@@ -1,6 +1,6 @@
 :root {
-  --top-bar: 54px;
-  --left-bar: 84px;
+  --top-bar: 62px;
+  --left-bar: 96px;
   --bg: #e9edf2;
   --chrome: #f7f8fa;
   --chrome-2: #eef1f5;
@@ -8,13 +8,14 @@
   --text: #14181f;
   --muted: #374151;
   --label: #1a1f26;
-  --accent: #0f766e;
-  --accent-soft: #e6f4f2;
+  --accent: #4f63e6;
+  --accent-soft: #e8ebfe;
   --danger: #e11d48;
   --badge: #ef4444;
   --active-bg: #e6e8ec;
   --shadow: 0 8px 28px rgba(15, 23, 42, 0.08);
-  --app-icon: 28px;
+  --app-icon: 34px;
+  --app-label-size: 15px;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   font-family: "Segoe UI Variable", "Segoe UI", "SF Pro Text", system-ui, sans-serif;
 }
@@ -27,27 +28,29 @@ body.theme-dark {
   --text: #f1f5f9;
   --muted: #94a3b8;
   --label: #f8fafc;
-  --accent: #2dd4bf;
-  --accent-soft: #134e4a;
+  --accent: #7b8cff;
+  --accent-soft: #1a2240;
   --active-bg: #243041;
   --shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
 }
 
 body.density-compact {
-  --top-bar: 46px;
-  --left-bar: 68px;
-  --app-icon: 24px;
+  --top-bar: 52px;
+  --left-bar: 78px;
+  --app-icon: 30px;
+  --app-label-size: 13px;
 }
 
 body.density-normal {
-  --top-bar: 50px;
-  --left-bar: 76px;
-  --app-icon: 26px;
+  --top-bar: 58px;
+  --left-bar: 88px;
+  --app-icon: 32px;
+  --app-label-size: 14px;
 }
 
 body.hide-labels {
-  --top-bar: 48px;
-  --left-bar: 58px;
+  --top-bar: 54px;
+  --left-bar: 64px;
 }
 
 /* Darkest — deeper contrast variant of dark */
@@ -178,7 +181,8 @@ body.layout-top .app-bar-top {
   align-items: center;
   gap: 2px;
   overflow-x: auto;
-  flex: 1;
+  /* Take all free width so wrap uses the full bar, not half of it. */
+  flex: 1 1 auto;
   min-width: 0;
   padding: 0 4px;
   scrollbar-width: none;
@@ -189,8 +193,10 @@ body.layout-top .app-bar-top {
 }
 
 .chrome-spacer {
-  flex: 1 1 12px;
-  min-width: 12px;
+  /* Tiny gap only — never compete with the apps track for width. */
+  flex: 0 0 8px;
+  width: 8px;
+  min-width: 8px;
 }
 
 .chrome-actions {
@@ -198,7 +204,7 @@ body.layout-top .app-bar-top {
   align-items: center;
   gap: 2px;
   padding: 0 4px 0 8px;
-  margin-left: 0;
+  margin-left: auto;
   border-left: 1px solid var(--border);
   height: 100%;
   flex-shrink: 0;
@@ -335,7 +341,16 @@ body.layout-right .app-tab.drop-after {
 
 .empty-card {
   text-align: center;
-  max-width: 360px;
+  max-width: 400px;
+}
+
+.brand-wordmark {
+  display: block;
+  width: min(280px, 72vw);
+  height: auto;
+  margin: 0 auto 18px;
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgba(8, 18, 48, 0.28);
 }
 
 .empty-card h1 {
@@ -343,6 +358,7 @@ body.layout-right .app-tab.drop-after {
   font-size: 28px;
   font-weight: 700;
   color: var(--text);
+  letter-spacing: -0.02em;
 }
 
 .empty-card p {
@@ -352,6 +368,18 @@ body.layout-right .app-tab.drop-after {
   line-height: 1.45;
 }
 
+.brand-avatar {
+  padding: 2px !important;
+  overflow: hidden;
+}
+
+.brand-avatar .aspera-app-icon {
+  width: 22px;
+  height: 22px;
+  display: block;
+  border-radius: 6px;
+}
+
 /* Rambox-style horizontal tabs: [icon+badge] [label] */
 .app-tab {
   position: relative;
@@ -359,33 +387,33 @@ body.layout-right .app-tab.drop-after {
   flex-direction: row;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  height: 38px;
+  gap: 10px;
+  height: 44px;
   min-width: 0;
-  padding: 0 12px 0 8px;
+  padding: 0 14px 0 10px;
   border: none;
   background: transparent;
   color: var(--label);
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: 10px;
   flex-shrink: 0;
   transition: background 0.14s var(--ease);
 }
 
 body.density-compact .app-tab {
-  height: 34px;
-  padding: 0 9px 0 7px;
-  gap: 7px;
+  height: 38px;
+  padding: 0 10px 0 8px;
+  gap: 8px;
 }
 
 body.layout-left .app-tab {
   width: 100%;
   height: auto;
-  min-height: 56px;
-  padding: 10px 6px;
+  min-height: 68px;
+  padding: 12px 6px;
   justify-content: center;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
 }
 
 .app-tab:hover {
@@ -544,20 +572,20 @@ body.hide-labels .app-tab {
 }
 
 .app-label {
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: var(--app-label-size);
+  font-weight: 700;
+  letter-spacing: -0.02em;
   color: var(--label);
   white-space: nowrap;
-  max-width: 110px;
+  max-width: 11ch;
   overflow: hidden;
   text-overflow: ellipsis;
   line-height: 1.1;
 }
 
 body.density-compact .app-label {
-  font-size: 12px;
-  max-width: 90px;
+  font-size: var(--app-label-size);
+  max-width: 11ch;
 }
 
 body.theme-dark .app-label {
@@ -566,7 +594,7 @@ body.theme-dark .app-label {
 
 .app-tab.active .app-label {
   color: var(--text);
-  font-weight: 700;
+  font-weight: 750;
 }
 
 .app-badge {
@@ -1445,38 +1473,49 @@ kbd {
 .lock-screen {
   position: fixed;
   inset: 0;
-  background: linear-gradient(160deg, #0f766e, #134e4a 40%, #0f1419);
+  background:
+    radial-gradient(ellipse at 30% 20%, rgba(90, 110, 230, 0.28), transparent 50%),
+    radial-gradient(ellipse at 80% 80%, rgba(160, 175, 255, 0.12), transparent 45%),
+    linear-gradient(160deg, #081230 0%, #0c1a3d 45%, #060b1c 100%);
   display: grid;
   place-items: center;
   z-index: 50;
 }
 
 .lock-card {
-  width: min(340px, 90vw);
-  background: #fff;
+  width: min(360px, 90vw);
+  background: rgba(255, 255, 255, 0.97);
   color: var(--text);
-  border-radius: 16px;
-  padding: 28px 22px;
+  border-radius: 18px;
+  padding: 28px 24px 22px;
   text-align: center;
-  box-shadow: var(--shadow);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
   display: grid;
   gap: 12px;
 }
 
 .lock-card .brand-mark {
-  width: 48px;
-  height: 48px;
+  width: 56px;
+  height: 56px;
   margin: 0 auto;
-  border-radius: 12px;
+  border-radius: 14px;
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, #0d9488, #4f8cff);
+  background: transparent;
   color: white;
   font-weight: 800;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(8, 18, 48, 0.35);
+}
+
+.lock-card .brand-mark .aspera-app-icon {
+  width: 56px;
+  height: 56px;
+  display: block;
 }
 
 .lock-card h1 {
-  margin: 0;
+  margin: 4px 0 0;
   font-size: 18px;
 }
 
@@ -1730,6 +1769,12 @@ body.theme-dark .app-menu-nav .icon-btn {
   object-fit: contain;
 }
 
+.edit-app-name-row {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+}
+
 .edit-app-name-row input {
   border: none;
   background: transparent;
@@ -1740,6 +1785,11 @@ body.theme-dark .app-menu-nav .icon-btn {
   width: min(280px, 70vw);
   padding: 4px 8px;
   border-radius: 8px;
+}
+
+.edit-app-name-row .name-limit-hint {
+  margin: 0;
+  font-size: 11px;
 }
 
 .edit-app-name-row input:focus {
@@ -1810,6 +1860,181 @@ body.theme-dark .advance-block {
 
 body.theme-dark .edit-app-body textarea {
   background: var(--chrome);
+}
+
+.profile-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.profile-pick-row .grow {
+  flex: 1;
+  margin: 0;
+}
+
+.profiles-intro {
+  margin: 0 16px 12px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.profiles-list {
+  display: grid;
+  gap: 8px;
+  padding: 0 16px 20px;
+  overflow: auto;
+}
+
+.profile-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--chrome-2);
+}
+
+.profile-meta {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.profile-meta strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.profile-meta span {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.profile-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.instance-profile {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.modal-head-ico {
+  display: inline-flex;
+  vertical-align: -4px;
+  margin-right: 6px;
+}
+
+.modal-head-ico svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Centered dialog (New profile / Rename) — Rambox-style */
+.modal.dialog-modal {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(2px);
+}
+
+.modal.dialog-modal.hidden {
+  display: none !important;
+}
+
+.profile-name-card {
+  width: min(420px, 92vw);
+  padding: 0;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.28);
+}
+
+.profile-name-card .modal-head {
+  padding: 16px 18px 8px;
+  border-bottom: none;
+}
+
+.profile-name-card .modal-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.profile-name-body {
+  padding: 8px 18px 4px;
+}
+
+.profile-name-body input {
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  border: 1.5px solid var(--accent);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text);
+  font-size: 14px;
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+body.theme-dark .profile-name-body input {
+  background: var(--chrome-2);
+}
+
+.profile-name-body input::placeholder {
+  color: #9aa3af;
+}
+
+.profile-name-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 16px 18px 18px;
+}
+
+.ghost-btn {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+body.theme-dark .ghost-btn {
+  background: var(--chrome-2);
+}
+
+.update-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+.update-status-row .hint-text {
+  margin: 0;
+}
+
+.ghost-btn:hover {
+  background: var(--chrome-2);
 }
 
 @media (max-width: 560px) {

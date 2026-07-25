@@ -1,11 +1,16 @@
 /**
  * App catalog for Aspera Dock.
- * Users add instances from this list (max 3 of the same app).
+ * Limits: max 10 apps total, up to 10 of the same app, tab names ≤ 10 chars.
+ * Each instance is bound to a Profile (Electron session partition),
+ * so multiple WhatsApp / Arattai / Gmail accounts stay signed in side by side.
  * The entire app bar can sit on Top or Left — not per-app.
  */
 
-export const MAX_INSTANCES_PER_APP = 3;
-export const MAX_WARM_VIEWS_DEFAULT = 3;
+export const MAX_INSTANCES_PER_APP = 10;
+export const MAX_APPS_TOTAL = 10;
+export const MAX_APP_NAME_LENGTH = 10;
+/** Only the active tab stays warm by default — critical for 8–16 GB PCs. */
+export const MAX_WARM_VIEWS_DEFAULT = 1;
 
 /** @typedef {{
  *   appId: string,
@@ -37,22 +42,6 @@ export const APP_CATALOG = [
     color: '#F5A623',
     logo: 'arattai',
     keepWarm: true,
-  },
-  {
-    appId: 'telegram',
-    name: 'Telegram',
-    title: 'Telegram',
-    url: 'https://web.telegram.org/k/',
-    color: '#26A5E4',
-    logo: 'telegram',
-  },
-  {
-    appId: 'gmessages',
-    name: 'Messages',
-    title: 'Google Messages',
-    url: 'https://messages.google.com/web',
-    color: '#1A73E8',
-    logo: 'messages',
   },
   {
     appId: 'gmail',
@@ -100,39 +89,45 @@ export function getAppCatalogEntry(appId) {
   return APP_CATALOG.find((a) => a.appId === appId) || null;
 }
 
-/** Short label for an instance, e.g. WhatsApp → WA 1 */
+/** Clamp tab labels so the bar stays compact and readable. */
+export function clampAppName(value, max = MAX_APP_NAME_LENGTH) {
+  const text = String(value ?? '').trim();
+  if (text.length <= max) return text;
+  return text.slice(0, max);
+}
+
+/** Short label for an instance, e.g. WhatsApp → WA 1 (always ≤ 10 chars) */
 export function defaultInstanceName(entry, index) {
   const short = {
     whatsapp: 'WA',
     arattai: 'Arattai',
-    telegram: 'Telegram',
-    gmessages: 'Messages',
     gmail: 'Gmail',
     'zoho-mail': 'ZMail',
     'zoho-crm': 'CRM',
     'zoho-books': 'Books',
-    'zoho-one': 'Zoho One',
-  }[entry.appId] || entry.name;
+    'zoho-one': 'ZohoOne',
+  }[entry.appId] || clampAppName(entry.name, 7);
 
-  if (index <= 1) return short;
-  return `${short} ${index}`;
+  if (index <= 1) return clampAppName(short);
+  return clampAppName(`${short} ${index}`);
 }
 
 export function defaultInstanceTitle(entry, index) {
+  // Tooltip / full title can be longer; tab name stays short via defaultInstanceName.
   if (index <= 1) return entry.title;
   return `${entry.title} ${index}`;
 }
 
 /** Layout chrome sizes (px) — must match CSS */
-export const TOP_APP_BAR = 54;
-export const TOP_APP_BAR_NORMAL = 50;
-export const TOP_APP_BAR_COMPACT = 46;
-export const TOP_APP_BAR_NO_LABEL = 48;
-export const LEFT_APP_BAR = 84;
-export const LEFT_APP_BAR_NORMAL = 76;
-export const LEFT_APP_BAR_COMPACT = 68;
-export const LEFT_APP_BAR_NO_LABEL = 58;
-export const TOOL_STRIP = 54;
+export const TOP_APP_BAR = 62;
+export const TOP_APP_BAR_NORMAL = 58;
+export const TOP_APP_BAR_COMPACT = 52;
+export const TOP_APP_BAR_NO_LABEL = 54;
+export const LEFT_APP_BAR = 96;
+export const LEFT_APP_BAR_NORMAL = 88;
+export const LEFT_APP_BAR_COMPACT = 78;
+export const LEFT_APP_BAR_NO_LABEL = 64;
+export const TOOL_STRIP = 58;
 
 export const INTERNAL_HOSTS = [
   'google.com',
@@ -147,8 +142,6 @@ export const INTERNAL_HOSTS = [
   'arattai.in',
   'whatsapp.com',
   'whatsapp.net',
-  'telegram.org',
-  'telegram.me',
   'accounts.youtube.com',
 ];
 

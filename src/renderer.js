@@ -1,6 +1,15 @@
 import './index.css';
 import { logoHtml } from './logos.js';
 import { icon } from './icons.js';
+import { BRAND, asperaAppIconSvg } from './brand.js';
+import * as SentryRenderer from '@sentry/electron/renderer';
+
+// Renderer errors route through main → Sentry when DSN is configured.
+try {
+  SentryRenderer.init();
+} catch {
+  // Optional — main process still captures crashes.
+}
 
 const els = {
   appsTop: document.getElementById('apps-top'),
@@ -63,6 +72,18 @@ const els = {
   editAppSave: document.getElementById('edit-app-save'),
   editAppClose: document.getElementById('edit-app-close'),
   editAppClearSession: document.getElementById('edit-app-clear-session'),
+  profilesModal: document.getElementById('profiles-modal'),
+  profilesList: document.getElementById('profiles-list'),
+  profilesCreate: document.getElementById('profiles-create'),
+  profilesClose: document.getElementById('profiles-close'),
+  profileNameModal: document.getElementById('profile-name-modal'),
+  profileNameTitle: document.getElementById('profile-name-title'),
+  profileNameInput: document.getElementById('profile-name-input'),
+  profileNameOk: document.getElementById('profile-name-ok'),
+  profileNameCancel: document.getElementById('profile-name-cancel'),
+  profileNameX: document.getElementById('profile-name-x'),
+  eaProfile: document.getElementById('ea-profile'),
+  eaProfileAdd: document.getElementById('ea-profile-add'),
 };
 
 const SHORTCUT_DEFS = [
@@ -180,7 +201,7 @@ function bindAppTabDrag(btn, service) {
 function paintToolbarIcons() {
   els.searchBtn.innerHTML = icon('search');
   els.focusBtn.innerHTML = icon('focus');
-  els.menuBtn.innerHTML = icon('menu');
+  els.menuBtn.innerHTML = asperaAppIconSvg(22);
   els.layoutBtn.innerHTML = icon('layout-left');
   els.addAppBtn.innerHTML = icon('plus');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
@@ -190,11 +211,17 @@ function paintToolbarIcons() {
   els.appMenuHome.innerHTML = icon('home');
   els.appMenuRefresh.innerHTML = icon('reload');
   els.appMenuForward.innerHTML = icon('forward');
+
+  // Brand surfaces
+  const emptyBrand = document.getElementById('empty-brand');
+  if (emptyBrand) emptyBrand.src = BRAND.wordmarkUrl;
+  const lockBrand = document.getElementById('lock-brand');
+  if (lockBrand) lockBrand.innerHTML = asperaAppIconSvg(48);
   const settingsHead = document.getElementById('settings-head-ico');
   const shortcutsHead = document.getElementById('shortcuts-head-ico');
   if (settingsHead) settingsHead.innerHTML = icon('settings');
   if (shortcutsHead) shortcutsHead.innerHTML = icon('keyboard');
-  for (const slot of document.querySelectorAll('.chrome-menu-ico')) {
+  for (const slot of document.querySelectorAll('.chrome-menu-ico, .modal-head-ico')) {
     slot.innerHTML = icon(slot.dataset.ico);
   }
 }
@@ -204,6 +231,7 @@ let state = {
   warmIds: [],
   services: [],
   catalog: [],
+  profiles: [],
   notifications: [],
   appMemory: {},
   unread: {},
@@ -483,12 +511,13 @@ function renderCatalog() {
 
     const meta = document.createElement('div');
     meta.className = 'catalog-meta';
-    meta.innerHTML = `<strong>${app.title}</strong><span>${app.count}/${app.max} added</span>`;
+    meta.innerHTML = `<strong>${app.title}</strong><span>${app.count}/${app.max} · dock ${app.totalApps || 0}/${app.maxTotal || 10}</span>`;
 
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'primary';
-    btn.textContent = app.canAdd ? 'Add' : 'Max';
+    const totalFull = (app.totalApps || 0) >= (app.maxTotal || 10);
+    btn.textContent = !app.canAdd ? (totalFull ? 'Dock full' : 'Max') : 'Add';
     btn.disabled = !app.canAdd;
     btn.addEventListener('click', async () => {
       const result = await window.asperadock.addService(app.appId);
@@ -519,8 +548,8 @@ function renderInstances() {
     row.className = 'instance-row';
 
     const logo = makeAppIcon(service);
-    const label = document.createElement('span');
-    label.textContent = service.title || service.name;
+  const label = document.createElement('span');
+  label.innerHTML = `${service.title || service.name}<small class="instance-profile">${service.profileName || 'Primary'}</small>`;
 
     const remove = document.createElement('button');
     remove.type = 'button';
@@ -576,10 +605,22 @@ function fillSettingsForm() {
   set('set-proxy-mode', s.proxyMode || 'none');
   set('set-proxy-rules', s.proxyRules || '');
   set('set-proxy-bypass', s.proxyBypass ?? '<local>');
-  set('set-hibernate', s.hibernateMinutes ?? 5);
-  set('set-max-warm', s.maxWarmViews ?? 3);
+  set('set-hibernate', s.hibernateMinutes ?? 2);
+  set('set-max-warm', s.maxWarmViews ?? 1);
+  set('set-low-memory', s.lowMemoryMode !== false);
   set('set-consumption', s.consumptionMonitor);
-  set('set-hw-accel', s.hardwareAcceleration !== false);
+  set('set-error-reporting', s.errorReportingEnabled !== false);
+  set('set-error-target', s.errorReportTarget || 'sentry');
+  set('set-sentry-dsn', s.sentryDsn || '');
+  set('set-error-repo', s.errorReportGithubRepo || '');
+  set('set-error-token', s.errorReportGithubToken || '');
+  set('set-error-url', s.errorReportUrl || '');
+  set('set-auto-update', s.autoUpdateEnabled !== false);
+  set('set-auto-download', s.autoUpdateDownload !== false);
+  set('set-auto-install', s.autoUpdateInstall === true);
+  set('set-update-channel', s.updateChannel || 'stable');
+  set('set-update-url', s.updateFeedUrl || '');
+  set('set-hw-accel', s.hardwareAcceleration === true);
   set('set-hidpi', s.hiDpiSupport !== false);
   set('set-media-keys', s.mediaKeys !== false);
   set('set-links', s.linkHandling || 'block');
@@ -620,9 +661,21 @@ function readSettingsForm() {
     proxyMode: val('set-proxy-mode'),
     proxyRules: val('set-proxy-rules').trim(),
     proxyBypass: val('set-proxy-bypass').trim() || '<local>',
-    hibernateMinutes: Number(val('set-hibernate')) || 5,
-    maxWarmViews: Number(val('set-max-warm')) || 3,
+    hibernateMinutes: Number(val('set-hibernate')) || 2,
+    maxWarmViews: Math.min(5, Math.max(1, Number(val('set-max-warm')) || 1)),
+    lowMemoryMode: checked('set-low-memory'),
     consumptionMonitor: checked('set-consumption'),
+    errorReportingEnabled: checked('set-error-reporting'),
+    errorReportTarget: val('set-error-target'),
+    sentryDsn: val('set-sentry-dsn').trim(),
+    errorReportGithubRepo: val('set-error-repo').trim(),
+    errorReportGithubToken: val('set-error-token').trim(),
+    errorReportUrl: val('set-error-url').trim(),
+    autoUpdateEnabled: checked('set-auto-update'),
+    autoUpdateDownload: checked('set-auto-download'),
+    autoUpdateInstall: checked('set-auto-install'),
+    updateChannel: val('set-update-channel'),
+    updateFeedUrl: val('set-update-url').trim(),
     hardwareAcceleration: checked('set-hw-accel'),
     hiDpiSupport: checked('set-hidpi'),
     mediaKeys: checked('set-media-keys'),
@@ -672,6 +725,8 @@ function anyOverlayOpen() {
     !els.settingsModal.classList.contains('hidden') ||
     !els.searchModal.classList.contains('hidden') ||
     !els.editAppModal.classList.contains('hidden') ||
+    !els.profilesModal?.classList.contains('hidden') ||
+    !els.profileNameModal?.classList.contains('hidden') ||
     !els.appMenu.classList.contains('hidden') ||
     !els.shortcutsModal.classList.contains('hidden') ||
     !els.chromeMenu.classList.contains('hidden') ||
@@ -767,8 +822,22 @@ function openEditApp(id) {
   const links = document.getElementById('ea-links');
   links.value = cfg.linkHandling || 'default';
 
+  fillProfileSelect(service.profileId);
   els.editAppModal.classList.remove('hidden');
   window.asperadock.setOverlay(true);
+}
+
+function fillProfileSelect(selectedId) {
+  if (!els.eaProfile) return;
+  const profiles = state.profiles || [];
+  els.eaProfile.innerHTML = '';
+  for (const profile of profiles) {
+    const opt = document.createElement('option');
+    opt.value = profile.id;
+    opt.textContent = profile.name;
+    if (profile.id === selectedId) opt.selected = true;
+    els.eaProfile.appendChild(opt);
+  }
 }
 
 function closeEditApp() {
@@ -782,8 +851,9 @@ async function saveEditApp() {
   const spellVal = document.getElementById('ea-spell').value;
   const linkVal = document.getElementById('ea-links').value;
   const patch = {
-    name: els.editAppName.value.trim(),
-    title: els.editAppName.value.trim(),
+    name: (els.editAppName.value || '').trim().slice(0, 10),
+    title: (els.editAppName.value || '').trim().slice(0, 10),
+    profileId: els.eaProfile?.value || undefined,
     enabled: document.getElementById('ea-enabled').checked,
     showNameInTab: document.getElementById('ea-show-name').checked,
     allowSounds: document.getElementById('ea-sounds').checked,
@@ -803,8 +873,132 @@ async function saveEditApp() {
     spellChecker: spellVal === 'default' ? null : [spellVal],
     linkHandling: linkVal === 'default' ? null : linkVal,
   };
-  await window.asperadock.saveAppConfig(editServiceId, patch);
+  const result = await window.asperadock.saveAppConfig(editServiceId, patch);
+  if (!result?.ok) {
+    alert(result?.error || 'Could not save app');
+    return;
+  }
   closeEditApp();
+}
+
+function renderProfiles() {
+  if (!els.profilesList) return;
+  els.profilesList.innerHTML = '';
+  const profiles = state.profiles || [];
+  if (!profiles.length) {
+    els.profilesList.innerHTML = '<p class="hint-text">No profiles yet.</p>';
+    return;
+  }
+
+  for (const profile of profiles) {
+    const row = document.createElement('div');
+    row.className = 'profile-row';
+
+    const meta = document.createElement('div');
+    meta.className = 'profile-meta';
+    const apps = (state.services || []).filter((s) => s.profileId === profile.id);
+    const appNames = apps.map((s) => s.name).join(', ') || 'No apps';
+    meta.innerHTML = `<strong>${profile.name}</strong><span>${profile.appCount || 0} app${(profile.appCount || 0) === 1 ? '' : 's'} · ${appNames}</span>`;
+
+    const actions = document.createElement('div');
+    actions.className = 'profile-actions';
+
+    const renameBtn = document.createElement('button');
+    renameBtn.type = 'button';
+    renameBtn.className = 'icon-btn';
+    renameBtn.title = 'Rename';
+    renameBtn.innerHTML = icon('pencil');
+    renameBtn.addEventListener('click', async () => {
+      const name = await askProfileName({
+        title: 'Rename profile',
+        initial: profile.name,
+      });
+      if (!name || name === profile.name) return;
+      const result = await window.asperadock.renameProfile(profile.id, name);
+      if (!result.ok) alert(result.error || 'Could not rename');
+    });
+
+    const trashBtn = document.createElement('button');
+    trashBtn.type = 'button';
+    trashBtn.className = 'icon-btn danger-btn';
+    trashBtn.title = profile.locked ? 'Primary cannot be deleted' : 'Delete profile';
+    trashBtn.disabled = !!profile.locked || (profile.appCount || 0) > 0;
+    trashBtn.innerHTML = icon('trash');
+    trashBtn.addEventListener('click', async () => {
+      if (
+        !confirm(
+          `Delete profile “${profile.name}”? Its login data will be cleared.`,
+        )
+      ) {
+        return;
+      }
+      const result = await window.asperadock.deleteProfile(profile.id);
+      if (!result.ok) alert(result.error || 'Could not delete');
+    });
+
+    actions.append(renameBtn, trashBtn);
+    row.append(meta, actions);
+    els.profilesList.appendChild(row);
+  }
+}
+
+function openProfiles() {
+  closeAppMenu();
+  closeChromeMenu();
+  closeNotificationCenter();
+  closeSettings();
+  closeEditApp();
+  renderProfiles();
+  els.profilesModal.classList.remove('hidden');
+  window.asperadock.setOverlay(true);
+}
+
+function closeProfiles() {
+  els.profilesModal.classList.add('hidden');
+  syncOverlayFromModals();
+}
+
+/** Rambox-style centered name dialog. Resolves to trimmed name or null. */
+let profileNameResolver = null;
+
+function closeProfileNameModal(result = null) {
+  if (!els.profileNameModal) return;
+  els.profileNameModal.classList.add('hidden');
+  const resolve = profileNameResolver;
+  profileNameResolver = null;
+  syncOverlayFromModals();
+  if (resolve) resolve(result);
+}
+
+function askProfileName({ title = 'New profile', initial = '' } = {}) {
+  return new Promise((resolve) => {
+    // Cancel any previous waiter.
+    if (profileNameResolver) profileNameResolver(null);
+    profileNameResolver = resolve;
+    els.profileNameTitle.textContent = title;
+    els.profileNameInput.value = initial || '';
+    els.profileNameInput.placeholder = "Profile's name";
+    els.profileNameModal.classList.remove('hidden');
+    window.asperadock.setOverlay(true);
+    requestAnimationFrame(() => {
+      els.profileNameInput.focus();
+      els.profileNameInput.select();
+    });
+  });
+}
+
+async function createProfilePrompt(defaultName = '') {
+  const name = await askProfileName({
+    title: 'New profile',
+    initial: defaultName && defaultName !== 'Profile' ? defaultName : '',
+  });
+  if (!name) return null;
+  const result = await window.asperadock.createProfile(name);
+  if (!result.ok) {
+    alert(result.error || 'Could not create profile');
+    return null;
+  }
+  return result.profile;
 }
 
 function openSettings() {
@@ -945,6 +1139,7 @@ function render() {
     renderCatalog();
     renderInstances();
   }
+  if (!els.profilesModal?.classList.contains('hidden')) renderProfiles();
   if (!els.notifCenter.classList.contains('hidden')) renderNotificationCenter();
   requestAnimationFrame(reportChromeSize);
 }
@@ -966,6 +1161,7 @@ els.chromeMenu.addEventListener('click', (event) => {
   const action = btn.dataset.action;
   closeChromeMenu();
   if (action === 'settings') openSettings();
+  if (action === 'profiles') openProfiles();
   if (action === 'shortcuts') openShortcuts();
   if (action === 'add-app') openAppsSettings();
   if (action === 'reload') window.asperadock.reloadActive();
@@ -1048,6 +1244,7 @@ window.addEventListener('resize', () => requestAnimationFrame(reportChromeSize))
 
 window.asperadock.onOpenSettings(openSettings);
 window.asperadock.onOpenAppsSettings?.(openAppsSettings);
+window.asperadock.onOpenProfiles?.(openProfiles);
 window.asperadock.onOpenSearch?.(openSearch);
 
 async function patchMenuFlag(key, checked) {
@@ -1102,12 +1299,61 @@ els.editAppRemove.addEventListener('click', async () => {
 els.editAppClearSession?.addEventListener('click', async () => {
   if (!editServiceId) return;
   const service = getServiceById(editServiceId);
+  const profileName = service?.profileName || 'this profile';
+  const shared = (state.services || []).filter(
+    (s) => s.profileId === service?.profileId,
+  );
+  const extra =
+    shared.length > 1
+      ? `\n\nAlso signs out: ${shared.map((s) => s.name).join(', ')}`
+      : '';
   if (
     confirm(
-      `Clear login/session data for ${service?.title || service?.name || 'this app'}?`,
+      `Clear login data for profile “${profileName}”?${extra}`,
     )
   ) {
     await window.asperadock.clearSession(editServiceId);
+  }
+});
+
+els.eaProfileAdd?.addEventListener('click', async () => {
+  const profile = await createProfilePrompt('');
+  if (!profile) return;
+  fillProfileSelect(profile.id);
+});
+
+els.profilesClose?.addEventListener('click', closeProfiles);
+els.profilesCreate?.addEventListener('click', async () => {
+  const profile = await createProfilePrompt('');
+  if (profile) renderProfiles();
+});
+els.profilesModal?.addEventListener('click', (event) => {
+  if (event.target === els.profilesModal) closeProfiles();
+});
+
+function submitProfileName() {
+  const name = (els.profileNameInput?.value || '').trim();
+  if (!name) {
+    els.profileNameInput?.focus();
+    return;
+  }
+  closeProfileNameModal(name);
+}
+
+els.profileNameOk?.addEventListener('click', submitProfileName);
+els.profileNameCancel?.addEventListener('click', () => closeProfileNameModal(null));
+els.profileNameX?.addEventListener('click', () => closeProfileNameModal(null));
+els.profileNameModal?.addEventListener('click', (event) => {
+  if (event.target === els.profileNameModal) closeProfileNameModal(null);
+});
+els.profileNameInput?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    submitProfileName();
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeProfileNameModal(null);
   }
 });
 
@@ -1130,18 +1376,144 @@ document.addEventListener('click', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
-    if (!els.chromeMenu.classList.contains('hidden')) closeChromeMenu();
+    if (!els.profileNameModal?.classList.contains('hidden')) closeProfileNameModal(null);
+    else if (!els.chromeMenu.classList.contains('hidden')) closeChromeMenu();
     else if (!els.notifCenter.classList.contains('hidden')) closeNotificationCenter();
     else if (!els.appMenu.classList.contains('hidden')) closeAppMenu();
+    else if (!els.profilesModal?.classList.contains('hidden')) closeProfiles();
     else if (!els.editAppModal.classList.contains('hidden')) closeEditApp();
     else if (!els.shortcutsModal.classList.contains('hidden')) closeShortcuts();
   }
 });
 
+function installRendererErrorReporting() {
+  const send = (kind, message, error = null, extra = null) => {
+    try {
+      window.asperadock.reportError?.({
+        kind,
+        message,
+        error: error
+          ? {
+              name: error.name,
+              message: error.message,
+              stack: error.stack,
+            }
+          : null,
+        source: 'renderer',
+        extra,
+      });
+    } catch {
+      // ignore
+    }
+  };
+
+  window.addEventListener('error', (event) => {
+    send('window-error', event.message || 'window error', event.error, {
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno,
+    });
+  });
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const reason = event.reason;
+    const error =
+      reason instanceof Error
+        ? reason
+        : new Error(typeof reason === 'string' ? reason : JSON.stringify(reason));
+    send('unhandledrejection', error.message, error);
+  });
+
+  // Heartbeat so main can detect UI freezes.
+  setInterval(() => {
+    window.asperadock.heartbeat?.();
+  }, 2000);
+
+  // Animation-frame watchdog: if rAF stalls, report a freeze from the UI side too.
+  let lastFrame = performance.now();
+  let freezeSentAt = 0;
+  const tick = (now) => {
+    const gap = now - lastFrame;
+    lastFrame = now;
+    if (gap > 12000 && now - freezeSentAt > 30000) {
+      freezeSentAt = now;
+      send('ui-freeze', `requestAnimationFrame stalled ${Math.round(gap)}ms`, null, {
+        gapMs: Math.round(gap),
+      });
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+document.getElementById('open-error-reports')?.addEventListener('click', () => {
+  window.asperadock.openErrorReports?.();
+});
+
+function setUpdateStatus(text) {
+  const el = document.getElementById('update-status-text');
+  if (el) el.textContent = text;
+}
+
+async function refreshUpdateStatus() {
+  try {
+    const status = await window.asperadock.updateStatus?.();
+    if (!status) return;
+    if (status.pending) {
+      setUpdateStatus(
+        status.pending.downloaded
+          ? `Update ${status.pending.version} ready — restart to apply`
+          : `Update ${status.pending.version} available`,
+      );
+    } else {
+      setUpdateStatus(`Up to date · v${status.currentVersion} (${status.channel})`);
+    }
+  } catch {
+    setUpdateStatus('');
+  }
+}
+
+document.getElementById('check-updates')?.addEventListener('click', async () => {
+  setUpdateStatus('Checking for updates…');
+  await window.asperadock.updateCheck?.();
+  refreshUpdateStatus();
+});
+
+window.asperadock.onUpdateEvent?.((data) => {
+  if (!data) return;
+  switch (data.event) {
+    case 'checking':
+      setUpdateStatus('Checking for updates…');
+      break;
+    case 'up-to-date':
+      setUpdateStatus(`Up to date · v${data.version || ''}`);
+      break;
+    case 'available':
+      setUpdateStatus(`Update ${data.version} available — downloading…`);
+      break;
+    case 'download-progress':
+      setUpdateStatus(`Downloading update… ${data.percent || 0}%`);
+      break;
+    case 'downloaded':
+      setUpdateStatus(`Update ${data.version} ready — restart to apply`);
+      break;
+    case 'installing':
+      setUpdateStatus('Installing update…');
+      break;
+    case 'error':
+      setUpdateStatus(`Update error: ${data.message || 'unknown'}`);
+      break;
+    default:
+      break;
+  }
+});
+
 async function boot() {
   paintToolbarIcons();
+  installRendererErrorReporting();
   state = await window.asperadock.getState();
   render();
+  refreshUpdateStatus();
   window.asperadock.onState((next) => {
     state = next;
     render();

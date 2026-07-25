@@ -1,0 +1,103 @@
+# Continuous deploy — every push to master ships a new release to all users.
+# Builds .deb (+ latest.json), publishes GitHub Release. Clients auto-update.
+# No fragmented installs: latest always comes from GitHub Releases.
+
+name: Deploy Aspera Dock
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      notes:
+        description: 'Release notes shown to users'
+        required: false
+        default: ''
+
+concurrency:
+  group: deploy-asperadock
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install system deps for .deb
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq fakeroot dpkg
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Compute next version & stamp package.json
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          LATEST=$(gh release list --limit 100 --json tagName -q '.[].tagName' 2>/dev/null \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1 || true)
+          if [ -n "${LATEST}" ]; then
+            MAJOR=$(echo "$LATEST" | cut -d. -f1)
+            MINOR=$(echo "$LATEST" | cut -d. -f2)
+            PATCH=$(echo "$LATEST" | cut -d. -f3)
+            NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))"
+          else
+            NEXT=$(node -p "require('./package.json').version")
+          fi
+          while gh release view "v${NEXT}" >/dev/null 2>&1; do
+            PATCH=$(echo "$NEXT" | cut -d. -f3)
+            NEXT="$(echo "$NEXT" | cut -d. -f1-2).$((PATCH + 1))"
+          done
+          node -e "
+            const fs=require('fs');
+            const p=JSON.parse(fs.readFileSync('package.json','utf8'));
+            p.version=process.argv[1];
+            fs.writeFileSync('package.json', JSON.stringify(p,null,2)+'\n');
+          " "$NEXT"
+          echo "version=${NEXT}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${NEXT}" >> "$GITHUB_OUTPUT"
+          echo "Next release: v${NEXT}"
+
+      - name: Build .deb
+        run: npm run make -- --targets @electron-forge/maker-deb
+
+      - name: Publish GitHub Release + update manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NOTES: ${{ github.event.inputs.notes }}
+        run: |
+          set -euo pipefail
+          MSG="${NOTES:-}"
+          if [ -z "$MSG" ]; then
+            MSG=$(git log -1 --pretty=%s)
+          fi
+          node scripts/publish-update.mjs --notes "$MSG"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Deployed Aspera Dock \`${{ steps.ver.outputs.tag }}\`"
+            echo ""
+            echo "All company PCs will pick this up via auto-update."
+            echo ""
+            echo "- Release: https://github.com/${{ github.repository }}/releases/tag/${{ steps.ver.outputs.tag }}"
+            echo "- Feed: https://github.com/${{ github.repository }}/releases/latest/download/latest.json"
+          } >> "$GITHUB_STEP_SUMMARY"

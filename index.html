@@ -41,10 +41,13 @@
             </div>
           </div>
           <div class="menu-wrap">
-            <button id="menu-btn" type="button" class="icon-btn" title="Menu"></button>
+            <button id="menu-btn" type="button" class="icon-btn brand-avatar" title="Menu" aria-label="Menu"></button>
             <div id="app-chrome-menu" class="chrome-menu hidden" role="menu">
               <button type="button" data-action="settings" class="chrome-menu-item">
                 <span class="chrome-menu-ico" data-ico="settings"></span> Settings
+              </button>
+              <button type="button" data-action="profiles" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="users"></span> Profiles
               </button>
               <button type="button" data-action="shortcuts" class="chrome-menu-item">
                 <span class="chrome-menu-ico" data-ico="keyboard"></span> Shortcuts
@@ -70,8 +73,9 @@
         <main id="content-slot" class="content-slot">
           <div id="empty-state" class="empty-state hidden">
             <div class="empty-card">
+              <img class="brand-wordmark" id="empty-brand" alt="Aspera" />
               <h1>Aspera Dock</h1>
-              <p>Add WhatsApp, Arattai, Gmail, Zoho and more. Up to 3 of each.</p>
+              <p>Add WhatsApp, Arattai, Gmail, Zoho and more. Up to 10 apps total (10 of each). Names are short — max 10 characters.</p>
               <button id="empty-add-btn" type="button" class="primary">Add your first app</button>
             </div>
           </div>
@@ -238,6 +242,13 @@
           </label>
 
           <div class="section-rule"><span>Performance</span></div>
+          <label class="switch-row">
+            <input id="set-low-memory" type="checkbox" />
+            <span>
+              Low memory mode (recommended for older PCs)
+              <small>Only 1 app stays in RAM; hibernates faster; GPU off. Needs relaunch.</small>
+            </span>
+          </label>
           <label class="field">
             <span>Hibernate after (minutes)</span>
             <input id="set-hibernate" type="number" min="1" max="120" />
@@ -245,7 +256,8 @@
           </label>
           <label class="field">
             <span>Max warm apps in RAM</span>
-            <input id="set-max-warm" type="number" min="1" max="10" />
+            <input id="set-max-warm" type="number" min="1" max="5" />
+            <p class="hint-text">Each warm app uses ~150–400 MB. Keep at 1 on 8–16 GB PCs.</p>
           </label>
           <label class="switch-row">
             <input id="set-consumption" type="checkbox" />
@@ -254,6 +266,98 @@
               <small>Shows memory per app in the notifications panel</small>
             </span>
           </label>
+
+          <div class="section-rule"><span>Error reporting</span></div>
+          <label class="switch-row">
+            <input id="set-error-reporting" type="checkbox" />
+            <span>
+              Automatically collect crash / freeze / error reports
+              <small>Saved locally; sent to Sentry when a DSN is set</small>
+            </span>
+          </label>
+          <label class="field">
+            <span>Report target</span>
+            <select id="set-error-target">
+              <option value="sentry">Sentry (recommended)</option>
+              <option value="github">GitHub Issues</option>
+              <option value="url">Custom HTTPS URL</option>
+              <option value="none">Local only</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Sentry DSN (optional override)</span>
+            <input
+              id="set-sentry-dsn"
+              type="password"
+              autocomplete="off"
+              placeholder="Leave empty = built-in Aspera Dock project"
+            />
+            <p class="hint-text">Reports already go to the Aspera Dock Sentry project. Only set this to use a different project.</p>
+          </label>
+          <label class="field">
+            <span>GitHub repo (only if target = GitHub)</span>
+            <input
+              id="set-error-repo"
+              type="text"
+              placeholder="ramchandragada/AsperaDock"
+            />
+          </label>
+          <label class="field">
+            <span>GitHub token (only if target = GitHub)</span>
+            <input
+              id="set-error-token"
+              type="password"
+              autocomplete="off"
+              placeholder="Fine-grained PAT — Issues: Write"
+            />
+          </label>
+          <label class="field">
+            <span>Custom report URL (only if target = Custom)</span>
+            <input id="set-error-url" type="url" placeholder="https://…" />
+          </label>
+          <button id="open-error-reports" type="button" class="ghost-btn">Open error reports folder</button>
+
+          <div class="section-rule"><span>Updates</span></div>
+          <label class="switch-row">
+            <input id="set-auto-update" type="checkbox" />
+            <span>
+              Keep Aspera Dock up to date automatically
+              <small>Downloads from GitHub Releases — includes Electron runtime</small>
+            </span>
+          </label>
+          <label class="switch-row">
+            <input id="set-auto-download" type="checkbox" />
+            <span>
+              Download updates in the background
+              <small>Ready to install without waiting</small>
+            </span>
+          </label>
+          <label class="switch-row">
+            <input id="set-auto-install" type="checkbox" />
+            <span>
+              Install updates silently on quit
+              <small>Applies seamlessly next launch. Required updates always install.</small>
+            </span>
+          </label>
+          <label class="field">
+            <span>Update channel</span>
+            <select id="set-update-channel">
+              <option value="stable">Stable (GitHub latest release)</option>
+              <option value="beta">Beta</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Update feed URL (optional override)</span>
+            <input
+              id="set-update-url"
+              type="url"
+              placeholder="Leave empty = GitHub Releases"
+            />
+          </label>
+          <div class="update-status-row">
+            <span id="update-status-text" class="hint-text">Checking…</span>
+            <button id="check-updates" type="button" class="ghost-btn">Check for updates</button>
+          </div>
 
           <div class="section-rule"><span>Compatibility</span></div>
           <label class="switch-row">
@@ -357,10 +461,23 @@
         <div class="edit-app-hero">
           <div id="edit-app-logo" class="edit-app-logo"></div>
           <div class="edit-app-name-row">
-            <input id="edit-app-name" type="text" maxlength="40" />
+            <input id="edit-app-name" type="text" maxlength="10" />
+            <span class="hint-text name-limit-hint">Max 10 characters</span>
           </div>
         </div>
         <div class="edit-app-body">
+          <section>
+            <h3>Profile</h3>
+            <p class="hint-text">
+              Each profile is a separate login session. Use different profiles for multiple WhatsApp, Arattai, or Gmail accounts.
+            </p>
+            <div class="profile-pick-row">
+              <label class="field grow">
+                <select id="ea-profile"></select>
+              </label>
+              <button id="ea-profile-add" type="button" class="icon-btn" title="Create profile">+</button>
+            </div>
+          </section>
           <section>
             <h3>Options</h3>
             <div class="check-grid">
@@ -418,8 +535,10 @@
           </section>
           <section>
             <h3>Session</h3>
-            <p class="hint-text">Clear login data for this app without removing it from the dock.</p>
-            <button id="edit-app-clear-session" type="button" class="danger-outline">Clear session data</button>
+            <p class="hint-text">
+              Clears login data for this app’s <strong>profile</strong> (every app on that profile signs out).
+            </p>
+            <button id="edit-app-clear-session" type="button" class="danger-outline">Clear profile session</button>
           </section>
           <details class="advance-block" open>
             <summary>Advance</summary>
@@ -450,10 +569,51 @@
       </div>
     </div>
 
+    <!-- Profiles manager (Rambox-style) -->
+    <div id="profiles-modal" class="modal drawer hidden" role="dialog" aria-labelledby="profiles-title">
+      <div class="modal-card profiles-card">
+        <header class="modal-head">
+          <h2 id="profiles-title"><span class="modal-head-ico" data-ico="users"></span> Profiles</h2>
+          <div class="edit-app-actions">
+            <button id="profiles-create" type="button" class="primary">Create</button>
+            <button id="profiles-close" type="button" class="icon-btn">✕</button>
+          </div>
+        </header>
+        <p class="profiles-intro">
+          Profiles keep separate logins. Add WhatsApp twice and each gets its own profile — both stay signed in.
+        </p>
+        <div id="profiles-list" class="profiles-list"></div>
+      </div>
+    </div>
+
+    <!-- New / rename profile dialog -->
+    <div id="profile-name-modal" class="modal dialog-modal hidden" role="dialog" aria-labelledby="profile-name-title">
+      <div class="modal-card profile-name-card">
+        <header class="modal-head">
+          <h2 id="profile-name-title">New profile</h2>
+          <button id="profile-name-x" type="button" class="icon-btn" title="Close">✕</button>
+        </header>
+        <div class="profile-name-body">
+          <input
+            id="profile-name-input"
+            type="text"
+            maxlength="60"
+            placeholder="Profile's name"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <footer class="profile-name-actions">
+          <button id="profile-name-cancel" type="button" class="ghost-btn">Cancel</button>
+          <button id="profile-name-ok" type="button" class="primary">OK</button>
+        </footer>
+      </div>
+    </div>
+
     <!-- Lock screen -->
     <div id="lock-screen" class="lock-screen hidden">
       <div class="lock-card">
-        <div class="brand-mark">AD</div>
+        <div class="brand-mark" id="lock-brand" aria-hidden="true"></div>
         <h1>Aspera Dock is locked</h1>
         <input id="lock-password" type="password" placeholder="Password" />
         <button id="unlock-btn" type="button" class="primary">Unlock</button>

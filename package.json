@@ -6,11 +6,14 @@
   "main": ".vite/build/main.js",
   "private": true,
   "scripts": {
-    "start": "electron-forge start -- --no-sandbox",
-    "start:sandbox": "electron-forge start",
+    "start": "electron-forge start -- --no-sandbox --class=asperadock",
+    "start:sandbox": "electron-forge start -- --class=asperadock",
+    "error-inbox": "node scripts/error-inbox.mjs",
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
+    "publish:update": "node scripts/publish-update.mjs",
+    "deploy": "node scripts/deploy.mjs",
     "lint": "echo \"No linter configured\"",
     "preview:bar": "node scripts/preview-bar.mjs && electron scripts/shot.cjs scripts/preview-bar.html scripts/preview-bar.png 1366 110 --no-sandbox --disable-gpu",
     "fix-sandbox": "echo \"Run: sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox\""
@@ -41,6 +44,7 @@
     "vite": "^5.4.19"
   },
   "dependencies": {
+    "@sentry/electron": "^7.16.0",
     "electron-squirrel-startup": "^1.0.1"
   }
 }

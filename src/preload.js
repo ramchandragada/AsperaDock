@@ -3,8 +3,14 @@ import { contextBridge, ipcRenderer } from 'electron';
 contextBridge.exposeInMainWorld('asperadock', {
   getState: () => ipcRenderer.invoke('dock:get-state'),
   activate: (id) => ipcRenderer.invoke('dock:activate', id),
-  addService: (appId) => ipcRenderer.invoke('dock:add-service', appId),
+  addService: (appId, profileId) =>
+    ipcRenderer.invoke('dock:add-service', appId, profileId),
   removeService: (id) => ipcRenderer.invoke('dock:remove-service', id),
+  createProfile: (name) => ipcRenderer.invoke('dock:create-profile', name),
+  renameProfile: (id, name) => ipcRenderer.invoke('dock:rename-profile', id, name),
+  deleteProfile: (id) => ipcRenderer.invoke('dock:delete-profile', id),
+  setInstanceProfile: (serviceId, profileId) =>
+    ipcRenderer.invoke('dock:set-instance-profile', serviceId, profileId),
   saveAppConfig: (id, patch) => ipcRenderer.invoke('dock:save-app-config', id, patch),
   appNavigate: (id, action) => ipcRenderer.invoke('dock:app-navigate', id, action),
   hibernate: (id) => ipcRenderer.invoke('dock:hibernate', id),
@@ -22,6 +28,19 @@ contextBridge.exposeInMainWorld('asperadock', {
   setChromeSize: (size) => ipcRenderer.invoke('dock:set-chrome-size', size),
   clearNotifications: () => ipcRenderer.invoke('dock:clear-notifications'),
   markAllRead: () => ipcRenderer.invoke('dock:mark-all-read'),
+  heartbeat: () => ipcRenderer.invoke('dock:heartbeat'),
+  reportError: (payload) => ipcRenderer.invoke('dock:report-error', payload),
+  listErrorReports: () => ipcRenderer.invoke('dock:list-error-reports'),
+  openErrorReports: () => ipcRenderer.invoke('dock:open-error-reports'),
+  updateStatus: () => ipcRenderer.invoke('dock:update-status'),
+  updateCheck: () => ipcRenderer.invoke('dock:update-check'),
+  updateDownload: () => ipcRenderer.invoke('dock:update-download'),
+  updateInstall: () => ipcRenderer.invoke('dock:update-install'),
+  onUpdateEvent: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('dock:update-event', listener);
+    return () => ipcRenderer.removeListener('dock:update-event', listener);
+  },
   onState: (callback) => {
     const listener = (_event, state) => callback(state);
     ipcRenderer.on('dock:state', listener);
@@ -36,6 +55,11 @@ contextBridge.exposeInMainWorld('asperadock', {
     const listener = () => callback();
     ipcRenderer.on('dock:open-apps-settings', listener);
     return () => ipcRenderer.removeListener('dock:open-apps-settings', listener);
+  },
+  onOpenProfiles: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('dock:open-profiles', listener);
+    return () => ipcRenderer.removeListener('dock:open-profiles', listener);
   },
   onOpenSearch: (callback) => {
     const listener = () => callback();

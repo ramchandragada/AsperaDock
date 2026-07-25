@@ -17,20 +17,51 @@ import { createRequire } from 'node:module';
 import {
   APP_CATALOG,
   MAX_INSTANCES_PER_APP,
+  MAX_APPS_TOTAL,
+  MAX_APP_NAME_LENGTH,
   MAX_WARM_VIEWS_DEFAULT,
   INTERNAL_HOSTS,
   getChromeMetrics,
   getAppCatalogEntry,
   defaultInstanceName,
   defaultInstanceTitle,
+  clampAppName,
 } from './services.js';
 import {
   loadSettings,
   saveSettings,
   hashPassword,
   verifyPassword,
+  makeProfile,
+  PRIMARY_PROFILE_ID,
 } from './store.js';
 import { mergeAppConfig, MOBILE_USER_AGENT } from './appConfig.js';
+import { APP_ICON_PNG_DATA_URL } from './appIconData.js';
+import {
+  installErrorReporting,
+  setErrorReporterContext,
+  setErrorReporterSettingsProvider,
+  reportError,
+  noteHeartbeat,
+  logBreadcrumb,
+  watchWebContents,
+  showPendingCrashDialog,
+  markCleanShutdown,
+  listRecentReports,
+  openReportsFolder,
+  getReportsDir,
+} from './errorReporter.js';
+import {
+  configureUpdater,
+  startAutoUpdate,
+  checkForUpdates,
+  downloadUpdate,
+  installUpdate,
+  getUpdateStatus,
+  updateReadyForQuit,
+} from './updater.js';
+import { initSentryMain } from './sentryMain.js';
+import fs from 'node:fs';
 
 const require = createRequire(import.meta.url);
 if (require('electron-squirrel-startup')) {
@@ -42,8 +73,97 @@ if (!gotLock) {
   app.quit();
 }
 
+// GNOME Wayland ignores BrowserWindow.setIcon for the dock/taskbar.
+// It matches windows to a .desktop file via app id / StartupWMClass.
+// Must be set before ready — use a stable id without spaces.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('class', 'asperadock');
+  app.setName('asperadock');
+  try {
+    app.setDesktopName('asperadock.desktop');
+  } catch {
+    // older Electron
+  }
+}
+
 const CHROME_USER_AGENT =
   'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
+/** Absolute path to a PNG the Linux WM can load for the taskbar icon. */
+function getAppIconPath() {
+  const candidates = [
+    path.join(process.resourcesPath || '', 'icon.png'),
+    path.join(app.getAppPath(), 'assets', 'icon.png'),
+    path.join(__dirname, '../../assets/icon.png'),
+    path.join(__dirname, '../assets/icon.png'),
+  ];
+  for (const p of candidates) {
+    try {
+      if (p && fs.existsSync(p) && fs.statSync(p).size > 100) return p;
+    } catch {
+      // try next
+    }
+  }
+
+  // Last resort: materialize the embedded Aspera A PNG under userData.
+  try {
+    const dest = path.join(app.getPath('userData'), 'asperadock-icon.png');
+    const b64 = APP_ICON_PNG_DATA_URL.split(',')[1];
+    const buf = Buffer.from(b64, 'base64');
+    if (!fs.existsSync(dest) || fs.statSync(dest).size !== buf.length) {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.writeFileSync(dest, buf);
+    }
+    return dest;
+  } catch {
+    return null;
+  }
+}
+
+/** Cached Aspera "A" app icon for window / tray / About. */
+let _appIcon = null;
+function getAppIcon() {
+  if (_appIcon && !_appIcon.isEmpty()) return _appIcon;
+  const iconPath = getAppIconPath();
+  if (iconPath) {
+    _appIcon = nativeImage.createFromPath(iconPath);
+  }
+  if (!_appIcon || _appIcon.isEmpty()) {
+    _appIcon = nativeImage.createFromDataURL(APP_ICON_PNG_DATA_URL);
+  }
+  return _appIcon;
+}
+
+function applyWindowIcon(win) {
+  if (!win || win.isDestroyed()) return;
+  try {
+    // Prefer NativeImage built from the embedded PNG — most reliable on Linux.
+    const img = electronNativeIcon();
+    if (img && !img.isEmpty()) {
+      win.setIcon(img);
+      return;
+    }
+  } catch {
+    // fall through
+  }
+  const iconPath = getAppIconPath();
+  if (iconPath) {
+    try {
+      win.setIcon(iconPath);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function electronNativeIcon() {
+  // Always rebuild from the embedded asset so we never hand Electron an empty image.
+  const fromData = nativeImage.createFromDataURL(APP_ICON_PNG_DATA_URL);
+  if (fromData && !fromData.isEmpty()) return fromData;
+  const iconPath = getAppIconPath();
+  if (iconPath) return nativeImage.createFromPath(iconPath);
+  return nativeImage.createEmpty();
+}
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null;
@@ -70,15 +190,50 @@ let locked = false;
 let overlayOpen = false;
 let settings = loadSettings();
 
-if (settings.hardwareAcceleration === false) {
-  app.disableHardwareAcceleration();
+/** Lean defaults for refurbished PCs — one warm tab, fast hibernate. */
+function isLowMemoryMode() {
+  return settings.lowMemoryMode !== false;
 }
-if (settings.hiDpiSupport === false) {
-  app.commandLine.appendSwitch('force-device-scale-factor', '1');
+
+function applyMemorySwitches() {
+  const lean = isLowMemoryMode();
+  const disabled = new Set(['SpareRendererForSitePerProcess']);
+
+  if (lean || settings.hardwareAcceleration === false) {
+    app.disableHardwareAcceleration();
+  }
+  if (settings.hiDpiSupport === false) {
+    app.commandLine.appendSwitch('force-device-scale-factor', '1');
+  }
+  if (settings.mediaKeys === false) {
+    disabled.add('HardwareMediaKeyHandling');
+  }
+
+  // Trim Chromium caches / spare processes (helps 8–16 GB machines a lot).
+  app.commandLine.appendSwitch('disable-features', [...disabled].join(','));
+  app.commandLine.appendSwitch('disk-cache-size', String((lean ? 32 : 64) * 1024 * 1024));
+  app.commandLine.appendSwitch(
+    'js-flags',
+    lean ? '--max-old-space-size=192' : '--max-old-space-size=384',
+  );
+  if (lean) {
+    app.commandLine.appendSwitch('renderer-process-limit', '4');
+  }
 }
-if (settings.mediaKeys === false) {
-  app.commandLine.appendSwitch('disable-features', 'HardwareMediaKeyHandling');
-}
+
+applyMemorySwitches();
+// Sentry must init before Electron's ready event (native crash + IPC hooks).
+setErrorReporterSettingsProvider(() => settings);
+initSentryMain(settings);
+
+setErrorReporterSettingsProvider(() => settings);
+setErrorReporterContext(() => ({
+  activeServiceId,
+  warmViewCount: views.size,
+  locked,
+  overlayOpen,
+  serviceCount: (settings.serviceInstances || []).length,
+}));
 
 function getAppConfig(id) {
   return mergeAppConfig((settings.serviceConfigs || {})[id] || {});
@@ -92,6 +247,103 @@ function saveAppConfig(id, patch) {
   return next;
 }
 
+function getProfiles() {
+  return Array.isArray(settings.profiles) ? settings.profiles : [];
+}
+
+function getProfile(id) {
+  return getProfiles().find((p) => p.id === id) || null;
+}
+
+function partitionForInstance(inst) {
+  if (inst.partition && String(inst.partition).startsWith('persist:')) {
+    return String(inst.partition);
+  }
+  const profile = getProfile(inst.profileId) || getProfile(PRIMARY_PROFILE_ID);
+  if (profile?.partition) return profile.partition;
+  return `persist:profile-${PRIMARY_PROFILE_ID}`;
+}
+
+function appsUsingProfile(profileId) {
+  return (settings.serviceInstances || []).filter((i) => i.profileId === profileId);
+}
+
+function ensureUniqueProfileName(base, exceptId = null) {
+  const names = new Set(
+    getProfiles()
+      .filter((p) => p.id !== exceptId)
+      .map((p) => p.name.toLowerCase()),
+  );
+  let name = String(base || 'Profile').trim() || 'Profile';
+  if (!names.has(name.toLowerCase())) return name;
+  let n = 2;
+  while (names.has(`${name} ${n}`.toLowerCase())) n += 1;
+  return `${name} ${n}`;
+}
+
+/** Create a fresh empty profile (new Electron partition). */
+function createProfile(name) {
+  const profile = makeProfile(ensureUniqueProfileName(name || 'Profile'));
+  const profiles = [...getProfiles(), profile];
+  settings = saveSettings({ profiles });
+  broadcastState();
+  return { ok: true, profile };
+}
+
+function renameProfile(id, name) {
+  if (id === PRIMARY_PROFILE_ID && !String(name || '').trim()) {
+    return { ok: false, error: 'Primary needs a name' };
+  }
+  const profiles = getProfiles();
+  const idx = profiles.findIndex((p) => p.id === id);
+  if (idx < 0) return { ok: false, error: 'Profile not found' };
+  const nextName = ensureUniqueProfileName(name, id);
+  const next = profiles.map((p, i) => (i === idx ? { ...p, name: nextName } : p));
+  settings = saveSettings({ profiles: next });
+  broadcastState();
+  return { ok: true, profile: next[idx] };
+}
+
+async function deleteProfile(id) {
+  if (id === PRIMARY_PROFILE_ID) {
+    return { ok: false, error: 'Cannot delete the Primary profile' };
+  }
+  const profile = getProfile(id);
+  if (!profile) return { ok: false, error: 'Profile not found' };
+  if (appsUsingProfile(id).length) {
+    return {
+      ok: false,
+      error: 'Move or remove apps using this profile first',
+    };
+  }
+  const profiles = getProfiles().filter((p) => p.id !== id);
+  settings = saveSettings({ profiles });
+  try {
+    const s = session.fromPartition(profile.partition);
+    await s.clearStorageData();
+    await s.clearCache();
+  } catch {
+    // ignore clear failures
+  }
+  broadcastState();
+  return { ok: true };
+}
+
+/**
+ * Pick a profile for a newly added app.
+ * First copy of an app → Primary.
+ * Extra copies → brand-new profile so logins stay separate (Rambox behaviour).
+ */
+function profileIdForNewApp(appId, entry) {
+  const existing = (settings.serviceInstances || []).filter((i) => i.appId === appId);
+  if (!existing.length) {
+    return getProfile(PRIMARY_PROFILE_ID)?.id || PRIMARY_PROFILE_ID;
+  }
+  const slot = existing.length + 1;
+  const created = createProfile(`${entry.name} ${slot}`);
+  return created.profile.id;
+}
+
 function resolveInstance(inst) {
   const entry = getAppCatalogEntry(inst.appId);
   if (!entry) return null;
@@ -99,16 +351,20 @@ function resolveInstance(inst) {
   const name = defaultInstanceName(entry, slot);
   const title = defaultInstanceTitle(entry, slot);
   const config = getAppConfig(inst.id);
+  const profileId = inst.profileId || PRIMARY_PROFILE_ID;
+  const profile = getProfile(profileId) || getProfile(PRIMARY_PROFILE_ID);
   return {
     id: inst.id,
     appId: entry.appId,
     name,
     title,
     url: entry.url,
-    partition: inst.partition,
+    partition: partitionForInstance(inst),
+    profileId: profile?.id || PRIMARY_PROFILE_ID,
+    profileName: profile?.name || 'Primary',
     color: entry.color,
     logo: entry.logo,
-    keepWarm: !!entry.keepWarm && slot === 1 && config.enabled,
+    keepWarm: false, // never pin forever — background apps must be hibernatable on low-RAM PCs
     slot,
     config,
   };
@@ -122,7 +378,9 @@ function orderedServices() {
   const decorate = (s) => {
     if (!s) return null;
     const custom = labels[s.id] || {};
-    const name = (custom.name && String(custom.name).trim()) || s.name;
+    const name = clampAppName(
+      (custom.name && String(custom.name).trim()) || s.name,
+    );
     const title =
       (custom.title && String(custom.title).trim()) ||
       (custom.name && String(custom.name).trim()) ||
@@ -157,6 +415,10 @@ function getService(id) {
   return orderedServices().find((s) => s.id === id) || null;
 }
 
+function totalAppCount() {
+  return (settings.serviceInstances || []).length;
+}
+
 function countInstances(appId) {
   return (settings.serviceInstances || []).filter((i) => i.appId === appId)
     .length;
@@ -174,9 +436,12 @@ function nextSlot(appId) {
   return null;
 }
 
-function addService(appId) {
+function addService(appId, profileId = null) {
   const entry = getAppCatalogEntry(appId);
   if (!entry) return { ok: false, error: 'Unknown app' };
+  if (totalAppCount() >= MAX_APPS_TOTAL) {
+    return { ok: false, error: `Max ${MAX_APPS_TOTAL} apps in the dock` };
+  }
   if (countInstances(appId) >= MAX_INSTANCES_PER_APP) {
     return { ok: false, error: `Max ${MAX_INSTANCES_PER_APP} ${entry.name} apps` };
   }
@@ -184,14 +449,68 @@ function addService(appId) {
   if (!slot) {
     return { ok: false, error: `Max ${MAX_INSTANCES_PER_APP} ${entry.name} apps` };
   }
+
+  let resolvedProfileId = profileId;
+  if (resolvedProfileId && !getProfile(resolvedProfileId)) {
+    return { ok: false, error: 'Profile not found' };
+  }
+  if (!resolvedProfileId) {
+    resolvedProfileId = profileIdForNewApp(appId, entry);
+  }
+
+  // Same app + same profile would share one WhatsApp/Gmail login — block it.
+  const clash = (settings.serviceInstances || []).some(
+    (i) => i.appId === appId && i.profileId === resolvedProfileId,
+  );
+  if (clash) {
+    return {
+      ok: false,
+      error: `Another ${entry.name} already uses this profile. Create or pick a different profile.`,
+    };
+  }
+
   const id = `${appId}-${slot}-${Date.now().toString(36)}`;
-  const partition = `persist:${id}`;
-  const instances = [...(settings.serviceInstances || []), { id, appId, partition, slot }];
+  const instances = [
+    ...(settings.serviceInstances || []),
+    { id, appId, profileId: resolvedProfileId, slot },
+  ];
   const serviceOrder = [...(settings.serviceOrder || []), id];
   settings = saveSettings({ serviceInstances: instances, serviceOrder });
   broadcastState();
   activateService(id);
-  return { ok: true, id };
+  return { ok: true, id, profileId: resolvedProfileId };
+}
+
+/** Move an app instance onto another profile (changes its Electron session). */
+function setInstanceProfile(serviceId, profileId) {
+  const profile = getProfile(profileId);
+  if (!profile) return { ok: false, error: 'Profile not found' };
+  const instances = settings.serviceInstances || [];
+  const idx = instances.findIndex((i) => i.id === serviceId);
+  if (idx < 0) return { ok: false, error: 'App not found' };
+  const inst = instances[idx];
+  if (inst.profileId === profileId) return { ok: true };
+
+  const clash = instances.some(
+    (i) => i.id !== serviceId && i.appId === inst.appId && i.profileId === profileId,
+  );
+  if (clash) {
+    const entry = getAppCatalogEntry(inst.appId);
+    return {
+      ok: false,
+      error: `Another ${entry?.name || 'app'} already uses this profile`,
+    };
+  }
+
+  // Tear down the old session view before switching partition.
+  hibernateService(serviceId);
+  const next = instances.map((i, n) =>
+    n === idx ? { id: i.id, appId: i.appId, profileId, slot: i.slot } : i,
+  );
+  settings = saveSettings({ serviceInstances: next });
+  broadcastState();
+  if (activeServiceId === serviceId) activateService(serviceId);
+  return { ok: true };
 }
 
 function removeService(id) {
@@ -227,10 +546,14 @@ function removeService(id) {
 }
 
 function hibernateMs() {
-  return Math.max(1, Number(settings.hibernateMinutes) || 5) * 60_000;
+  const mins = isLowMemoryMode()
+    ? Math.min(3, Math.max(1, Number(settings.hibernateMinutes) || 2))
+    : Math.max(1, Number(settings.hibernateMinutes) || 2);
+  return mins * 60_000;
 }
 
 function maxWarm() {
+  if (isLowMemoryMode()) return 1;
   return Math.max(1, Number(settings.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT);
 }
 
@@ -508,15 +831,29 @@ function applyProxy(partitionSession) {
 }
 
 function applyProxyToAllSessions() {
+  const seen = new Set();
   for (const item of settings.serviceInstances || []) {
-    if (!item.partition) continue;
-    applyProxy(session.fromPartition(item.partition));
+    const partition = partitionForInstance(item);
+    if (!partition || seen.has(partition)) continue;
+    seen.add(partition);
+    applyProxy(session.fromPartition(partition));
+  }
+  for (const profile of getProfiles()) {
+    if (!profile.partition || seen.has(profile.partition)) continue;
+    seen.add(profile.partition);
+    applyProxy(session.fromPartition(profile.partition));
   }
 }
 
-function configureSession(partitionSession) {
-  partitionSession.setUserAgent(CHROME_USER_AGENT);
+/** Partitions that already had permission/download handlers attached. */
+const configuredPartitions = new Set();
+
+function configureSession(partitionSession, partitionKey) {
   applyProxy(partitionSession);
+  if (configuredPartitions.has(partitionKey)) return;
+  configuredPartitions.add(partitionKey);
+
+  partitionSession.setUserAgent(CHROME_USER_AGENT);
   partitionSession.setPermissionRequestHandler((_wc, permission, callback) => {
     callback(
       [
@@ -548,7 +885,7 @@ function configureSession(partitionSession) {
 function createViewForService(service) {
   const cfg = getAppConfig(service.id);
   const partitionSession = session.fromPartition(service.partition);
-  configureSession(partitionSession);
+  configureSession(partitionSession, service.partition);
 
   const ua =
     (cfg.userAgent && cfg.userAgent.trim()) ||
@@ -670,6 +1007,7 @@ function createViewForService(service) {
   webContents.loadURL(service.url);
 
   views.set(service.id, { view, lastUsed: Date.now() });
+  watchWebContents(webContents, `app:${service.appId}:${service.id}`);
   return views.get(service.id);
 }
 
@@ -690,11 +1028,10 @@ function hibernateService(id) {
 
 function enforceWarmLimit() {
   const evictable = [...views.entries()]
-    .filter(([id]) => id !== activeServiceId && !getService(id)?.keepWarm)
+    .filter(([id]) => id !== activeServiceId)
     .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
 
-  const pinned = [...views.keys()].filter((id) => getService(id)?.keepWarm).length;
-  const budget = Math.max(0, maxWarm() - 1 - pinned);
+  const budget = Math.max(0, maxWarm() - 1);
   while (evictable.length > budget) {
     const [id] = evictable.shift();
     hibernateService(id);
@@ -754,7 +1091,6 @@ function toggleMute() {
 function hibernateBackground() {
   for (const id of [...views.keys()]) {
     if (id === activeServiceId) continue;
-    if (getService(id)?.keepWarm) continue;
     hibernateService(id);
   }
   broadcastState();
@@ -788,12 +1124,27 @@ function currentState() {
     activeServiceId,
     warmIds: [...views.keys()],
     services: orderedServices(),
+    profiles: getProfiles().map((p) => ({
+      ...p,
+      appCount: appsUsingProfile(p.id).length,
+      locked: p.id === PRIMARY_PROFILE_ID,
+    })),
     catalog: APP_CATALOG.map((a) => ({
       ...a,
       count: countInstances(a.appId),
       max: MAX_INSTANCES_PER_APP,
-      canAdd: countInstances(a.appId) < MAX_INSTANCES_PER_APP,
+      totalApps: totalAppCount(),
+      maxTotal: MAX_APPS_TOTAL,
+      canAdd:
+        totalAppCount() < MAX_APPS_TOTAL &&
+        countInstances(a.appId) < MAX_INSTANCES_PER_APP,
     })),
+    limits: {
+      maxAppsTotal: MAX_APPS_TOTAL,
+      maxPerApp: MAX_INSTANCES_PER_APP,
+      maxNameLength: MAX_APP_NAME_LENGTH,
+      totalApps: totalAppCount(),
+    },
     unread: unreadForUi,
     totalUnread: totalUnread(),
     notifications: notificationLog,
@@ -918,19 +1269,23 @@ function unlockApp(password) {
 }
 
 function createTrayIcon(badge) {
-  const size = 16;
-  const canvas = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}">
-      <rect width="${size}" height="${size}" rx="3" fill="#4f8cff"/>
-      <text x="8" y="12" text-anchor="middle" font-size="9" font-family="sans-serif" fill="white">AD</text>
-      ${
-        badge && settings.trayUnreadIndicator
-          ? `<circle cx="12" cy="4" r="4" fill="#e5484d"/>`
-          : ''
-      }
+  const showBadge = !!(badge && settings.trayUnreadIndicator);
+  // Crisp SVG of the Aspera open-A mark (matches app icon).
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+      <rect width="64" height="64" rx="14" fill="#081230"/>
+      <defs>
+        <linearGradient id="g" x1="14" y1="48" x2="50" y2="16" gradientUnits="userSpaceOnUse">
+          <stop stop-color="#5A6EE6"/>
+          <stop offset="1" stop-color="#A0AFFF"/>
+        </linearGradient>
+      </defs>
+      <path fill="url(#g)" d="M15.2 47.5 L29.4 18.2 H33.2 L21.5 47.5 Z"/>
+      <path fill="url(#g)" d="M48.8 47.5 L34.6 18.2 H30.8 L42.5 47.5 Z"/>
+      ${showBadge ? '<circle cx="52" cy="12" r="10" fill="#e5484d"/>' : ''}
     </svg>`;
   return nativeImage.createFromDataURL(
-    `data:image/svg+xml;base64,${Buffer.from(canvas).toString('base64')}`,
+    `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`,
   );
 }
 
@@ -1025,9 +1380,13 @@ async function requestQuit() {
 }
 
 function allAppSessions() {
-  const partitions = new Set(
-    (settings.serviceInstances || []).map((item) => item.partition).filter(Boolean),
-  );
+  const partitions = new Set();
+  for (const item of settings.serviceInstances || []) {
+    partitions.add(partitionForInstance(item));
+  }
+  for (const profile of getProfiles()) {
+    if (profile.partition) partitions.add(profile.partition);
+  }
   return [...partitions].map((partition) => session.fromPartition(partition));
 }
 
@@ -1146,6 +1505,10 @@ function installApplicationMenu() {
           label: 'Apps manager',
           click: () => mainWindow?.webContents.send('dock:open-apps-settings'),
         },
+        {
+          label: 'Profiles',
+          click: () => mainWindow?.webContents.send('dock:open-profiles'),
+        },
         { type: 'separator' },
         { label: 'Zoom Aspera Dock', submenu: zoomPresets },
         {
@@ -1216,8 +1579,34 @@ function installApplicationMenu() {
           accelerator: 'CommandOrControl+F1',
           click: () =>
             shell.openExternal(
-              'mailto:support@aspera.local?subject=Aspera%20Dock%20Support',
+              'https://github.com/ramchandragada/AsperaDock/issues/new',
             ),
+        },
+        { type: 'separator' },
+        {
+          label: 'Check for updates…',
+          click: () => checkForUpdates({ silent: false }),
+        },
+        {
+          label: 'Open error reports folder',
+          click: () => openReportsFolder(),
+        },
+        {
+          label: 'Send test error report',
+          click: async () => {
+            const result = await reportError('manual-test', {
+              message: 'Manual test report from Help menu',
+              reason: 'user-triggered',
+            });
+            dialog.showMessageBox(mainWindow, {
+              type: 'info',
+              title: 'Test report',
+              message: result.uploaded
+                ? 'Test report saved and sent (Sentry / configured target).'
+                : `Test report saved locally.\n${result.file || getReportsDir()}\n\nAdd a Sentry DSN in Settings to send automatically.`,
+              buttons: ['OK'],
+            });
+          },
         },
         { type: 'separator' },
         {
@@ -1227,8 +1616,10 @@ function installApplicationMenu() {
               type: 'info',
               title: 'About Aspera Dock',
               message: `Aspera Dock ${app.getVersion()}`,
-              detail: 'A lightweight company workspace for messaging and business apps.',
+              detail:
+                'Company workspace by Aspera — messaging and business apps in one dock.',
               buttons: ['OK'],
+              icon: getAppIcon(),
             }),
         },
       ],
@@ -1240,13 +1631,15 @@ function installApplicationMenu() {
 }
 
 function createWindow() {
+  const icon = electronNativeIcon();
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 900,
     minHeight: 600,
     title: 'Aspera Dock',
-    backgroundColor: '#f4f6f8',
+    icon,
+    backgroundColor: '#081230',
     show: false,
     autoHideMenuBar: settings.autoHideMenuBar !== false,
     webPreferences: {
@@ -1260,8 +1653,19 @@ function createWindow() {
   installApplicationMenu();
   applyWindowPrefs();
   ensureTray();
+  applyWindowIcon(mainWindow);
+  watchWebContents(mainWindow.webContents, 'shell');
 
-  mainWindow.once('ready-to-show', () => mainWindow.show());
+  mainWindow.once('ready-to-show', () => {
+    applyWindowIcon(mainWindow);
+    mainWindow.show();
+    // Some Linux panels only refresh the icon after the window is mapped.
+    setTimeout(() => applyWindowIcon(mainWindow), 250);
+    setTimeout(() => applyWindowIcon(mainWindow), 1000);
+    setTimeout(() => {
+      showPendingCrashDialog(mainWindow).catch(() => {});
+    }, 1200);
+  });
   mainWindow.on('resize', layoutActiveView);
   mainWindow.on('focus', () => focusActiveContents());
   attachShortcuts(mainWindow.webContents);
@@ -1307,14 +1711,9 @@ function createWindow() {
     const first =
       remembered ||
       orderedServices().find((s) => s.config?.enabled !== false);
+    // Only load the active app. Preloading "keepWarm" views wasted 300–800 MB each
+    // even before sign-in — deadly on refurbished PCs.
     if (first && first.config?.enabled !== false) activateService(first.id);
-    for (const service of orderedServices()) {
-      if (!service.config?.enabled) continue;
-      if (service.config?.startHibernated) continue;
-      if (service.keepWarm && !views.has(service.id)) {
-        createViewForService(service);
-      }
-    }
   });
 }
 
@@ -1323,12 +1722,13 @@ function startHibernateTimer() {
     const now = Date.now();
     for (const [id, entry] of views.entries()) {
       if (id === activeServiceId) continue;
-      if (getService(id)?.keepWarm) continue;
       const cfg = getAppConfig(id);
       const mins =
         cfg.hibernateMinutes > 0
           ? cfg.hibernateMinutes
-          : Math.max(1, Number(settings.hibernateMinutes) || 5);
+          : isLowMemoryMode()
+            ? Math.min(3, Math.max(1, Number(settings.hibernateMinutes) || 2))
+            : Math.max(1, Number(settings.hibernateMinutes) || 2);
       if (now - entry.lastUsed >= mins * 60_000) hibernateService(id);
     }
     // Auto wake-up for startHibernated / hibernated apps
@@ -1369,21 +1769,67 @@ ipcMain.handle('dock:mark-all-read', () => {
   return { ok: true };
 });
 
+ipcMain.handle('dock:heartbeat', () => {
+  noteHeartbeat();
+  return { ok: true };
+});
+
+ipcMain.handle('dock:report-error', async (_e, payload = {}) => {
+  const result = await reportError(payload.kind || 'renderer-error', {
+    message: payload.message || 'Renderer error',
+    error: payload.error || null,
+    source: payload.source || 'renderer',
+    extra: payload.extra || null,
+  });
+  return {
+    ok: true,
+    id: result.id,
+    uploaded: result.uploaded,
+    file: result.file,
+  };
+});
+
+ipcMain.handle('dock:list-error-reports', () => listRecentReports(30));
+ipcMain.handle('dock:open-error-reports', () => {
+  openReportsFolder();
+  return { ok: true, dir: getReportsDir() };
+});
+
+ipcMain.handle('dock:update-status', () => getUpdateStatus());
+ipcMain.handle('dock:update-check', () => checkForUpdates({ silent: false }));
+ipcMain.handle('dock:update-download', () => downloadUpdate());
+ipcMain.handle('dock:update-install', () => installUpdate());
+
 ipcMain.handle('dock:get-state', () => currentState());
 ipcMain.handle('dock:activate', (_e, id) => {
   activateService(id);
   return { ok: true };
 });
-ipcMain.handle('dock:add-service', (_e, appId) => addService(appId));
+ipcMain.handle('dock:add-service', (_e, appId, profileId) =>
+  addService(appId, profileId || null),
+);
 ipcMain.handle('dock:remove-service', (_e, id) => removeService(id));
+ipcMain.handle('dock:create-profile', (_e, name) => createProfile(name));
+ipcMain.handle('dock:rename-profile', (_e, id, name) => renameProfile(id, name));
+ipcMain.handle('dock:delete-profile', (_e, id) => deleteProfile(id));
+ipcMain.handle('dock:set-instance-profile', (_e, serviceId, profileId) =>
+  setInstanceProfile(serviceId, profileId),
+);
 ipcMain.handle('dock:save-app-config', (_e, id, patch) => {
   if (!getService(id)) return { ok: false, error: 'Not found' };
+
+  if (patch && patch.profileId != null) {
+    const moved = setInstanceProfile(id, patch.profileId);
+    if (!moved.ok) return moved;
+    delete patch.profileId;
+  }
+
   const labels = { ...(settings.serviceLabels || {}) };
   if (patch && (patch.name != null || patch.title != null)) {
     const service = getService(id);
     const entry = {};
-    const name = patch.name != null ? String(patch.name).trim() : '';
-    const title = patch.title != null ? String(patch.title).trim() : '';
+    const name = patch.name != null ? clampAppName(patch.name) : '';
+    const title = patch.title != null ? clampAppName(patch.title) : '';
     if (name && name !== service.defaultName) entry.name = name;
     if (title && title !== service.defaultTitle) entry.title = title;
     if (Object.keys(entry).length) labels[id] = { ...(labels[id] || {}), ...entry };
@@ -1461,12 +1907,24 @@ ipcMain.handle('dock:save-settings', (_e, patch) => {
   if (next.lockEnabled === false) {
     next.lockPasswordHash = '';
   }
+  // Low-memory mode clamps warm/hibernate and turns GPU off (relaunch needed).
+  if (next.lowMemoryMode === true) {
+    next.maxWarmViews = 1;
+    next.hibernateMinutes = Math.min(
+      3,
+      Math.max(1, Number(next.hibernateMinutes) || 2),
+    );
+    next.hardwareAcceleration = false;
+  }
   settings = saveSettings(next);
   applyWindowPrefs();
   installApplicationMenu();
   ensureTray();
   applyProxyToAllSessions();
   sampleAppMemory();
+  startAutoUpdate();
+  // Sentry can start mid-session if the user just pasted a DSN.
+  initSentryMain(settings);
   layoutActiveView();
   for (const [id, entry] of views.entries()) {
     applyFocusMode(entry.view.webContents, id);
@@ -1490,11 +1948,16 @@ ipcMain.handle('dock:clear-session', async (_e, id) => {
   const service = getService(id);
   if (!service) return { ok: false };
   hibernateService(id);
+  // Clears the whole profile partition — every app on this profile signs out.
   const s = session.fromPartition(service.partition);
   await s.clearStorageData();
-  unreadCounts.delete(id);
+  await s.clearCache();
+  for (const inst of appsUsingProfile(service.profileId)) {
+    unreadCounts.delete(inst.id);
+    hibernateService(inst.id);
+  }
   broadcastState();
-  return { ok: true };
+  return { ok: true, profileId: service.profileId };
 });
 ipcMain.handle('dock:reorder', (_e, order) => {
   settings = saveSettings({ serviceOrder: order });
@@ -1519,12 +1982,31 @@ function watchSystemIdle() {
 }
 
 app.whenReady().then(() => {
-  app.setName('Aspera Dock');
+  // Keep a friendly name in menus/About; WM class stays "asperadock" for the dock icon.
+  if (process.platform !== 'linux') {
+    app.setName('Aspera Dock');
+  }
   settings = loadSettings();
+  installErrorReporting({
+    getSettings: () => settings,
+    getContext: () => ({
+      activeServiceId,
+      warmViewCount: views.size,
+      locked,
+      overlayOpen,
+      serviceCount: (settings.serviceInstances || []).length,
+    }),
+  });
+  logBreadcrumb('app-ready');
   createWindow();
   startHibernateTimer();
   startMemoryTimer();
   watchSystemIdle();
+  configureUpdater({
+    getSettings: () => settings,
+    onError: (kind, payload) => reportError(kind, payload).catch(() => {}),
+  });
+  startAutoUpdate();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
@@ -1536,8 +2018,34 @@ app.on('second-instance', () => {
 
 app.on('before-quit', () => {
   quitting = true;
+  markCleanShutdown();
+  logBreadcrumb('before-quit');
+  // Seamless: apply a downloaded AppImage update in place while quitting so the
+  // next launch is already the new version. deb/rpm need elevation, so those are
+  // handled interactively during the session instead.
+  if (updateReadyForQuit()) {
+    installUpdate({ silentOnFail: true }).catch(() => {});
+  }
+});
+
+app.on('will-quit', () => {
+  markCleanShutdown();
 });
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+app.on('child-process-gone', (_event, details) => {
+  reportError('child-process-gone', {
+    message: `Child process gone: ${details?.type || 'unknown'} / ${details?.reason || ''}`,
+    details,
+  }).catch(() => {});
+});
+
+app.on('render-process-gone', (_event, _wc, details) => {
+  reportError('app-render-process-gone', {
+    message: `App render process gone: ${details?.reason || 'unknown'}`,
+    details,
+  }).catch(() => {});
 });

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Aspera">
+  <defs>
+    <linearGradient id="g" x1="10" y1="56" x2="54" y2="10" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#5A6EE6"/>
+      <stop offset="1" stop-color="#A0AFFF"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#g)" d="M9.5 56.5 L29.6 10.5 H34.2 L18.8 56.5 Z"/>
+  <path fill="url(#g)" d="M54.5 56.5 L34.4 10.5 H29.8 L45.2 56.5 Z"/>
+</svg>

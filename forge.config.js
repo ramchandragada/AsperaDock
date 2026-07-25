@@ -7,6 +7,19 @@ module.exports = {
     executableName: 'asperadock',
     name: 'Aspera Dock',
     appBundleId: 'app.asperadock.desktop',
+    // Stylized Aspera "A" only — not the full wordmark.
+    icon: './assets/icon',
+    extraResource: [
+      './assets/icon.png',
+      './assets/icon-16.png',
+      './assets/icon-24.png',
+      './assets/icon-32.png',
+      './assets/icon-48.png',
+      './assets/icon-64.png',
+      './assets/icon-128.png',
+      './assets/icon-256.png',
+      './assets/icon-512.png',
+    ],
   },
   rebuildConfig: {},
   makers: [
@@ -22,22 +35,10 @@ module.exports = {
           categories: ['Office', 'Network'],
           section: 'utils',
           maintainer: 'Aspera <support@aspera.local>',
-        },
-      },
-    },
-    {
-      name: '@electron-forge/maker-zip',
-      platforms: ['linux'],
-    },
-    {
-      name: '@electron-forge/maker-rpm',
-      config: {
-        options: {
-          name: 'asperadock',
-          productName: 'Aspera Dock',
-          description:
+          icon: './assets/icon.png',
+          // Matches app.setName('asperadock') / --class=asperadock for GNOME dock icons.
+          productDescription:
             'Lightweight company workspace for WhatsApp, Arattai, Google Workspace, and Zoho',
-          categories: ['Office', 'Network'],
         },
       },
     },
