@@ -75,7 +75,7 @@
             <div class="empty-card">
               <img class="brand-wordmark" id="empty-brand" alt="Aspera" />
               <h1>Aspera Dock</h1>
-              <p>Add WhatsApp, Arattai, Gmail, Zoho and more. Up to 10 apps total (10 of each). Names are short — max 10 characters.</p>
+              <p>Add WhatsApp, Arattai, Gmail, Zoho — or any custom URL. Up to 10 apps total. Names max 10 characters.</p>
               <button id="empty-add-btn" type="button" class="primary">Add your first app</button>
             </div>
           </div>
@@ -396,11 +396,44 @@
           </details>
 
           <div class="section-rule"><span>Add apps</span></div>
-          <p class="hint-text">Catalog only — naming, sound, and advanced options are per app (right-click).</p>
+          <p class="hint-text">Catalog + custom URL. Naming, sound, and advanced options are per app (right-click).</p>
           <div id="catalog-list" class="catalog-list"></div>
           <div id="instance-list" class="instance-list"></div>
         </div>
       </div>
+    </div>
+
+    <!-- Custom URL app -->
+    <div id="custom-app-modal" class="modal dialog-modal hidden" role="dialog" aria-modal="true">
+      <div class="modal-card profile-name-card">
+        <header class="modal-head">
+          <h2 id="custom-app-title">Add custom app</h2>
+          <button id="custom-app-x" type="button" class="icon-btn" aria-label="Close">✕</button>
+        </header>
+        <div class="profile-name-body">
+          <label class="field">
+            <span>Website URL</span>
+            <input id="custom-app-url" type="url" placeholder="https://intranet.company.com" autocomplete="off" />
+          </label>
+          <label class="field">
+            <span>Tab name (max 10)</span>
+            <input id="custom-app-name" type="text" maxlength="10" placeholder="Intranet" autocomplete="off" />
+          </label>
+          <div class="profile-name-actions">
+            <button id="custom-app-cancel" type="button" class="ghost-btn">Cancel</button>
+            <button id="custom-app-ok" type="button" class="primary">Add</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Find in page -->
+    <div id="find-bar" class="find-bar hidden" role="search">
+      <input id="find-input" type="search" placeholder="Find in page" autocomplete="off" />
+      <span id="find-status" class="find-status"></span>
+      <button id="find-prev" type="button" class="ghost-btn" title="Previous">↑</button>
+      <button id="find-next" type="button" class="ghost-btn" title="Next">↓</button>
+      <button id="find-close" type="button" class="icon-btn" aria-label="Close">✕</button>
     </div>
 
     <!-- Shortcuts (global, separate from Settings) -->
@@ -466,6 +499,10 @@
           </div>
         </div>
         <div class="edit-app-body">
+          <label class="field hidden" id="ea-url-field">
+            <span>Website URL</span>
+            <input id="ea-url" type="url" placeholder="https://…" />
+          </label>
           <section>
             <h3>Profile</h3>
             <p class="hint-text">

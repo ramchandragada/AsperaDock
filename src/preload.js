@@ -5,6 +5,12 @@ contextBridge.exposeInMainWorld('asperadock', {
   activate: (id) => ipcRenderer.invoke('dock:activate', id),
   addService: (appId, profileId) =>
     ipcRenderer.invoke('dock:add-service', appId, profileId),
+  addCustomService: (payload) =>
+    ipcRenderer.invoke('dock:add-custom-service', payload),
+  findInPage: (text, options) =>
+    ipcRenderer.invoke('dock:find-in-page', text, options),
+  stopFind: () => ipcRenderer.invoke('dock:stop-find'),
+  printActive: () => ipcRenderer.invoke('dock:print-active'),
   removeService: (id) => ipcRenderer.invoke('dock:remove-service', id),
   createProfile: (name) => ipcRenderer.invoke('dock:create-profile', name),
   renameProfile: (id, name) => ipcRenderer.invoke('dock:rename-profile', id, name),
@@ -65,5 +71,15 @@ contextBridge.exposeInMainWorld('asperadock', {
     const listener = () => callback();
     ipcRenderer.on('dock:open-search', listener);
     return () => ipcRenderer.removeListener('dock:open-search', listener);
+  },
+  onOpenFind: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('dock:open-find', listener);
+    return () => ipcRenderer.removeListener('dock:open-find', listener);
+  },
+  onFindResult: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('dock:find-result', listener);
+    return () => ipcRenderer.removeListener('dock:find-result', listener);
   },
 });

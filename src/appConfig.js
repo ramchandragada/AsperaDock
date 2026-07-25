@@ -10,8 +10,10 @@ export const DEFAULT_APP_CONFIG = {
   /** 0 = use global hibernate setting */
   hibernateMinutes: 0,
   startHibernated: false,
-  /** 0 = disabled */
+  /** 0 = disabled — after hibernate, soft-wake in background after N minutes */
   autoWakeMinutes: 0,
+  /** Per-app page zoom (0.5–2). */
+  zoomFactor: 1,
   injectJs: '',
   injectCss: '',
   stylishUrl: '',

@@ -2033,6 +2033,43 @@ body.theme-dark .ghost-btn {
   margin: 0;
 }
 
+.find-bar {
+  position: fixed;
+  top: 12px;
+  right: 16px;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--chrome-1, #fff);
+  color: var(--text);
+}
+.find-bar.hidden {
+  display: none;
+}
+.find-bar input {
+  width: 180px;
+  height: 32px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  padding: 0 10px;
+  background: transparent;
+  color: inherit;
+}
+.find-status {
+  min-width: 4ch;
+  font-size: 12px;
+  color: var(--muted, #667);
+}
+.find-bar .ghost-btn {
+  height: 32px;
+  min-width: 36px;
+  padding: 0 10px;
+}
+
 .ghost-btn:hover {
   background: var(--chrome-2);
 }

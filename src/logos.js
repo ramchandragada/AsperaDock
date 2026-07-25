@@ -56,6 +56,13 @@ export const LOGOS = {
     <rect x="7.2" y="15" width="5.5" height="1.7" rx=".7" fill="${ZOHO_GREEN}"/>`,
   ),
 
+  custom: solidTile(
+    '#3D5A80',
+    `<circle cx="12" cy="12" r="7.5" fill="none" stroke="#fff" stroke-width="1.6"/>
+    <ellipse cx="12" cy="12" rx="3.2" ry="7.5" fill="none" stroke="#fff" stroke-width="1.4"/>
+    <path fill="none" stroke="#fff" stroke-width="1.4" d="M4.5 12h15M12 4.5c2.2 2.4 2.2 12.6 0 15M12 4.5c-2.2 2.4-2.2 12.6 0 15"/>`,
+  ),
+
   mail: solidTile(
     '#5F6368',
     `<rect x="3" y="5.5" width="18" height="13" rx="2" fill="#fff"/>

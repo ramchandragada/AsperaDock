@@ -12,6 +12,13 @@ export const MAX_APP_NAME_LENGTH = 10;
 /** Only the active tab stays warm by default — critical for 8–16 GB PCs. */
 export const MAX_WARM_VIEWS_DEFAULT = 1;
 
+/** Synthetic catalog id for user-defined URLs (intranet, HRMS, Jira, …). */
+export const CUSTOM_APP_ID = 'custom';
+
+export function isCustomAppId(appId) {
+  return appId === CUSTOM_APP_ID;
+}
+
 /** @typedef {{
  *   appId: string,
  *   name: string,
@@ -86,7 +93,26 @@ export const APP_CATALOG = [
 ];
 
 export function getAppCatalogEntry(appId) {
+  if (isCustomAppId(appId)) {
+    return {
+      appId: CUSTOM_APP_ID,
+      name: 'Custom',
+      title: 'Custom app',
+      url: 'https://',
+      color: '#3D5A80',
+      logo: 'custom',
+    };
+  }
   return APP_CATALOG.find((a) => a.appId === appId) || null;
+}
+
+/** True if this instance is still valid (catalog app or custom with URL). */
+export function isKnownAppInstance(inst) {
+  if (!inst?.appId) return false;
+  if (isCustomAppId(inst.appId)) {
+    return Boolean(inst.url && String(inst.url).startsWith('http'));
+  }
+  return Boolean(APP_CATALOG.find((a) => a.appId === inst.appId));
 }
 
 /** Clamp tab labels so the bar stays compact and readable. */
@@ -106,6 +132,7 @@ export function defaultInstanceName(entry, index) {
     'zoho-crm': 'CRM',
     'zoho-books': 'Books',
     'zoho-one': 'ZohoOne',
+    custom: 'Custom',
   }[entry.appId] || clampAppName(entry.name, 7);
 
   if (index <= 1) return clampAppName(short);

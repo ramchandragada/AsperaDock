@@ -84,6 +84,18 @@ const els = {
   profileNameX: document.getElementById('profile-name-x'),
   eaProfile: document.getElementById('ea-profile'),
   eaProfileAdd: document.getElementById('ea-profile-add'),
+  customAppModal: document.getElementById('custom-app-modal'),
+  customAppUrl: document.getElementById('custom-app-url'),
+  customAppName: document.getElementById('custom-app-name'),
+  customAppOk: document.getElementById('custom-app-ok'),
+  customAppCancel: document.getElementById('custom-app-cancel'),
+  customAppX: document.getElementById('custom-app-x'),
+  findBar: document.getElementById('find-bar'),
+  findInput: document.getElementById('find-input'),
+  findStatus: document.getElementById('find-status'),
+  findPrev: document.getElementById('find-prev'),
+  findNext: document.getElementById('find-next'),
+  findClose: document.getElementById('find-close'),
 };
 
 const SHORTCUT_DEFS = [
@@ -99,6 +111,8 @@ const SHORTCUT_DEFS = [
     group: 'Sections and features',
     items: [
       { id: 'search', label: 'Quick search', keys: 'Ctrl + /' },
+      { id: 'find', label: 'Find in page', keys: 'Ctrl + F' },
+      { id: 'print', label: 'Print page', keys: 'Ctrl + P' },
       { id: 'settings', label: 'Settings', keys: 'Ctrl + ,' },
       { id: 'focusMode', label: 'Focus mode', keys: 'Ctrl + Shift + D' },
       { id: 'mute', label: 'Mute', keys: 'Ctrl + Shift + M' },
@@ -517,9 +531,13 @@ function renderCatalog() {
     btn.type = 'button';
     btn.className = 'primary';
     const totalFull = (app.totalApps || 0) >= (app.maxTotal || 10);
-    btn.textContent = !app.canAdd ? (totalFull ? 'Dock full' : 'Max') : 'Add';
+    btn.textContent = !app.canAdd ? (totalFull ? 'Dock full' : 'Max') : app.isCustom ? 'Add URL…' : 'Add';
     btn.disabled = !app.canAdd;
     btn.addEventListener('click', async () => {
+      if (app.isCustom) {
+        openCustomAppModal();
+        return;
+      }
       const result = await window.asperadock.addService(app.appId);
       if (!result.ok) alert(result.error || 'Could not add app');
     });
@@ -727,6 +745,7 @@ function anyOverlayOpen() {
     !els.editAppModal.classList.contains('hidden') ||
     !els.profilesModal?.classList.contains('hidden') ||
     !els.profileNameModal?.classList.contains('hidden') ||
+    !els.customAppModal?.classList.contains('hidden') ||
     !els.appMenu.classList.contains('hidden') ||
     !els.shortcutsModal.classList.contains('hidden') ||
     !els.chromeMenu.classList.contains('hidden') ||
@@ -793,6 +812,18 @@ function openEditApp(id) {
   );
   els.editAppName.value = service.name;
   els.editAppName.dataset.defaultName = service.defaultName || service.name;
+
+  const urlField = document.getElementById('ea-url-field');
+  const urlInput = document.getElementById('ea-url');
+  if (urlField && urlInput) {
+    if (service.isCustom || service.appId === 'custom') {
+      urlField.classList.remove('hidden');
+      urlInput.value = service.url || '';
+    } else {
+      urlField.classList.add('hidden');
+      urlInput.value = '';
+    }
+  }
 
   const setChk = (elId, value) => {
     document.getElementById(elId).checked = !!value;
@@ -873,6 +904,11 @@ async function saveEditApp() {
     spellChecker: spellVal === 'default' ? null : [spellVal],
     linkHandling: linkVal === 'default' ? null : linkVal,
   };
+  const urlInput = document.getElementById('ea-url');
+  const service = getServiceById(editServiceId);
+  if (service && (service.isCustom || service.appId === 'custom') && urlInput) {
+    patch.url = urlInput.value.trim();
+  }
   const result = await window.asperadock.saveAppConfig(editServiceId, patch);
   if (!result?.ok) {
     alert(result?.error || 'Could not save app');
@@ -1246,6 +1282,15 @@ window.asperadock.onOpenSettings(openSettings);
 window.asperadock.onOpenAppsSettings?.(openAppsSettings);
 window.asperadock.onOpenProfiles?.(openProfiles);
 window.asperadock.onOpenSearch?.(openSearch);
+window.asperadock.onOpenFind?.(openFindBar);
+window.asperadock.onFindResult?.((data) => {
+  if (!els.findStatus || !data) return;
+  if (!data.matches) {
+    els.findStatus.textContent = '0/0';
+    return;
+  }
+  els.findStatus.textContent = `${data.activeMatchOrdinal || 0}/${data.matches}`;
+});
 
 async function patchMenuFlag(key, checked) {
   if (!menuServiceId) return;
@@ -1357,6 +1402,100 @@ els.profileNameInput?.addEventListener('keydown', (event) => {
   }
 });
 
+function openCustomAppModal() {
+  closeSettings();
+  if (!els.customAppModal) return;
+  els.customAppUrl.value = '';
+  els.customAppName.value = '';
+  els.customAppModal.classList.remove('hidden');
+  window.asperadock.setOverlay(true);
+  requestAnimationFrame(() => els.customAppUrl?.focus());
+}
+
+function closeCustomAppModal() {
+  els.customAppModal?.classList.add('hidden');
+  syncOverlayFromModals();
+}
+
+async function submitCustomApp() {
+  const url = (els.customAppUrl?.value || '').trim();
+  const name = (els.customAppName?.value || '').trim();
+  if (!url) {
+    els.customAppUrl?.focus();
+    return;
+  }
+  const result = await window.asperadock.addCustomService?.({ url, name });
+  if (!result?.ok) {
+    alert(result?.error || 'Could not add custom app');
+    return;
+  }
+  closeCustomAppModal();
+}
+
+els.customAppOk?.addEventListener('click', submitCustomApp);
+els.customAppCancel?.addEventListener('click', closeCustomAppModal);
+els.customAppX?.addEventListener('click', closeCustomAppModal);
+els.customAppModal?.addEventListener('click', (event) => {
+  if (event.target === els.customAppModal) closeCustomAppModal();
+});
+els.customAppUrl?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    if (!(els.customAppName?.value || '').trim()) {
+      try {
+        const host = new URL(
+          els.customAppUrl.value.includes('://')
+            ? els.customAppUrl.value
+            : `https://${els.customAppUrl.value}`,
+        ).hostname.replace(/^www\./, '');
+        els.customAppName.value = host.slice(0, 10);
+      } catch {
+        // ignore
+      }
+    }
+    submitCustomApp();
+  }
+  if (event.key === 'Escape') closeCustomAppModal();
+});
+
+function openFindBar() {
+  if (!els.findBar) return;
+  els.findBar.classList.remove('hidden');
+  els.findInput.value = '';
+  els.findStatus.textContent = '';
+  requestAnimationFrame(() => {
+    els.findInput?.focus();
+    els.findInput?.select();
+  });
+}
+
+function closeFindBar() {
+  els.findBar?.classList.add('hidden');
+  window.asperadock.stopFind?.();
+  els.findStatus.textContent = '';
+}
+
+async function runFind({ findNext = false, forward = true } = {}) {
+  const text = els.findInput?.value || '';
+  await window.asperadock.findInPage?.(text, { findNext, forward });
+  els.findStatus.textContent = text ? 'Searching…' : '';
+}
+
+els.findClose?.addEventListener('click', closeFindBar);
+els.findNext?.addEventListener('click', () => runFind({ findNext: true, forward: true }));
+els.findPrev?.addEventListener('click', () => runFind({ findNext: true, forward: false }));
+els.findInput?.addEventListener('input', () => runFind({ findNext: false }));
+els.findInput?.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    runFind({ findNext: true, forward: !event.shiftKey });
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeFindBar();
+  }
+});
+
 els.editAppModal.addEventListener('click', (event) => {
   if (event.target === els.editAppModal) closeEditApp();
 });
@@ -1376,7 +1515,9 @@ document.addEventListener('click', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
-    if (!els.profileNameModal?.classList.contains('hidden')) closeProfileNameModal(null);
+    if (!els.findBar?.classList.contains('hidden')) closeFindBar();
+    else if (!els.customAppModal?.classList.contains('hidden')) closeCustomAppModal();
+    else if (!els.profileNameModal?.classList.contains('hidden')) closeProfileNameModal(null);
     else if (!els.chromeMenu.classList.contains('hidden')) closeChromeMenu();
     else if (!els.notifCenter.classList.contains('hidden')) closeNotificationCenter();
     else if (!els.appMenu.classList.contains('hidden')) closeAppMenu();

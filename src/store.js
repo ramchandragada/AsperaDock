@@ -2,7 +2,7 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { getAppCatalogEntry } from './services.js';
+import { getAppCatalogEntry, isKnownAppInstance } from './services.js';
 
 export const PRIMARY_PROFILE_ID = 'primary';
 
@@ -170,10 +170,10 @@ function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
 }
 
-/** Drop saved instances of apps that are no longer in the catalog. */
+/** Drop saved instances of apps that are no longer in the catalog (keep custom URLs). */
 function dropRetiredApps(settings) {
   const instances = (settings.serviceInstances || []).filter((i) =>
-    getAppCatalogEntry(i.appId),
+    isKnownAppInstance(i),
   );
   if (instances.length === (settings.serviceInstances || []).length) return settings;
 

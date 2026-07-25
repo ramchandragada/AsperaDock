@@ -21,6 +21,8 @@ import {
   MAX_APP_NAME_LENGTH,
   MAX_WARM_VIEWS_DEFAULT,
   INTERNAL_HOSTS,
+  CUSTOM_APP_ID,
+  isCustomAppId,
   getChromeMetrics,
   getAppCatalogEntry,
   defaultInstanceName,
@@ -173,6 +175,9 @@ let quitting = false;
 
 /** @type {Map<string, { view: BrowserView, lastUsed: number }>} */
 const views = new Map();
+/** When a background app was hibernated — used for auto-wake. */
+/** @type {Map<string, number>} */
+const hibernatedAt = new Map();
 /** @type {Map<string, number>} */
 const unreadCounts = new Map();
 /** Recent unread activity shown in the notification center. */
@@ -348,11 +353,34 @@ function resolveInstance(inst) {
   const entry = getAppCatalogEntry(inst.appId);
   if (!entry) return null;
   const slot = Math.max(1, Number(inst.slot) || 1);
-  const name = defaultInstanceName(entry, slot);
-  const title = defaultInstanceTitle(entry, slot);
   const config = getAppConfig(inst.id);
   const profileId = inst.profileId || PRIMARY_PROFILE_ID;
   const profile = getProfile(profileId) || getProfile(PRIMARY_PROFILE_ID);
+
+  if (isCustomAppId(inst.appId)) {
+    const url = String(inst.url || '').trim();
+    if (!url.startsWith('http')) return null;
+    const name = clampAppName(inst.name || entry.name);
+    return {
+      id: inst.id,
+      appId: CUSTOM_APP_ID,
+      name,
+      title: String(inst.title || name).trim() || name,
+      url,
+      partition: partitionForInstance(inst),
+      profileId: profile?.id || PRIMARY_PROFILE_ID,
+      profileName: profile?.name || 'Primary',
+      color: inst.color || entry.color,
+      logo: 'custom',
+      keepWarm: false,
+      slot,
+      config,
+      isCustom: true,
+    };
+  }
+
+  const name = defaultInstanceName(entry, slot);
+  const title = defaultInstanceTitle(entry, slot);
   return {
     id: inst.id,
     appId: entry.appId,
@@ -364,9 +392,10 @@ function resolveInstance(inst) {
     profileName: profile?.name || 'Primary',
     color: entry.color,
     logo: entry.logo,
-    keepWarm: false, // never pin forever — background apps must be hibernatable on low-RAM PCs
+    keepWarm: false,
     slot,
     config,
+    isCustom: false,
   };
 }
 
@@ -459,20 +488,83 @@ function addService(appId, profileId = null) {
   }
 
   // Same app + same profile would share one WhatsApp/Gmail login — block it.
-  const clash = (settings.serviceInstances || []).some(
-    (i) => i.appId === appId && i.profileId === resolvedProfileId,
-  );
-  if (clash) {
-    return {
-      ok: false,
-      error: `Another ${entry.name} already uses this profile. Create or pick a different profile.`,
-    };
+  // Custom URLs may share a profile (different sites, same cookies jar is fine).
+  if (!isCustomAppId(appId)) {
+    const clash = (settings.serviceInstances || []).some(
+      (i) => i.appId === appId && i.profileId === resolvedProfileId,
+    );
+    if (clash) {
+      return {
+        ok: false,
+        error: `Another ${entry.name} already uses this profile. Create or pick a different profile.`,
+      };
+    }
   }
 
   const id = `${appId}-${slot}-${Date.now().toString(36)}`;
   const instances = [
     ...(settings.serviceInstances || []),
     { id, appId, profileId: resolvedProfileId, slot },
+  ];
+  const serviceOrder = [...(settings.serviceOrder || []), id];
+  settings = saveSettings({ serviceInstances: instances, serviceOrder });
+  broadcastState();
+  activateService(id);
+  return { ok: true, id, profileId: resolvedProfileId };
+}
+
+/** Add any https URL as a dock app (intranet, HRMS, Jira, Notion, …). */
+function addCustomService({ url, name, profileId = null } = {}) {
+  if (totalAppCount() >= MAX_APPS_TOTAL) {
+    return { ok: false, error: `Max ${MAX_APPS_TOTAL} apps in the dock` };
+  }
+  let parsed;
+  try {
+    const raw = String(url || '').trim();
+    parsed = new URL(raw.includes('://') ? raw : `https://${raw}`);
+  } catch {
+    return { ok: false, error: 'Enter a valid URL' };
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    return { ok: false, error: 'URL must start with http:// or https://' };
+  }
+  const href = parsed.toString();
+  const label = clampAppName(
+    name || parsed.hostname.replace(/^www\./, '') || 'Custom',
+  );
+
+  let resolvedProfileId = profileId;
+  if (resolvedProfileId && !getProfile(resolvedProfileId)) {
+    return { ok: false, error: 'Profile not found' };
+  }
+  if (!resolvedProfileId) {
+    resolvedProfileId = getProfile(PRIMARY_PROFILE_ID)?.id || PRIMARY_PROFILE_ID;
+  }
+
+  const same = (settings.serviceInstances || []).some(
+    (i) =>
+      isCustomAppId(i.appId) &&
+      i.profileId === resolvedProfileId &&
+      String(i.url || '') === href,
+  );
+  if (same) {
+    return { ok: false, error: 'That URL is already on this profile' };
+  }
+
+  const slot = nextSlot(CUSTOM_APP_ID) || countInstances(CUSTOM_APP_ID) + 1;
+  const id = `custom-${slot}-${Date.now().toString(36)}`;
+  const instances = [
+    ...(settings.serviceInstances || []),
+    {
+      id,
+      appId: CUSTOM_APP_ID,
+      profileId: resolvedProfileId,
+      slot,
+      url: href,
+      name: label,
+      title: label,
+      color: '#3D5A80',
+    },
   ];
   const serviceOrder = [...(settings.serviceOrder || []), id];
   settings = saveSettings({ serviceInstances: instances, serviceOrder });
@@ -492,7 +584,11 @@ function setInstanceProfile(serviceId, profileId) {
   if (inst.profileId === profileId) return { ok: true };
 
   const clash = instances.some(
-    (i) => i.id !== serviceId && i.appId === inst.appId && i.profileId === profileId,
+    (i) =>
+      i.id !== serviceId &&
+      i.appId === inst.appId &&
+      i.profileId === profileId &&
+      !isCustomAppId(inst.appId),
   );
   if (clash) {
     const entry = getAppCatalogEntry(inst.appId);
@@ -505,7 +601,7 @@ function setInstanceProfile(serviceId, profileId) {
   // Tear down the old session view before switching partition.
   hibernateService(serviceId);
   const next = instances.map((i, n) =>
-    n === idx ? { id: i.id, appId: i.appId, profileId, slot: i.slot } : i,
+    n === idx ? { ...i, profileId } : i,
   );
   settings = saveSettings({ serviceInstances: next });
   broadcastState();
@@ -568,7 +664,13 @@ function isInternalUrl(url, service) {
   } catch {
     return true;
   }
-  const allowed = [baseDomain(new URL(service.url).hostname), ...INTERNAL_HOSTS];
+  let serviceHost = '';
+  try {
+    serviceHost = baseDomain(new URL(service.url).hostname);
+  } catch {
+    serviceHost = '';
+  }
+  const allowed = [serviceHost, ...INTERNAL_HOSTS].filter(Boolean);
   return allowed.some((d) => host === d || host.endsWith(`.${d}`));
 }
 
@@ -868,11 +970,19 @@ function configureSession(partitionSession, partitionKey) {
   });
 
   partitionSession.on('will-download', (_event, item) => {
-    const dir =
-      settings.downloadPath ||
-      app.getPath('downloads');
     if (settings.downloadPath) {
-      item.setSavePath(path.join(dir, item.getFilename()));
+      item.setSavePath(path.join(settings.downloadPath, item.getFilename()));
+    } else {
+      // "Ask every time" — blank download path in Settings.
+      const picked = dialog.showSaveDialogSync(mainWindow || undefined, {
+        title: 'Save download',
+        defaultPath: path.join(app.getPath('downloads'), item.getFilename()),
+      });
+      if (!picked) {
+        item.cancel();
+        return;
+      }
+      item.setSavePath(picked);
     }
     item.once('done', (_e, state) => {
       if (state !== 'completed') return;
@@ -1004,9 +1114,21 @@ function createViewForService(service) {
   }
 
   attachShortcuts(webContents);
+  webContents.on('found-in-page', (_event, result) => {
+    mainWindow?.webContents.send('dock:find-result', {
+      activeMatchOrdinal: result.activeMatchOrdinal,
+      matches: result.matches,
+    });
+  });
   webContents.loadURL(service.url);
 
+  const zoom = Number(cfg.zoomFactor);
+  if (Number.isFinite(zoom) && zoom > 0) {
+    webContents.setZoomFactor(Math.min(2, Math.max(0.5, zoom)));
+  }
+
   views.set(service.id, { view, lastUsed: Date.now() });
+  hibernatedAt.delete(service.id);
   watchWebContents(webContents, `app:${service.appId}:${service.id}`);
   return views.get(service.id);
 }
@@ -1024,6 +1146,18 @@ function hibernateService(id) {
   entry.view.webContents.close();
   views.delete(id);
   unreadCounts.delete(id);
+  hibernatedAt.set(id, Date.now());
+}
+
+/** Background wake for autoWakeMinutes — loads without stealing the active tab. */
+function softWakeService(id) {
+  if (views.has(id) || locked) return false;
+  const service = getService(id);
+  if (!service || service.config?.enabled === false) return false;
+  if (views.size >= maxWarm()) return false;
+  createViewForService(service);
+  enforceWarmLimit();
+  return views.has(id);
 }
 
 function enforceWarmLimit() {
@@ -1106,7 +1240,9 @@ function applyWindowPrefs() {
   mainWindow.setAlwaysOnTop(!!settings.alwaysOnTop);
   mainWindow.setAutoHideMenuBar(settings.autoHideMenuBar !== false);
   mainWindow.setMenuBarVisibility(settings.autoHideMenuBar === false);
+  mainWindow.setSkipTaskbar(settings.displayBehaviour === 'tray');
   app.setLoginItemSettings({ openAtLogin: !!settings.autoStart });
+  ensureTray();
 }
 
 function currentState() {
@@ -1129,16 +1265,34 @@ function currentState() {
       appCount: appsUsingProfile(p.id).length,
       locked: p.id === PRIMARY_PROFILE_ID,
     })),
-    catalog: APP_CATALOG.map((a) => ({
-      ...a,
-      count: countInstances(a.appId),
-      max: MAX_INSTANCES_PER_APP,
-      totalApps: totalAppCount(),
-      maxTotal: MAX_APPS_TOTAL,
-      canAdd:
-        totalAppCount() < MAX_APPS_TOTAL &&
-        countInstances(a.appId) < MAX_INSTANCES_PER_APP,
-    })),
+    catalog: [
+      ...APP_CATALOG.map((a) => ({
+        ...a,
+        count: countInstances(a.appId),
+        max: MAX_INSTANCES_PER_APP,
+        totalApps: totalAppCount(),
+        maxTotal: MAX_APPS_TOTAL,
+        canAdd:
+          totalAppCount() < MAX_APPS_TOTAL &&
+          countInstances(a.appId) < MAX_INSTANCES_PER_APP,
+      })),
+      {
+        appId: CUSTOM_APP_ID,
+        name: 'Custom',
+        title: 'Custom app (any URL)',
+        url: '',
+        color: '#3D5A80',
+        logo: 'custom',
+        count: countInstances(CUSTOM_APP_ID),
+        max: MAX_INSTANCES_PER_APP,
+        totalApps: totalAppCount(),
+        maxTotal: MAX_APPS_TOTAL,
+        canAdd:
+          totalAppCount() < MAX_APPS_TOTAL &&
+          countInstances(CUSTOM_APP_ID) < MAX_INSTANCES_PER_APP,
+        isCustom: true,
+      },
+    ],
     limits: {
       maxAppsTotal: MAX_APPS_TOTAL,
       maxPerApp: MAX_INSTANCES_PER_APP,
@@ -1227,6 +1381,16 @@ function attachShortcuts(webContents) {
     if (key === '/' && shortcutOn('search')) {
       event.preventDefault();
       mainWindow?.webContents.send('dock:open-search');
+      return;
+    }
+    if (key === 'f' && !input.shift) {
+      event.preventDefault();
+      mainWindow?.webContents.send('dock:open-find');
+      return;
+    }
+    if (key === 'p' && !input.shift) {
+      event.preventDefault();
+      printActivePage();
       return;
     }
     if (input.shift && key === 'd' && shortcutOn('focusMode')) {
@@ -1359,7 +1523,41 @@ function changeZoom(delta = 0, exact = null) {
   const webContents = activeWebContents();
   if (!webContents || webContents.isDestroyed()) return;
   const next = exact ?? webContents.getZoomFactor() + delta;
-  webContents.setZoomFactor(Math.min(2, Math.max(0.5, next)));
+  const clamped = Math.min(2, Math.max(0.5, next));
+  webContents.setZoomFactor(clamped);
+  if (activeServiceId) {
+    saveAppConfig(activeServiceId, { zoomFactor: clamped });
+  }
+}
+
+function findInActivePage(text, options = {}) {
+  const webContents = views.get(activeServiceId)?.view.webContents;
+  if (!webContents || webContents.isDestroyed()) return { ok: false };
+  const query = String(text || '');
+  if (!query) {
+    webContents.stopFindInPage('clearSelection');
+    return { ok: true, cleared: true };
+  }
+  webContents.findInPage(query, {
+    forward: options.forward !== false,
+    findNext: !!options.findNext,
+    matchCase: !!options.matchCase,
+  });
+  return { ok: true };
+}
+
+function stopFindInActivePage() {
+  const webContents = views.get(activeServiceId)?.view.webContents;
+  if (!webContents || webContents.isDestroyed()) return { ok: false };
+  webContents.stopFindInPage('clearSelection');
+  return { ok: true };
+}
+
+function printActivePage() {
+  const webContents = views.get(activeServiceId)?.view.webContents;
+  if (!webContents || webContents.isDestroyed()) return { ok: false };
+  webContents.print({});
+  return { ok: true };
 }
 
 async function requestQuit() {
@@ -1476,6 +1674,11 @@ function installApplicationMenu() {
           accelerator: 'CommandOrControl+,',
           click: () => mainWindow?.webContents.send('dock:open-settings'),
         },
+        {
+          label: 'Print…',
+          accelerator: 'CommandOrControl+P',
+          click: () => printActivePage(),
+        },
         { type: 'separator' },
         {
           label: 'Exit',
@@ -1496,6 +1699,12 @@ function installApplicationMenu() {
         { role: 'pasteAndMatchStyle' },
         { role: 'delete' },
         { role: 'selectAll' },
+        { type: 'separator' },
+        {
+          label: 'Find…',
+          accelerator: 'CommandOrControl+F',
+          click: () => mainWindow?.webContents.send('dock:open-find'),
+        },
       ],
     },
     {
@@ -1707,13 +1916,27 @@ function createWindow() {
       broadcastState();
       return;
     }
+    const enabled = orderedServices().filter((s) => s.config?.enabled !== false);
     const remembered = getService(settings.lastActiveServiceId);
-    const first =
-      remembered ||
-      orderedServices().find((s) => s.config?.enabled !== false);
-    // Only load the active app. Preloading "keepWarm" views wasted 300–800 MB each
-    // even before sign-in — deadly on refurbished PCs.
-    if (first && first.config?.enabled !== false) activateService(first.id);
+    let first =
+      remembered && remembered.config?.enabled !== false ? remembered : null;
+    // Prefer an app that is not "start hibernated" for the first paint.
+    if (!first || first.config?.startHibernated) {
+      first =
+        enabled.find((s) => !s.config?.startHibernated) ||
+        first ||
+        enabled[0] ||
+        null;
+    }
+    if (!first) return;
+    if (first.config?.startHibernated) {
+      // Select the tab but don't load until the user clicks (or auto-wake).
+      activeServiceId = first.id;
+      hibernatedAt.set(first.id, Date.now());
+      broadcastState();
+      return;
+    }
+    activateService(first.id);
   });
 }
 
@@ -1731,13 +1954,16 @@ function startHibernateTimer() {
             : Math.max(1, Number(settings.hibernateMinutes) || 2);
       if (now - entry.lastUsed >= mins * 60_000) hibernateService(id);
     }
-    // Auto wake-up for startHibernated / hibernated apps
+    // Auto wake-up: soft-load hibernated apps after autoWakeMinutes (if warm budget allows).
     for (const service of orderedServices()) {
-      if (!service.config?.autoWakeMinutes || service.config.autoWakeMinutes <= 0) {
-        continue;
+      const mins = Number(service.config?.autoWakeMinutes) || 0;
+      if (mins <= 0) continue;
+      if (views.has(service.id) || service.config?.enabled === false) continue;
+      const sleptAt = hibernatedAt.get(service.id);
+      if (!sleptAt) continue;
+      if (Date.now() - sleptAt >= mins * 60_000) {
+        softWakeService(service.id);
       }
-      if (views.has(service.id) || !service.config.enabled) continue;
-      // Wake only if it was previously used (has lastActive memory) — skip cold startHibernated forever
     }
     broadcastState();
   }, 30_000);
@@ -1808,6 +2034,14 @@ ipcMain.handle('dock:activate', (_e, id) => {
 ipcMain.handle('dock:add-service', (_e, appId, profileId) =>
   addService(appId, profileId || null),
 );
+ipcMain.handle('dock:add-custom-service', (_e, payload) =>
+  addCustomService(payload || {}),
+);
+ipcMain.handle('dock:find-in-page', (_e, text, options) =>
+  findInActivePage(text, options || {}),
+);
+ipcMain.handle('dock:stop-find', () => stopFindInActivePage());
+ipcMain.handle('dock:print-active', () => printActivePage());
 ipcMain.handle('dock:remove-service', (_e, id) => removeService(id));
 ipcMain.handle('dock:create-profile', (_e, name) => createProfile(name));
 ipcMain.handle('dock:rename-profile', (_e, id, name) => renameProfile(id, name));
@@ -1838,6 +2072,40 @@ ipcMain.handle('dock:save-app-config', (_e, id, patch) => {
     delete patch.name;
     delete patch.title;
   }
+
+  // Custom apps store URL / color on the instance record.
+  if (patch && (patch.url != null || patch.color != null)) {
+    const instances = settings.serviceInstances || [];
+    const idx = instances.findIndex((i) => i.id === id);
+    if (idx >= 0 && isCustomAppId(instances[idx].appId)) {
+      let nextUrl = instances[idx].url;
+      if (patch.url != null) {
+        try {
+          const raw = String(patch.url).trim();
+          const parsed = new URL(raw.includes('://') ? raw : `https://${raw}`);
+          if (!['http:', 'https:'].includes(parsed.protocol)) {
+            return { ok: false, error: 'URL must be http(s)' };
+          }
+          nextUrl = parsed.toString();
+        } catch {
+          return { ok: false, error: 'Invalid URL' };
+        }
+      }
+      const updated = {
+        ...instances[idx],
+        url: nextUrl,
+        color: patch.color != null ? patch.color : instances[idx].color,
+      };
+      if (labels[id]?.name) updated.name = labels[id].name;
+      const nextInstances = instances.map((i, n) => (n === idx ? updated : i));
+      settings = saveSettings({ serviceInstances: nextInstances });
+      hibernateService(id);
+      if (activeServiceId === id) activateService(id);
+    }
+    delete patch.url;
+    delete patch.color;
+  }
+
   const cfg = saveAppConfig(id, patch || {});
   if (!cfg.enabled) {
     if (activeServiceId === id) {
