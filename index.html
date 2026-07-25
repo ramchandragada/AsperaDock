@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Aspera Dock</title>
+  </head>
+  <body class="theme-light layout-top density-comfortable">
+    <div class="shell">
+      <header id="top-bar" class="app-bar app-bar-top">
+        <nav id="apps-top" class="apps-track" aria-label="Apps"></nav>
+        <button id="add-app-btn" type="button" class="icon-btn add-app-btn" title="Add app"></button>
+        <div class="chrome-spacer"></div>
+        <div class="chrome-actions">
+          <button id="layout-btn" type="button" class="icon-btn" title="Move app bar"></button>
+          <button id="search-btn" type="button" class="icon-btn" title="Quick search (Ctrl+/)"></button>
+          <button id="focus-btn" type="button" class="icon-btn" title="Focus mode — Ctrl+Shift+D"></button>
+          <button id="mute-btn" type="button" class="icon-btn" title="Mute — Ctrl+Shift+M"></button>
+          <div class="menu-wrap">
+            <button id="notif-btn" type="button" class="icon-btn badge-host" title="Notifications">
+              <span class="icon-slot"></span>
+              <span id="global-badge" class="global-badge hidden">0</span>
+            </button>
+            <div id="notif-center" class="chrome-menu notif-center hidden" role="menu">
+              <header class="notif-head">
+                <strong>Notifications</strong>
+                <div class="notif-head-actions">
+                  <button id="notif-read-all" type="button" class="link-btn">Mark all read</button>
+                  <button id="notif-clear" type="button" class="link-btn">Clear</button>
+                </div>
+              </header>
+              <div id="notif-list" class="notif-list"></div>
+              <div id="monitor-block" class="monitor-block hidden">
+                <div class="monitor-head">Memory per app</div>
+                <div id="monitor-list" class="monitor-list"></div>
+              </div>
+            </div>
+          </div>
+          <div class="menu-wrap">
+            <button id="menu-btn" type="button" class="icon-btn" title="Menu"></button>
+            <div id="app-chrome-menu" class="chrome-menu hidden" role="menu">
+              <button type="button" data-action="settings" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="settings"></span> Settings
+              </button>
+              <button type="button" data-action="shortcuts" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="keyboard"></span> Shortcuts
+              </button>
+              <hr />
+              <button type="button" data-action="reload" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="reload"></span> Reload app
+              </button>
+              <button type="button" data-action="free-ram" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="ram"></span> Free RAM
+              </button>
+              <hr />
+              <button type="button" data-action="add-app" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="plus"></span> Add app
+              </button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div class="body-row">
+        <nav id="apps-left" class="app-bar app-bar-left" aria-label="Apps"></nav>
+        <main id="content-slot" class="content-slot">
+          <div id="empty-state" class="empty-state hidden">
+            <div class="empty-card">
+              <h1>Aspera Dock</h1>
+              <p>Add WhatsApp, Arattai, Gmail, Zoho and more. Up to 3 of each.</p>
+              <button id="empty-add-btn" type="button" class="primary">Add your first app</button>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- Quick search -->
+    <div id="search-modal" class="modal hidden" role="dialog">
+      <div class="modal-card search-card">
+        <input id="search-input" type="search" placeholder="Jump to app…" autocomplete="off" />
+        <ul id="search-results"></ul>
+      </div>
+    </div>
+
+    <!-- Global Settings (dock-wide — not per-app) -->
+    <div id="settings-modal" class="modal drawer hidden" role="dialog">
+      <div class="modal-card settings-card">
+        <header class="modal-head">
+          <h2><span class="head-ico" id="settings-head-ico"></span> Settings</h2>
+          <div>
+            <button id="settings-save" type="button" class="primary">Save</button>
+            <button id="settings-close" type="button" class="icon-btn">✕</button>
+          </div>
+        </header>
+        <div class="settings-body">
+          <p class="settings-banner">
+            These are <strong>global</strong> dock settings. To change one app (sound, name, hibernate…),
+            <strong>right-click</strong> that app’s icon.
+          </p>
+
+          <div class="section-rule"><span>General</span></div>
+
+          <label class="field">
+            <span>Theme</span>
+            <select id="set-theme">
+              <option value="system">System</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+              <option value="darkest">Darkest</option>
+              <option value="glossy">Glossy</option>
+              <option value="mint">Mint</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Density</span>
+            <select id="set-density">
+              <option value="compact">Compact</option>
+              <option value="normal">Normal</option>
+              <option value="comfortable">Comfortable</option>
+            </select>
+          </label>
+          <div class="field-row">
+            <label class="field grow">
+              <span>Apps position</span>
+              <select id="set-apps-position">
+                <option value="top">Top</option>
+                <option value="left">Left</option>
+                <option value="right">Right</option>
+              </select>
+            </label>
+            <label class="check inline-check">
+              <input id="set-hide-labels" type="checkbox" />
+              Hide apps labels
+            </label>
+          </div>
+          <label class="switch-row">
+            <input id="set-wrap-tabs" type="checkbox" />
+            <span>Wrap apps onto a second row instead of scrolling</span>
+          </label>
+          <label class="field">
+            <span>Display active app in window title</span>
+            <select id="set-active-title">
+              <option value="false">Disabled</option>
+              <option value="true">Enabled</option>
+            </select>
+          </label>
+          <label class="switch-row menu-bar-setting">
+            <input id="set-auto-hide-menu" type="checkbox" />
+            <span>
+              Auto-hide menu bar · <kbd>Alt</kbd> key to display
+              <small>File, Edit, View, Window, Tools and Help</small>
+            </span>
+          </label>
+          <label class="switch-row">
+            <input id="set-focus-clear-badges" type="checkbox" />
+            <span>Remove all badges when Focus mode is active</span>
+          </label>
+
+          <div class="section-rule"><span>Downloads</span></div>
+          <label class="field">
+            <span>Download directory</span>
+            <div class="row">
+              <input id="set-download-path" type="text" placeholder="Leave blank to ask every time" />
+              <button id="browse-download" type="button" class="primary">Browse…</button>
+            </div>
+            <p class="hint-text">Leave blank to ask location every time you download a file.</p>
+          </label>
+          <label class="check"><input id="set-open-folder" type="checkbox" /> Open folder on finish</label>
+          <label class="check"><input id="set-open-file" type="checkbox" /> Open file on finish</label>
+
+          <div class="section-rule"><span>Startup and window</span></div>
+          <label class="field">
+            <span>Open Aspera Dock automatically on system startup</span>
+            <select id="set-autostart">
+              <option value="false">No</option>
+              <option value="true">Yes</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Display behaviour</span>
+            <select id="set-display">
+              <option value="taskbar">Show in Taskbar</option>
+              <option value="tray">System tray only</option>
+              <option value="both">Taskbar + tray</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Close button behaviour</span>
+            <select id="set-close">
+              <option value="quit">Quit</option>
+              <option value="tray">Minimize to tray</option>
+            </select>
+          </label>
+          <label class="switch-row"><input id="set-always-top" type="checkbox" /><span>Always on top</span></label>
+          <label class="switch-row"><input id="set-tray-unread" type="checkbox" /><span>Show System Tray indicator on unread messages</span></label>
+          <label class="switch-row"><input id="set-flash" type="checkbox" /><span>Flash Taskbar on new message</span></label>
+          <label class="switch-row"><input id="set-confirm-quit" type="checkbox" /><span>Confirm dialog on quitting with Ctrl+Q</span></label>
+
+          <div class="section-rule"><span>Security</span></div>
+          <label class="field">
+            <span>Lock app</span>
+            <select id="set-lock-enabled">
+              <option value="false">Disabled</option>
+              <option value="true">Password</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Set / change password</span>
+            <input id="set-lock-password" type="password" placeholder="Leave blank to keep current" />
+          </label>
+          <label class="switch-row">
+            <input id="set-lock-idle" type="checkbox" />
+            <span>Lock when the system locks or sleeps</span>
+          </label>
+
+          <div class="section-rule"><span>Proxy</span></div>
+          <label class="field">
+            <span>Proxy mode</span>
+            <select id="set-proxy-mode">
+              <option value="none">No proxy</option>
+              <option value="system">Use system proxy</option>
+              <option value="manual">Manual configuration</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Proxy rules</span>
+            <input id="set-proxy-rules" type="text" placeholder="http=host:3128;https=host:3128" />
+            <p class="hint-text">Used only in manual mode. Example: <code>http=10.0.0.5:3128</code></p>
+          </label>
+          <label class="field">
+            <span>Bypass list</span>
+            <input id="set-proxy-bypass" type="text" placeholder="&lt;local&gt;" />
+          </label>
+
+          <div class="section-rule"><span>Performance</span></div>
+          <label class="field">
+            <span>Hibernate after (minutes)</span>
+            <input id="set-hibernate" type="number" min="1" max="120" />
+            <p class="hint-text">Global default. Per-app override is in right-click → Edit.</p>
+          </label>
+          <label class="field">
+            <span>Max warm apps in RAM</span>
+            <input id="set-max-warm" type="number" min="1" max="10" />
+          </label>
+          <label class="switch-row">
+            <input id="set-consumption" type="checkbox" />
+            <span>
+              Enable apps consumption monitor
+              <small>Shows memory per app in the notifications panel</small>
+            </span>
+          </label>
+
+          <div class="section-rule"><span>Compatibility</span></div>
+          <label class="switch-row">
+            <input id="set-hw-accel" type="checkbox" />
+            <span>Enable hardware acceleration <em class="relaunch">(needs relaunch)</em></span>
+          </label>
+          <label class="switch-row">
+            <input id="set-hidpi" type="checkbox" />
+            <span>Enable HiDPI support <em class="relaunch">(needs relaunch)</em></span>
+          </label>
+          <label class="switch-row">
+            <input id="set-media-keys" type="checkbox" />
+            <span>Enable Media Keys support <em class="relaunch">(needs relaunch)</em></span>
+          </label>
+
+          <details class="defaults-block" open>
+            <summary>Default app settings</summary>
+            <p class="hint-text">Applied to new apps. Individual apps can override these via right-click → Edit.</p>
+            <label class="field">
+              <span>Link handling</span>
+              <select id="set-links">
+                <option value="block">Block all pop-ups</option>
+                <option value="external">Always open in system browser</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Spell checker</span>
+              <select id="set-spell">
+                <option value="en-US">English (US)</option>
+                <option value="en-GB">English (UK)</option>
+                <option value="ta">Tamil</option>
+                <option value="hi">Hindi</option>
+              </select>
+            </label>
+            <label class="check"><input id="set-hide-notif-body" type="checkbox" /> Hide notification content</label>
+          </details>
+
+          <div class="section-rule"><span>Add apps</span></div>
+          <p class="hint-text">Catalog only — naming, sound, and advanced options are per app (right-click).</p>
+          <div id="catalog-list" class="catalog-list"></div>
+          <div id="instance-list" class="instance-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Shortcuts (global, separate from Settings) -->
+    <div id="shortcuts-modal" class="modal hidden" role="dialog">
+      <div class="modal-card shortcuts-card">
+        <header class="modal-head">
+          <h2><span class="head-ico" id="shortcuts-head-ico"></span> Shortcuts</h2>
+          <div>
+            <button id="shortcuts-save" type="button" class="primary">Save and close</button>
+            <button id="shortcuts-close" type="button" class="icon-btn">✕</button>
+          </div>
+        </header>
+        <div class="settings-body shortcuts-body" id="shortcuts-list"></div>
+      </div>
+    </div>
+
+    <!-- App context menu (right-click) -->
+    <div id="app-menu" class="app-menu hidden" role="menu">
+      <div class="app-menu-head">
+        <strong id="app-menu-title">App</strong>
+        <div class="app-menu-head-actions">
+          <button id="app-menu-edit" type="button" class="icon-btn" title="Edit settings"></button>
+          <button id="app-menu-reload" type="button" class="icon-btn" title="Reload"></button>
+        </div>
+      </div>
+      <label class="app-toggle">
+        <span>Enabled</span>
+        <input id="app-menu-enabled" type="checkbox" />
+      </label>
+      <label class="app-toggle">
+        <span>Sound</span>
+        <input id="app-menu-sound" type="checkbox" />
+      </label>
+      <label class="app-toggle">
+        <span>Notifications</span>
+        <input id="app-menu-notifications" type="checkbox" />
+      </label>
+      <div class="app-menu-nav">
+        <button id="app-menu-back" type="button" class="icon-btn" title="Back"></button>
+        <button id="app-menu-home" type="button" class="icon-btn" title="Home"></button>
+        <button id="app-menu-refresh" type="button" class="icon-btn" title="Refresh"></button>
+        <button id="app-menu-forward" type="button" class="icon-btn" title="Forward"></button>
+      </div>
+      <button id="app-menu-devtools" type="button" class="devtools-btn">Developer Tools</button>
+    </div>
+
+    <!-- Edit app settings -->
+    <div id="edit-app-modal" class="modal drawer hidden" role="dialog">
+      <div class="modal-card edit-app-card">
+        <header class="modal-head">
+          <h2 id="edit-app-heading">Edit app</h2>
+          <div class="edit-app-actions">
+            <button id="edit-app-remove" type="button" class="danger-outline">Remove</button>
+            <button id="edit-app-save" type="button" class="primary">Save</button>
+            <button id="edit-app-close" type="button" class="icon-btn">✕</button>
+          </div>
+        </header>
+        <div class="edit-app-hero">
+          <div id="edit-app-logo" class="edit-app-logo"></div>
+          <div class="edit-app-name-row">
+            <input id="edit-app-name" type="text" maxlength="40" />
+          </div>
+        </div>
+        <div class="edit-app-body">
+          <section>
+            <h3>Options</h3>
+            <div class="check-grid">
+              <label class="check"><input id="ea-enabled" type="checkbox" /> Enable app</label>
+              <label class="check"><input id="ea-show-name" type="checkbox" /> Show app name in tab</label>
+              <label class="check"><input id="ea-sounds" type="checkbox" /> Allow sounds</label>
+              <label class="check"><input id="ea-notifications" type="checkbox" /> Allow notifications</label>
+              <label class="check"><input id="ea-hide-body" type="checkbox" /> Hide notification content</label>
+            </div>
+          </section>
+          <section>
+            <h3>Unread counter</h3>
+            <div class="check-grid">
+              <label class="check"><input id="ea-unread-tab" type="checkbox" /> Display in tab</label>
+              <label class="check"><input id="ea-unread-global" type="checkbox" /> Include in global</label>
+            </div>
+          </section>
+          <section>
+            <h3>Spell checker</h3>
+            <label class="field">
+              <select id="ea-spell">
+                <option value="default">Default (global)</option>
+                <option value="en-US">English (US)</option>
+                <option value="en-GB">English (UK)</option>
+                <option value="ta">Tamil</option>
+                <option value="hi">Hindi</option>
+              </select>
+            </label>
+          </section>
+          <section>
+            <h3>Link handling</h3>
+            <label class="field">
+              <select id="ea-links">
+                <option value="default">Default (global)</option>
+                <option value="block">Block pop-ups (open externally)</option>
+                <option value="external">Always open in system browser</option>
+              </select>
+            </label>
+          </section>
+          <section>
+            <h3>Hibernate</h3>
+            <label class="field">
+              <span>After minutes (0 = use global)</span>
+              <input id="ea-hibernate" type="number" min="0" max="240" />
+            </label>
+            <label class="check"><input id="ea-start-hibernated" type="checkbox" /> Start hibernated</label>
+            <p class="hint-text">Leave at 0 to use the global hibernate setting.</p>
+          </section>
+          <section>
+            <h3>Auto wake-up</h3>
+            <label class="field">
+              <span>After hibernated minutes (0 = off)</span>
+              <input id="ea-autowake" type="number" min="0" max="240" />
+            </label>
+          </section>
+          <section>
+            <h3>Session</h3>
+            <p class="hint-text">Clear login data for this app without removing it from the dock.</p>
+            <button id="edit-app-clear-session" type="button" class="danger-outline">Clear session data</button>
+          </section>
+          <details class="advance-block" open>
+            <summary>Advance</summary>
+            <div class="advance-warn">
+              The following options may cause security problems — use them responsibly.
+              Injected code / user agent changes apply the next time the app loads.
+            </div>
+            <label class="field">
+              <span>Inject JavaScript code</span>
+              <textarea id="ea-inject-js" rows="4" spellcheck="false"></textarea>
+            </label>
+            <label class="field">
+              <span>Inject CSS code</span>
+              <textarea id="ea-inject-css" rows="4" spellcheck="false"></textarea>
+            </label>
+            <label class="field">
+              <span>Stylish URL</span>
+              <input id="ea-stylish" type="url" placeholder="https://userstyles.org/styles/xxxx/xxxxxx" />
+            </label>
+            <label class="field">
+              <span>User Agent</span>
+              <input id="ea-ua" type="text" placeholder="Leave blank for default Chrome UA" />
+            </label>
+            <label class="check"><input id="ea-mobile" type="checkbox" /> Force mobile rendering</label>
+            <label class="check"><input id="ea-no-basic-auth" type="checkbox" /> Prevent Basic Auth</label>
+          </details>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lock screen -->
+    <div id="lock-screen" class="lock-screen hidden">
+      <div class="lock-card">
+        <div class="brand-mark">AD</div>
+        <h1>Aspera Dock is locked</h1>
+        <input id="lock-password" type="password" placeholder="Password" />
+        <button id="unlock-btn" type="button" class="primary">Unlock</button>
+        <p id="lock-error" class="error"></p>
+      </div>
+    </div>
+
+    <script type="module" src="./src/renderer.js"></script>
+  </body>
+</html>

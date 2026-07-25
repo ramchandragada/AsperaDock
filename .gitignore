@@ -1,0 +1,11 @@
+node_modules
+.vite
+out
+dist
+.DS_Store
+*.log
+.env
+.env.*
+scripts/preview-bar.html
+scripts/*.png
+scripts/rambox-frames/
