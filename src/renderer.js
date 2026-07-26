@@ -404,9 +404,12 @@ function renderEmptyState() {
 
 function paintAppVersion() {
   const version = state.appVersion || '';
-  const label = version ? `Version ${version}` : '';
-  const short = version ? `v${version}` : '';
-  const full = version ? `Aspera Dock ${version}` : 'Aspera Dock';
+  const dev = state.isPackaged === false;
+  const label = version ? (dev ? `Version ${version} (dev)` : `Version ${version}`) : '';
+  const short = version ? (dev ? `v${version}·dev` : `v${version}`) : '';
+  const full = version
+    ? (dev ? `Aspera Dock ${version} (dev)` : `Aspera Dock ${version}`)
+    : 'Aspera Dock';
 
   const emptyVer = document.getElementById('empty-version');
   if (emptyVer) emptyVer.textContent = label || 'Version …';

@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
-# Launch Aspera Dock (used by the .desktop entry for GNOME dock icon matching).
-cd /home/shree/Projects/asperadock || exit 1
-exec npm start
+# Prefer the installed package. Fall back to a local npm start only for developers.
+set -euo pipefail
+
+if [[ -x /usr/bin/asperadock ]]; then
+  exec /usr/bin/asperadock "$@"
+fi
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT" || exit 1
+exec npm start -- "$@"

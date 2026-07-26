@@ -69,8 +69,16 @@ import { initSentryMain } from './sentryMain.js';
 import fs from 'node:fs';
 
 const require = createRequire(import.meta.url);
-if (require('electron-squirrel-startup')) {
-  app.quit();
+// Windows Squirrel first-run hook. Never hard-require it — Forge+Vite does not
+// ship node_modules into the asar, so a bare require crashes Linux .deb installs.
+if (process.platform === 'win32') {
+  try {
+    if (require('electron-squirrel-startup')) {
+      app.quit();
+    }
+  } catch {
+    // ignore — module absent in packaged Linux builds
+  }
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -888,7 +896,8 @@ function totalUnread() {
 }
 
 function dockTitleBase() {
-  return `Aspera Dock ${app.getVersion()}`;
+  const v = app.getVersion();
+  return app.isPackaged ? `Aspera Dock ${v}` : `Aspera Dock ${v} (dev)`;
 }
 
 function refreshBadge() {
@@ -1309,6 +1318,7 @@ function currentState() {
       totalApps: totalAppCount(),
     },
     appVersion: app.getVersion(),
+    isPackaged: app.isPackaged,
     unread: unreadForUi,
     totalUnread: totalUnread(),
     notifications: notificationLog,

@@ -172,6 +172,24 @@ export async function checkForUpdates({ silent = true } = {}) {
   if (settings().autoUpdateEnabled === false) {
     return { available: false, disabled: true };
   }
+  // Dev / npm start uses package.json 0.1.0 forever — don't spam "install .deb" nags.
+  if (detectPackaging() === 'dev') {
+    broadcast('up-to-date', { version: `${currentVersion()} (dev)` });
+    if (!silent) {
+      beforeDialog();
+      dialog
+        .showMessageBox(BrowserWindow.getAllWindows()[0], {
+          type: 'info',
+          title: 'Development build',
+          message: `You are running a development build (v${currentVersion()}).`,
+          detail:
+            'Updates apply to the installed Aspera Dock package (/usr/bin/asperadock), not this npm start session.\n\nQuit this window and launch Aspera Dock from the app menu to use the installed version.',
+          buttons: ['OK'],
+        })
+        .finally(() => afterDialog());
+    }
+    return { available: false, version: currentVersion(), dev: true };
+  }
   broadcast('checking');
   try {
     const manifest = await fetchManifest();
