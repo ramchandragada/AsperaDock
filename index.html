@@ -263,12 +263,12 @@
           <label class="field">
             <span>Hibernate after (minutes)</span>
             <input id="set-hibernate" type="number" min="1" max="120" />
-            <p class="hint-text">Idle background apps unload after this. Messaging apps stay longer, but Max warm apps still caps RAM.</p>
+            <p class="hint-text">Unselected apps unload when you switch away. This timer applies to other idle background activity.</p>
           </label>
           <label class="field">
             <span>Max warm apps in RAM</span>
             <input id="set-max-warm" type="number" min="1" max="10" />
-            <p class="hint-text">Hard cap on apps kept in memory. 3 WhatsApp tabs alone can use several GB — try 3–4 if RAM climbs past ~4 GB.</p>
+            <p class="hint-text">Includes the active app, so a value of 5 lets you select 4 background apps. Lowering this disables extra warm selections.</p>
           </label>
           <label class="switch-row">
             <input id="set-consumption" type="checkbox" />

@@ -312,9 +312,10 @@ function makeAppTab(service, index) {
   const cfg = service.config || {};
   const muted = !!state.settings?.muted || cfg.allowSounds === false;
   const sleeping = !state.warmIds.includes(service.id);
-  const btn = document.createElement('button');
-  btn.type = 'button';
+  const btn = document.createElement('div');
   btn.className = 'app-tab';
+  btn.setAttribute('role', 'button');
+  btn.tabIndex = 0;
   btn.dataset.id = service.id;
   btn.dataset.tooltip = service.title || service.name;
   btn.setAttribute(
@@ -327,6 +328,8 @@ function makeAppTab(service, index) {
   if (cfg.enabled === false) btn.classList.add('disabled');
   if (muted) btn.classList.add('muted');
 
+  const iconStack = document.createElement('span');
+  iconStack.className = 'app-icon-stack';
   const logo = makeAppIcon(service);
 
   if (unread > 0 && cfg.displayUnreadInTab !== false) {
@@ -349,7 +352,37 @@ function makeAppTab(service, index) {
     logo.appendChild(sleepDot);
   }
 
-  btn.appendChild(logo);
+  iconStack.appendChild(logo);
+
+  const keepWarm = cfg.keepWarm === true;
+  const warmBtn = document.createElement('button');
+  warmBtn.type = 'button';
+  warmBtn.className = `warm-toggle${keepWarm ? ' selected' : ''}`;
+  warmBtn.innerHTML = icon('flame');
+  warmBtn.setAttribute('aria-pressed', String(keepWarm));
+  warmBtn.setAttribute(
+    'aria-label',
+    keepWarm ? `Allow ${service.name} to sleep` : `Keep ${service.name} warm`,
+  );
+  warmBtn.title = keepWarm
+    ? 'Warm app enabled — click to allow sleep'
+    : 'Keep this app warm in memory';
+  warmBtn.addEventListener('click', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    warmBtn.disabled = true;
+    const result = await window.asperadock.toggleKeepWarm?.(service.id);
+    if (result && !result.ok) {
+      alert(result.error || 'Could not change warm-app selection.');
+      warmBtn.disabled = false;
+    }
+  });
+  warmBtn.addEventListener('contextmenu', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  iconStack.appendChild(warmBtn);
+  btn.appendChild(iconStack);
 
   if (cfg.showNameInTab !== false && !state.settings?.hideAppLabels) {
     const label = document.createElement('span');
@@ -368,6 +401,11 @@ function makeAppTab(service, index) {
       return;
     }
     window.asperadock.activate(service.id);
+  });
+  btn.addEventListener('keydown', (event) => {
+    if (event.target !== btn || !['Enter', ' '].includes(event.key)) return;
+    event.preventDefault();
+    btn.click();
   });
   btn.addEventListener('contextmenu', (event) => {
     event.preventDefault();

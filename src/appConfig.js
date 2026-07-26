@@ -9,6 +9,8 @@ export const DEFAULT_APP_CONFIG = {
   includeUnreadInGlobal: true,
   /** 0 = use global hibernate setting */
   hibernateMinutes: 0,
+  /** User-selected: keep this app loaded while it is in the background. */
+  keepWarm: false,
   startHibernated: false,
   /** 0 = disabled — after hibernate, soft-wake in background after N minutes */
   autoWakeMinutes: 0,

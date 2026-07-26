@@ -26,7 +26,6 @@ export function isCustomAppId(appId) {
  *   url: string,
  *   color: string,
  *   logo: string,
- *   keepWarm?: boolean,
  * }} AppCatalogEntry
  */
 
@@ -39,7 +38,6 @@ export const APP_CATALOG = [
     url: 'https://web.whatsapp.com',
     color: '#25D366',
     logo: 'whatsapp',
-    keepWarm: true,
   },
   {
     appId: 'arattai',
@@ -48,7 +46,6 @@ export const APP_CATALOG = [
     url: 'https://web.arattai.in',
     color: '#F5A623',
     logo: 'arattai',
-    keepWarm: true,
   },
   {
     appId: 'gmail',

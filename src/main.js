@@ -662,7 +662,9 @@ function hibernateMs() {
 }
 
 function maxWarm() {
-  if (isLowMemoryMode()) return 1;
+  if (isLowMemoryMode()) {
+    return Math.min(3, Math.max(2, Number(settings.maxWarmViews) || 2));
+  }
   return Math.max(1, Number(settings.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT);
 }
 
@@ -1249,11 +1251,29 @@ function rememberGoodUrl(serviceId, url) {
   lastGoodUrls.set(serviceId, url);
 }
 
-/** WhatsApp / Arattai etc. — prefer keeping loaded across tab switches. */
+/** Warm status is chosen per app by the user; catalog type has no priority. */
 function isKeepWarmService(id) {
-  const service = getService(id);
-  if (!service) return false;
-  return Boolean(getAppCatalogEntry(service.appId)?.keepWarm);
+  return getAppConfig(id).keepWarm === true;
+}
+
+function warmSelectionLimit() {
+  // Reserve one view for an active app that the user did not mark warm.
+  return Math.max(0, maxWarm() - 1);
+}
+
+function selectedWarmIds() {
+  return orderedServices()
+    .filter((service) => service.config?.enabled !== false && isKeepWarmService(service.id))
+    .map((service) => service.id);
+}
+
+function reconcileWarmSelections() {
+  const selected = selectedWarmIds();
+  const limit = warmSelectionLimit();
+  for (const id of selected.slice(limit)) {
+    saveAppConfig(id, { keepWarm: false });
+    if (id !== activeServiceId) hibernateService(id);
+  }
 }
 
 /** Background wake for autoWakeMinutes — loads without stealing the active tab. */
@@ -1268,23 +1288,56 @@ function softWakeService(id) {
 }
 
 function enforceWarmLimit() {
-  // Hard cap memory: prefer dropping mail/custom first, then least-recent
-  // keepWarm messaging apps. Never leaving keepWarm forever unbounded RAM
-  // (3× WhatsApp Web alone can exceed 5 GB).
+  // User-selected warm apps are protected. The selection limit reserves enough
+  // room for the active app, so only unselected background views are evictable.
   const evictable = [...views.entries()]
-    .filter(([id]) => id !== activeServiceId)
-    .sort((a, b) => {
-      const ka = isKeepWarmService(a[0]) ? 1 : 0;
-      const kb = isKeepWarmService(b[0]) ? 1 : 0;
-      if (ka !== kb) return ka - kb;
-      return a[1].lastUsed - b[1].lastUsed;
-    });
+    .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
+    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
 
-  const budget = Math.max(0, maxWarm() - 1);
-  while (evictable.length > budget) {
+  while (views.size > maxWarm() && evictable.length) {
     const [id] = evictable.shift();
     hibernateService(id);
   }
+}
+
+function toggleKeepWarm(id) {
+  const service = getService(id);
+  if (!service) return { ok: false, error: 'App not found' };
+
+  const enabled = !isKeepWarmService(id);
+  if (enabled) {
+    const limit = warmSelectionLimit();
+    if (selectedWarmIds().length >= limit) {
+      return {
+        ok: false,
+        error:
+          limit > 0
+            ? `You can keep ${limit} background app${limit === 1 ? '' : 's'} warm. Increase “Max warm apps in RAM” to select more.`
+            : 'Increase “Max warm apps in RAM” before selecting a warm app.',
+      };
+    }
+  }
+
+  const config = saveAppConfig(id, { keepWarm: enabled });
+  if (!enabled) {
+    if (id !== activeServiceId) hibernateService(id);
+  } else if (!views.has(id) && !locked) {
+    // Make room by dropping the oldest unselected background app.
+    const candidate = [...views.entries()]
+      .filter(([viewId]) => viewId !== activeServiceId && !isKeepWarmService(viewId))
+      .sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0];
+    if (views.size >= maxWarm() && candidate) hibernateService(candidate[0]);
+    softWakeService(id);
+  }
+  enforceWarmLimit();
+  broadcastState();
+  return {
+    ok: true,
+    keepWarm: enabled,
+    config,
+    selected: selectedWarmIds().length,
+    limit: warmSelectionLimit(),
+  };
 }
 
 /** Reuse a warm view only when its renderer is still alive. */
@@ -1319,11 +1372,17 @@ function activateService(id) {
     return;
   }
 
+  const previousId = activeServiceId;
   detachAllViews();
   const entry = ensureLiveView(service);
   entry.lastUsed = Date.now();
   activeServiceId = id;
   settings = saveSettings({ lastActiveServiceId: id });
+
+  // Only user-selected apps remain loaded after switching away.
+  if (previousId && previousId !== id && !isKeepWarmService(previousId)) {
+    hibernateService(previousId);
+  }
 
   if (!overlayOpen) {
     mainWindow.addBrowserView(entry.view);
@@ -2284,6 +2343,7 @@ ipcMain.handle('dock:delete-profile', (_e, id) => deleteProfile(id));
 ipcMain.handle('dock:set-instance-profile', (_e, serviceId, profileId) =>
   setInstanceProfile(serviceId, profileId),
 );
+ipcMain.handle('dock:toggle-keep-warm', (_e, id) => toggleKeepWarm(id));
 ipcMain.handle('dock:save-app-config', (_e, id, patch) => {
   if (!getService(id)) return { ok: false, error: 'Not found' };
 
@@ -2421,6 +2481,8 @@ ipcMain.handle('dock:save-settings', (_e, patch) => {
     next.hardwareAcceleration = false;
   }
   settings = saveSettings(next);
+  reconcileWarmSelections();
+  enforceWarmLimit();
   applyWindowPrefs();
   installApplicationMenu();
   ensureTray();
