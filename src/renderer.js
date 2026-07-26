@@ -1248,7 +1248,10 @@ els.chromeMenu.addEventListener('click', (event) => {
   if (action === 'about') window.asperadock.showAbout?.();
   if (action === 'check-updates') {
     setUpdateStatus('Checking for updates…');
-    window.asperadock.updateCheck?.().finally?.(() => refreshUpdateStatus());
+    // Native dialogs come from the main process; await so errors surface in status.
+    Promise.resolve(window.asperadock.updateCheck?.())
+      .catch((err) => setUpdateStatus(`Update error: ${err?.message || err}`))
+      .finally(() => refreshUpdateStatus());
   }
 });
 

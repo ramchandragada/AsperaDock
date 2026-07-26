@@ -177,7 +177,7 @@ export async function checkForUpdates({ silent = true } = {}) {
   // Already downloaded and waiting? Re-offer it instead of doing nothing.
   if (!silent && pendingUpdate && downloadedPath && fs.existsSync(downloadedPath)) {
     clearSnooze();
-    promptReady();
+    promptReady({ force: true });
     return { available: true, version: pendingUpdate.version, downloaded: true };
   }
   // Dev / npm start uses package.json 0.1.0 forever — don't spam "install .deb" nags.
@@ -259,6 +259,11 @@ export async function checkForUpdates({ silent = true } = {}) {
       mandatory: !!manifest.mandatory,
       file,
     };
+
+    // Reuse a previously finished download (survives restart).
+    const existing = findDownloadedArtifact(manifest.version, file);
+    if (existing) downloadedPath = existing;
+
     broadcast('available', {
       version: manifest.version,
       notes: manifest.notes || '',
@@ -266,11 +271,27 @@ export async function checkForUpdates({ silent = true } = {}) {
       canAutoInstall: !!file && ['appimage', 'deb', 'rpm'].includes(file.kind),
     });
 
-    // Auto-download when enabled and we have an installable artifact.
-    if (settings().autoUpdateDownload !== false && file) {
+    // Manual "Check for updates" must always show a dialog — auto-download with
+    // no UI looked like the menu item was broken (80MB+ silent fetch).
+    if (!silent) {
+      if (downloadedPath && fs.existsSync(downloadedPath)) {
+        promptReady({ force: true });
+      } else if (busy) {
+        beforeDialog();
+        dialog
+          .showMessageBox(BrowserWindow.getAllWindows()[0], {
+            type: 'info',
+            title: 'Downloading update',
+            message: `Aspera Dock ${manifest.version} is already downloading.`,
+            detail: 'You will be prompted to install when the download finishes.',
+            buttons: ['OK'],
+          })
+          .finally(() => afterDialog());
+      } else {
+        promptAvailable();
+      }
+    } else if (settings().autoUpdateDownload !== false && file) {
       downloadUpdate().catch((err) => reportError('update-download', { message: String(err) }));
-    } else if (!silent) {
-      promptAvailable();
     }
     return {
       available: true,
@@ -384,8 +405,41 @@ export async function downloadUpdate() {
     const message = String(error?.message || error);
     broadcast('error', { message });
     reportError('update-download', { message });
+    beforeDialog();
+    dialog
+      .showMessageBox(BrowserWindow.getAllWindows()[0], {
+        type: 'error',
+        title: 'Update download failed',
+        message: 'Could not download the update.',
+        detail: message,
+        buttons: ['OK'],
+      })
+      .finally(() => afterDialog());
     return { ok: false, error: message };
   }
+}
+
+function findDownloadedArtifact(version, file) {
+  if (!version) return null;
+  const candidates = [];
+  if (file?.url) {
+    try {
+      candidates.push(path.basename(new URL(file.url).pathname));
+    } catch {
+      // ignore
+    }
+  }
+  candidates.push(
+    `asperadock_${version}_amd64.deb`,
+    `AsperaDock-${version}.AppImage`,
+    `asperadock-${version}.x86_64.rpm`,
+  );
+  for (const name of candidates) {
+    if (!name) continue;
+    const full = path.join(updatesDir(), name);
+    if (fs.existsSync(full)) return full;
+  }
+  return null;
 }
 
 function relaunchAndExit(execPathOverride) {
@@ -705,15 +759,22 @@ function promptAvailable() {
     })
     .then((r) => {
       afterDialog();
-      if (r.response === 0) downloadUpdate();
+      if (r.response === 0) {
+        downloadUpdate().catch((err) =>
+          reportError('update-download', { message: String(err) }),
+        );
+      } else {
+        snoozeUpdate(pendingUpdate?.version);
+      }
     })
     .catch(() => afterDialog());
 }
 
-function promptReady() {
+function promptReady({ force = false } = {}) {
   const win = BrowserWindow.getAllWindows()[0];
   if (!win || !pendingUpdate) return;
-  if (!pendingUpdate.mandatory && isUpdateSnoozed(pendingUpdate.version)) return;
+  if (!force && !pendingUpdate.mandatory && isUpdateSnoozed(pendingUpdate.version)) return;
+  if (force) clearSnooze();
   beforeDialog();
   dialog
     .showMessageBox(win, {
