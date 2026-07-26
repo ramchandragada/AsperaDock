@@ -4,6 +4,9 @@ out
 dist
 .DS_Store
 *.log
+*.deb
+*.rpm
+*.AppImage
 .env
 .env.*
 scripts/preview-bar.html
