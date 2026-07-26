@@ -20,10 +20,11 @@ export function makeProfile(name, partition) {
 }
 
 export const DEFAULTS = {
-  // Layout (Top or Left only)
+  // Top-bar presentation
   appsPosition: 'top',
   hideAppLabels: false,
-  density: 'comfortable', // compact | normal | comfortable
+  density: 'large', // normal | large | huge — spacing / tile width only
+  appIconSize: 'large', // normal | large | huge
   theme: 'system', // system | light | dark | darkest | glossy | mint
   autoHideMenuBar: true,
   /** Let the app bar grow to a second row instead of scrolling. */
@@ -298,6 +299,25 @@ function migrateWarmKeepAlive(settings) {
   // App bar is top-only — drop legacy left/right layout preferences.
   if (next.appsPosition !== 'top') {
     next = { ...next, appsPosition: 'top' };
+  }
+  if (!next.displaySizingV1) {
+    const legacyDensity = String(next.density || 'comfortable');
+    const legacyMap = {
+      compact: { density: 'normal', appIconSize: 'normal' },
+      normal: { density: 'normal', appIconSize: 'normal' },
+      comfortable: { density: 'large', appIconSize: 'large' },
+    };
+    const migrated =
+      legacyMap[legacyDensity] ||
+      {
+        density: ['normal', 'large', 'huge'].includes(legacyDensity)
+          ? legacyDensity
+          : 'large',
+        appIconSize: ['normal', 'large', 'huge'].includes(next.appIconSize)
+          ? next.appIconSize
+          : 'large',
+      };
+    next = { ...next, ...migrated, displaySizingV1: true };
   }
   return next;
 }

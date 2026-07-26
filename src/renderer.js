@@ -268,12 +268,13 @@ function applyChromeClasses() {
   document.body.classList.toggle('wrap-tabs', s.wrapAppTabs !== false);
   document.body.classList.add('layout-top');
   document.body.classList.remove('layout-left', 'layout-right');
-  document.body.classList.toggle('density-compact', s.density === 'compact');
-  document.body.classList.toggle('density-normal', s.density === 'normal');
-  document.body.classList.toggle(
-    'density-comfortable',
-    s.density !== 'compact' && s.density !== 'normal',
-  );
+  for (const size of ['normal', 'large', 'huge']) {
+    document.body.classList.toggle(`density-${size}`, (s.density || 'large') === size);
+    document.body.classList.toggle(
+      `icon-size-${size}`,
+      (s.appIconSize || 'large') === size,
+    );
+  }
   document.body.classList.toggle('hide-labels', !!s.hideAppLabels);
   document.body.classList.toggle('is-empty', !(state.services || []).length);
 }
@@ -629,7 +630,8 @@ function fillSettingsForm() {
   };
 
   set('set-theme', s.theme || 'system');
-  set('set-density', s.density || 'comfortable');
+  set('set-density', s.density || 'large');
+  set('set-app-icon-size', s.appIconSize || 'large');
   set('set-hide-labels', s.hideAppLabels);
   set('set-wrap-tabs', s.wrapAppTabs !== false);
   set('set-auto-hide-menu', s.autoHideMenuBar !== false);
@@ -686,6 +688,7 @@ function readSettingsForm() {
   const patch = {
     theme: val('set-theme'),
     density: val('set-density'),
+    appIconSize: val('set-app-icon-size'),
     appsPosition: 'top',
     hideAppLabels: checked('set-hide-labels'),
     wrapAppTabs: checked('set-wrap-tabs'),

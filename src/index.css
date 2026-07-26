@@ -16,7 +16,9 @@
   --shadow: 0 8px 28px rgba(15, 23, 42, 0.08);
   --app-icon: 54px;
   --app-label-size: 12px;
-  --app-tab-min: 78px;
+  --app-tab-min: 104px;
+  --apps-gap: 10px;
+  --app-tab-pad-x: 12px;
   --app-accent: #64748b;
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   font-family: "Segoe UI Variable", "Segoe UI", "SF Pro Display", "Ubuntu", system-ui, sans-serif;
@@ -36,26 +38,44 @@ body.theme-dark {
   --shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
 }
 
-body.density-compact {
-  --top-bar: 78px;
-  --left-bar: 78px;
-  --app-icon: 42px;
-  --app-label-size: 11px;
-  --app-tab-min: 64px;
+body.density-normal {
+  --app-tab-min: 86px;
+  --apps-gap: 6px;
+  --app-tab-pad-x: 8px;
 }
 
-body.density-normal {
-  --top-bar: 86px;
-  --left-bar: 88px;
-  --app-icon: 48px;
+body.density-large {
+  --app-tab-min: 104px;
+  --apps-gap: 10px;
+  --app-tab-pad-x: 12px;
+}
+
+body.density-huge {
+  --app-tab-min: 122px;
+  --apps-gap: 14px;
+  --app-tab-pad-x: 16px;
+}
+
+body.icon-size-normal {
+  --top-bar: 84px;
+  --app-icon: 44px;
   --app-label-size: 11.5px;
-  --app-tab-min: 72px;
+}
+
+body.icon-size-large {
+  --top-bar: 96px;
+  --app-icon: 54px;
+  --app-label-size: 12px;
+}
+
+body.icon-size-huge {
+  --top-bar: 110px;
+  --app-icon: 64px;
+  --app-label-size: 13px;
 }
 
 body.hide-labels {
-  --top-bar: 74px;
   --left-bar: 64px;
-  --app-tab-min: 68px;
 }
 
 /* Darkest — deeper contrast variant of dark */
@@ -188,7 +208,7 @@ body.layout-top .app-bar-top {
 .apps-track {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--apps-gap);
   overflow-x: auto;
   /* Take all free width so wrap uses the full bar, not half of it. */
   flex: 1 1 auto;
@@ -432,8 +452,8 @@ body.layout-right .app-tab.drop-after {
   height: auto;
   min-height: calc(var(--top-bar) - 14px);
   min-width: var(--app-tab-min);
-  max-width: 104px;
-  padding: 8px 10px 7px;
+  max-width: calc(var(--app-tab-min) + 16px);
+  padding: 8px var(--app-tab-pad-x) 7px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--label);
@@ -447,11 +467,8 @@ body.layout-right .app-tab.drop-after {
     transform 0.16s var(--ease);
 }
 
-body.density-compact .app-tab {
-  gap: 5px;
-  padding: 6px 8px 5px;
+body.density-normal .app-tab {
   border-radius: 14px;
-  max-width: 88px;
 }
 
 .app-tab:hover {
@@ -564,9 +581,14 @@ body.layout-left .app-tab[data-tooltip]:hover::after {
   transition: transform 0.18s var(--ease), box-shadow 0.18s var(--ease);
 }
 
-body.density-compact .app-icon.has-logo svg,
-body.density-compact .app-icon.has-logo .app-logo-img {
+body.icon-size-normal .app-icon.has-logo svg,
+body.icon-size-normal .app-icon.has-logo .app-logo-img {
   border-radius: 12px;
+}
+
+body.icon-size-huge .app-icon.has-logo svg,
+body.icon-size-huge .app-icon.has-logo .app-logo-img {
+  border-radius: 18px;
 }
 
 .app-mark {
@@ -632,7 +654,7 @@ body.hide-labels .app-label {
 }
 
 body.hide-labels .app-tab {
-  padding: 8px 10px;
+  padding: 8px var(--app-tab-pad-x);
   min-width: var(--app-tab-min);
 }
 

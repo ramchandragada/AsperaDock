@@ -2480,6 +2480,10 @@ ipcMain.handle('dock:save-settings', (_e, patch) => {
     );
     next.hardwareAcceleration = false;
   }
+  if (!['normal', 'large', 'huge'].includes(next.density)) next.density = 'large';
+  if (!['normal', 'large', 'huge'].includes(next.appIconSize)) {
+    next.appIconSize = 'large';
+  }
   next.appsPosition = 'top';
   settings = saveSettings(next);
   reconcileWarmSelections();

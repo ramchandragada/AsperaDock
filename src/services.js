@@ -147,10 +147,9 @@ export function defaultInstanceTitle(entry, index) {
 }
 
 /** Layout chrome sizes (px) — must match CSS */
-export const TOP_APP_BAR = 96;
-export const TOP_APP_BAR_NORMAL = 86;
-export const TOP_APP_BAR_COMPACT = 78;
-export const TOP_APP_BAR_NO_LABEL = 74;
+export const TOP_APP_BAR_NORMAL = 84;
+export const TOP_APP_BAR_LARGE = 96;
+export const TOP_APP_BAR_HUGE = 110;
 
 export const INTERNAL_HOSTS = [
   'google.com',
@@ -169,13 +168,13 @@ export const INTERNAL_HOSTS = [
 ];
 
 export function getChromeMetrics(settings) {
-  const density = settings.density || 'comfortable';
-  const hide = settings.hideAppLabels;
-
-  let top = TOP_APP_BAR;
-  if (hide) top = TOP_APP_BAR_NO_LABEL;
-  else if (density === 'compact') top = TOP_APP_BAR_COMPACT;
-  else if (density === 'normal') top = TOP_APP_BAR_NORMAL;
+  const iconSize = settings.appIconSize || 'large';
+  const top =
+    iconSize === 'normal'
+      ? TOP_APP_BAR_NORMAL
+      : iconSize === 'huge'
+        ? TOP_APP_BAR_HUGE
+        : TOP_APP_BAR_LARGE;
   return {
     top,
     left: 0,

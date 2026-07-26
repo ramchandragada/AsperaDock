@@ -9,7 +9,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Aspera Dock</title>
   </head>
-  <body class="theme-light layout-top density-comfortable">
+  <body class="theme-light layout-top density-large icon-size-large">
     <div class="shell">
       <header id="top-bar" class="app-bar app-bar-top">
         <nav id="apps-top" class="apps-track" aria-label="Apps"></nav>
@@ -130,11 +130,20 @@
             </select>
           </label>
           <label class="field">
-            <span>Density</span>
+            <span>App spacing</span>
             <select id="set-density">
-              <option value="compact">Compact icons</option>
-              <option value="normal">Normal icons</option>
-              <option value="comfortable">Large icons</option>
+              <option value="normal">Normal</option>
+              <option value="large">Large</option>
+              <option value="huge">Huge</option>
+            </select>
+            <small>Controls the space and tile width between apps.</small>
+          </label>
+          <label class="field">
+            <span>App icon size</span>
+            <select id="set-app-icon-size">
+              <option value="normal">Normal</option>
+              <option value="large">Large</option>
+              <option value="huge">Huge</option>
             </select>
           </label>
           <label class="check">
