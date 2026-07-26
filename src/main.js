@@ -225,13 +225,11 @@ function applyMemorySwitches() {
     disabled.add('HardwareMediaKeyHandling');
   }
 
-  // Trim Chromium caches / spare processes (helps 8–16 GB machines a lot).
+  // Trim Chromium caches / spare processes. Do not cap V8's old-space heap:
+  // WhatsApp Web can exceed the old 384 MB limit and its renderer then dies.
+  // Low-memory mode controls usage through warm-view limits and hibernation.
   app.commandLine.appendSwitch('disable-features', [...disabled].join(','));
   app.commandLine.appendSwitch('disk-cache-size', String((lean ? 32 : 64) * 1024 * 1024));
-  app.commandLine.appendSwitch(
-    'js-flags',
-    lean ? '--max-old-space-size=192' : '--max-old-space-size=384',
-  );
   if (lean) {
     app.commandLine.appendSwitch('renderer-process-limit', '4');
   }
@@ -1123,6 +1121,40 @@ function createViewForService(service) {
         // ignore
       }
     }
+  });
+
+  // A crashed guest used to remain in `views`, so activating its tab reattached
+  // a dead BrowserView and showed only the dock's grey background. Remove the
+  // dead entry immediately; recreate it now when active, or on the next click
+  // when it crashed in the background.
+  webContents.on('render-process-gone', (_event, details) => {
+    const reason = details?.reason || 'unknown';
+    if (reason === 'clean-exit') return;
+    const current = views.get(service.id);
+    if (!current || current.view !== view) return;
+
+    try {
+      mainWindow?.removeBrowserView(view);
+    } catch {
+      // ignore
+    }
+    views.delete(service.id);
+    unreadCounts.delete(service.id);
+    hibernatedAt.set(service.id, Date.now());
+    broadcastState();
+
+    if (service.id !== activeServiceId) return;
+    setTimeout(() => {
+      if (
+        service.id === activeServiceId &&
+        !locked &&
+        mainWindow &&
+        !mainWindow.isDestroyed() &&
+        getService(service.id)
+      ) {
+        activateService(service.id);
+      }
+    }, 500);
   });
 
   if (cfg.preventBasicAuth) {

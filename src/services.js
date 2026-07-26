@@ -86,7 +86,10 @@ export const APP_CATALOG = [
     appId: 'zoho-one',
     name: 'Zoho One',
     title: 'Zoho One',
-    url: 'https://one.zoho.com',
+    // Enter through Zoho One's service-specific authentication route. Opening
+    // one.zoho.com directly can redirect an existing session to generic Zoho
+    // Accounts instead of returning to the Zoho One application portal.
+    url: 'https://accounts.zoho.com/signin?servicename=ZohoOne&serviceurl=https%3A%2F%2Fone.zoho.com%2F',
     color: '#226DB4',
     logo: 'zoho-one',
   },
