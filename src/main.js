@@ -1966,16 +1966,30 @@ function createWindow() {
     activeServiceId = null;
   });
 
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
-  } else {
-    mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-    );
-  }
+  loadDockChrome();
+
+  // A dead renderer leaves the tab bar blank while app views keep painting —
+  // it looks like the dock turned into a single fullscreen app. Recover instead.
+  mainWindow.webContents.on('did-fail-load', (_event, code, description, url, isMainFrame) => {
+    if (!isMainFrame || code === -3) return;
+    reportError('chrome-load-failed', {
+      message: `Dock chrome failed to load (${code} ${description})`,
+      details: { url },
+    }).catch(() => {});
+    scheduleChromeReload();
+  });
+
+  mainWindow.webContents.on('render-process-gone', () => {
+    scheduleChromeReload();
+  });
 
   mainWindow.webContents.on('did-finish-load', () => {
+    chromeReloadTries = 0;
     broadcastState();
+    if (activeServiceId) {
+      // Reattach after a chrome reload, otherwise the window looks empty.
+      setOverlayOpen(false);
+    }
     if (settings.lockEnabled && settings.lockPasswordHash) {
       locked = true;
       broadcastState();
@@ -2003,6 +2017,36 @@ function createWindow() {
     }
     activateService(first.id);
   });
+}
+
+function loadDockChrome() {
+  if (!mainWindow) return;
+  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
+  } else {
+    mainWindow.loadFile(
+      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
+    );
+  }
+}
+
+let chromeReloadTimer = null;
+let chromeReloadTries = 0;
+
+function scheduleChromeReload() {
+  if (chromeReloadTimer || !mainWindow || mainWindow.isDestroyed()) return;
+  chromeReloadTries += 1;
+  if (chromeReloadTries > 5) {
+    // Give up quietly rather than reload-looping; views still work.
+    return;
+  }
+  chromeReloadTimer = setTimeout(() => {
+    chromeReloadTimer = null;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    // Uncover the chrome so a blank bar cannot hide behind an app view.
+    detachAllViews();
+    loadDockChrome();
+  }, 800 * chromeReloadTries);
 }
 
 function startHibernateTimer() {
