@@ -169,8 +169,16 @@ async function fetchManifest() {
  * @returns {Promise<{available:boolean, version?:string, notes?:string, mandatory?:boolean, error?:string}>}
  */
 export async function checkForUpdates({ silent = true } = {}) {
-  if (settings().autoUpdateEnabled === false) {
+  // An explicit "Check for updates" always runs, even with auto-update off.
+  if (silent && settings().autoUpdateEnabled === false) {
     return { available: false, disabled: true };
+  }
+
+  // Already downloaded and waiting? Re-offer it instead of doing nothing.
+  if (!silent && pendingUpdate && downloadedPath && fs.existsSync(downloadedPath)) {
+    clearSnooze();
+    promptReady();
+    return { available: true, version: pendingUpdate.version, downloaded: true };
   }
   // Dev / npm start uses package.json 0.1.0 forever — don't spam "install .deb" nags.
   if (detectPackaging() === 'dev') {
@@ -236,7 +244,10 @@ export async function checkForUpdates({ silent = true } = {}) {
       return { available: false, version: currentVersion() };
     }
 
-    if (!manifest.mandatory && isUpdateSnoozed(manifest.version)) {
+    // A manual check overrides an earlier "Later".
+    if (!silent) clearSnooze();
+
+    if (silent && !manifest.mandatory && isUpdateSnoozed(manifest.version)) {
       broadcast('snoozed', { version: manifest.version });
       return { available: true, snoozed: true, version: manifest.version };
     }
@@ -553,6 +564,14 @@ function snoozeUpdate(version) {
       JSON.stringify({ version, until: Date.now() + 24 * 60 * 60 * 1000 }),
       'utf8',
     );
+  } catch {
+    // ignore
+  }
+}
+
+function clearSnooze() {
+  try {
+    if (fs.existsSync(snoozePath())) fs.unlinkSync(snoozePath());
   } catch {
     // ignore
   }

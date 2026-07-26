@@ -1246,6 +1246,10 @@ els.chromeMenu.addEventListener('click', (event) => {
   if (action === 'reload') window.asperadock.reloadActive();
   if (action === 'free-ram') window.asperadock.hibernateBackground();
   if (action === 'about') window.asperadock.showAbout?.();
+  if (action === 'check-updates') {
+    setUpdateStatus('Checking for updates…');
+    window.asperadock.updateCheck?.().finally?.(() => refreshUpdateStatus());
+  }
 });
 
 els.settingsSave.addEventListener('click', async () => {
