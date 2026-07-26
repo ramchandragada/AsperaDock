@@ -383,10 +383,43 @@ function relaunchAndExit(execPathOverride) {
   } catch {
     // ignore
   }
+
+  // After a .deb/.rpm replace, process.execPath can still point at the old
+  // unlinked inode — app.relaunch() then "restarts" the dead binary and the
+  // UI never comes back. Always spawn the fresh launcher after we exit.
+  const packaged = app.isPackaged && !process.env.APPIMAGE;
+  if (packaged && !execPathOverride) {
+    const launcher =
+      process.platform === 'linux' && fs.existsSync('/usr/bin/asperadock')
+        ? '/usr/bin/asperadock'
+        : process.execPath;
+    try {
+      const child = spawn(
+        '/bin/sh',
+        ['-c', `sleep 1.5; exec ${shellQuote(launcher)}`],
+        {
+          detached: true,
+          stdio: 'ignore',
+          env: { ...process.env },
+        },
+      );
+      child.unref();
+    } catch (error) {
+      console.error('[updater] delayed relaunch failed', error);
+      app.relaunch();
+    }
+    app.exit(0);
+    return;
+  }
+
   const opts = {};
   if (execPathOverride) opts.execPath = execPathOverride;
   app.relaunch(opts);
   app.exit(0);
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
 /** Install the downloaded artifact and relaunch into the new version. */
@@ -415,7 +448,7 @@ export async function installUpdate({ silentOnFail = false } = {}) {
       if (installed.manual) {
         // Desktop installer / systemd-run kicked off — wait for the package
         // version to catch up, then relaunch. Never claim success early.
-        const applied = await waitForDebVersion(pendingUpdate?.version, 25_000);
+        const applied = await waitForDebVersion(pendingUpdate?.version, 90_000);
         if (!applied) {
           beforeDialog();
           const choice = await dialog.showMessageBox(BrowserWindow.getAllWindows()[0], {
@@ -439,7 +472,7 @@ export async function installUpdate({ silentOnFail = false } = {}) {
             snoozeUpdate(pendingUpdate?.version);
             return { ok: false, manual: true, snoozed: true };
           }
-          const okNow = await waitForDebVersion(pendingUpdate?.version, 5_000);
+          const okNow = await waitForDebVersion(pendingUpdate?.version, 15_000);
           if (!okNow) {
             throw new Error(
               `Version ${pendingUpdate?.version} is not installed yet (still ${readDebPackageVersion() || currentVersion()}). Finish the package install, then try again.`,
@@ -448,6 +481,8 @@ export async function installUpdate({ silentOnFail = false } = {}) {
         }
       }
 
+      // Give dpkg a moment to finish writing files, then restart via /usr/bin/asperadock.
+      await new Promise((r) => setTimeout(r, 800));
       relaunchAndExit();
       return { ok: true };
     }

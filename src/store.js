@@ -56,7 +56,7 @@ export const DEFAULTS = {
 
   // Compatibility (needs relaunch)
   /** Off by default — GPU process often costs 100–200 MB on Linux. */
-  hardwareAcceleration: false,
+  hardwareAcceleration: true,
   hiDpiSupport: true,
   mediaKeys: true,
 
@@ -268,24 +268,34 @@ function migrateProfiles(settings) {
 /**
  * Older builds defaulted to 1 warm view + low-memory mode, which destroys
  * every background tab on switch (WhatsApp reloads every time). One-shot migrate
- * existing installs to Rambox/Ferdium-style keep-alive.
+ * existing installs to high-performance keep-alive (Rambox/Ferdium-style).
  */
 function migrateWarmKeepAlive(settings) {
-  if (settings.warmKeepAliveV1) return settings;
-  const maxWarm = Number(settings.maxWarmViews);
-  const needsFix =
-    settings.lowMemoryMode === true || !Number.isFinite(maxWarm) || maxWarm <= 1;
-  return {
-    ...settings,
-    warmKeepAliveV1: true,
-    ...(needsFix
-      ? {
-          lowMemoryMode: false,
-          maxWarmViews: Math.max(5, maxWarm || 0),
-          hibernateMinutes: Math.max(30, Number(settings.hibernateMinutes) || 0),
-        }
-      : {}),
-  };
+  let next = { ...settings };
+  if (!next.warmKeepAliveV1) {
+    const maxWarm = Number(next.maxWarmViews);
+    const needsFix =
+      next.lowMemoryMode === true || !Number.isFinite(maxWarm) || maxWarm <= 1;
+    next = {
+      ...next,
+      warmKeepAliveV1: true,
+      lowMemoryMode: false,
+      maxWarmViews: Math.max(5, Number.isFinite(maxWarm) ? maxWarm : 5),
+      hibernateMinutes:
+        Math.max(needsFix ? 30 : 0, Number(next.hibernateMinutes) || 0) || 30,
+    };
+  }
+  if (!next.highPerfDefaultV1) {
+    // Second pass: GPU on + low-memory strictly opt-in for earlier installs.
+    next = {
+      ...next,
+      highPerfDefaultV1: true,
+      lowMemoryMode: false,
+      hardwareAcceleration: true,
+      maxWarmViews: Math.max(5, Number(next.maxWarmViews) || 5),
+    };
+  }
+  return next;
 }
 
 export function loadSettings() {

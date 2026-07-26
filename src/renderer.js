@@ -659,9 +659,9 @@ function fillSettingsForm() {
   set('set-proxy-mode', s.proxyMode || 'none');
   set('set-proxy-rules', s.proxyRules || '');
   set('set-proxy-bypass', s.proxyBypass ?? '<local>');
-  set('set-hibernate', s.hibernateMinutes ?? 2);
-  set('set-max-warm', s.maxWarmViews ?? 1);
-  set('set-low-memory', s.lowMemoryMode !== false);
+  set('set-hibernate', s.hibernateMinutes ?? 30);
+  set('set-max-warm', s.maxWarmViews ?? 5);
+  set('set-low-memory', s.lowMemoryMode === true);
   set('set-consumption', s.consumptionMonitor);
   set('set-error-reporting', s.errorReportingEnabled !== false);
   set('set-error-target', s.errorReportTarget || 'sentry');

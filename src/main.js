@@ -206,9 +206,9 @@ let locked = false;
 let overlayOpen = false;
 let settings = loadSettings();
 
-/** Lean defaults for refurbished PCs — one warm tab, fast hibernate. */
+/** High performance is the default — low memory is opt-in only. */
 function isLowMemoryMode() {
-  return settings.lowMemoryMode !== false;
+  return settings.lowMemoryMode === true;
 }
 
 function applyMemorySwitches() {
