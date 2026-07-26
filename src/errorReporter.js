@@ -417,6 +417,7 @@ export function listRecentReports(limit = 20) {
             createdAt: raw.createdAt,
             message: raw.message || raw.reason || raw.error?.message || '',
             uploadedAt: raw.uploadedAt || null,
+            dismissedAt: raw.dismissedAt || null,
             file: full,
           };
         } catch {
@@ -428,6 +429,43 @@ export function listRecentReports(limit = 20) {
   } catch {
     return [];
   }
+}
+
+function markReportDismissed(filePath) {
+  try {
+    const raw = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+    raw.dismissedAt = new Date().toISOString();
+    fs.writeFileSync(filePath, JSON.stringify(raw, null, 2), 'utf8');
+  } catch {
+    // ignore
+  }
+}
+
+/** Mark every recent promptable report as dismissed (stops restart loops). */
+export function dismissAllPendingReports() {
+  for (const report of listRecentReports(40)) {
+    if (report.dismissedAt) continue;
+    if (
+      report.kind === 'unclean-shutdown' ||
+      report.kind === 'freeze' ||
+      report.kind === 'uncaughtException' ||
+      report.kind === 'render-process-gone' ||
+      report.kind === 'unresponsive' ||
+      report.kind === 'update-install'
+    ) {
+      markReportDismissed(report.file);
+    }
+  }
+}
+
+let freezePaused = false;
+export function pauseFreezeWatch() {
+  freezePaused = true;
+  lastHeartbeatAt = Date.now();
+}
+export function resumeFreezeWatch() {
+  freezePaused = false;
+  lastHeartbeatAt = Date.now();
 }
 
 export function openReportsFolder() {
@@ -512,6 +550,10 @@ function startFreezeWatch() {
   freezeTimer = setInterval(() => {
     const settings = settingsProvider?.() || {};
     if (settings.errorReportingEnabled === false) return;
+    if (freezePaused) {
+      lastHeartbeatAt = Date.now();
+      return;
+    }
     const idle = Date.now() - lastHeartbeatAt;
     if (idle < FREEZE_MS) return;
     // Avoid spam: only one freeze report per freeze episode.
@@ -597,36 +639,41 @@ export function watchWebContents(webContents, label = 'unknown') {
 }
 
 export async function showPendingCrashDialog(mainWindow) {
-  const reports = listRecentReports(5).filter(
+  const reports = listRecentReports(10).filter(
     (r) =>
-      r.kind === 'unclean-shutdown' ||
-      r.kind === 'uncaughtException' ||
-      r.kind === 'render-process-gone' ||
-      r.kind === 'freeze',
+      !r.uploadedAt &&
+      !r.dismissedAt &&
+      (r.kind === 'unclean-shutdown' ||
+        r.kind === 'uncaughtException' ||
+        r.kind === 'render-process-gone'),
   );
+  // Freeze/unresponsive prompts were looping every restart (false positives while
+  // native update dialogs blocked the UI). Keep them on disk for Sentry; don't nag.
   if (!reports.length) return;
 
   const latest = reports[0];
-  // Only prompt for reports from the last 24h that weren't uploaded.
   const age = latest.createdAt ? Date.now() - Date.parse(latest.createdAt) : Infinity;
   if (age > 24 * 60 * 60 * 1000) return;
 
+  pauseFreezeWatch();
   const result = await dialog.showMessageBox(mainWindow, {
     type: 'warning',
     title: 'Aspera Dock — error report',
     message: 'Aspera Dock hit a problem last time.',
     detail: `${latest.kind}: ${latest.message || 'No details'}\n\nA report was saved so we can fix it in the next build.`,
     buttons: ['Send report', 'Open reports folder', 'Dismiss'],
-    defaultId: 0,
+    defaultId: 2,
     cancelId: 2,
   });
+  resumeFreezeWatch();
 
   if (result.response === 0) {
     try {
       const raw = JSON.parse(fs.readFileSync(latest.file, 'utf8'));
       const uploaded = await uploadReport(raw, latest.file);
+      markReportDismissed(latest.file);
       if (uploaded.uploaded) {
-        dialog.showMessageBox(mainWindow, {
+        await dialog.showMessageBox(mainWindow, {
           type: 'info',
           title: 'Report sent',
           message: uploaded.issueUrl
@@ -637,21 +684,26 @@ export async function showPendingCrashDialog(mainWindow) {
           buttons: ['OK'],
         });
       } else if (resolveSentryDsn(settingsProvider?.() || {})) {
-        dialog.showMessageBox(mainWindow, {
-          type: 'warning',
-          title: 'Could not send',
-          message: 'Sentry is configured but the report did not send. It is saved locally.',
+        // Sentry may still have received it via capture; don't re-prompt forever.
+        await dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          title: 'Report saved',
+          message: 'The report is saved locally. You will not be asked again for this issue.',
           buttons: ['OK'],
         });
       } else {
-        // No Sentry DSN → open a pre-filled GitHub issue in the browser.
         openReportOnGithub(raw);
       }
     } catch (error) {
       console.error('[errorReporter] send failed', error);
+      markReportDismissed(latest.file);
     }
   } else if (result.response === 1) {
     openReportsFolder();
+    dismissAllPendingReports();
+  } else {
+    // Dismiss — clear the whole pending queue so restart doesn't nag again.
+    dismissAllPendingReports();
   }
 }
 

@@ -52,6 +52,9 @@ import {
   listRecentReports,
   openReportsFolder,
   getReportsDir,
+  pauseFreezeWatch,
+  resumeFreezeWatch,
+  dismissAllPendingReports,
 } from './errorReporter.js';
 import {
   configureUpdater,
@@ -1871,8 +1874,26 @@ function createWindow() {
     // Some Linux panels only refresh the icon after the window is mapped.
     setTimeout(() => applyWindowIcon(mainWindow), 250);
     setTimeout(() => applyWindowIcon(mainWindow), 1000);
-    setTimeout(() => {
-      showPendingCrashDialog(mainWindow).catch(() => {});
+    setTimeout(async () => {
+      // One-time clear of the restart-nag loop caused by freeze + failed update dialogs.
+      try {
+        const nagFlag = path.join(app.getPath('userData'), 'cleared-dialog-nags-v1');
+        if (!fs.existsSync(nagFlag)) {
+          dismissAllPendingReports();
+          fs.writeFileSync(nagFlag, new Date().toISOString(), 'utf8');
+        }
+      } catch {
+        // ignore
+      }
+      setOverlayOpen(true);
+      pauseFreezeWatch();
+      try {
+        await showPendingCrashDialog(mainWindow);
+      } finally {
+        resumeFreezeWatch();
+        mainWindow?.webContents.send('dock:sync-overlay');
+        setOverlayOpen(false);
+      }
     }, 1200);
   });
   mainWindow.on('resize', layoutActiveView);
@@ -2273,6 +2294,19 @@ app.whenReady().then(() => {
   configureUpdater({
     getSettings: () => settings,
     onError: (kind, payload) => reportError(kind, payload).catch(() => {}),
+    onBeforeDialog: () => {
+      setOverlayOpen(true);
+      pauseFreezeWatch();
+    },
+    onAfterDialog: () => {
+      resumeFreezeWatch();
+      // Let the renderer re-assert if a settings/menu overlay is still open.
+      mainWindow?.webContents.send('dock:sync-overlay');
+      setOverlayOpen(false);
+    },
+    onBeforeRelaunch: () => {
+      markCleanShutdown();
+    },
   });
   startAutoUpdate();
   app.on('activate', () => {

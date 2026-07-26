@@ -1291,6 +1291,7 @@ window.asperadock.onFindResult?.((data) => {
   }
   els.findStatus.textContent = `${data.activeMatchOrdinal || 0}/${data.matches}`;
 });
+window.asperadock.onSyncOverlay?.(syncOverlayFromModals);
 
 async function patchMenuFlag(key, checked) {
   if (!menuServiceId) return;

@@ -82,4 +82,9 @@ contextBridge.exposeInMainWorld('asperadock', {
     ipcRenderer.on('dock:find-result', listener);
     return () => ipcRenderer.removeListener('dock:find-result', listener);
   },
+  onSyncOverlay: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('dock:sync-overlay', listener);
+    return () => ipcRenderer.removeListener('dock:sync-overlay', listener);
+  },
 });

@@ -40,6 +40,9 @@ const CHECK_INTERVAL_MIN = 180; // 3h default
 
 let settingsProvider = () => ({});
 let reportError = () => {};
+let beforeDialog = () => {};
+let afterDialog = () => {};
+let beforeRelaunch = () => {};
 let checkTimer = null;
 
 /** @type {{version:string, notes?:string, mandatory?:boolean, file?:object}|null} */
@@ -47,9 +50,18 @@ let pendingUpdate = null;
 let downloadedPath = null;
 let busy = false;
 
-export function configureUpdater({ getSettings, onError } = {}) {
+export function configureUpdater({
+  getSettings,
+  onError,
+  onBeforeDialog,
+  onAfterDialog,
+  onBeforeRelaunch,
+} = {}) {
   if (getSettings) settingsProvider = getSettings;
   if (onError) reportError = onError;
+  if (onBeforeDialog) beforeDialog = onBeforeDialog;
+  if (onAfterDialog) afterDialog = onAfterDialog;
+  if (onBeforeRelaunch) beforeRelaunch = onBeforeRelaunch;
 }
 
 function settings() {
@@ -166,13 +178,16 @@ export async function checkForUpdates({ silent = true } = {}) {
     if (!newer) {
       broadcast('up-to-date', { version: currentVersion() });
       if (!silent) {
-        dialog.showMessageBox(BrowserWindow.getAllWindows()[0], {
-          type: 'info',
-          title: 'Aspera Dock',
-          message: 'You are up to date.',
-          detail: `Version ${currentVersion()} is the latest.`,
-          buttons: ['OK'],
-        });
+        beforeDialog();
+        dialog
+          .showMessageBox(BrowserWindow.getAllWindows()[0], {
+            type: 'info',
+            title: 'Aspera Dock',
+            message: 'You are up to date.',
+            detail: `Version ${currentVersion()} is the latest.`,
+            buttons: ['OK'],
+          })
+          .finally(() => afterDialog());
       }
       return { available: false, version: currentVersion() };
     }
@@ -208,13 +223,16 @@ export async function checkForUpdates({ silent = true } = {}) {
     broadcast('error', { message });
     reportError('update-check', { message });
     if (!silent) {
-      dialog.showMessageBox(BrowserWindow.getAllWindows()[0], {
-        type: 'error',
-        title: 'Update check failed',
-        message: 'Could not check for updates.',
-        detail: message,
-        buttons: ['OK'],
-      });
+      beforeDialog();
+      dialog
+        .showMessageBox(BrowserWindow.getAllWindows()[0], {
+          type: 'error',
+          title: 'Update check failed',
+          message: 'Could not check for updates.',
+          detail: message,
+          buttons: ['OK'],
+        })
+        .finally(() => afterDialog());
     }
     return { available: false, error: message };
   }
@@ -311,6 +329,11 @@ export async function downloadUpdate() {
 }
 
 function relaunchAndExit(execPathOverride) {
+  try {
+    beforeRelaunch();
+  } catch {
+    // ignore
+  }
   const opts = {};
   if (execPathOverride) opts.execPath = execPathOverride;
   app.relaunch(opts);
@@ -352,16 +375,21 @@ export async function installUpdate({ silentOnFail = false } = {}) {
     broadcast('error', { message });
     reportError('update-install', { message });
     if (!silentOnFail) {
-      dialog.showMessageBox(BrowserWindow.getAllWindows()[0], {
-        type: 'error',
-        title: 'Update failed to install',
-        message: 'Aspera Dock could not install the update automatically.',
-        detail: `${message}\n\nThe downloaded file is here:\n${downloadedPath}`,
-        buttons: ['Open folder', 'OK'],
-        defaultId: 1,
-      }).then((r) => {
-        if (r.response === 0) shell.showItemInFolder(downloadedPath);
-      });
+      beforeDialog();
+      dialog
+        .showMessageBox(BrowserWindow.getAllWindows()[0], {
+          type: 'error',
+          title: 'Update failed to install',
+          message: 'Aspera Dock could not install the update automatically.',
+          detail: `${message}\n\nThe downloaded file is here:\n${downloadedPath}\n\nYou can double-click the .deb to install it manually, then reopen Aspera Dock.`,
+          buttons: ['Open folder', 'OK'],
+          defaultId: 1,
+        })
+        .then((r) => {
+          afterDialog();
+          if (r.response === 0) shell.showItemInFolder(downloadedPath);
+        })
+        .catch(() => afterDialog());
     }
     return { ok: false, error: message };
   }
@@ -369,21 +397,64 @@ export async function installUpdate({ silentOnFail = false } = {}) {
 
 function elevatedInstall(kind, filePath) {
   return new Promise((resolve) => {
-    // pkexec shows the graphical polkit password prompt.
-    let cmd;
+    // pkexec requires an absolute path to the binary (relative names → exit 127).
+    const pkexec = '/usr/bin/pkexec';
     let args;
     if (kind === 'deb') {
-      cmd = 'pkexec';
-      args = ['apt-get', 'install', '-y', filePath];
+      // Local .deb: dpkg -i is the reliable path; apt-get may not accept a bare file.
+      args = ['/usr/bin/dpkg', '-i', filePath];
     } else {
-      cmd = 'pkexec';
-      args = ['rpm', '-U', '--force', filePath];
+      args = ['/usr/bin/rpm', '-U', '--force', filePath];
     }
-    const child = spawn(cmd, args, { stdio: 'ignore' });
+    if (!fs.existsSync(pkexec)) {
+      resolve({
+        ok: false,
+        error: 'pkexec not found — open the .deb manually and install with your package manager',
+      });
+      return;
+    }
+    const child = spawn(pkexec, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk);
+    });
     child.on('error', (err) => resolve({ ok: false, error: String(err) }));
     child.on('exit', (code) => {
-      if (code === 0) resolve({ ok: true });
-      else resolve({ ok: false, error: `Installer exited with code ${code}` });
+      if (code === 0) {
+        resolve({ ok: true });
+        return;
+      }
+      // Dependency gaps after dpkg -i: try apt-get -f install.
+      if (kind === 'deb' && code !== 127) {
+        const fix = spawn(
+          pkexec,
+          ['/usr/bin/apt-get', 'install', '-f', '-y'],
+          { stdio: 'ignore' },
+        );
+        fix.on('error', () =>
+          resolve({
+            ok: false,
+            error: `Installer exited with code ${code}${stderr ? `: ${stderr.trim().slice(0, 200)}` : ''}`,
+          }),
+        );
+        fix.on('exit', (fixCode) => {
+          if (fixCode === 0) resolve({ ok: true });
+          else
+            resolve({
+              ok: false,
+              error: `Installer exited with code ${code}${stderr ? `: ${stderr.trim().slice(0, 200)}` : ''}`,
+            });
+        });
+        return;
+      }
+      const hint =
+        code === 127
+          ? ' (command not found — install policykit-1 / use absolute package tools)'
+          : '';
+      resolve({
+        ok: false,
+        error: `Installer exited with code ${code}${hint}${stderr ? `: ${stderr.trim().slice(0, 200)}` : ''}`,
+      });
     });
   });
 }
@@ -391,6 +462,7 @@ function elevatedInstall(kind, filePath) {
 function promptAvailable() {
   const win = BrowserWindow.getAllWindows()[0];
   if (!win || !pendingUpdate) return;
+  beforeDialog();
   dialog
     .showMessageBox(win, {
       type: 'info',
@@ -402,13 +474,16 @@ function promptAvailable() {
       cancelId: 1,
     })
     .then((r) => {
+      afterDialog();
       if (r.response === 0) downloadUpdate();
-    });
+    })
+    .catch(() => afterDialog());
 }
 
 function promptReady() {
   const win = BrowserWindow.getAllWindows()[0];
   if (!win || !pendingUpdate) return;
+  beforeDialog();
   dialog
     .showMessageBox(win, {
       type: 'info',
@@ -424,8 +499,10 @@ function promptReady() {
       cancelId: pendingUpdate.mandatory ? 0 : 1,
     })
     .then((r) => {
+      afterDialog();
       if (r.response === 0) installUpdate();
-    });
+    })
+    .catch(() => afterDialog());
 }
 
 /** Called from before-quit: silently apply a downloaded update if configured. */
