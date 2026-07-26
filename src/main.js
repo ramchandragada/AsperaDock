@@ -186,6 +186,9 @@ let quitting = false;
 
 /** @type {Map<string, { view: BrowserView, lastUsed: number }>} */
 const views = new Map();
+/** Last good in-app URL per service — used when recreating after hibernate/crash. */
+/** @type {Map<string, string>} */
+const lastGoodUrls = new Map();
 /** When a background app was hibernated — used for auto-wake. */
 /** @type {Map<string, number>} */
 const hibernatedAt = new Map();
@@ -624,6 +627,7 @@ function removeService(id) {
 
   hibernateService(id);
   unreadCounts.delete(id);
+  lastGoodUrls.delete(id);
 
   const instances = (settings.serviceInstances || []).filter((i) => i.id !== id);
   const serviceOrder = (settings.serviceOrder || []).filter((x) => x !== id);
@@ -1169,6 +1173,20 @@ function createViewForService(service) {
     });
   }
 
+  webContents.on('did-navigate', (_event, url) => {
+    rememberGoodUrl(service.id, url);
+  });
+  webContents.on('did-navigate-in-page', (_event, url) => {
+    rememberGoodUrl(service.id, url);
+  });
+  webContents.on('did-finish-load', () => {
+    try {
+      rememberGoodUrl(service.id, webContents.getURL());
+    } catch {
+      // ignore
+    }
+  });
+
   attachShortcuts(webContents);
   webContents.on('found-in-page', (_event, result) => {
     mainWindow?.webContents.send('dock:find-result', {
@@ -1176,7 +1194,7 @@ function createViewForService(service) {
       matches: result.matches,
     });
   });
-  webContents.loadURL(service.url);
+  webContents.loadURL(startUrlForService(service));
 
   const zoom = Number(cfg.zoomFactor);
   if (Number.isFinite(zoom) && zoom > 0) {
@@ -1205,7 +1223,33 @@ function hibernateService(id) {
   hibernatedAt.set(id, Date.now());
 }
 
-/** WhatsApp / Arattai etc. — stay loaded across tab switches (Rambox-style). */
+/** True for Zoho/Google login and MFA pages — never restore these as "home". */
+function isAuthOrLoginUrl(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    const pathName = u.pathname.toLowerCase();
+    if (host.startsWith('accounts.')) return true;
+    if (/\/signin|\/login|\/logout|\/oauth/i.test(pathName)) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/** Prefer the last in-app page; never cold-start on a login/QR screen. */
+function startUrlForService(service) {
+  const last = lastGoodUrls.get(service.id);
+  if (last && !isAuthOrLoginUrl(last)) return last;
+  return service.url;
+}
+
+function rememberGoodUrl(serviceId, url) {
+  if (!url || !String(url).startsWith('http') || isAuthOrLoginUrl(url)) return;
+  lastGoodUrls.set(serviceId, url);
+}
+
+/** WhatsApp / Arattai etc. — prefer keeping loaded across tab switches. */
 function isKeepWarmService(id) {
   const service = getService(id);
   if (!service) return false;
@@ -1224,17 +1268,20 @@ function softWakeService(id) {
 }
 
 function enforceWarmLimit() {
-  // Never drop keepWarm messaging apps — over-budget only hibernates mail/custom.
+  // Hard cap memory: prefer dropping mail/custom first, then least-recent
+  // keepWarm messaging apps. Never leaving keepWarm forever unbounded RAM
+  // (3× WhatsApp Web alone can exceed 5 GB).
   const evictable = [...views.entries()]
-    .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
-    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    .filter(([id]) => id !== activeServiceId)
+    .sort((a, b) => {
+      const ka = isKeepWarmService(a[0]) ? 1 : 0;
+      const kb = isKeepWarmService(b[0]) ? 1 : 0;
+      if (ka !== kb) return ka - kb;
+      return a[1].lastUsed - b[1].lastUsed;
+    });
 
   const budget = Math.max(0, maxWarm() - 1);
-  const keepWarmBackground = [...views.keys()].filter(
-    (id) => id !== activeServiceId && isKeepWarmService(id),
-  ).length;
-  const nonKeepBudget = Math.max(0, budget - keepWarmBackground);
-  while (evictable.length > nonKeepBudget) {
+  while (evictable.length > budget) {
     const [id] = evictable.shift();
     hibernateService(id);
   }

@@ -86,10 +86,10 @@ export const APP_CATALOG = [
     appId: 'zoho-one',
     name: 'Zoho One',
     title: 'Zoho One',
-    // Enter through Zoho One's service-specific authentication route. Opening
-    // one.zoho.com directly can redirect an existing session to generic Zoho
-    // Accounts instead of returning to the Zoho One application portal.
-    url: 'https://accounts.zoho.com/signin?servicename=ZohoOne&serviceurl=https%3A%2F%2Fone.zoho.com%2F',
+    // Portal URL — cookies restore the session after hibernate/crash recreate.
+    // Do NOT use accounts.zoho.com/signin here: every view recreate would show
+    // the OneAuth QR page and look like a sign-out.
+    url: 'https://one.zoho.com/',
     color: '#226DB4',
     logo: 'zoho-one',
   },

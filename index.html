@@ -263,12 +263,12 @@
           <label class="field">
             <span>Hibernate after (minutes)</span>
             <input id="set-hibernate" type="number" min="1" max="120" />
-            <p class="hint-text">Idle background apps only. WhatsApp / Arattai stay loaded while you switch tabs.</p>
+            <p class="hint-text">Idle background apps unload after this. Messaging apps stay longer, but Max warm apps still caps RAM.</p>
           </label>
           <label class="field">
             <span>Max warm apps in RAM</span>
             <input id="set-max-warm" type="number" min="1" max="10" />
-            <p class="hint-text">How many apps stay loaded when you switch. Use 5+ for multiple WhatsApp accounts (like Rambox/Ferdium).</p>
+            <p class="hint-text">Hard cap on apps kept in memory. 3 WhatsApp tabs alone can use several GB — try 3–4 if RAM climbs past ~4 GB.</p>
           </label>
           <label class="switch-row">
             <input id="set-consumption" type="checkbox" />
