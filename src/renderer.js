@@ -299,6 +299,7 @@ function makeAppTab(service, index) {
   btn.setAttribute('role', 'button');
   btn.tabIndex = 0;
   btn.dataset.id = service.id;
+  btn.style.setProperty('--app-accent', service.color || '#64748b');
   btn.dataset.tooltip = service.title || service.name;
   btn.setAttribute(
     'aria-label',

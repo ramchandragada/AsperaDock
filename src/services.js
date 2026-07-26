@@ -147,10 +147,10 @@ export function defaultInstanceTitle(entry, index) {
 }
 
 /** Layout chrome sizes (px) — must match CSS */
-export const TOP_APP_BAR = 62;
-export const TOP_APP_BAR_NORMAL = 58;
-export const TOP_APP_BAR_COMPACT = 52;
-export const TOP_APP_BAR_NO_LABEL = 54;
+export const TOP_APP_BAR = 96;
+export const TOP_APP_BAR_NORMAL = 86;
+export const TOP_APP_BAR_COMPACT = 78;
+export const TOP_APP_BAR_NO_LABEL = 74;
 
 export const INTERNAL_HOSTS = [
   'google.com',
