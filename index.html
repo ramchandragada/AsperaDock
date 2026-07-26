@@ -17,7 +17,6 @@
         <div class="chrome-spacer"></div>
         <div class="chrome-actions">
           <button id="downloads-btn" type="button" class="icon-btn" title="Open Downloads folder" aria-label="Open Downloads folder"></button>
-          <button id="layout-btn" type="button" class="icon-btn" title="Move app bar"></button>
           <button id="search-btn" type="button" class="icon-btn" title="Quick search (Ctrl+/)"></button>
           <button id="focus-btn" type="button" class="icon-btn" title="Focus mode — Ctrl+Shift+D"></button>
           <button id="mute-btn" type="button" class="icon-btn" title="Mute — Ctrl+Shift+M"></button>
@@ -78,7 +77,6 @@
       </header>
 
       <div class="body-row">
-        <nav id="apps-left" class="app-bar app-bar-left" aria-label="Apps"></nav>
         <main id="content-slot" class="content-slot">
           <div id="empty-state" class="empty-state hidden">
             <div class="empty-card">
@@ -139,20 +137,10 @@
               <option value="comfortable">Comfortable</option>
             </select>
           </label>
-          <div class="field-row">
-            <label class="field grow">
-              <span>Apps position</span>
-              <select id="set-apps-position">
-                <option value="top">Top</option>
-                <option value="left">Left</option>
-                <option value="right">Right</option>
-              </select>
-            </label>
-            <label class="check inline-check">
-              <input id="set-hide-labels" type="checkbox" />
-              Hide apps labels
-            </label>
-          </div>
+          <label class="check">
+            <input id="set-hide-labels" type="checkbox" />
+            Hide apps labels
+          </label>
           <label class="switch-row">
             <input id="set-wrap-tabs" type="checkbox" />
             <span>Wrap apps onto a second row instead of scrolling</span>

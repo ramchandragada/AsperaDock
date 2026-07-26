@@ -3,7 +3,7 @@
  * Limits: max 10 apps total, up to 10 of the same app, tab names ≤ 10 chars.
  * Each instance is bound to a Profile (Electron session partition),
  * so multiple WhatsApp / Arattai / Gmail accounts stay signed in side by side.
- * The entire app bar can sit on Top or Left — not per-app.
+ * The app bar is fixed at the top of the window.
  */
 
 export const MAX_INSTANCES_PER_APP = 10;
@@ -151,11 +151,6 @@ export const TOP_APP_BAR = 62;
 export const TOP_APP_BAR_NORMAL = 58;
 export const TOP_APP_BAR_COMPACT = 52;
 export const TOP_APP_BAR_NO_LABEL = 54;
-export const LEFT_APP_BAR = 96;
-export const LEFT_APP_BAR_NORMAL = 88;
-export const LEFT_APP_BAR_COMPACT = 78;
-export const LEFT_APP_BAR_NO_LABEL = 64;
-export const TOOL_STRIP = 58;
 
 export const INTERNAL_HOSTS = [
   'google.com',
@@ -176,22 +171,6 @@ export const INTERNAL_HOSTS = [
 export function getChromeMetrics(settings) {
   const density = settings.density || 'comfortable';
   const hide = settings.hideAppLabels;
-  const side = settings.appsPosition === 'left' || settings.appsPosition === 'right';
-
-  if (side) {
-    let apps = LEFT_APP_BAR;
-    if (hide) apps = LEFT_APP_BAR_NO_LABEL;
-    else if (density === 'compact') apps = LEFT_APP_BAR_COMPACT;
-    else if (density === 'normal') apps = LEFT_APP_BAR_NORMAL;
-    const onLeft = settings.appsPosition === 'left';
-    return {
-      top: TOOL_STRIP,
-      left: onLeft ? apps : 0,
-      right: onLeft ? 0 : apps,
-      appsWidth: apps,
-      appsHeight: TOOL_STRIP,
-    };
-  }
 
   let top = TOP_APP_BAR;
   if (hide) top = TOP_APP_BAR_NO_LABEL;

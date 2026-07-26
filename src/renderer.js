@@ -17,7 +17,6 @@ import('@sentry/electron/renderer')
 
 const els = {
   appsTop: document.getElementById('apps-top'),
-  appsLeft: document.getElementById('apps-left'),
   addAppBtn: document.getElementById('add-app-btn'),
   emptyState: document.getElementById('empty-state'),
   emptyAddBtn: document.getElementById('empty-add-btn'),
@@ -29,7 +28,6 @@ const els = {
   chromeMenu: document.getElementById('app-chrome-menu'),
   downloadsBtn: document.getElementById('downloads-btn'),
   searchBtn: document.getElementById('search-btn'),
-  layoutBtn: document.getElementById('layout-btn'),
   globalBadge: document.getElementById('global-badge'),
   notifBtn: document.getElementById('notif-btn'),
   notifCenter: document.getElementById('notif-center'),
@@ -134,9 +132,6 @@ let dragDidMove = false;
 let dropTargetId = null;
 let dropPlace = 'before';
 
-const SIDE_POSITIONS = ['left', 'right'];
-const POSITION_CYCLE = ['top', 'left', 'right'];
-
 function clearDropMarkers() {
   document.querySelectorAll('.app-tab.drop-before, .app-tab.drop-after').forEach((el) => {
     el.classList.remove('drop-before', 'drop-after');
@@ -183,16 +178,8 @@ function bindAppTabDrag(btn, service) {
     event.dataTransfer.dropEffect = 'move';
     dragDidMove = true;
     const rect = btn.getBoundingClientRect();
-    const side =
-      state.settings?.appsPosition === 'left' ||
-      state.settings?.appsPosition === 'right';
-    const place = side
-      ? event.clientY < rect.top + rect.height / 2
-        ? 'before'
-        : 'after'
-      : event.clientX < rect.left + rect.width / 2
-        ? 'before'
-        : 'after';
+    const place =
+      event.clientX < rect.left + rect.width / 2 ? 'before' : 'after';
     clearDropMarkers();
     btn.classList.add(place === 'before' ? 'drop-before' : 'drop-after');
     dropTargetId = service.id;
@@ -222,7 +209,6 @@ function paintToolbarIcons() {
   els.searchBtn.innerHTML = icon('search');
   els.focusBtn.innerHTML = icon('focus');
   els.menuBtn.innerHTML = asperaAppIconSvg(22);
-  els.layoutBtn.innerHTML = icon('layout-left');
   els.addAppBtn.innerHTML = icon('plus');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
   els.appMenuEdit.innerHTML = icon('settings');
@@ -280,12 +266,8 @@ function applyChromeClasses() {
   document.body.classList.toggle('theme-dark', DARK_THEMES.includes(theme));
   document.body.classList.toggle('theme-light', !DARK_THEMES.includes(theme));
   document.body.classList.toggle('wrap-tabs', s.wrapAppTabs !== false);
-  document.body.classList.toggle(
-    'layout-top',
-    !SIDE_POSITIONS.includes(s.appsPosition),
-  );
-  document.body.classList.toggle('layout-left', s.appsPosition === 'left');
-  document.body.classList.toggle('layout-right', s.appsPosition === 'right');
+  document.body.classList.add('layout-top');
+  document.body.classList.remove('layout-left', 'layout-right');
   document.body.classList.toggle('density-compact', s.density === 'compact');
   document.body.classList.toggle('density-normal', s.density === 'normal');
   document.body.classList.toggle(
@@ -419,21 +401,9 @@ function makeAppTab(service, index) {
 function renderApps() {
   const list = state.services || [];
   els.appsTop.innerHTML = '';
-  els.appsLeft.innerHTML = '';
   list.forEach((service, index) => {
     els.appsTop.appendChild(makeAppTab(service, index));
-    els.appsLeft.appendChild(makeAppTab(service, index));
   });
-
-  if (SIDE_POSITIONS.includes(state.settings?.appsPosition)) {
-    const addLeft = document.createElement('button');
-    addLeft.type = 'button';
-    addLeft.className = 'icon-btn add-app-btn add-app-left';
-    addLeft.title = 'Add app';
-    addLeft.innerHTML = icon('plus');
-    addLeft.addEventListener('click', openAppsSettings);
-    els.appsLeft.appendChild(addLeft);
-  }
 }
 
 function renderEmptyState() {
@@ -488,20 +458,6 @@ function renderChromeActions() {
   } else {
     els.globalBadge.classList.add('hidden');
   }
-
-  const pos = s.appsPosition || 'top';
-  const icons = {
-    top: 'layout-left',
-    left: 'layout-right',
-    right: 'layout-top',
-  };
-  const titles = {
-    top: 'Move app bar to left',
-    left: 'Move app bar to right',
-    right: 'Move app bar to top',
-  };
-  els.layoutBtn.innerHTML = icon(icons[pos] || 'layout-left');
-  els.layoutBtn.title = titles[pos] || 'Move app bar';
 }
 
 function relativeTime(at) {
@@ -576,13 +532,11 @@ function renderNotificationCenter() {
 
 /** Report measured chrome size so the BrowserView never overlaps wrapped rows. */
 function reportChromeSize() {
-  const pos = state.settings?.appsPosition || 'top';
-  const sideWidth = els.appsLeft.getBoundingClientRect().width;
   const topHeight = els.topBar.getBoundingClientRect().height;
   window.asperadock.setChromeSize?.({
     top: Math.round(topHeight),
-    left: pos === 'left' ? Math.round(sideWidth) : 0,
-    right: pos === 'right' ? Math.round(sideWidth) : 0,
+    left: 0,
+    right: 0,
   });
 }
 
@@ -675,7 +629,6 @@ function fillSettingsForm() {
 
   set('set-theme', s.theme || 'system');
   set('set-density', s.density || 'comfortable');
-  set('set-apps-position', s.appsPosition || 'top');
   set('set-hide-labels', s.hideAppLabels);
   set('set-wrap-tabs', s.wrapAppTabs !== false);
   set('set-auto-hide-menu', s.autoHideMenuBar !== false);
@@ -732,7 +685,7 @@ function readSettingsForm() {
   const patch = {
     theme: val('set-theme'),
     density: val('set-density'),
-    appsPosition: val('set-apps-position'),
+    appsPosition: 'top',
     hideAppLabels: checked('set-hide-labels'),
     wrapAppTabs: checked('set-wrap-tabs'),
     autoHideMenuBar: checked('set-auto-hide-menu'),
@@ -1357,12 +1310,6 @@ els.notifClear.addEventListener('click', async () => {
 });
 els.notifReadAll.addEventListener('click', async () => {
   await window.asperadock.markAllRead?.();
-});
-els.layoutBtn.addEventListener('click', async () => {
-  const current = state.settings?.appsPosition || 'top';
-  const index = POSITION_CYCLE.indexOf(current);
-  const next = POSITION_CYCLE[(index + 1) % POSITION_CYCLE.length];
-  await window.asperadock.saveSettings({ appsPosition: next });
 });
 
 window.addEventListener('resize', () => requestAnimationFrame(reportChromeSize));

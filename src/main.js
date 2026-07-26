@@ -2480,6 +2480,7 @@ ipcMain.handle('dock:save-settings', (_e, patch) => {
     );
     next.hardwareAcceleration = false;
   }
+  next.appsPosition = 'top';
   settings = saveSettings(next);
   reconcileWarmSelections();
   enforceWarmLimit();

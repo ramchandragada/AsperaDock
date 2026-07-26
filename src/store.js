@@ -295,6 +295,10 @@ function migrateWarmKeepAlive(settings) {
       maxWarmViews: Math.max(5, Number(next.maxWarmViews) || 5),
     };
   }
+  // App bar is top-only — drop legacy left/right layout preferences.
+  if (next.appsPosition !== 'top') {
+    next = { ...next, appsPosition: 'top' };
+  }
   return next;
 }
 
