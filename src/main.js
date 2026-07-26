@@ -2353,6 +2353,16 @@ ipcMain.handle('dock:pick-download-dir', async () => {
   if (result.canceled || !result.filePaths[0]) return { path: null };
   return { path: result.filePaths[0] };
 });
+ipcMain.handle('dock:open-downloads', async () => {
+  const downloadDir = String(settings.downloadPath || '').trim() || app.getPath('downloads');
+  try {
+    fs.mkdirSync(downloadDir, { recursive: true });
+    const error = await shell.openPath(downloadDir);
+    return { ok: !error, path: downloadDir, error: error || undefined };
+  } catch (error) {
+    return { ok: false, path: downloadDir, error: String(error?.message || error) };
+  }
+});
 
 function watchSystemIdle() {
   const lockIfEnabled = () => {

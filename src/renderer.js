@@ -27,6 +27,7 @@ const els = {
   reloadBtn: null,
   menuBtn: document.getElementById('menu-btn'),
   chromeMenu: document.getElementById('app-chrome-menu'),
+  downloadsBtn: document.getElementById('downloads-btn'),
   searchBtn: document.getElementById('search-btn'),
   layoutBtn: document.getElementById('layout-btn'),
   globalBadge: document.getElementById('global-badge'),
@@ -217,6 +218,7 @@ function bindAppTabDrag(btn, service) {
 }
 
 function paintToolbarIcons() {
+  els.downloadsBtn.innerHTML = icon('download');
   els.searchBtn.innerHTML = icon('search');
   els.focusBtn.innerHTML = icon('focus');
   els.menuBtn.innerHTML = asperaAppIconSvg(22);
@@ -429,6 +431,10 @@ function paintAppVersion() {
 
 function renderChromeActions() {
   const s = state.settings || {};
+  const folder = String(s.downloadPath || '').trim();
+  els.downloadsBtn.title = folder
+    ? `Open Downloads folder\n${folder}`
+    : 'Open Downloads folder';
   els.focusBtn.classList.toggle('on', !!s.focusMode);
   els.focusBtn.title = s.focusMode
     ? 'Focus on — Ctrl+Shift+D'
@@ -1213,6 +1219,12 @@ function render() {
 
 els.focusBtn.addEventListener('click', () => window.asperadock.toggleFocus());
 els.muteBtn.addEventListener('click', () => window.asperadock.toggleMute());
+els.downloadsBtn.addEventListener('click', async () => {
+  const result = await window.asperadock.openDownloads?.();
+  if (result && !result.ok) {
+    alert(`Could not open Downloads folder.\n${result.error || result.path || ''}`);
+  }
+});
 els.menuBtn.addEventListener('click', (event) => {
   event.stopPropagation();
   toggleChromeMenu();

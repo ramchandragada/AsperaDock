@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('asperadock', {
   clearSession: (id) => ipcRenderer.invoke('dock:clear-session', id),
   reorder: (order) => ipcRenderer.invoke('dock:reorder', order),
   pickDownloadDir: () => ipcRenderer.invoke('dock:pick-download-dir'),
+  openDownloads: () => ipcRenderer.invoke('dock:open-downloads'),
   setOverlay: (open) => ipcRenderer.invoke('dock:set-overlay', open),
   setChromeSize: (size) => ipcRenderer.invoke('dock:set-chrome-size', size),
   clearNotifications: () => ipcRenderer.invoke('dock:clear-notifications'),

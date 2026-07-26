@@ -1,0 +1,16 @@
+---
+description: Always bump package.json version when shipping app changes
+alwaysApply: true
+---
+
+# Version bump on every change set
+
+Whenever you make user-facing or packaged Aspera Dock changes that will be committed/pushed:
+
+1. Check the latest GitHub release (`gh release list --limit 1`) and/or installed version.
+2. Bump `package.json` `version` to the **next patch** (or minor/major if the change warrants it) **before or with** the commit.
+3. Include the version bump in the same commit as the feature/fix when practical.
+4. Mention the new version in the commit message (e.g. `Add downloads button (v0.1.9).`).
+5. Push so CI can publish that release (Deploy workflow may also stamp from the latest tag — keep `package.json` ahead of or equal to the next expected release).
+
+Do **not** leave `package.json` stuck on an old base version while shipping new builds.
