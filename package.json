@@ -1,7 +1,7 @@
 {
   "name": "asperadock",
   "productName": "Aspera Dock",
-  "version": "0.1.17",
+  "version": "0.1.18",
   "description": "Lightweight company workspace for multiple WhatsApp, Arattai, Google Workspace, and Zoho apps",
   "main": ".vite/build/main.js",
   "private": true,

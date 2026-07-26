@@ -86,10 +86,11 @@ export const APP_CATALOG = [
     appId: 'zoho-one',
     name: 'Zoho One',
     title: 'Zoho One',
-    // Portal URL — cookies restore the session after hibernate/crash recreate.
-    // Do NOT use accounts.zoho.com/signin here: every view recreate would show
-    // the OneAuth QR page and look like a sign-out.
-    url: 'https://one.zoho.com/',
+    // India DC portal. Unauthenticated users are redirected to
+    // accounts.zoho.in/signin?servicename=ZohoOne&signupurl=…
+    // Using the portal (not the sign-in page) as home so hibernate/crash
+    // recreate restores the session instead of showing OneAuth QR again.
+    url: 'https://one.zoho.in/',
     color: '#226DB4',
     logo: 'zoho-one',
   },
