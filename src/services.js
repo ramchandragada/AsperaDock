@@ -10,7 +10,7 @@ export const MAX_INSTANCES_PER_APP = 10;
 export const MAX_APPS_TOTAL = 10;
 export const MAX_APP_NAME_LENGTH = 10;
 /** Only the active tab stays warm by default — critical for 8–16 GB PCs. */
-export const MAX_WARM_VIEWS_DEFAULT = 1;
+export const MAX_WARM_VIEWS_DEFAULT = 5;
 
 /** Synthetic catalog id for user-defined URLs (intranet, HRMS, Jira, …). */
 export const CUSTOM_APP_ID = 'custom';

@@ -253,19 +253,19 @@
           <label class="switch-row">
             <input id="set-low-memory" type="checkbox" />
             <span>
-              Low memory mode (recommended for older PCs)
-              <small>Only 1 app stays in RAM; hibernates faster; GPU off. Needs relaunch.</small>
+              Low memory mode (for very low-RAM PCs)
+              <small>Fewer warm apps (still ≥2), faster hibernate, GPU off. Needs relaunch. Turn off for instant tab switching.</small>
             </span>
           </label>
           <label class="field">
             <span>Hibernate after (minutes)</span>
             <input id="set-hibernate" type="number" min="1" max="120" />
-            <p class="hint-text">Global default. Per-app override is in right-click → Edit.</p>
+            <p class="hint-text">Idle background apps only. WhatsApp / Arattai stay loaded while you switch tabs.</p>
           </label>
           <label class="field">
             <span>Max warm apps in RAM</span>
-            <input id="set-max-warm" type="number" min="1" max="5" />
-            <p class="hint-text">Each warm app uses ~150–400 MB. Keep at 1 on 8–16 GB PCs.</p>
+            <input id="set-max-warm" type="number" min="1" max="10" />
+            <p class="hint-text">How many apps stay loaded when you switch. Use 5+ for multiple WhatsApp accounts (like Rambox/Ferdium).</p>
           </label>
           <label class="switch-row">
             <input id="set-consumption" type="checkbox" />

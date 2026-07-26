@@ -110,18 +110,22 @@ export const DEFAULTS = {
 
   /**
    * Lean mode for refurbished / low-RAM PCs:
-   * disables GPU accel, keeps only 1 warm app, hibernates faster.
+   * disables GPU accel, keeps fewer warm apps, hibernates faster.
    * Needs relaunch for hardwareAcceleration.
+   * Off by default — on kills tab switching (apps reload every click).
    */
-  lowMemoryMode: true,
+  lowMemoryMode: false,
 
   // Defaults for apps (overridden per-app via right-click Edit)
   linkHandling: 'block', // block | external
   spellChecker: ['en-US'],
-  /** Hibernate background apps quickly to free RAM. */
-  hibernateMinutes: 2,
-  /** Active tab only — each extra warm BrowserView costs ~150–400 MB. */
-  maxWarmViews: 1,
+  /** Hibernate idle background apps (keepWarm apps like WhatsApp are skipped). */
+  hibernateMinutes: 30,
+  /**
+   * How many apps stay loaded while you switch tabs.
+   * Rambox/Ferdium-style: keep several messaging apps warm so switching is instant.
+   */
+  maxWarmViews: 5,
 
   /** Toggleable global shortcuts */
   shortcuts: {
@@ -261,21 +265,46 @@ function migrateProfiles(settings) {
   return { ...settings, profiles, serviceInstances: instances };
 }
 
+/**
+ * Older builds defaulted to 1 warm view + low-memory mode, which destroys
+ * every background tab on switch (WhatsApp reloads every time). One-shot migrate
+ * existing installs to Rambox/Ferdium-style keep-alive.
+ */
+function migrateWarmKeepAlive(settings) {
+  if (settings.warmKeepAliveV1) return settings;
+  const maxWarm = Number(settings.maxWarmViews);
+  const needsFix =
+    settings.lowMemoryMode === true || !Number.isFinite(maxWarm) || maxWarm <= 1;
+  return {
+    ...settings,
+    warmKeepAliveV1: true,
+    ...(needsFix
+      ? {
+          lowMemoryMode: false,
+          maxWarmViews: Math.max(5, maxWarm || 0),
+          hibernateMinutes: Math.max(30, Number(settings.hibernateMinutes) || 0),
+        }
+      : {}),
+  };
+}
+
 export function loadSettings() {
   if (cache) return cache;
   try {
     const raw = fs.readFileSync(settingsPath(), 'utf8');
     const parsed = JSON.parse(raw);
-    cache = migrateProfiles(
-      dropRetiredApps({
-        ...DEFAULTS,
-        ...parsed,
-        shortcuts: { ...DEFAULTS.shortcuts, ...(parsed.shortcuts || {}) },
-        serviceLabels: parsed.serviceLabels || {},
-        serviceConfigs: parsed.serviceConfigs || {},
-        serviceInstances: parsed.serviceInstances || [],
-        profiles: parsed.profiles,
-      }),
+    cache = migrateWarmKeepAlive(
+      migrateProfiles(
+        dropRetiredApps({
+          ...DEFAULTS,
+          ...parsed,
+          shortcuts: { ...DEFAULTS.shortcuts, ...(parsed.shortcuts || {}) },
+          serviceLabels: parsed.serviceLabels || {},
+          serviceConfigs: parsed.serviceConfigs || {},
+          serviceInstances: parsed.serviceInstances || [],
+          profiles: parsed.profiles,
+        }),
+      ),
     );
     // Persist migration so partitions/profileIds are stable next launch.
     try {

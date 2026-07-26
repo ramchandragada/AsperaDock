@@ -716,7 +716,7 @@ function readSettingsForm() {
     proxyRules: val('set-proxy-rules').trim(),
     proxyBypass: val('set-proxy-bypass').trim() || '<local>',
     hibernateMinutes: Number(val('set-hibernate')) || 2,
-    maxWarmViews: Math.min(5, Math.max(1, Number(val('set-max-warm')) || 1)),
+    maxWarmViews: Math.min(10, Math.max(1, Number(val('set-max-warm')) || 5)),
     lowMemoryMode: checked('set-low-memory'),
     consumptionMonitor: checked('set-consumption'),
     errorReportingEnabled: checked('set-error-reporting'),

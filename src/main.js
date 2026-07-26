@@ -1167,6 +1167,13 @@ function hibernateService(id) {
   hibernatedAt.set(id, Date.now());
 }
 
+/** WhatsApp / Arattai etc. — stay loaded across tab switches (Rambox-style). */
+function isKeepWarmService(id) {
+  const service = getService(id);
+  if (!service) return false;
+  return Boolean(getAppCatalogEntry(service.appId)?.keepWarm);
+}
+
 /** Background wake for autoWakeMinutes — loads without stealing the active tab. */
 function softWakeService(id) {
   if (views.has(id) || locked) return false;
@@ -1181,7 +1188,13 @@ function softWakeService(id) {
 function enforceWarmLimit() {
   const evictable = [...views.entries()]
     .filter(([id]) => id !== activeServiceId)
-    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    .sort((a, b) => {
+      // Drop mail/custom first; keep messaging apps until last resort.
+      const ka = isKeepWarmService(a[0]) ? 1 : 0;
+      const kb = isKeepWarmService(b[0]) ? 1 : 0;
+      if (ka !== kb) return ka - kb;
+      return a[1].lastUsed - b[1].lastUsed;
+    });
 
   const budget = Math.max(0, maxWarm() - 1);
   while (evictable.length > budget) {
@@ -2054,13 +2067,15 @@ function startHibernateTimer() {
     const now = Date.now();
     for (const [id, entry] of views.entries()) {
       if (id === activeServiceId) continue;
+      // Messaging apps stay warm — switching must not reload WhatsApp every time.
+      if (isKeepWarmService(id)) continue;
       const cfg = getAppConfig(id);
       const mins =
         cfg.hibernateMinutes > 0
           ? cfg.hibernateMinutes
           : isLowMemoryMode()
-            ? Math.min(3, Math.max(1, Number(settings.hibernateMinutes) || 2))
-            : Math.max(1, Number(settings.hibernateMinutes) || 2);
+            ? Math.min(10, Math.max(3, Number(settings.hibernateMinutes) || 10))
+            : Math.max(5, Number(settings.hibernateMinutes) || 30);
       if (now - entry.lastUsed >= mins * 60_000) hibernateService(id);
     }
     // Auto wake-up: soft-load hibernated apps after autoWakeMinutes (if warm budget allows).
@@ -2289,11 +2304,12 @@ ipcMain.handle('dock:save-settings', (_e, patch) => {
     next.lockPasswordHash = '';
   }
   // Low-memory mode clamps warm/hibernate and turns GPU off (relaunch needed).
+  // Keep at least 3 warm slots so multi-WhatsApp switching still works.
   if (next.lowMemoryMode === true) {
-    next.maxWarmViews = 1;
+    next.maxWarmViews = Math.min(3, Math.max(2, Number(next.maxWarmViews) || 3));
     next.hibernateMinutes = Math.min(
-      3,
-      Math.max(1, Number(next.hibernateMinutes) || 2),
+      10,
+      Math.max(3, Number(next.hibernateMinutes) || 10),
     );
     next.hardwareAcceleration = false;
   }
