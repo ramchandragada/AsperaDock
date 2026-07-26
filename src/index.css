@@ -361,6 +361,37 @@ body.layout-right .app-tab.drop-after {
   letter-spacing: -0.02em;
 }
 
+.app-version-label {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.app-version-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 9px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: var(--chrome-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.chrome-menu-version {
+  padding: 8px 10px 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
 .empty-card p {
   margin: 0 0 20px;
   color: var(--muted);

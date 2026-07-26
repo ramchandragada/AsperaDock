@@ -887,6 +887,10 @@ function totalUnread() {
   return total;
 }
 
+function dockTitleBase() {
+  return `Aspera Dock ${app.getVersion()}`;
+}
+
 function refreshBadge() {
   const total = totalUnread();
   try {
@@ -901,11 +905,11 @@ function refreshBadge() {
         const svc = getService(activeServiceId);
         mainWindow.setTitle(
           total > 0
-            ? `Aspera Dock — ${svc?.title || svc?.name} (${total})`
-            : `Aspera Dock — ${svc?.title || svc?.name || ''}`,
+            ? `${dockTitleBase()} — ${svc?.title || svc?.name} (${total})`
+            : `${dockTitleBase()} — ${svc?.title || svc?.name || ''}`,
         );
       } else if (dockIsUserFocused()) {
-        mainWindow.setTitle(total > 0 ? `Aspera Dock (${total})` : 'Aspera Dock');
+        mainWindow.setTitle(total > 0 ? `${dockTitleBase()} (${total})` : dockTitleBase());
       }
     }
     // Never flash/raise while the user is in another app unless they opted in —
@@ -1304,6 +1308,7 @@ function currentState() {
       maxNameLength: MAX_APP_NAME_LENGTH,
       totalApps: totalAppCount(),
     },
+    appVersion: app.getVersion(),
     unread: unreadForUi,
     totalUnread: totalUnread(),
     notifications: notificationLog,
@@ -1825,16 +1830,7 @@ function installApplicationMenu() {
         { type: 'separator' },
         {
           label: 'About Aspera Dock',
-          click: () =>
-            dialog.showMessageBox(mainWindow, {
-              type: 'info',
-              title: 'About Aspera Dock',
-              message: `Aspera Dock ${app.getVersion()}`,
-              detail:
-                'Company workspace by Aspera — messaging and business apps in one dock.',
-              buttons: ['OK'],
-              icon: getAppIcon(),
-            }),
+          click: () => showAboutDialog(),
         },
       ],
     },
@@ -1842,6 +1838,42 @@ function installApplicationMenu() {
 
   Menu.setApplicationMenu(menu);
   mainWindow?.setMenu(menu);
+}
+
+function showAboutDialog() {
+  beforeDialogSafe();
+  dialog
+    .showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'About Aspera Dock',
+      message: `Aspera Dock ${app.getVersion()}`,
+      detail:
+        'Company workspace by Aspera — messaging and business apps in one dock.\n\n' +
+        `Electron ${process.versions.electron} · Chrome ${process.versions.chrome}`,
+      buttons: ['OK'],
+      icon: getAppIcon(),
+    })
+    .finally(() => afterDialogSafe());
+}
+
+function beforeDialogSafe() {
+  try {
+    setOverlayOpen(true);
+    pauseFreezeWatch();
+  } catch {
+    // ignore
+  }
+}
+
+function afterDialogSafe() {
+  try {
+    resumeFreezeWatch();
+    mainWindow?.webContents.send('dock:sync-overlay');
+    setOverlayOpen(false);
+    setTimeout(() => layoutActiveView(), 50);
+  } catch {
+    // ignore
+  }
 }
 
 function createWindow() {
@@ -2045,6 +2077,10 @@ ipcMain.handle('dock:open-error-reports', () => {
 });
 
 ipcMain.handle('dock:update-status', () => getUpdateStatus());
+ipcMain.handle('dock:show-about', () => {
+  showAboutDialog();
+  return { version: app.getVersion() };
+});
 ipcMain.handle('dock:update-check', () => checkForUpdates({ silent: false }));
 ipcMain.handle('dock:update-download', () => downloadUpdate());
 ipcMain.handle('dock:update-install', () => installUpdate());

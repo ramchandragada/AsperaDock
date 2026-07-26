@@ -42,6 +42,7 @@ contextBridge.exposeInMainWorld('asperadock', {
   updateCheck: () => ipcRenderer.invoke('dock:update-check'),
   updateDownload: () => ipcRenderer.invoke('dock:update-download'),
   updateInstall: () => ipcRenderer.invoke('dock:update-install'),
+  showAbout: () => ipcRenderer.invoke('dock:show-about'),
   onUpdateEvent: (callback) => {
     const listener = (_event, data) => callback(data);
     ipcRenderer.on('dock:update-event', listener);

@@ -63,6 +63,11 @@
               <button type="button" data-action="add-app" class="chrome-menu-item">
                 <span class="chrome-menu-ico" data-ico="plus"></span> Add app
               </button>
+              <hr />
+              <button type="button" data-action="about" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="info"></span> About
+              </button>
+              <div id="chrome-menu-version" class="chrome-menu-version">Aspera Dock</div>
             </div>
           </div>
         </div>
@@ -75,6 +80,7 @@
             <div class="empty-card">
               <img class="brand-wordmark" id="empty-brand" alt="Aspera" />
               <h1>Aspera Dock</h1>
+              <p id="empty-version" class="app-version-label">Version …</p>
               <p>Add WhatsApp, Arattai, Gmail, Zoho — or any custom URL. Up to 10 apps total. Names max 10 characters.</p>
               <button id="empty-add-btn" type="button" class="primary">Add your first app</button>
             </div>
@@ -97,6 +103,7 @@
         <header class="modal-head">
           <h2><span class="head-ico" id="settings-head-ico"></span> Settings</h2>
           <div>
+            <span id="settings-app-version" class="app-version-chip" title="Installed app version">v…</span>
             <button id="settings-save" type="button" class="primary">Save</button>
             <button id="settings-close" type="button" class="icon-btn">✕</button>
           </div>
@@ -318,6 +325,9 @@
           <button id="open-error-reports" type="button" class="ghost-btn">Open error reports folder</button>
 
           <div class="section-rule"><span>Updates</span></div>
+          <p class="settings-banner" id="settings-version-banner">
+            You are running <strong id="settings-running-version">Aspera Dock</strong>.
+          </p>
           <label class="switch-row">
             <input id="set-auto-update" type="checkbox" />
             <span>

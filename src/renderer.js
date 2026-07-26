@@ -399,6 +399,29 @@ function renderApps() {
 function renderEmptyState() {
   const empty = !(state.services || []).length;
   els.emptyState.classList.toggle('hidden', !empty || state.locked);
+  paintAppVersion();
+}
+
+function paintAppVersion() {
+  const version = state.appVersion || '';
+  const label = version ? `Version ${version}` : '';
+  const short = version ? `v${version}` : '';
+  const full = version ? `Aspera Dock ${version}` : 'Aspera Dock';
+
+  const emptyVer = document.getElementById('empty-version');
+  if (emptyVer) emptyVer.textContent = label || 'Version …';
+
+  const chip = document.getElementById('settings-app-version');
+  if (chip) {
+    chip.textContent = short || 'v…';
+    chip.title = full;
+  }
+
+  const running = document.getElementById('settings-running-version');
+  if (running) running.textContent = full;
+
+  const menuVer = document.getElementById('chrome-menu-version');
+  if (menuVer) menuVer.textContent = full;
 }
 
 function renderChromeActions() {
@@ -1174,6 +1197,7 @@ function render() {
   renderApps();
   renderEmptyState();
   renderChromeActions();
+  paintAppVersion();
   renderLock();
   if (!els.settingsModal.classList.contains('hidden')) {
     renderCatalog();
@@ -1206,6 +1230,7 @@ els.chromeMenu.addEventListener('click', (event) => {
   if (action === 'add-app') openAppsSettings();
   if (action === 'reload') window.asperadock.reloadActive();
   if (action === 'free-ram') window.asperadock.hibernateBackground();
+  if (action === 'about') window.asperadock.showAbout?.();
 });
 
 els.settingsSave.addEventListener('click', async () => {
