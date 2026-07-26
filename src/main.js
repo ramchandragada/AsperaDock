@@ -1040,6 +1040,12 @@ function createViewForService(service) {
   webContents.setWindowOpenHandler(({ url }) => {
     if (linkMode === 'external' || !isInternalUrl(url, service)) {
       shell.openExternal(url);
+      return { action: 'deny' };
+    }
+    // Zoho/Google SSO often returns via window.open. Silently denying those
+    // popups leaves the tab stuck on Accounts profile instead of the app.
+    if (url.startsWith('http')) {
+      webContents.loadURL(url).catch(() => {});
     }
     return { action: 'deny' };
   });
@@ -1218,21 +1224,43 @@ function softWakeService(id) {
 }
 
 function enforceWarmLimit() {
+  // Never drop keepWarm messaging apps — over-budget only hibernates mail/custom.
   const evictable = [...views.entries()]
-    .filter(([id]) => id !== activeServiceId)
-    .sort((a, b) => {
-      // Drop mail/custom first; keep messaging apps until last resort.
-      const ka = isKeepWarmService(a[0]) ? 1 : 0;
-      const kb = isKeepWarmService(b[0]) ? 1 : 0;
-      if (ka !== kb) return ka - kb;
-      return a[1].lastUsed - b[1].lastUsed;
-    });
+    .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
+    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
 
   const budget = Math.max(0, maxWarm() - 1);
-  while (evictable.length > budget) {
+  const keepWarmBackground = [...views.keys()].filter(
+    (id) => id !== activeServiceId && isKeepWarmService(id),
+  ).length;
+  const nonKeepBudget = Math.max(0, budget - keepWarmBackground);
+  while (evictable.length > nonKeepBudget) {
     const [id] = evictable.shift();
     hibernateService(id);
   }
+}
+
+/** Reuse a warm view only when its renderer is still alive. */
+function ensureLiveView(service) {
+  const existing = views.get(service.id);
+  if (existing) {
+    const wc = existing.view?.webContents;
+    if (wc && !wc.isDestroyed()) return existing;
+    try {
+      mainWindow?.removeBrowserView(existing.view);
+    } catch {
+      // ignore
+    }
+    try {
+      if (wc && !wc.isDestroyed()) wc.close();
+    } catch {
+      // ignore
+    }
+    views.delete(service.id);
+    unreadCounts.delete(service.id);
+    hibernatedAt.set(service.id, Date.now());
+  }
+  return createViewForService(service);
 }
 
 function activateService(id) {
@@ -1245,7 +1273,7 @@ function activateService(id) {
   }
 
   detachAllViews();
-  const entry = views.get(id) || createViewForService(service);
+  const entry = ensureLiveView(service);
   entry.lastUsed = Date.now();
   activeServiceId = id;
   settings = saveSettings({ lastActiveServiceId: id });
