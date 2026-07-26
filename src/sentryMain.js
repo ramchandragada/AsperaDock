@@ -4,13 +4,12 @@
  * Preferred error sink when a DSN is configured (Settings or ASPERADOCK_SENTRY_DSN).
  * Native crashes + JS exceptions go to Sentry; we still keep local JSON reports.
  *
- * Load is resilient: a missing/broken Sentry package must never crash the app.
+ * IMPORTANT: use a static import so Vite bundles @sentry into main.js.
+ * Runtime require() fails in the packaged asar (no node_modules + OnlyLoadAppFromAsar).
  */
 
 import { app } from 'electron';
-import { createRequire } from 'node:module';
-
-const require = createRequire(import.meta.url);
+import * as Sentry from '@sentry/electron/main';
 
 /**
  * Aspera Dock Sentry project (org: zarpat, project: asperadock).
@@ -20,19 +19,11 @@ const require = createRequire(import.meta.url);
 export const DEFAULT_SENTRY_DSN =
   'https://dd355d556cdd20608f3659a57817aec4@o4511041705738240.ingest.de.sentry.io/4511797041102928';
 
-let Sentry = null;
 let initialized = false;
-
-try {
-  // Prefer static bundling (vite); fall back to require for tests / unpackaged.
-  Sentry = require('@sentry/electron/main');
-} catch (error) {
-  console.error('[sentry] @sentry/electron/main unavailable — continuing without it', error?.message || error);
-}
 
 function pkgVersion() {
   try {
-    return require('../package.json').version || '0.0.0';
+    return app.getVersion() || '0.0.0';
   } catch {
     return '0.0.0';
   }
@@ -53,7 +44,7 @@ export function resolveSentryDsn(settings = {}) {
  */
 export function initSentryMain(settings = {}) {
   const dsn = resolveSentryDsn(settings);
-  if (!dsn || !Sentry?.init) return false;
+  if (!dsn) return false;
   if (initialized) return true;
 
   try {
@@ -79,7 +70,7 @@ export function isSentryActive() {
 }
 
 export function sentryCaptureError(kind, payload = {}) {
-  if (!initialized || !Sentry) return false;
+  if (!initialized) return false;
   try {
     const message = payload.message || kind;
     const err =
@@ -110,7 +101,7 @@ export function sentryCaptureError(kind, payload = {}) {
 }
 
 export function sentryAddBreadcrumb(message, data) {
-  if (!initialized || !Sentry) return;
+  if (!initialized) return;
   try {
     Sentry.addBreadcrumb({
       category: 'asperadock',

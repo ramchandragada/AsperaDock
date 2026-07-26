@@ -733,7 +733,9 @@ function layoutActiveView() {
     width: Math.max(0, width - m.left - right),
     height: Math.max(0, height - m.top),
   });
-  entry.view.setAutoResize({ width: true, height: true });
+  // Never autoResize — on Linux it expands over the HTML chrome after
+  // dialogs/reattach and looks like a "single app" fullscreen webview.
+  entry.view.setAutoResize({ width: false, height: false, horizontal: false, vertical: false });
 }
 
 function detachAllViews() {
@@ -2303,6 +2305,9 @@ app.whenReady().then(() => {
       // Let the renderer re-assert if a settings/menu overlay is still open.
       mainWindow?.webContents.send('dock:sync-overlay');
       setOverlayOpen(false);
+      // Re-layout after native dialogs — BrowserView can end up fullscreen otherwise.
+      setTimeout(() => layoutActiveView(), 50);
+      setTimeout(() => layoutActiveView(), 250);
     },
     onBeforeRelaunch: () => {
       markCleanShutdown();

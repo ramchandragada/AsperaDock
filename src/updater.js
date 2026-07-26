@@ -11,7 +11,8 @@
  *  - Downloads the matching artifact for this install type (AppImage / deb / rpm),
  *    verifies SHA-256, then installs:
  *      AppImage → overwrite in place + relaunch (fully seamless)
- *      deb/rpm  → elevated install via pkexec + relaunch
+ *      deb/rpm  → systemd-run + pkexec (or xdg-open .deb) + relaunch
+ *                 (never pkexec as a direct Electron child — NO_NEW_PRIVS)
  *      dev/zip  → notify + reveal file (manual)
  *
  * Manifest shape (host anywhere static):
@@ -31,7 +32,7 @@ import { app, dialog, shell, BrowserWindow } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { GITHUB_UPDATE_FEED, GITHUB_SLUG } from './github.js';
 
 /** Default feed: GitHub Releases (no custom server). */
@@ -175,6 +176,31 @@ export async function checkForUpdates({ silent = true } = {}) {
   try {
     const manifest = await fetchManifest();
     const newer = compareVersions(manifest.version, currentVersion()) > 0;
+    const debVer = detectPackaging() === 'deb' ? readDebPackageVersion() : null;
+    // Package already on disk (manual/systemd install) but this process is stale.
+    if (debVer && compareVersions(debVer, manifest.version) >= 0) {
+      if (compareVersions(currentVersion(), manifest.version) < 0) {
+        beforeDialog();
+        dialog
+          .showMessageBox(BrowserWindow.getAllWindows()[0], {
+            type: 'info',
+            title: 'Update installed',
+            message: `Aspera Dock ${debVer} is installed. Restart to use it.`,
+            buttons: ['Restart now', 'Later'],
+            defaultId: 0,
+            cancelId: 1,
+          })
+          .then((r) => {
+            afterDialog();
+            if (r.response === 0) relaunchAndExit();
+            else snoozeUpdate(manifest.version);
+          })
+          .catch(() => afterDialog());
+        return { available: false, version: debVer, pendingRelaunch: true };
+      }
+      broadcast('up-to-date', { version: currentVersion() });
+      return { available: false, version: currentVersion() };
+    }
     if (!newer) {
       broadcast('up-to-date', { version: currentVersion() });
       if (!silent) {
@@ -190,6 +216,11 @@ export async function checkForUpdates({ silent = true } = {}) {
           .finally(() => afterDialog());
       }
       return { available: false, version: currentVersion() };
+    }
+
+    if (!manifest.mandatory && isUpdateSnoozed(manifest.version)) {
+      broadcast('snoozed', { version: manifest.version });
+      return { available: true, snoozed: true, version: manifest.version };
     }
 
     const file = pickFileForPackaging(manifest);
@@ -362,6 +393,43 @@ export async function installUpdate({ silentOnFail = false } = {}) {
     if (kind === 'deb' || kind === 'rpm') {
       const installed = await elevatedInstall(kind, downloadedPath);
       if (!installed.ok) throw new Error(installed.error || 'Install failed');
+
+      if (installed.manual) {
+        // Desktop installer / systemd-run kicked off — wait for the package
+        // version to catch up, then relaunch. Never claim success early.
+        const applied = await waitForDebVersion(pendingUpdate?.version, 25_000);
+        if (!applied) {
+          beforeDialog();
+          const choice = await dialog.showMessageBox(BrowserWindow.getAllWindows()[0], {
+            type: 'info',
+            title: 'Finish installing the update',
+            message: `Approve the install of Aspera Dock ${pendingUpdate?.version} in your package manager.`,
+            detail:
+              `The update file is:\n${downloadedPath}\n\n` +
+              'When the package manager says the install is done, click Restart.\n' +
+              'If nothing opened, click Open folder and double-click the .deb.',
+            buttons: ['Restart now', 'Open folder', 'Later'],
+            defaultId: 0,
+            cancelId: 2,
+          });
+          afterDialog();
+          if (choice.response === 1) {
+            shell.showItemInFolder(downloadedPath);
+            return { ok: false, manual: true, error: 'Waiting for manual install' };
+          }
+          if (choice.response === 2) {
+            snoozeUpdate(pendingUpdate?.version);
+            return { ok: false, manual: true, snoozed: true };
+          }
+          const okNow = await waitForDebVersion(pendingUpdate?.version, 5_000);
+          if (!okNow) {
+            throw new Error(
+              `Version ${pendingUpdate?.version} is not installed yet (still ${readDebPackageVersion() || currentVersion()}). Finish the package install, then try again.`,
+            );
+          }
+        }
+      }
+
       relaunchAndExit();
       return { ok: true };
     }
@@ -381,9 +449,9 @@ export async function installUpdate({ silentOnFail = false } = {}) {
           type: 'error',
           title: 'Update failed to install',
           message: 'Aspera Dock could not install the update automatically.',
-          detail: `${message}\n\nThe downloaded file is here:\n${downloadedPath}\n\nYou can double-click the .deb to install it manually, then reopen Aspera Dock.`,
+          detail: `${message}\n\nThe downloaded file is here:\n${downloadedPath}\n\nDouble-click the .deb to install it with your package manager, then reopen Aspera Dock.`,
           buttons: ['Open folder', 'OK'],
-          defaultId: 1,
+          defaultId: 0,
         })
         .then((r) => {
           afterDialog();
@@ -395,68 +463,158 @@ export async function installUpdate({ silentOnFail = false } = {}) {
   }
 }
 
+function readDebPackageVersion() {
+  try {
+    const out = execFileSync('/usr/bin/dpkg-query', ['-W', '-f=${Version}', 'asperadock'], {
+      encoding: 'utf8',
+      timeout: 5000,
+    });
+    return String(out || '').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForDebVersion(version, timeoutMs) {
+  if (!version) return false;
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const installed = readDebPackageVersion();
+    if (installed && compareVersions(installed, version) >= 0) return true;
+    // Also accept app.getVersion() if this process was already replaced (rare).
+    if (compareVersions(currentVersion(), version) >= 0) return true;
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+  return false;
+}
+
+function snoozePath() {
+  return path.join(app.getPath('userData'), 'update-snooze.json');
+}
+
+function snoozeUpdate(version) {
+  if (!version) return;
+  try {
+    fs.writeFileSync(
+      snoozePath(),
+      JSON.stringify({ version, until: Date.now() + 24 * 60 * 60 * 1000 }),
+      'utf8',
+    );
+  } catch {
+    // ignore
+  }
+}
+
+function isUpdateSnoozed(version) {
+  try {
+    if (!fs.existsSync(snoozePath())) return false;
+    const raw = JSON.parse(fs.readFileSync(snoozePath(), 'utf8'));
+    if (!raw || raw.version !== version) return false;
+    if (Date.now() > Number(raw.until || 0)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Install .deb/.rpm without spawning pkexec as a direct Electron child.
+ * Chromium sets PR_SET_NO_NEW_PRIVS, so setuid helpers like pkexec fail with
+ * "pkexec must be setuid root" when launched from this process tree.
+ */
 function elevatedInstall(kind, filePath) {
   return new Promise((resolve) => {
-    // pkexec requires an absolute path to the binary (relative names → exit 127).
-    const pkexec = '/usr/bin/pkexec';
-    let args;
     if (kind === 'deb') {
-      // Local .deb: dpkg -i is the reliable path; apt-get may not accept a bare file.
-      args = ['/usr/bin/dpkg', '-i', filePath];
-    } else {
-      args = ['/usr/bin/rpm', '-U', '--force', filePath];
-    }
-    if (!fs.existsSync(pkexec)) {
-      resolve({
-        ok: false,
-        error: 'pkexec not found — open the .deb manually and install with your package manager',
+      // 1) systemd-run → new process under systemd (no NO_NEW_PRIVS) → pkexec works.
+      const ran = trySystemdPkexecInstall(filePath);
+      if (ran.started) {
+        resolve({ ok: true, manual: true, via: 'systemd-run' });
+        return;
+      }
+
+      // 2) Hand off to the desktop package installer (mintinstall / apturl / etc.).
+      const child = spawn('/usr/bin/xdg-open', [filePath], {
+        detached: true,
+        stdio: 'ignore',
+        env: { ...process.env },
       });
+      child.on('error', () => {
+        resolve({
+          ok: false,
+          error: `Could not open the package installer (${ran.error || 'no systemd-run'}). Open the .deb manually.`,
+        });
+      });
+      child.unref();
+      // xdg-open returns immediately; treat as manual install in progress.
+      setTimeout(() => resolve({ ok: true, manual: true, via: 'xdg-open' }), 500);
       return;
     }
-    const child = spawn(pkexec, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stderr = '';
-    child.stderr?.on('data', (chunk) => {
-      stderr += String(chunk);
-    });
-    child.on('error', (err) => resolve({ ok: false, error: String(err) }));
-    child.on('exit', (code) => {
-      if (code === 0) {
-        resolve({ ok: true });
-        return;
-      }
-      // Dependency gaps after dpkg -i: try apt-get -f install.
-      if (kind === 'deb' && code !== 127) {
-        const fix = spawn(
-          pkexec,
-          ['/usr/bin/apt-get', 'install', '-f', '-y'],
-          { stdio: 'ignore' },
-        );
-        fix.on('error', () =>
-          resolve({
-            ok: false,
-            error: `Installer exited with code ${code}${stderr ? `: ${stderr.trim().slice(0, 200)}` : ''}`,
-          }),
-        );
-        fix.on('exit', (fixCode) => {
-          if (fixCode === 0) resolve({ ok: true });
-          else
-            resolve({
-              ok: false,
-              error: `Installer exited with code ${code}${stderr ? `: ${stderr.trim().slice(0, 200)}` : ''}`,
-            });
-        });
-        return;
-      }
-      const hint =
-        code === 127
-          ? ' (command not found — install policykit-1 / use absolute package tools)'
-          : '';
-      resolve({
-        ok: false,
-        error: `Installer exited with code ${code}${hint}${stderr ? `: ${stderr.trim().slice(0, 200)}` : ''}`,
-      });
+
+    // rpm: same systemd-run strategy
+    const display = process.env.DISPLAY || ':0';
+    const xauth = process.env.XAUTHORITY || '';
+    const rpmArgs = [
+      '--description=Aspera Dock update',
+      `--setenv=DISPLAY=${display}`,
+    ];
+    if (xauth) rpmArgs.push(`--setenv=XAUTHORITY=${xauth}`);
+    rpmArgs.push('/usr/bin/pkexec', '/usr/bin/rpm', '-U', '--force', filePath);
+    const started = spawnSystemdRun(['--user', ...rpmArgs]);
+    if (started.ok || spawnSystemdRun(rpmArgs).ok) {
+      resolve({ ok: true, manual: true, via: 'systemd-run' });
+      return;
+    }
+    resolve({
+      ok: false,
+      error: started.error || 'Could not start elevated rpm install',
     });
   });
+}
+
+function trySystemdPkexecInstall(filePath) {
+  const display = process.env.DISPLAY || ':0';
+  const xauth = process.env.XAUTHORITY || '';
+  const args = [
+    '--description=Aspera Dock update',
+    `--setenv=DISPLAY=${display}`,
+  ];
+  if (xauth) args.push(`--setenv=XAUTHORITY=${xauth}`);
+  // Prefer --user so the polkit agent on the desktop session can prompt.
+  const userTry = spawnSystemdRun([
+    '--user',
+    ...args,
+    '/usr/bin/pkexec',
+    '/usr/bin/dpkg',
+    '-i',
+    filePath,
+  ]);
+  if (userTry.ok) return { started: true };
+  const sysTry = spawnSystemdRun([
+    ...args,
+    '/usr/bin/pkexec',
+    '/usr/bin/dpkg',
+    '-i',
+    filePath,
+  ]);
+  if (sysTry.ok) return { started: true };
+  return { started: false, error: userTry.error || sysTry.error };
+}
+
+function spawnSystemdRun(argv) {
+  const bin = '/usr/bin/systemd-run';
+  if (!fs.existsSync(bin)) return { ok: false, error: 'systemd-run not found' };
+  try {
+    const result = spawnSync(bin, argv, {
+      encoding: 'utf8',
+      timeout: 15_000,
+      env: { ...process.env },
+    });
+    if (result.status === 0) return { ok: true };
+    const detail = String(result.stderr || result.stdout || '').trim().slice(0, 240);
+    return { ok: false, error: detail || `systemd-run exited ${result.status}` };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
 }
 
 function promptAvailable() {
@@ -483,6 +641,7 @@ function promptAvailable() {
 function promptReady() {
   const win = BrowserWindow.getAllWindows()[0];
   if (!win || !pendingUpdate) return;
+  if (!pendingUpdate.mandatory && isUpdateSnoozed(pendingUpdate.version)) return;
   beforeDialog();
   dialog
     .showMessageBox(win, {
@@ -501,6 +660,7 @@ function promptReady() {
     .then((r) => {
       afterDialog();
       if (r.response === 0) installUpdate();
+      else snoozeUpdate(pendingUpdate?.version);
     })
     .catch(() => afterDialog());
 }
