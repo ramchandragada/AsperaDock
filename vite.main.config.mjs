@@ -3,8 +3,9 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   build: {
     rollupOptions: {
-      // Keep Sentry external so its native/main entry resolves at runtime.
-      external: ['electron', /^@sentry\//],
+      // Bundle @sentry into main.js — externalizing it left require() broken in
+      // the packaged asar (OnlyLoadAppFromAsar + no node_modules/@sentry).
+      external: ['electron'],
     },
   },
 });

@@ -2,14 +2,18 @@ import './index.css';
 import { logoHtml } from './logos.js';
 import { icon } from './icons.js';
 import { BRAND, asperaAppIconSvg } from './brand.js';
-import * as SentryRenderer from '@sentry/electron/renderer';
-
 // Renderer errors route through main → Sentry when DSN is configured.
-try {
-  SentryRenderer.init();
-} catch {
-  // Optional — main process still captures crashes.
-}
+import('@sentry/electron/renderer')
+  .then((SentryRenderer) => {
+    try {
+      SentryRenderer.init();
+    } catch {
+      // ignore
+    }
+  })
+  .catch(() => {
+    // Optional — main process still captures crashes; missing module must not blank UI.
+  });
 
 const els = {
   appsTop: document.getElementById('apps-top'),

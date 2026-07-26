@@ -3,9 +3,10 @@
  *
  * Preferred error sink when a DSN is configured (Settings or ASPERADOCK_SENTRY_DSN).
  * Native crashes + JS exceptions go to Sentry; we still keep local JSON reports.
+ *
+ * Load is resilient: a missing/broken Sentry package must never crash the app.
  */
 
-import * as Sentry from '@sentry/electron/main';
 import { app } from 'electron';
 import { createRequire } from 'node:module';
 
@@ -19,7 +20,15 @@ const require = createRequire(import.meta.url);
 export const DEFAULT_SENTRY_DSN =
   'https://dd355d556cdd20608f3659a57817aec4@o4511041705738240.ingest.de.sentry.io/4511797041102928';
 
+let Sentry = null;
 let initialized = false;
+
+try {
+  // Prefer static bundling (vite); fall back to require for tests / unpackaged.
+  Sentry = require('@sentry/electron/main');
+} catch (error) {
+  console.error('[sentry] @sentry/electron/main unavailable — continuing without it', error?.message || error);
+}
 
 function pkgVersion() {
   try {
@@ -44,7 +53,7 @@ export function resolveSentryDsn(settings = {}) {
  */
 export function initSentryMain(settings = {}) {
   const dsn = resolveSentryDsn(settings);
-  if (!dsn) return false;
+  if (!dsn || !Sentry?.init) return false;
   if (initialized) return true;
 
   try {
@@ -70,7 +79,7 @@ export function isSentryActive() {
 }
 
 export function sentryCaptureError(kind, payload = {}) {
-  if (!initialized) return false;
+  if (!initialized || !Sentry) return false;
   try {
     const message = payload.message || kind;
     const err =
@@ -101,7 +110,7 @@ export function sentryCaptureError(kind, payload = {}) {
 }
 
 export function sentryAddBreadcrumb(message, data) {
-  if (!initialized) return;
+  if (!initialized || !Sentry) return;
   try {
     Sentry.addBreadcrumb({
       category: 'asperadock',
