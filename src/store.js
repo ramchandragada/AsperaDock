@@ -133,15 +133,12 @@ export const DEFAULTS = {
   /** Hibernate idle background apps (keepWarm apps like WhatsApp are skipped). */
   hibernateMinutes: 30,
   /**
-   * How many apps may be marked “priority / warm” (flame). Selection budget only —
-   * does not force that many Chromium tabs to stay loaded (see maxResidentViews).
+   * How many apps stay fully loaded for instant switching (includes active).
+   * Cap is 5 — usability first; non-warm apps load on click only.
    */
-  maxWarmViews: 6,
-  /**
-   * Hard cap on how many guest WebContents stay loaded at once (includes active).
-   * Extra priority apps soft-wake on hover / click so RAM stays bounded.
-   */
-  maxResidentViews: 3,
+  maxWarmViews: 5,
+  /** Legacy field — no longer parks warm apps (usability over RAM). */
+  maxResidentViews: 5,
 
   /** Toggleable global shortcuts */
   shortcuts: {
@@ -353,47 +350,32 @@ function migrateWarmKeepAlive(settings) {
       displaySizingV3: true,
     };
   }
-  // Company policy: never more than 6 warm apps in RAM.
+  // Company policy: max 5 warm apps in RAM (usability-first).
   if (!next.warmCap6V1) {
     next = {
       ...next,
-      maxWarmViews: 6,
+      maxWarmViews: 5,
       warmCap6V1: true,
       warmCap4V1: true,
     };
+  }
+  if (!next.warmCap5V1) {
+    next = {
+      ...next,
+      warmCap5V1: true,
+      maxWarmViews: Math.min(5, Math.max(1, Number(next.maxWarmViews) || 5)),
+      // Stop parking flame apps for RAM — UX wins.
+      maxResidentViews: Math.min(5, Math.max(5, Number(next.maxWarmViews) || 5)),
+    };
   } else {
     next.maxWarmViews = Math.min(
-      6,
-      Math.max(1, Number(next.maxWarmViews) || 6),
+      5,
+      Math.max(1, Number(next.maxWarmViews) || 5),
     );
   }
-  // Cap concurrent loaded guests so 5 warm WhatsApp/Gmail tabs cannot hold ~6 GB.
-  if (!next.residentCapV1) {
-    next = {
-      ...next,
-      residentCapV1: true,
-      maxResidentViews: Math.min(
-        3,
-        Math.max(2, Number(next.maxResidentViews) || 2),
-      ),
-    };
-  } else {
-    next.maxResidentViews = Math.min(
-      4,
-      Math.max(1, Number(next.maxResidentViews) || 2),
-    );
-  }
-  // v2: raise default resident budget to 3 and enforce it on flame apps too.
-  if (!next.residentCapV2) {
-    next = {
-      ...next,
-      residentCapV2: true,
-      maxResidentViews: Math.min(
-        4,
-        Math.max(3, Number(next.maxResidentViews) || 3),
-      ),
-    };
-  }
+  // Keep legacy keys so older migrations stay idempotent.
+  if (!next.residentCapV1) next = { ...next, residentCapV1: true };
+  if (!next.residentCapV2) next = { ...next, residentCapV2: true };
   return next;
 }
 

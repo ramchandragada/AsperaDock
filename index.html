@@ -266,14 +266,9 @@
             <p class="hint-text">Unselected apps unload when you switch away. This timer applies to other idle background activity.</p>
           </label>
           <label class="field">
-            <span>Max warm apps</span>
-            <input id="set-max-warm" type="number" min="1" max="6" />
-            <p class="hint-text">How many apps can show the flame (priority). Includes the active tab. Maximum is 6.</p>
-          </label>
-          <label class="field">
-            <span>Apps kept loaded in RAM</span>
-            <input id="set-max-resident" type="number" min="2" max="4" />
-            <p class="hint-text">Hard memory cap (includes the active tab). Oldest apps park when over this — even warm ones. Try 3 for ~4–5 GB with several WhatsApp tabs. Zoho One / Arattai load on first click so CRM does not blank.</p>
+            <span>Max warm apps in RAM</span>
+            <input id="set-max-warm" type="number" min="1" max="5" />
+            <p class="hint-text">Warm apps stay fully loaded for instant switching (includes the active tab). Maximum is 5 — mark up to 4 background apps with the flame. Non-warm apps load only when you click them.</p>
           </label>
           <label class="switch-row">
             <input id="set-consumption" type="checkbox" />

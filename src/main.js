@@ -268,13 +268,9 @@ function applyMemorySwitches() {
   const warm = Math.max(
     1,
     Math.min(
-      MAX_WARM_VIEWS_CAP || 6,
-      Number(settings.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT || 6,
+      MAX_WARM_VIEWS_CAP || 5,
+      Number(settings.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT || 5,
     ),
-  );
-  const resident = Math.max(
-    1,
-    Math.min(4, Number(settings.maxResidentViews) || 3),
   );
 
   if (lean || settings.hardwareAcceleration === false) {
@@ -292,27 +288,30 @@ function applyMemorySwitches() {
     'disk-cache-size',
     String((lean ? 16 : 32) * 1024 * 1024),
   );
-  // Room for warm guests + Zoho CRM child windows + shell.
+  // Room for all warm guests + Zoho CRM child windows + shell.
   app.commandLine.appendSwitch(
     'renderer-process-limit',
-    String(Math.max(10, warm + resident + 4)),
+    String(Math.max(12, warm + 6)),
   );
 }
 
 /**
- * Active guest runs full speed. Heavy portals (Zoho One / Arattai) are never
- * background-throttled until the user has opened them once — otherwise CRM
- * iframes finish the shell then starve and show a blank white pane.
+ * Warm apps stay full-speed even in the background (instant switch / UX first).
+ * Non-warm background guests may throttle after first load.
+ * Heavy portals are not throttled until the user has opened them once.
  */
 function applyGuestPerfMode(
   webContents,
-  { active, loadedOnce = true, allowThrottle = true } = {},
+  { active, loadedOnce = true, keepWarm = false, allowThrottle = true } = {},
 ) {
   if (!webContents || webContents.isDestroyed()) return;
   if (!active && !loadedOnce) return;
-  if (!active && !allowThrottle) return;
   try {
-    webContents.setBackgroundThrottling(!active);
+    if (active || keepWarm || !allowThrottle) {
+      webContents.setBackgroundThrottling(false);
+    } else {
+      webContents.setBackgroundThrottling(true);
+    }
   } catch {
     // ignore
   }
@@ -323,15 +322,20 @@ function syncAllGuestPerfModes() {
     const wc = entry?.view?.webContents;
     if (!wc || wc.isDestroyed()) continue;
     const service = getService(id) || entry.service;
+    const keepWarm = isKeepWarmService(id);
     applyGuestPerfMode(wc, {
       active: !overlayOpen && !locked && id === activeServiceId,
       loadedOnce: entry.loadedOnce === true,
-      allowThrottle: !isHeavyPortalApp(service) || entry.activatedOnce === true,
+      keepWarm,
+      allowThrottle:
+        !keepWarm ||
+        !isHeavyPortalApp(service) ||
+        entry.activatedOnce === true,
     });
   }
 }
 
-/** SPAs that break if soft-woken + throttled before first user focus. */
+/** SPAs that need an unthrottled first boot (then stay full-speed if warm). */
 function isHeavyPortalApp(service) {
   const id = service?.appId;
   return id === 'zoho-one' || id === 'arattai' || id === 'zoho-crm';}
@@ -742,11 +746,9 @@ function maxWarm() {
   );
 }
 
-/** How many guest pages may stay loaded (active included). Priority marks are separate. */
+/** How many guest pages may stay loaded — same as warm budget (UX first). */
 function maxResident() {
-  if (isLowMemoryMode()) return 2;
-  const n = Number(settings.maxResidentViews);
-  return Math.min(4, Math.max(2, Number.isFinite(n) ? n : 3));
+  return maxWarm();
 }
 
 function dockIsUserFocused() {
@@ -1614,15 +1616,16 @@ function createViewForService(service) {
       const entry = views.get(service.id);
       if (entry) {
         entry.loadedOnce = true;
-        const allowThrottle =
-          !isHeavyPortalApp(service) || entry.activatedOnce === true;
-        if (service.id !== activeServiceId) {
-          applyGuestPerfMode(webContents, {
-            active: false,
-            loadedOnce: true,
-            allowThrottle,
-          });
-        }
+        const keepWarm = isKeepWarmService(service.id);
+        applyGuestPerfMode(webContents, {
+          active: service.id === activeServiceId,
+          loadedOnce: true,
+          keepWarm,
+          allowThrottle:
+            !keepWarm ||
+            !isHeavyPortalApp(service) ||
+            entry.activatedOnce === true,
+        });
       }
     } catch {
       // ignore
@@ -1775,26 +1778,24 @@ function softWakeService(id) {
   if (views.has(id) || locked) return false;
   const service = getService(id);
   if (!service || service.config?.enabled === false) return false;
-  // Heavy portals must boot under user focus or CRM/chat panes stay blank.
-  if (isHeavyPortalApp(service)) return false;
 
-  // Park oldest guests (including warm) when over the resident RAM budget.
+  // Never park warm apps. Only drop non-warm background views for budget.
   const evictable = [...views.entries()]
-    .filter(([viewId]) => viewId !== activeServiceId)
+    .filter(([viewId]) => viewId !== activeServiceId && !isKeepWarmService(viewId))
     .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-  while (views.size >= maxResident() && evictable.length) {
+  while (views.size >= maxWarm() && evictable.length) {
     const [victimId] = evictable.shift();
     hibernateService(victimId);
   }
-  if (views.size >= maxResident()) return false;
+  if (views.size >= maxWarm()) return false;
   createViewForService(service);
   enforceWarmLimit();
   return views.has(id);
 }
 
 /**
- * Soft-load recently used warm apps up to the resident RAM budget.
- * Staggered; skips Zoho One / Arattai (load on first click instead).
+ * Soft-load every warm app so switching stays instant.
+ * Staggered; warm guests stay full-speed (no background throttle).
  */
 let softWakeTimer = null;
 function softWakeKeepWarmApps(exceptId = null) {
@@ -1802,19 +1803,9 @@ function softWakeKeepWarmApps(exceptId = null) {
     clearTimeout(softWakeTimer);
     softWakeTimer = null;
   }
-  const budget = Math.max(0, maxResident() - (exceptId && views.has(exceptId) ? 1 : 0));
-  const pending = selectedWarmIds()
-    .filter((id) => {
-      if (id === exceptId || views.has(id)) return false;
-      const service = getService(id);
-      return service && !isHeavyPortalApp(service);
-    })
-    .sort((a, b) => {
-      const aUsed = hibernatedAt.get(a) || 0;
-      const bUsed = hibernatedAt.get(b) || 0;
-      return bUsed - aUsed;
-    })
-    .slice(0, Math.max(1, budget));
+  const pending = selectedWarmIds().filter(
+    (id) => id !== exceptId && !views.has(id),
+  );
   if (!pending.length) return;
 
   let i = 0;
@@ -1822,28 +1813,26 @@ function softWakeKeepWarmApps(exceptId = null) {
     softWakeTimer = null;
     if (locked) return;
     while (i < pending.length && views.has(pending[i])) i += 1;
-    if (i >= pending.length || views.size >= maxResident()) {
+    if (i >= pending.length) {
       broadcastState();
       return;
     }
     softWakeService(pending[i]);
     i += 1;
     broadcastState();
-    if (i < pending.length && views.size < maxResident()) {
-      softWakeTimer = setTimeout(step, 1500);
-    }
+    if (i < pending.length) softWakeTimer = setTimeout(step, 1200);
   };
-  softWakeTimer = setTimeout(step, 600);
+  softWakeTimer = setTimeout(step, 400);
 }
 
 function enforceResidentLimit() {
-  // Hard RAM cap — parks oldest background guests, including flame apps.
-  // Flame still means "prefer soft-wake / don't idle-hibernate on the short timer".
+  // Usability first: never park flame/keepWarm apps for RAM.
+  // Only unload non-warm background guests beyond the warm budget.
   const evictable = [...views.entries()]
-    .filter(([id]) => id !== activeServiceId)
+    .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
     .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
 
-  while (views.size > maxResident() && evictable.length) {
+  while (views.size > maxWarm() && evictable.length) {
     const [id] = evictable.shift();
     hibernateService(id);
   }
@@ -1942,6 +1931,7 @@ function activateService(id) {
   applyGuestPerfMode(wc, {
     active: true,
     loadedOnce: true,
+    keepWarm: isKeepWarmService(id),
     allowThrottle: true,
   });
   // Recreate path sometimes attaches a view that never started loading.
@@ -3167,7 +3157,7 @@ dockHandle('dock:save-settings', (_e, patch) => {
   // Keep at least 2 warm slots so multi-WhatsApp switching still works.
   if (next.lowMemoryMode === true) {
     next.maxWarmViews = Math.min(3, Math.max(2, Number(next.maxWarmViews) || 3));
-    next.maxResidentViews = 2;
+    next.maxResidentViews = next.maxWarmViews;
     next.hibernateMinutes = Math.min(
       10,
       Math.max(3, Number(next.hibernateMinutes) || 10),
@@ -3178,11 +3168,12 @@ dockHandle('dock:save-settings', (_e, patch) => {
       MAX_WARM_VIEWS_CAP,
       Math.max(1, Number(next.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT),
     );
+    next.maxResidentViews = next.maxWarmViews;
   }
-  if (next.maxResidentViews != null) {
+  if (next.maxResidentViews != null && next.maxWarmViews == null) {
     next.maxResidentViews = Math.min(
-      4,
-      Math.max(2, Number(next.maxResidentViews) || 3),
+      MAX_WARM_VIEWS_CAP,
+      Math.max(1, Number(next.maxResidentViews) || MAX_WARM_VIEWS_DEFAULT),
     );
   }
   if (next.density != null && !['normal', 'large', 'huge'].includes(next.density)) {
