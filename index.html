@@ -268,12 +268,12 @@
           <label class="field">
             <span>Max warm apps</span>
             <input id="set-max-warm" type="number" min="1" max="6" />
-            <p class="hint-text">How many apps can stay loaded for instant switching (flame). Includes the active tab. Maximum is 6.</p>
+            <p class="hint-text">How many apps can show the flame (priority). Includes the active tab. Maximum is 6.</p>
           </label>
           <label class="field">
-            <span>Extra non-warm apps in RAM</span>
-            <input id="set-max-resident" type="number" min="1" max="4" />
-            <p class="hint-text">Spare slots for apps you open without the flame. Warm apps are never unloaded by this limit.</p>
+            <span>Apps kept loaded in RAM</span>
+            <input id="set-max-resident" type="number" min="2" max="4" />
+            <p class="hint-text">Hard memory cap (includes the active tab). Oldest apps park when over this — even warm ones. Try 3 for ~4–5 GB with several WhatsApp tabs. Zoho One / Arattai load on first click so CRM does not blank.</p>
           </label>
           <label class="switch-row">
             <input id="set-consumption" type="checkbox" />
@@ -398,9 +398,10 @@
             <label class="field">
               <span>Link handling</span>
               <select id="set-links">
-                <option value="block">Block all pop-ups</option>
-                <option value="external">Always open in system browser</option>
+                <option value="block">In-app for known hosts (recommended)</option>
+                <option value="external">Unknown links open in system browser</option>
               </select>
+              <p class="hint-text">Zoho One / CRM always keep internal popups in-dock — otherwise Sales/CRM can show a blank page.</p>
             </label>
             <label class="field">
               <span>Spell checker</span>
@@ -565,8 +566,8 @@
             <label class="field">
               <select id="ea-links">
                 <option value="default">Default (global)</option>
-                <option value="block">Block pop-ups (open externally)</option>
-                <option value="external">Always open in system browser</option>
+                <option value="block">In-app for known hosts</option>
+                <option value="external">Unknown links → system browser</option>
               </select>
             </label>
           </section>

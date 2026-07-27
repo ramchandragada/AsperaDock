@@ -141,7 +141,7 @@ export const DEFAULTS = {
    * Hard cap on how many guest WebContents stay loaded at once (includes active).
    * Extra priority apps soft-wake on hover / click so RAM stays bounded.
    */
-  maxResidentViews: 2,
+  maxResidentViews: 3,
 
   /** Toggleable global shortcuts */
   shortcuts: {
@@ -382,6 +382,17 @@ function migrateWarmKeepAlive(settings) {
       4,
       Math.max(1, Number(next.maxResidentViews) || 2),
     );
+  }
+  // v2: raise default resident budget to 3 and enforce it on flame apps too.
+  if (!next.residentCapV2) {
+    next = {
+      ...next,
+      residentCapV2: true,
+      maxResidentViews: Math.min(
+        4,
+        Math.max(3, Number(next.maxResidentViews) || 3),
+      ),
+    };
   }
   return next;
 }

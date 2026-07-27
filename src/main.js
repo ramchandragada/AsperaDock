@@ -265,9 +265,16 @@ function isLowMemoryMode() {
 function applyMemorySwitches() {
   const lean = isLowMemoryMode();
   const disabled = new Set(['SpareRendererForSitePerProcess']);
+  const warm = Math.max(
+    1,
+    Math.min(
+      MAX_WARM_VIEWS_CAP || 6,
+      Number(settings.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT || 6,
+    ),
+  );
   const resident = Math.max(
     1,
-    Math.min(4, Number(settings.maxResidentViews) || 2),
+    Math.min(4, Number(settings.maxResidentViews) || 3),
   );
 
   if (lean || settings.hardwareAcceleration === false) {
@@ -285,20 +292,25 @@ function applyMemorySwitches() {
     'disk-cache-size',
     String((lean ? 16 : 32) * 1024 * 1024),
   );
+  // Room for warm guests + Zoho CRM child windows + shell.
   app.commandLine.appendSwitch(
     'renderer-process-limit',
-    String(Math.max(6, resident + 4)),
+    String(Math.max(10, warm + resident + 4)),
   );
 }
 
 /**
- * Active guest runs full speed. Background guests throttle only after their
- * first successful load — throttling during boot leaves Zoho One / Arattai
- * stuck on the splash forever.
+ * Active guest runs full speed. Heavy portals (Zoho One / Arattai) are never
+ * background-throttled until the user has opened them once — otherwise CRM
+ * iframes finish the shell then starve and show a blank white pane.
  */
-function applyGuestPerfMode(webContents, { active, loadedOnce = true } = {}) {
+function applyGuestPerfMode(
+  webContents,
+  { active, loadedOnce = true, allowThrottle = true } = {},
+) {
   if (!webContents || webContents.isDestroyed()) return;
   if (!active && !loadedOnce) return;
+  if (!active && !allowThrottle) return;
   try {
     webContents.setBackgroundThrottling(!active);
   } catch {
@@ -310,12 +322,19 @@ function syncAllGuestPerfModes() {
   for (const [id, entry] of views.entries()) {
     const wc = entry?.view?.webContents;
     if (!wc || wc.isDestroyed()) continue;
+    const service = getService(id) || entry.service;
     applyGuestPerfMode(wc, {
       active: !overlayOpen && !locked && id === activeServiceId,
       loadedOnce: entry.loadedOnce === true,
+      allowThrottle: !isHeavyPortalApp(service) || entry.activatedOnce === true,
     });
   }
 }
+
+/** SPAs that break if soft-woken + throttled before first user focus. */
+function isHeavyPortalApp(service) {
+  const id = service?.appId;
+  return id === 'zoho-one' || id === 'arattai' || id === 'zoho-crm';}
 
 /** Drop HTTP cache only — cookies / IndexedDB stay so sessions survive. */
 async function trimGuestHttpCache(partition) {
@@ -727,7 +746,7 @@ function maxWarm() {
 function maxResident() {
   if (isLowMemoryMode()) return 2;
   const n = Number(settings.maxResidentViews);
-  return Math.min(4, Math.max(1, Number.isFinite(n) ? n : 2));
+  return Math.min(4, Math.max(2, Number.isFinite(n) ? n : 3));
 }
 
 function dockIsUserFocused() {
@@ -1293,39 +1312,53 @@ function attachGuestContextMenu(webContents) {
  * that share the service session — denying them makes embedded apps like
  * Zoho CRM hang forever waiting for the window handle.
  *
- * Google is special: OAuth often opens a popup that then becomes the full
- * Gmail inbox. Keep http navigations in the dock tab, and if a blank popup
- * still appears, fold the session back into the parent when it lands on Gmail.
+ * IMPORTANT: linkHandling "external" must NOT deny about:blank / internal Zoho
+ * popups. That setting only forces true third-party links into the OS browser.
  */
 function configureGuestWindowOpen(wc, service) {
-  const linkMode =
-    getAppConfig(service.id).linkHandling || settings.linkHandling || 'block';
   const googleish = isGoogleService(service);
 
+  const allowPopup = () => ({
+    action: 'allow',
+    overrideBrowserWindowOptions: {
+      autoHideMenuBar: true,
+      width: 1024,
+      height: 720,
+      webPreferences: guestWebPreferences(service),
+    },
+  });
+
   wc.setWindowOpenHandler(({ url }) => {
-    const external =
-      linkMode === 'external' ||
-      (url.startsWith('http') && !isInternalUrl(url, service));
-    if (external) {
-      openExternalSafe(url);
-      return { action: 'deny' };
+    const raw = String(url || '');
+    // Zoho One CRM / SPA portals boot child frames via about:blank first.
+    if (!raw || raw === 'about:blank' || raw.startsWith('about:blank')) {
+      return allowPopup();
     }
 
-    // Gmail/Google: keep sign-in inside the dock tab whenever we have a URL.
-    if (googleish && url.startsWith('http')) {
-      wc.loadURL(url).catch(() => {});
-      return { action: 'deny' };
+    if (raw.startsWith('http')) {
+      const internal = isInternalUrl(raw, service);
+      // Only true third-party URLs leave the dock (even when linkHandling is
+      // "external"). Denying Zoho/about:blank popups blanks the CRM pane.
+      if (!internal) {
+        openExternalSafe(raw);
+        return { action: 'deny' };
+      }
+
+      // Gmail/Google: keep sign-in inside the dock tab whenever we have a URL.
+      if (googleish) {
+        wc.loadURL(raw).catch(() => {});
+        return { action: 'deny' };
+      }
+
+      return allowPopup();
     }
 
-    return {
-      action: 'allow',
-      overrideBrowserWindowOptions: {
-        autoHideMenuBar: true,
-        width: 1024,
-        height: 720,
-        webPreferences: guestWebPreferences(service),
-      },
-    };
+    // blob:/data: targets used by some in-app viewers
+    if (raw.startsWith('blob:') || raw.startsWith('data:')) {
+      return allowPopup();
+    }
+
+    return { action: 'deny' };
   });
 }
 
@@ -1581,8 +1614,14 @@ function createViewForService(service) {
       const entry = views.get(service.id);
       if (entry) {
         entry.loadedOnce = true;
+        const allowThrottle =
+          !isHeavyPortalApp(service) || entry.activatedOnce === true;
         if (service.id !== activeServiceId) {
-          applyGuestPerfMode(webContents, { active: false, loadedOnce: true });
+          applyGuestPerfMode(webContents, {
+            active: false,
+            loadedOnce: true,
+            allowThrottle,
+          });
         }
       }
     } catch {
@@ -1736,25 +1775,26 @@ function softWakeService(id) {
   if (views.has(id) || locked) return false;
   const service = getService(id);
   if (!service || service.config?.enabled === false) return false;
+  // Heavy portals must boot under user focus or CRM/chat panes stay blank.
+  if (isHeavyPortalApp(service)) return false;
 
-  // Never park priority apps to make room — that made every switch reload.
-  // Only non-warm background views are evictable; budget is maxWarm overall.
+  // Park oldest guests (including warm) when over the resident RAM budget.
   const evictable = [...views.entries()]
-    .filter(([viewId]) => viewId !== activeServiceId && !isKeepWarmService(viewId))
+    .filter(([viewId]) => viewId !== activeServiceId)
     .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
-  while (views.size >= maxWarm() && evictable.length) {
+  while (views.size >= maxResident() && evictable.length) {
     const [victimId] = evictable.shift();
     hibernateService(victimId);
   }
-  if (views.size >= maxWarm()) return false;
+  if (views.size >= maxResident()) return false;
   createViewForService(service);
   enforceWarmLimit();
   return views.has(id);
 }
 
 /**
- * Soft-load every priority (keepWarm) app so tab switches stay instant.
- * Staggered to avoid a CPU spike when several WhatsApp/Gmail tabs wake at once.
+ * Soft-load recently used warm apps up to the resident RAM budget.
+ * Staggered; skips Zoho One / Arattai (load on first click instead).
  */
 let softWakeTimer = null;
 function softWakeKeepWarmApps(exceptId = null) {
@@ -1762,9 +1802,19 @@ function softWakeKeepWarmApps(exceptId = null) {
     clearTimeout(softWakeTimer);
     softWakeTimer = null;
   }
-  const pending = selectedWarmIds().filter(
-    (id) => id !== exceptId && !views.has(id),
-  );
+  const budget = Math.max(0, maxResident() - (exceptId && views.has(exceptId) ? 1 : 0));
+  const pending = selectedWarmIds()
+    .filter((id) => {
+      if (id === exceptId || views.has(id)) return false;
+      const service = getService(id);
+      return service && !isHeavyPortalApp(service);
+    })
+    .sort((a, b) => {
+      const aUsed = hibernatedAt.get(a) || 0;
+      const bUsed = hibernatedAt.get(b) || 0;
+      return bUsed - aUsed;
+    })
+    .slice(0, Math.max(1, budget));
   if (!pending.length) return;
 
   let i = 0;
@@ -1772,23 +1822,25 @@ function softWakeKeepWarmApps(exceptId = null) {
     softWakeTimer = null;
     if (locked) return;
     while (i < pending.length && views.has(pending[i])) i += 1;
-    if (i >= pending.length) {
+    if (i >= pending.length || views.size >= maxResident()) {
       broadcastState();
       return;
     }
     softWakeService(pending[i]);
     i += 1;
     broadcastState();
-    if (i < pending.length) softWakeTimer = setTimeout(step, 1200);
+    if (i < pending.length && views.size < maxResident()) {
+      softWakeTimer = setTimeout(step, 1500);
+    }
   };
-  softWakeTimer = setTimeout(step, 400);
+  softWakeTimer = setTimeout(step, 600);
 }
 
 function enforceResidentLimit() {
-  // Cap only non-priority background apps. Flame/keepWarm tabs stay resident
-  // so switching does not reload WhatsApp/Gmail every time.
+  // Hard RAM cap — parks oldest background guests, including flame apps.
+  // Flame still means "prefer soft-wake / don't idle-hibernate on the short timer".
   const evictable = [...views.entries()]
-    .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
+    .filter(([id]) => id !== activeServiceId)
     .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
 
   while (views.size > maxResident() && evictable.length) {
@@ -1798,8 +1850,6 @@ function enforceResidentLimit() {
 }
 
 function enforceWarmLimit() {
-  // Drop unselected background views beyond the warm selection budget, then
-  // trim any leftover non-priority residents under the RAM spare cap.
   const evictable = [...views.entries()]
     .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
     .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
@@ -1883,13 +1933,18 @@ function activateService(id) {
   detachAllViews();
   const entry = ensureLiveView(service);
   entry.lastUsed = Date.now();
+  entry.activatedOnce = true;
   activeServiceId = id;
   settings = saveSettings({ lastActiveServiceId: id });
 
   const wc = entry.view.webContents;
   // Unthrottle immediately so SPAs finish booting when user switches in.
-  applyGuestPerfMode(wc, { active: true, loadedOnce: true });
-  // Background soft-wake can stall Zoho One / Arattai on splash — reload once.
+  applyGuestPerfMode(wc, {
+    active: true,
+    loadedOnce: true,
+    allowThrottle: true,
+  });
+  // Recreate path sometimes attaches a view that never started loading.
   if (!entry.loadedOnce && !wc.isLoading()) {
     try {
       wc.reload();
@@ -3127,7 +3182,7 @@ dockHandle('dock:save-settings', (_e, patch) => {
   if (next.maxResidentViews != null) {
     next.maxResidentViews = Math.min(
       4,
-      Math.max(1, Number(next.maxResidentViews) || 2),
+      Math.max(2, Number(next.maxResidentViews) || 3),
     );
   }
   if (next.density != null && !['normal', 'large', 'huge'].includes(next.density)) {
