@@ -358,6 +358,8 @@ function isHeavyPortalApp(service) {
  */
 const PORTAL_STALE_MS = 8 * 60_000;
 const PORTAL_RELOAD_COOLDOWN_MS = 45_000;
+const PORTAL_BOOT_RELOAD_MS = 1400;
+const PORTAL_HEALTH_CHECK_MS = 2800;
 
 function touchPortalPresence(entry) {
   if (entry) entry.lastPresenceAt = Date.now();
@@ -426,7 +428,12 @@ async function trimGuestHttpCache(partition) {
 async function trimInactiveGuestCaches() {
   for (const [id, entry] of views.entries()) {
     if (id === activeServiceId) continue;
-    const partition = getService(id)?.partition || entry?.service?.partition;
+    // Never trim warm / portal guests — Zoho One CRM blanks when its cache is
+    // cleared while the user works in another tab.
+    if (isKeepWarmService(id)) continue;
+    const service = getService(id) || entry?.service;
+    if (isHeavyPortalApp(service)) continue;
+    const partition = service?.partition || entry?.service?.partition;
     if (partition) await trimGuestHttpCache(partition);
   }
 }
@@ -902,6 +909,136 @@ function detachGuestView(view) {
   }
 }
 
+/** Keep warm guests attached at 1×1 so SPA iframes (Zoho CRM) keep booting. */
+function parkGuestView(entry) {
+  if (!mainWindow || !entry?.view || mainWindow.isDestroyed()) return;
+  try {
+    mainWindow.contentView.addChildView(entry.view);
+    entry.view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
+    entry.__parked = true;
+  } catch {
+    // ignore — may already be attached
+  }
+}
+
+/** Detach non-warm guests; park warm ones off-screen instead of killing iframes. */
+function parkBackgroundViews(exceptId = null) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  for (const [viewId, entry] of views.entries()) {
+    if (viewId === exceptId) continue;
+    if (isKeepWarmService(viewId)) parkGuestView(entry);
+    else detachGuestView(entry.view);
+  }
+}
+
+function clearPortalTimer(entry, key) {
+  if (!entry?.[key]) return;
+  clearTimeout(entry[key]);
+  entry[key] = null;
+}
+
+function scheduleHeavyPortalWork(id, kind = 'health') {
+  const entry = views.get(id);
+  if (!entry) return;
+  const key = kind === 'boot' ? '__portalBootTimer' : '__portalHealthTimer';
+  clearPortalTimer(entry, key);
+  const delay = kind === 'boot' ? PORTAL_BOOT_RELOAD_MS : PORTAL_HEALTH_CHECK_MS;
+  entry[key] = setTimeout(() => {
+    entry[key] = null;
+    if (kind === 'boot') maybeBootHeavyPortal(id);
+    else runPortalHealthCheck(id);
+  }, delay);
+}
+
+function maybeBootHeavyPortal(id) {
+  const entry = views.get(id);
+  const service = getService(id) || entry?.service;
+  if (!entry || !isHeavyPortalApp(service)) return;
+  if (id !== activeServiceId || locked || overlayOpen) return;
+  if (!entry.__portalBootPending) return;
+  const wc = entry.view?.webContents;
+  if (!wc || wc.isDestroyed() || wc.isLoading()) {
+    scheduleHeavyPortalWork(id, 'boot');
+    return;
+  }
+  entry.__portalBootPending = false;
+  // Restoring a deep Zoho One URL after restart often paints the shell but
+  // leaves the CRM iframe blank unless we reload once after first paint.
+  try {
+    entry.__lastStaleReloadAt = Date.now();
+    wc.reload();
+  } catch {
+    // ignore
+  }
+  scheduleHeavyPortalWork(id, 'health');
+}
+
+async function runPortalHealthCheck(id) {
+  const entry = views.get(id);
+  const service = getService(id) || entry?.service;
+  if (!entry || !isHeavyPortalApp(service)) return;
+  if (id !== activeServiceId || locked || overlayOpen) return;
+  const wc = entry.view?.webContents;
+  if (!wc || wc.isDestroyed() || wc.isLoading()) return;
+
+  const now = Date.now();
+  if (
+    entry.__lastStaleReloadAt &&
+    now - entry.__lastStaleReloadAt < PORTAL_RELOAD_COOLDOWN_MS
+  ) {
+    return;
+  }
+
+  let looksBlank = false;
+  try {
+    if (service.appId === 'zoho-one') {
+      looksBlank = await wc.executeJavaScript(
+        `(() => {
+          const iframes = [...document.querySelectorAll('iframe')];
+          for (const frame of iframes) {
+            const r = frame.getBoundingClientRect();
+            if (r.width < 120 || r.height < 120) continue;
+            const src = String(frame.src || '');
+            if (src && src !== 'about:blank') return false;
+            return true;
+          }
+          const panes = [...document.querySelectorAll(
+            'main,[role="main"],#content,.content,div[class*="content"]',
+          )];
+          let emptyArea = 0;
+          for (const el of panes) {
+            const r = el.getBoundingClientRect();
+            if (r.width < 200 || r.height < 160) continue;
+            if ((el.innerText || '').trim().length > 60) return false;
+            emptyArea += r.width * r.height;
+          }
+          return emptyArea > 40000;
+        })()`,
+        true,
+      );
+    } else {
+      looksBlank = await wc.executeJavaScript(
+        `(() => ((document.body && document.body.innerText) || '').trim().length < 40)()`,
+        true,
+      );
+    }
+  } catch {
+    return;
+  }
+
+  if (!looksBlank) return;
+  entry.__lastStaleReloadAt = now;
+  try {
+    logBreadcrumb('portal-blank-reload', {
+      serviceId: id,
+      appId: service.appId,
+    });
+    wc.reload();
+  } catch {
+    // ignore
+  }
+}
+
 function layoutActiveView() {
   if (!mainWindow || !activeServiceId || locked || overlayOpen) return;
   if (mainWindow.isDestroyed()) return;
@@ -966,6 +1103,7 @@ function setOverlayOpen(open) {
   }
   const entry = views.get(activeServiceId);
   if (!entry) return;
+  parkBackgroundViews(activeServiceId);
   attachGuestView(entry.view);
   entry.__lastBounds = null;
   layoutActiveView();
@@ -1699,6 +1837,13 @@ function createViewForService(service) {
             !isHeavyPortalApp(service) ||
             entry.activatedOnce === true,
         });
+        if (isHeavyPortalApp(service) && service.id === activeServiceId) {
+          if (entry.__portalBootPending) {
+            scheduleHeavyPortalWork(service.id, 'boot');
+          } else {
+            scheduleHeavyPortalWork(service.id, 'health');
+          }
+        }
       }
     } catch {
       // ignore
@@ -1719,7 +1864,13 @@ function createViewForService(service) {
     webContents.setZoomFactor(Math.min(2, Math.max(0.5, zoom)));
   }
 
-  views.set(service.id, { view, lastUsed: Date.now(), loadedOnce: false, service });
+  views.set(service.id, {
+    view,
+    lastUsed: Date.now(),
+    loadedOnce: false,
+    service,
+    __portalBootPending: isHeavyPortalApp(service),
+  });
   hibernatedAt.delete(service.id);
   watchWebContents(webContents, `app:${service.appId}:${service.id}`);
   return views.get(service.id);
@@ -1729,6 +1880,8 @@ function hibernateService(id, { force = false } = {}) {
   const entry = views.get(id);
   if (!entry) return;
   if (!force && id === activeServiceId) return;
+  clearPortalTimer(entry, '__portalBootTimer');
+  clearPortalTimer(entry, '__portalHealthTimer');
   const service = getService(id);
   try {
     const url = entry.view.webContents.getURL();
@@ -1862,6 +2015,10 @@ function softWakeService(id) {
   }
   if (views.size >= maxWarm()) return false;
   createViewForService(service);
+  if (id !== activeServiceId) {
+    const warmed = views.get(id);
+    if (warmed && isKeepWarmService(id)) parkGuestView(warmed);
+  }
   enforceWarmLimit();
   return views.has(id);
 }
@@ -1992,7 +2149,7 @@ function activateService(id) {
   }
 
   const previousId = activeServiceId;
-  detachAllViews();
+  parkBackgroundViews(id);
   const entry = ensureLiveView(service);
   const wasStale =
     isHeavyPortalApp(service) &&
@@ -2014,12 +2171,19 @@ function activateService(id) {
   });
   // Recreate path sometimes attaches a view that never started loading.
   // Heavy portals left idle ~10–20 min often show a blank CRM pane — reload.
-  if ((wasStale || !entry.loadedOnce) && !wc.isLoading()) {
+  if (wasStale && !wc.isLoading()) {
     try {
-      if (wasStale) entry.__lastStaleReloadAt = Date.now();
+      entry.__lastStaleReloadAt = Date.now();
+      entry.__portalBootPending = false;
       wc.reload();
     } catch {
       // ignore
+    }
+  } else if (isHeavyPortalApp(service)) {
+    if (entry.__portalBootPending) {
+      scheduleHeavyPortalWork(id, 'boot');
+    } else {
+      scheduleHeavyPortalWork(id, 'health');
     }
   }
 
