@@ -354,13 +354,14 @@ function isHeavyPortalApp(service) {
   return id === 'zoho-one' || id === 'arattai' || id === 'zoho-crm';}
 
 /**
- * Zoho One CRM (and similar portals) often leave a blank content pane after the
- * machine sits idle or the tab is hidden — shell/nav stay, widgets die.
+ * Zoho One CRM blanks when Sales is opened after Finance/HR, or after tab
+ * switches — shell/nav stay, content pane dies. Recover in-place (reload),
+ * never bounce to portal home (that dumps the user on Personal).
  */
-const PORTAL_STALE_MS = 2 * 60_000;
-const PORTAL_RELOAD_COOLDOWN_MS = 20_000;
-const PORTAL_HEALTH_CHECK_MS = 1600;
-const PORTAL_HEALTH_RETRY_MS = 3200;
+const PORTAL_STALE_MS = 90_000;
+const PORTAL_RELOAD_COOLDOWN_MS = 12_000;
+const PORTAL_HEALTH_CHECK_MS = 900;
+const PORTAL_HEALTH_RETRY_MS = 2200;
 
 function touchPortalPresence(entry) {
   if (entry) entry.lastPresenceAt = Date.now();
@@ -928,33 +929,23 @@ function contentGuestBounds() {
 }
 
 /**
- * Keep warm guests attached at full size.
- * Heavy portals (Zoho One) must stay "visible" to Chromium — setVisible(false)
- * fires Page Visibility → CRM iframes freeze and never recover (blank white pane
- * under an otherwise healthy Zoho shell). Park them off-screen instead.
+ * Keep warm guests attached at full size and Chromium-visible.
+ * setVisible(false) freezes Zoho CRM / Arattai iframes via Page Visibility.
+ * Park every warm app off-screen instead — instant switch is the product promise.
  */
 function parkGuestView(entry, viewId = null) {
   if (!mainWindow || !entry?.view || mainWindow.isDestroyed()) return;
   try {
     mainWindow.contentView.addChildView(entry.view);
     const bounds = contentGuestBounds();
-    const service = (viewId && getService(viewId)) || entry.service;
-    if (isHeavyPortalApp(service)) {
-      const parked = {
-        ...bounds,
-        x: -Math.max(bounds.width, 1100) - 80,
-      };
-      entry.view.setBounds(parked);
-      entry.__lastBounds = parked;
-      if (typeof entry.view.setVisible === 'function') {
-        entry.view.setVisible(true);
-      }
-    } else {
-      entry.view.setBounds(bounds);
-      entry.__lastBounds = bounds;
-      if (typeof entry.view.setVisible === 'function') {
-        entry.view.setVisible(false);
-      }
+    const parked = {
+      ...bounds,
+      x: -Math.max(bounds.width, 1100) - 80,
+    };
+    entry.view.setBounds(parked);
+    entry.__lastBounds = parked;
+    if (typeof entry.view.setVisible === 'function') {
+      entry.view.setVisible(true);
     }
     entry.__parked = true;
   } catch {
@@ -962,7 +953,7 @@ function parkGuestView(entry, viewId = null) {
   }
 }
 
-/** Detach non-warm guests; park warm ones off-screen / hidden so SPAs stay alive. */
+/** Detach non-warm guests; park warm ones off-screen (still visible to Chromium). */
 function parkBackgroundViews(exceptId = null) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   for (const [viewId, entry] of views.entries()) {
@@ -988,9 +979,19 @@ function schedulePortalHealthCheck(id, delay = PORTAL_HEALTH_CHECK_MS) {
   }, delay);
 }
 
+function schedulePortalHealthChecks(id) {
+  schedulePortalHealthCheck(id, PORTAL_HEALTH_CHECK_MS);
+  const entry = views.get(id);
+  if (!entry) return;
+  clearPortalTimer(entry, '__portalHealthTimer2');
+  entry.__portalHealthTimer2 = setTimeout(() => {
+    entry.__portalHealthTimer2 = null;
+    runPortalHealthCheck(id);
+  }, PORTAL_HEALTH_RETRY_MS);
+}
+
 /**
- * Spoof Page Visibility so Zoho CRM does not freeze when the Hub window is
- * occluded or the view is parked off-screen.
+ * Spoof Page Visibility so Zoho CRM / Arattai do not freeze when parked.
  */
 function attachPortalVisibilityKeepAlive(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
@@ -1003,20 +1004,9 @@ function attachPortalVisibilityKeepAlive(webContents) {
         configurable: true,
         get: () => 'visible',
       });
-      window.addEventListener(
-        'visibilitychange',
-        (e) => {
-          e.stopImmediatePropagation();
-        },
-        true,
-      );
-      document.addEventListener(
-        'visibilitychange',
-        (e) => {
-          e.stopImmediatePropagation();
-        },
-        true,
-      );
+      const stop = (e) => e.stopImmediatePropagation();
+      window.addEventListener('visibilitychange', stop, true);
+      document.addEventListener('visibilitychange', stop, true);
     } catch (_) {}
   })()`;
   const inject = () => {
@@ -1029,8 +1019,98 @@ function attachPortalVisibilityKeepAlive(webContents) {
 }
 
 /**
- * Detect Zoho One "shell OK, CRM pane blank" (the common failure mode) and
- * recover with a single reload. Also catches a fully empty white page.
+ * In-page guardian for Zoho One: Finance/HR work, but Sales → CRM often paints
+ * a blank pane after space switches. Auto-reload once when that happens.
+ */
+function attachZohoOneBlankGuardian(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  const script = `(() => {
+    if (window.__asperaZohoSalesGuardian) return;
+    window.__asperaZohoSalesGuardian = true;
+    let lastFixAt = 0;
+    const COOLDOWN = 12000;
+
+    function salesContext() {
+      const path = String(location.pathname || '').toLowerCase();
+      const href = String(location.href || '').toLowerCase();
+      if (path.includes('/cxapp-spaces/sales') || href.includes('/cxapp-spaces/sales')) {
+        return true;
+      }
+      if (path.includes('/crm/') && path.includes('/tab/')) return true;
+      // UI: Sales dropdown selected + CRM chrome without content.
+      const text = ((document.body && document.body.innerText) || '').slice(0, 4000);
+      return /\\bCRM\\b/.test(text) && /\\bSales\\b/.test(text) && /Workqueue|Analytics|My Requests/.test(text);
+    }
+
+    function looksBlank() {
+      const vw = window.innerWidth || 0;
+      const vh = window.innerHeight || 0;
+      if (vw < 200 || vh < 200) return false;
+
+      for (const frame of document.querySelectorAll('iframe')) {
+        const r = frame.getBoundingClientRect();
+        if (r.width < vw * 0.35 || r.height < vh * 0.28) continue;
+        const src = String(frame.getAttribute('src') || frame.src || '');
+        if (!src || src === 'about:blank' || src.startsWith('about:blank')) return true;
+        try {
+          const doc = frame.contentDocument;
+          if (doc) {
+            const t = ((doc.body && doc.body.innerText) || '').trim();
+            const kids = doc.body ? doc.body.children.length : 0;
+            if (t.length < 30 && kids < 2) return true;
+          }
+        } catch (_) {}
+      }
+
+      let emptyArea = 0;
+      for (const el of document.querySelectorAll('main,section,div')) {
+        const r = el.getBoundingClientRect();
+        if (r.width < vw * 0.42 || r.height < vh * 0.38) continue;
+        const text = (el.innerText || '').trim();
+        if (text.length > 100) continue;
+        if (el.querySelectorAll('img,canvas,table,tr,li,button,input,a').length > 8) continue;
+        emptyArea += r.width * r.height;
+      }
+      return emptyArea > vw * vh * 0.3;
+    }
+
+    function tryFix() {
+      const now = Date.now();
+      if (now - lastFixAt < COOLDOWN) return;
+      if (!salesContext() || !looksBlank()) return;
+      lastFixAt = now;
+      // Prefer refreshing the dead CRM iframe; fall back to full reload.
+      for (const frame of document.querySelectorAll('iframe')) {
+        const r = frame.getBoundingClientRect();
+        if (r.width < (window.innerWidth || 0) * 0.35) continue;
+        if (r.height < (window.innerHeight || 0) * 0.28) continue;
+        const src = String(frame.src || '');
+        if (src && !src.startsWith('about:blank')) {
+          try {
+            frame.src = src;
+            return;
+          } catch (_) {}
+        }
+      }
+      try { location.reload(); } catch (_) {}
+    }
+
+    setInterval(tryFix, 1800);
+    document.addEventListener('click', () => setTimeout(tryFix, 1800), true);
+    window.addEventListener('hashchange', () => setTimeout(tryFix, 1200));
+    window.addEventListener('popstate', () => setTimeout(tryFix, 1200));
+  })()`;
+  const inject = () => {
+    if (webContents.isDestroyed()) return;
+    webContents.executeJavaScript(script, true).catch(() => {});
+  };
+  webContents.on('dom-ready', inject);
+  webContents.on('did-finish-load', inject);
+  inject();
+}
+
+/**
+ * Detect blank portal content and recover with reload (stay on current route).
  */
 async function runPortalHealthCheck(id) {
   const entry = views.get(id);
@@ -1063,7 +1143,6 @@ async function runPortalHealthCheck(id) {
         const vh = window.innerHeight || 0;
         if (vw < 200 || vh < 200) return false;
 
-        // Large iframe with no usable document / about:blank → blank CRM pane.
         for (const frame of document.querySelectorAll('iframe')) {
           const r = frame.getBoundingClientRect();
           if (r.width < vw * 0.35 || r.height < vh * 0.28) continue;
@@ -1076,28 +1155,24 @@ async function runPortalHealthCheck(id) {
             if (doc) {
               const t = ((doc.body && doc.body.innerText) || '').trim();
               const kids = doc.body ? doc.body.children.length : 0;
-              if (t.length < 24 && kids < 2) return true;
+              if (t.length < 30 && kids < 2) return true;
             }
-          } catch (_) {
-            // cross-origin with a real src usually means content is loading OK
-          }
+          } catch (_) {}
         }
 
-        // Big empty content boxes under the Zoho shell (nav still painted).
         let emptyArea = 0;
         for (const el of document.querySelectorAll('main,section,div')) {
           const r = el.getBoundingClientRect();
           if (r.width < vw * 0.4 || r.height < vh * 0.35) continue;
           const text = (el.innerText || '').trim();
-          if (text.length > 80) continue;
-          if (el.querySelectorAll('img,canvas,table,tr,li,button,a').length > 6) {
+          if (text.length > 100) continue;
+          if (el.querySelectorAll('img,canvas,table,tr,li,button,a').length > 8) {
             continue;
           }
           emptyArea += r.width * r.height;
         }
         if (emptyArea > vw * vh * 0.28) return true;
 
-        // Fully empty page (no shell).
         const bodyText = ((document.body && document.body.innerText) || '').trim();
         return bodyText.length < 24;
       })()`,
@@ -1115,13 +1190,8 @@ async function runPortalHealthCheck(id) {
       appId: service.appId,
       from: String(currentUrl || '').slice(0, 200),
     });
-    // Stay on the current portal route when possible — user is already in Sales/CRM.
-    if (service.appId === 'zoho-one' && isFragileZohoOneDeepUrl(currentUrl)) {
-      // Deep CRM URLs sometimes never recover — bounce to portal home.
-      await wc.loadURL(service.url);
-    } else {
-      wc.reload();
-    }
+    // Always reload in place — never navigate to portal home (that opens Personal).
+    wc.reload();
   } catch {
     // ignore
   }
@@ -1750,8 +1820,11 @@ function createViewForService(service) {
 
   configureGuestWindowOpen(webContents, service);
   attachGuestContextMenu(webContents);
-  if (isHeavyPortalApp(service)) {
+  if (isHeavyPortalApp(service) || isKeepWarmService(service.id)) {
     attachPortalVisibilityKeepAlive(webContents);
+  }
+  if (service.appId === 'zoho-one') {
+    attachZohoOneBlankGuardian(webContents);
   }
   // Throttling is applied after first load (see did-finish-load below).
 
@@ -1910,6 +1983,15 @@ function createViewForService(service) {
   });
   webContents.on('did-navigate-in-page', (_event, url) => {
     rememberGoodUrl(service.id, url);
+    // Zoho One Sales/Finance/HR are in-page space switches — CRM often blanks here.
+    if (
+      isHeavyPortalApp(service) &&
+      service.id === activeServiceId &&
+      !locked &&
+      !overlayOpen
+    ) {
+      schedulePortalHealthChecks(service.id);
+    }
   });
   webContents.on('did-finish-load', () => {
     try {
@@ -1934,7 +2016,7 @@ function createViewForService(service) {
             entry.activatedOnce === true,
         });
         if (isHeavyPortalApp(service) && service.id === activeServiceId) {
-          schedulePortalHealthCheck(service.id);
+          schedulePortalHealthChecks(service.id);
         }
       }
     } catch {
@@ -2086,8 +2168,8 @@ function isKeepWarmService(id) {
 }
 
 function warmSelectionLimit() {
-  // Reserve one view for an active app that the user did not mark warm.
-  return Math.max(0, maxWarm() - 1);
+  // All warm slots are usable; active tab may also be warm.
+  return Math.max(1, maxWarm());
 }
 
 function selectedWarmIds() {
@@ -2119,7 +2201,8 @@ function softWakeService(id) {
     const [victimId] = evictable.shift();
     hibernateService(victimId);
   }
-  if (views.size >= maxWarm()) return false;
+  // Warm apps are exempt from the hard cap — usability first (instant switch).
+  if (views.size >= maxWarm() && !isKeepWarmService(id)) return false;
   createViewForService(service);
   if (id !== activeServiceId) {
     const warmed = views.get(id);
@@ -2131,7 +2214,7 @@ function softWakeService(id) {
 
 /**
  * Soft-load every warm app so switching stays instant.
- * Staggered; warm guests stay full-speed (no background throttle).
+ * Fast stagger — warm guests must be ready within ~1s of each other.
  */
 let softWakeTimer = null;
 function softWakeKeepWarmApps(exceptId = null) {
@@ -2156,9 +2239,9 @@ function softWakeKeepWarmApps(exceptId = null) {
     softWakeService(pending[i]);
     i += 1;
     broadcastState();
-    if (i < pending.length) softWakeTimer = setTimeout(step, 1200);
+    if (i < pending.length) softWakeTimer = setTimeout(step, 250);
   };
-  softWakeTimer = setTimeout(step, 400);
+  softWakeTimer = setTimeout(step, 80);
 }
 
 function enforceResidentLimit() {
@@ -2280,27 +2363,14 @@ function activateService(id) {
   if (wasStale && !wc.isLoading()) {
     try {
       entry.__lastStaleReloadAt = Date.now();
-      // Prefer portal home over a fragile deep CRM URL after long idle.
-      if (
-        service.appId === 'zoho-one' &&
-        isFragileZohoOneDeepUrl(wc.getURL())
-      ) {
-        wc.loadURL(service.url).catch(() => {});
-      } else {
-        wc.reload();
-      }
+      // Reload in place — do not bounce Zoho One to portal home (Personal).
+      wc.reload();
     } catch {
       // ignore
     }
   } else if (isHeavyPortalApp(service)) {
-    // Switching back / un-parking often leaves CRM blank for 1–3s — check twice.
-    const switchedIn = Boolean(previousId && previousId !== id);
-    schedulePortalHealthCheck(id, switchedIn || entry.__parked ? 800 : PORTAL_HEALTH_CHECK_MS);
-    clearPortalTimer(entry, '__portalHealthTimer2');
-    entry.__portalHealthTimer2 = setTimeout(() => {
-      entry.__portalHealthTimer2 = null;
-      runPortalHealthCheck(id);
-    }, PORTAL_HEALTH_RETRY_MS);
+    // Switching back / un-parking / in-app Sales often leaves CRM blank — check twice.
+    schedulePortalHealthChecks(id);
   }
   entry.__parked = false;
 
