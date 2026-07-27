@@ -1,7 +1,7 @@
 {
   "name": "asperadock",
   "productName": "Aspera Dock",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "description": "Lightweight company workspace for multiple WhatsApp, Arattai, Google Workspace, and Zoho apps",
   "main": ".vite/build/main.js",
   "private": true,
@@ -15,6 +15,7 @@
     "publish:update": "node scripts/publish-update.mjs",
     "deploy": "node scripts/deploy.mjs",
     "lint": "echo \"No linter configured\"",
+    "test": "node --test test/**/*.mjs",
     "preview:bar": "node scripts/preview-bar.mjs && electron scripts/shot.cjs scripts/preview-bar.html scripts/preview-bar.png 1366 110 --no-sandbox --disable-gpu",
     "fix-sandbox": "echo \"Run: sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox\""
   },

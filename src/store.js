@@ -58,6 +58,12 @@ export const DEFAULTS = {
   allowPageInjection: false,
   /** When false (default), guest DevTools are blocked in packaged builds. */
   allowGuestDevTools: false,
+  /**
+   * Vendor workarounds (defaults ON — kill switches for breakage).
+   * Not exposed in Settings UI; edit settings.json or ASPERADOCK_ADMIN=1.
+   */
+  googleSpoofEnabled: true,
+  zohoReclaimEnabled: true,
 
   // Compatibility (needs relaunch)
   /** Off by default — GPU process often costs 100–200 MB on Linux. */
@@ -401,50 +407,8 @@ export function saveSettings(patch) {
   return cache;
 }
 
-export function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const derived = crypto.scryptSync(String(password), salt, 64, {
-    N: 16384,
-    r: 8,
-    p: 1,
-  });
-  return `scrypt$${salt}$${derived.toString('hex')}`;
-}
-
-/** Verify password. Supports legacy unsalted SHA-256 and scrypt$salt$hash. */
-export function verifyPassword(password, stored) {
-  if (!stored) return false;
-  const value = String(password);
-  const record = String(stored);
-  if (record.startsWith('scrypt$')) {
-    const parts = record.split('$');
-    if (parts.length !== 3) return false;
-    const [, salt, hashHex] = parts;
-    try {
-      const derived = crypto.scryptSync(value, salt, 64, {
-        N: 16384,
-        r: 8,
-        p: 1,
-      });
-      const expected = Buffer.from(hashHex, 'hex');
-      if (expected.length !== derived.length) return false;
-      return crypto.timingSafeEqual(expected, derived);
-    } catch {
-      return false;
-    }
-  }
-  // Legacy unsalted SHA-256 (pre-0.2.0) — still accept, then rehash on unlock.
-  const legacy = crypto.createHash('sha256').update(value).digest('hex');
-  try {
-    const a = Buffer.from(legacy, 'hex');
-    const b = Buffer.from(record, 'hex');
-    if (a.length !== b.length) return false;
-    return crypto.timingSafeEqual(a, b);
-  } catch {
-    return legacy === record;
-  }
-}
-
-export function isLegacyPasswordHash(stored) {
-  return Boolean(stored && !String(stored).startsWith('scrypt$'));
-}
+export {
+  hashPassword,
+  verifyPassword,
+  isLegacyPasswordHash,
+} from './passwordCrypto.js';

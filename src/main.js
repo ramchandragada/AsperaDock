@@ -21,7 +21,6 @@ import {
   MAX_APP_NAME_LENGTH,
   MAX_WARM_VIEWS_DEFAULT,
   MAX_WARM_VIEWS_CAP,
-  INTERNAL_HOSTS,
   CUSTOM_APP_ID,
   isCustomAppId,
   getChromeMetrics,
@@ -75,6 +74,20 @@ import {
   attachChromeProtocolHandler,
   chromeAppUrl,
 } from './chromeProtocol.js';
+import {
+  isInternalUrl,
+  isForbiddenGuestNavigation,
+  isAuthOrLoginUrl,
+  isUrlForService,
+} from './guestNav.js';
+import {
+  isGoogleService,
+  isGoogleMailAppUrl,
+  attachGoogleChromeSpoof,
+  applyGoogleRequestHeaders,
+  noteGoogleMarketingLanding,
+} from './vendors/google.js';
+import { reclaimServiceHomeIfWrongProduct as reclaimZohoHome } from './vendors/zoho.js';
 import fs from 'node:fs';
 
 // Custom scheme must be registered before ready (A+ fuse: no file:// privileges).
@@ -660,44 +673,6 @@ function maxWarm() {
   );
 }
 
-function baseDomain(hostname) {
-  return hostname.split('.').slice(-2).join('.');
-}
-
-function isInternalUrl(url, service) {
-  let host;
-  try {
-    host = new URL(url).hostname;
-  } catch {
-    // Fail closed — malformed URLs are never treated as in-dock.
-    return false;
-  }
-  let serviceHost = '';
-  try {
-    serviceHost = baseDomain(new URL(service.url).hostname);
-  } catch {
-    serviceHost = '';
-  }
-  const allowed = [serviceHost, ...INTERNAL_HOSTS].filter(Boolean);
-  return allowed.some((d) => host === d || host.endsWith(`.${d}`));
-}
-
-/** Dangerous or non-web schemes must never navigate inside a guest. */
-function isForbiddenGuestNavigation(url) {
-  try {
-    const protocol = new URL(String(url || '')).protocol.toLowerCase();
-    return ![
-      'http:',
-      'https:',
-      'about:',
-      'blob:',
-      'data:',
-    ].includes(protocol);
-  } catch {
-    return true;
-  }
-}
-
 function dockIsUserFocused() {
   return !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused());
 }
@@ -737,78 +712,6 @@ function dockHandle(channel, handler) {
     assertShellSender(event);
     return handler(event, ...args);
   });
-}
-
-function buildGoogleChromeSpoofSource() {
-  const full = CHROME_VERSION;
-  const major = CHROME_MAJOR;
-  return `(() => {
-  try {
-    const full = ${JSON.stringify(full)};
-    const major = ${JSON.stringify(major)};
-    const brands = [
-      { brand: 'Chromium', version: major },
-      { brand: 'Google Chrome', version: major },
-      { brand: 'Not_A Brand', version: '24' },
-    ];
-    const fullVersionList = [
-      { brand: 'Chromium', version: full },
-      { brand: 'Google Chrome', version: full },
-      { brand: 'Not_A Brand', version: '24.0.0.0' },
-    ];
-    const high = {
-      architecture: 'x86', bitness: '64', brands, fullVersionList,
-      mobile: false, model: '', platform: 'Linux', platformVersion: '6.8.0',
-      uaFullVersion: full, wow64: false,
-    };
-    const uaData = {
-      brands, mobile: false, platform: 'Linux',
-      getHighEntropyValues: () => Promise.resolve(high),
-      toJSON: () => ({ brands, mobile: false, platform: 'Linux' }),
-    };
-    Object.defineProperty(Navigator.prototype, 'userAgentData', {
-      get: () => uaData, configurable: true,
-    });
-    const t = Date.now() / 1000;
-    const chrome = window.chrome || {};
-    chrome.app = chrome.app || {
-      isInstalled: false,
-      InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
-      RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
-    };
-    chrome.runtime = chrome.runtime || {
-      OnInstalledReason: {}, OnRestartRequiredReason: {}, PlatformArch: {}, PlatformOs: {},
-      connect() {}, sendMessage() {},
-    };
-    chrome.loadTimes = chrome.loadTimes || function () {
-      return {
-        requestTime: t, startLoadTime: t, commitLoadTime: t,
-        finishDocumentLoadTime: t, finishLoadTime: t, firstPaintTime: t,
-        firstPaintAfterLoadTime: 0, navigationType: 'Other',
-        wasFetchedViaSpdy: true, wasNpnNegotiated: true,
-        npnNegotiatedProtocol: 'h2', wasAlternateProtocolAvailable: false,
-        connectionInfo: 'h2',
-      };
-    };
-    chrome.csi = chrome.csi || function () {
-      return { startE: Date.now(), onloadT: Date.now(), pageT: 1000, tran: 15 };
-    };
-    window.chrome = chrome;
-  } catch (e) {}
-})();`;
-}
-
-async function attachGoogleChromeSpoof(wc) {
-  if (!wc || wc.isDestroyed() || wc.__asperaGoogleSpoof) return;
-  wc.__asperaGoogleSpoof = true;
-  const source = buildGoogleChromeSpoofSource();
-  // Prefer page inject only — CDP debugger attach causes Linux paint flicker.
-  const inject = () => {
-    if (wc.isDestroyed()) return;
-    wc.executeJavaScript(source, true).catch(() => {});
-  };
-  wc.on('dom-ready', inject);
-  wc.on('did-finish-load', inject);
 }
 
 /**
@@ -1126,8 +1029,7 @@ function configureSession(partitionSession, partitionKey) {
     );
   });
 
-  // Google sign-in: spoof Client Hints as Chrome, and use a Firefox UA only on
-  // accounts.google.com (widely used workaround for the embedded-browser block).
+  // Google sign-in: Client Hints + Firefox UA on accounts (vendor quarantine).
   partitionSession.webRequest.onBeforeSendHeaders(
     {
       urls: [
@@ -1139,27 +1041,16 @@ function configureSession(partitionSession, partitionKey) {
       ],
     },
     (details, callback) => {
-      const headers = { ...details.requestHeaders };
-      let host = '';
-      try {
-        host = new URL(details.url).hostname.toLowerCase();
-      } catch {
-        // ignore
-      }
-      if (host === 'accounts.google.com' || host.endsWith('.accounts.google.com')) {
-        headers['User-Agent'] = FIREFOX_ACCOUNTS_UA;
-        delete headers['sec-ch-ua'];
-        delete headers['sec-ch-ua-mobile'];
-        delete headers['sec-ch-ua-platform'];
-        delete headers['Sec-CH-UA'];
-        delete headers['Sec-CH-UA-Mobile'];
-        delete headers['Sec-CH-UA-Platform'];
-      } else {
-        headers['User-Agent'] = headers['User-Agent'] || CHROME_USER_AGENT;
-        headers['sec-ch-ua'] = SEC_CH_UA;
-        headers['sec-ch-ua-mobile'] = '?0';
-        headers['sec-ch-ua-platform'] = '"Linux"';
-      }
+      const headers = applyGoogleRequestHeaders(
+        { ...details.requestHeaders },
+        details.url,
+        {
+          chromeUA: CHROME_USER_AGENT,
+          firefoxAccountsUA: FIREFOX_ACCOUNTS_UA,
+          secChUa: SEC_CH_UA,
+          enabled: settings.googleSpoofEnabled !== false,
+        },
+      );
       callback({ cancel: false, requestHeaders: headers });
     },
   );
@@ -1187,22 +1078,6 @@ function configureSession(partitionSession, partitionKey) {
   });
 }
 
-function isGoogleService(service) {
-  if (!service) return false;
-  if (service.appId === 'gmail') return true;
-  try {
-    const host = new URL(service.url).hostname.toLowerCase();
-    return (
-      host === 'google.com' ||
-      host.endsWith('.google.com') ||
-      host === 'gmail.com' ||
-      host.endsWith('.gmail.com')
-    );
-  } catch {
-    return false;
-  }
-}
-
 function guestWebPreferences(service) {
   return {
     session: session.fromPartition(service.partition),
@@ -1211,20 +1086,6 @@ function guestWebPreferences(service) {
     sandbox: true,
     spellcheck: true,
   };
-}
-
-function isGoogleMailAppUrl(url) {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.toLowerCase();
-    return (
-      host === 'mail.google.com' ||
-      host.endsWith('.mail.google.com') ||
-      host === 'inbox.google.com'
-    );
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -1340,7 +1201,11 @@ function createViewForService(service) {
   webContents.setUserAgent(ua);
   webContents.setAudioMuted(settings.muted || !cfg.allowSounds);
   if (isGoogleService(service)) {
-    attachGoogleChromeSpoof(webContents).catch(() => {});
+    attachGoogleChromeSpoof(webContents, {
+      chromeVersion: CHROME_VERSION,
+      chromeMajor: CHROME_MAJOR,
+      enabled: settings.googleSpoofEnabled !== false,
+    }).catch(() => {});
   }
   const langs = cfg.spellChecker || settings.spellChecker || ['en-US'];
   webContents.session.setSpellCheckerLanguages(
@@ -1356,7 +1221,11 @@ function createViewForService(service) {
     configureGuestWindowOpen(childWc, service);
     attachPopupSessionAdopt(webContents, childWindow, service);
     if (isGoogleService(service)) {
-      attachGoogleChromeSpoof(childWc).catch(() => {});
+      attachGoogleChromeSpoof(childWc, {
+        chromeVersion: CHROME_VERSION,
+        chromeMajor: CHROME_MAJOR,
+        enabled: settings.googleSpoofEnabled !== false,
+      }).catch(() => {});
     }
     childWc.on('will-navigate', (event, url) => {
       if (isForbiddenGuestNavigation(url)) {
@@ -1492,7 +1361,10 @@ function createViewForService(service) {
 
   webContents.on('did-navigate', (_event, url) => {
     rememberGoodUrl(service.id, url);
-    reclaimServiceHomeIfWrongProduct(webContents, service, url);
+    if (isGoogleService(service)) noteGoogleMarketingLanding(service.id, url);
+    reclaimZohoHome(webContents, service, url, {
+      enabled: settings.zohoReclaimEnabled !== false,
+    });
   });
   webContents.on('did-navigate-in-page', (_event, url) => {
     rememberGoodUrl(service.id, url);
@@ -1501,7 +1373,10 @@ function createViewForService(service) {
     try {
       const url = webContents.getURL();
       rememberGoodUrl(service.id, url);
-      reclaimServiceHomeIfWrongProduct(webContents, service, url);
+      if (isGoogleService(service)) noteGoogleMarketingLanding(service.id, url);
+      reclaimZohoHome(webContents, service, url, {
+        enabled: settings.zohoReclaimEnabled !== false,
+      });
     } catch {
       // ignore
     }
@@ -1562,57 +1437,6 @@ function hibernateService(id, { force = false } = {}) {
   }
 }
 
-/** True for Zoho/Google login and MFA pages — never restore these as "home". */
-function isAuthOrLoginUrl(url) {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.toLowerCase();
-    const pathName = u.pathname.toLowerCase();
-    if (host.startsWith('accounts.')) return true;
-    if (host.includes('accounts.google.')) return true;
-    if (/\/signin|\/login|\/logout|\/oauth|\/oneauth|\/mfa|\/verify/i.test(pathName)) {
-      return true;
-    }
-    return false;
-  } catch {
-    return true;
-  }
-}
-
-/**
- * Only restore URLs that belong to this app. Shared Zoho SSO cookies made
- * Mail tabs remember Cliq/Meeting after a cross-product hop — reject those.
- */
-function isUrlForService(service, url) {
-  if (!service || !url) return false;
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    let expected = '';
-    try {
-      expected = new URL(service.url).hostname.toLowerCase();
-    } catch {
-      return false;
-    }
-    if (!expected) return false;
-    if (host === expected || host.endsWith(`.${expected}`)) return true;
-
-    // Zoho DC aliases: mail.zoho.in ↔ mail.zoho.com (same product, first label).
-    const product = expected.split('.')[0];
-    const hostProduct = host.split('.')[0];
-    if (
-      product &&
-      hostProduct === product &&
-      (host.endsWith('.zoho.com') || host.endsWith('.zoho.in')) &&
-      (expected.endsWith('.zoho.com') || expected.endsWith('.zoho.in'))
-    ) {
-      return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
 /** Prefer the last in-app page; never cold-start on a login/QR / wrong-app screen. */
 function startUrlForService(service) {
   const memory = lastGoodUrls.get(service.id);
@@ -1664,25 +1488,6 @@ function hydrateLastUrls() {
   if (dirty) {
     settings = saveSettings({ lastServiceUrls: cleaned });
   }
-}
-
-/** Zoho Mail (etc.) must not stay on Cliq/Meeting after an in-app hop. */
-const reclaimInFlight = new Set();
-function reclaimServiceHomeIfWrongProduct(webContents, service, url) {
-  if (!service || !webContents || webContents.isDestroyed()) return;
-  if (!url || isAuthOrLoginUrl(url)) return;
-  if (isUrlForService(service, url)) return;
-  // Only reclaim Zoho product tabs — shared SSO often dumps the wrong app.
-  if (!String(service.appId || '').startsWith('zoho-')) return;
-  if (reclaimInFlight.has(service.id)) return;
-  reclaimInFlight.add(service.id);
-  const home = service.url;
-  webContents
-    .loadURL(home)
-    .catch(() => {})
-    .finally(() => {
-      setTimeout(() => reclaimInFlight.delete(service.id), 1500);
-    });
 }
 
 function flushAllSessionCookies() {
@@ -2948,7 +2753,13 @@ dockHandle('dock:toggle-mute', () => {
 dockHandle('dock:save-settings', (_e, patch) => {
   const incoming = patch && typeof patch === 'object' ? patch : {};
   const adminOverride = process.env.ASPERADOCK_ADMIN === '1';
-  const blocked = new Set(['allowPageInjection', 'allowGuestDevTools', 'lockPasswordHash']);
+  const blocked = new Set([
+    'allowPageInjection',
+    'allowGuestDevTools',
+    'lockPasswordHash',
+    'googleSpoofEnabled',
+    'zohoReclaimEnabled',
+  ]);
   const allowed = new Set([...Object.keys(DEFAULTS), 'lockPassword']);
   const next = {};
   for (const [key, value] of Object.entries(incoming)) {

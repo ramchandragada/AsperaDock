@@ -34,6 +34,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { GITHUB_UPDATE_FEED, GITHUB_SLUG } from './github.js';
+import { assertHttpsUrl } from './netTrust.js';
 
 /** Default feed: GitHub Releases (no custom server). */
 const DEFAULT_FEED = GITHUB_UPDATE_FEED;
@@ -336,16 +337,7 @@ async function sha256File(filePath) {
 
 /** Reject non-HTTPS artifact URLs (feed integrity alone is not enough). */
 function assertHttpsArtifactUrl(url) {
-  let parsed;
-  try {
-    parsed = new URL(String(url || ''));
-  } catch {
-    throw new Error('Invalid update artifact URL');
-  }
-  if (parsed.protocol !== 'https:') {
-    throw new Error('Update artifacts must be HTTPS');
-  }
-  return parsed;
+  return assertHttpsUrl(url, 'Update artifact URL');
 }
 
 /**
