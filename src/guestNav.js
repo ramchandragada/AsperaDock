@@ -56,6 +56,35 @@ export function isAuthOrLoginUrl(url) {
 }
 
 /**
+ * Zoho One deep embedded-app routes (CRM / Books / etc. under cxapp-spaces)
+ * often paint a blank white pane when restored as a cold start URL. Prefer the
+ * portal home and let the user open Sales → CRM again (session stays signed in).
+ */
+export function isFragileZohoOneDeepUrl(url) {
+  try {
+    const path = new URL(String(url || '')).pathname.toLowerCase();
+    if (path.includes('/cxapp-spaces/')) return true;
+    if (path.includes('/crm/') && /\/tab\//.test(path)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** Safe cold-start URL for a service (avoids fragile deep SPA routes). */
+export function safeStartUrlForService(service, candidate) {
+  if (!service) return candidate || '';
+  if (
+    service.appId === 'zoho-one' &&
+    candidate &&
+    isFragileZohoOneDeepUrl(candidate)
+  ) {
+    return service.url;
+  }
+  return candidate || service.url;
+}
+
+/**
  * Only restore URLs that belong to this app (shared Zoho SSO can hop products).
  * Zoho One is a portal — allow any *.zoho.in / *.zoho.com host for that app.
  */

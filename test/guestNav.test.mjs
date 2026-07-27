@@ -5,6 +5,8 @@ import {
   isForbiddenGuestNavigation,
   isAuthOrLoginUrl,
   isUrlForService,
+  isFragileZohoOneDeepUrl,
+  safeStartUrlForService,
 } from '../src/guestNav.js';
 
 test('isForbiddenGuestNavigation blocks file and javascript', () => {
@@ -48,4 +50,17 @@ test('isUrlForService allows Arattai hosts', () => {
   const arattai = { url: 'https://web.arattai.in', appId: 'arattai' };
   assert.equal(isUrlForService(arattai, 'https://web.arattai.in/'), true);
   assert.equal(isUrlForService(arattai, 'https://api.arattai.in/x'), true);
+});
+
+test('Zoho One deep CRM routes are fragile for cold start', () => {
+  const one = { url: 'https://one.zoho.in/', appId: 'zoho-one' };
+  const deep =
+    'https://one.zoho.in/zohoone/aspera/home/cxapp-spaces/sales/crm/thegstcompany/tab/Home/begin';
+  assert.equal(isFragileZohoOneDeepUrl(deep), true);
+  assert.equal(isFragileZohoOneDeepUrl('https://one.zoho.in/zohoone/aspera/home'), false);
+  assert.equal(safeStartUrlForService(one, deep), 'https://one.zoho.in/');
+  assert.equal(
+    safeStartUrlForService(one, 'https://one.zoho.in/zohoone/aspera/home'),
+    'https://one.zoho.in/zohoone/aspera/home',
+  );
 });

@@ -80,6 +80,8 @@ import {
   isForbiddenGuestNavigation,
   isAuthOrLoginUrl,
   isUrlForService,
+  isFragileZohoOneDeepUrl,
+  safeStartUrlForService,
 } from './guestNav.js';
 import {
   isGoogleService,
@@ -358,8 +360,7 @@ function isHeavyPortalApp(service) {
  */
 const PORTAL_STALE_MS = 8 * 60_000;
 const PORTAL_RELOAD_COOLDOWN_MS = 45_000;
-const PORTAL_BOOT_RELOAD_MS = 1400;
-const PORTAL_HEALTH_CHECK_MS = 2800;
+const PORTAL_HEALTH_CHECK_MS = 3500;
 
 function touchPortalPresence(entry) {
   if (entry) entry.lastPresenceAt = Date.now();
@@ -895,6 +896,7 @@ function attachGuestView(view) {
   try {
     // WebContentsView (Electron 30+) — BrowserView bounds are unreliable on 37/Linux.
     mainWindow.contentView.addChildView(view);
+    if (typeof view.setVisible === 'function') view.setVisible(true);
   } catch {
     // ignore
   }
@@ -909,19 +911,43 @@ function detachGuestView(view) {
   }
 }
 
-/** Keep warm guests attached at 1×1 so SPA iframes (Zoho CRM) keep booting. */
+function contentGuestBounds() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { x: 0, y: 70, width: 800, height: 600 };
+  }
+  const [width, height] = mainWindow.getContentSize();
+  const m = effectiveMetrics();
+  const right = m.right || 0;
+  const top = Math.max(64, m.top || 0);
+  return {
+    x: Math.max(0, m.left || 0),
+    y: top,
+    width: Math.max(1, width - (m.left || 0) - right),
+    height: Math.max(1, height - top),
+  };
+}
+
+/**
+ * Keep warm guests attached at full size but hidden — Zoho CRM / SPA iframes
+ * measure the viewport; parking them at 1×1 leaves a permanent blank pane.
+ */
 function parkGuestView(entry) {
   if (!mainWindow || !entry?.view || mainWindow.isDestroyed()) return;
   try {
     mainWindow.contentView.addChildView(entry.view);
-    entry.view.setBounds({ x: 0, y: 0, width: 1, height: 1 });
+    const bounds = contentGuestBounds();
+    entry.view.setBounds(bounds);
+    entry.__lastBounds = bounds;
+    if (typeof entry.view.setVisible === 'function') {
+      entry.view.setVisible(false);
+    }
     entry.__parked = true;
   } catch {
     // ignore — may already be attached
   }
 }
 
-/** Detach non-warm guests; park warm ones off-screen instead of killing iframes. */
+/** Detach non-warm guests; park warm ones hidden (full size) so SPAs stay alive. */
 function parkBackgroundViews(exceptId = null) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   for (const [viewId, entry] of views.entries()) {
@@ -937,42 +963,21 @@ function clearPortalTimer(entry, key) {
   entry[key] = null;
 }
 
-function scheduleHeavyPortalWork(id, kind = 'health') {
+function schedulePortalHealthCheck(id) {
   const entry = views.get(id);
   if (!entry) return;
-  const key = kind === 'boot' ? '__portalBootTimer' : '__portalHealthTimer';
-  clearPortalTimer(entry, key);
-  const delay = kind === 'boot' ? PORTAL_BOOT_RELOAD_MS : PORTAL_HEALTH_CHECK_MS;
-  entry[key] = setTimeout(() => {
-    entry[key] = null;
-    if (kind === 'boot') maybeBootHeavyPortal(id);
-    else runPortalHealthCheck(id);
-  }, delay);
+  clearPortalTimer(entry, '__portalHealthTimer');
+  entry.__portalHealthTimer = setTimeout(() => {
+    entry.__portalHealthTimer = null;
+    runPortalHealthCheck(id);
+  }, PORTAL_HEALTH_CHECK_MS);
 }
 
-function maybeBootHeavyPortal(id) {
-  const entry = views.get(id);
-  const service = getService(id) || entry?.service;
-  if (!entry || !isHeavyPortalApp(service)) return;
-  if (id !== activeServiceId || locked || overlayOpen) return;
-  if (!entry.__portalBootPending) return;
-  const wc = entry.view?.webContents;
-  if (!wc || wc.isDestroyed() || wc.isLoading()) {
-    scheduleHeavyPortalWork(id, 'boot');
-    return;
-  }
-  entry.__portalBootPending = false;
-  // Restoring a deep Zoho One URL after restart often paints the shell but
-  // leaves the CRM iframe blank unless we reload once after first paint.
-  try {
-    entry.__lastStaleReloadAt = Date.now();
-    wc.reload();
-  } catch {
-    // ignore
-  }
-  scheduleHeavyPortalWork(id, 'health');
-}
-
+/**
+ * Completely empty Zoho One (no shell) after a bad deep-URL restore — send the
+ * user back to the portal home once. Do NOT treat normal about:blank CRM
+ * iframes as failure (that caused reload loops).
+ */
 async function runPortalHealthCheck(id) {
   const entry = views.get(id);
   const service = getService(id) || entry?.service;
@@ -990,50 +995,42 @@ async function runPortalHealthCheck(id) {
   }
 
   let looksBlank = false;
+  let currentUrl = '';
   try {
-    if (service.appId === 'zoho-one') {
-      looksBlank = await wc.executeJavaScript(
-        `(() => {
-          const iframes = [...document.querySelectorAll('iframe')];
-          for (const frame of iframes) {
-            const r = frame.getBoundingClientRect();
-            if (r.width < 120 || r.height < 120) continue;
-            const src = String(frame.src || '');
-            if (src && src !== 'about:blank') return false;
-            return true;
-          }
-          const panes = [...document.querySelectorAll(
-            'main,[role="main"],#content,.content,div[class*="content"]',
-          )];
-          let emptyArea = 0;
-          for (const el of panes) {
-            const r = el.getBoundingClientRect();
-            if (r.width < 200 || r.height < 160) continue;
-            if ((el.innerText || '').trim().length > 60) return false;
-            emptyArea += r.width * r.height;
-          }
-          return emptyArea > 40000;
-        })()`,
-        true,
-      );
-    } else {
-      looksBlank = await wc.executeJavaScript(
-        `(() => ((document.body && document.body.innerText) || '').trim().length < 40)()`,
-        true,
-      );
-    }
+    currentUrl = wc.getURL();
+  } catch {
+    return;
+  }
+
+  try {
+    looksBlank = await wc.executeJavaScript(
+      `(() => {
+        const text = ((document.body && document.body.innerText) || '').trim();
+        if (text.length > 80) return false;
+        const hasChrome = !!(
+          document.querySelector('nav,header,[role="navigation"],iframe') ||
+          document.querySelector('[class*="zoho"],[id*="zoho"]')
+        );
+        // Truly empty white page — no portal chrome and almost no text.
+        return text.length < 24 && !hasChrome;
+      })()`,
+      true,
+    );
   } catch {
     return;
   }
 
   if (!looksBlank) return;
   entry.__lastStaleReloadAt = now;
+  const home = service.url;
   try {
-    logBreadcrumb('portal-blank-reload', {
+    logBreadcrumb('portal-blank-home', {
       serviceId: id,
       appId: service.appId,
+      from: String(currentUrl || '').slice(0, 200),
+      to: String(home).slice(0, 200),
     });
-    wc.reload();
+    await wc.loadURL(home);
   } catch {
     // ignore
   }
@@ -1827,6 +1824,7 @@ function createViewForService(service) {
       const entry = views.get(service.id);
       if (entry) {
         entry.loadedOnce = true;
+        entry.__portalBootPending = false;
         const keepWarm = isKeepWarmService(service.id);
         applyGuestPerfMode(webContents, {
           active: service.id === activeServiceId,
@@ -1838,11 +1836,7 @@ function createViewForService(service) {
             entry.activatedOnce === true,
         });
         if (isHeavyPortalApp(service) && service.id === activeServiceId) {
-          if (entry.__portalBootPending) {
-            scheduleHeavyPortalWork(service.id, 'boot');
-          } else {
-            scheduleHeavyPortalWork(service.id, 'health');
-          }
+          schedulePortalHealthCheck(service.id);
         }
       }
     } catch {
@@ -1869,7 +1863,6 @@ function createViewForService(service) {
     lastUsed: Date.now(),
     loadedOnce: false,
     service,
-    __portalBootPending: isHeavyPortalApp(service),
   });
   hibernatedAt.delete(service.id);
   watchWebContents(webContents, `app:${service.appId}:${service.id}`);
@@ -1880,7 +1873,6 @@ function hibernateService(id, { force = false } = {}) {
   const entry = views.get(id);
   if (!entry) return;
   if (!force && id === activeServiceId) return;
-  clearPortalTimer(entry, '__portalBootTimer');
   clearPortalTimer(entry, '__portalHealthTimer');
   const service = getService(id);
   try {
@@ -1910,8 +1902,10 @@ function hibernateService(id, { force = false } = {}) {
       .fromPartition(service.partition)
       .cookies.flushStore()
       .catch(() => {});
-    // Free HTTP cache pages for this partition (session/cookies kept).
-    trimGuestHttpCache(service.partition).catch(() => {});
+    // Heavy portals break (blank CRM) if we wipe cache between wakes.
+    if (!isHeavyPortalApp(service)) {
+      trimGuestHttpCache(service.partition).catch(() => {});
+    }
   }
 }
 
@@ -1925,7 +1919,7 @@ function startUrlForService(service) {
     !isAuthOrLoginUrl(last) &&
     isUrlForService(service, last)
   ) {
-    return last;
+    return safeStartUrlForService(service, last);
   }
   return service.url;
 }
@@ -1935,13 +1929,24 @@ function rememberGoodUrl(serviceId, url) {
   if (!url || !String(url).startsWith('http') || isAuthOrLoginUrl(url)) return;
   const service = getService(serviceId);
   if (service && !isUrlForService(service, url)) return;
-  lastGoodUrls.set(serviceId, url);
+  // Never persist fragile Zoho One CRM deep links — they blank after restart.
+  let storeUrl = url;
+  if (service?.appId === 'zoho-one' && isFragileZohoOneDeepUrl(url)) {
+    try {
+      const u = new URL(url);
+      const homeMatch = u.pathname.match(/^(\/zohoone\/[^/]+\/home)/i);
+      storeUrl = homeMatch ? `${u.origin}${homeMatch[1]}` : service.url;
+    } catch {
+      storeUrl = service.url;
+    }
+  }
+  lastGoodUrls.set(serviceId, storeUrl);
   if (lastUrlSaveTimer) clearTimeout(lastUrlSaveTimer);
   lastUrlSaveTimer = setTimeout(() => {
     const prev = settings.lastServiceUrls || {};
-    if (prev[serviceId] === url) return;
+    if (prev[serviceId] === storeUrl) return;
     settings = saveSettings({
-      lastServiceUrls: { ...prev, [serviceId]: url },
+      lastServiceUrls: { ...prev, [serviceId]: storeUrl },
     });
   }, 1200);
 }
@@ -1960,8 +1965,10 @@ function hydrateLastUrls() {
       dirty = true;
       continue;
     }
-    cleaned[id] = url;
-    lastGoodUrls.set(id, url);
+    const safe = service ? safeStartUrlForService(service, url) : url;
+    if (safe !== url) dirty = true;
+    cleaned[id] = safe;
+    lastGoodUrls.set(id, safe);
   }
   if (dirty) {
     settings = saveSettings({ lastServiceUrls: cleaned });
@@ -2174,17 +2181,20 @@ function activateService(id) {
   if (wasStale && !wc.isLoading()) {
     try {
       entry.__lastStaleReloadAt = Date.now();
-      entry.__portalBootPending = false;
-      wc.reload();
+      // Prefer portal home over a fragile deep CRM URL after long idle.
+      if (
+        service.appId === 'zoho-one' &&
+        isFragileZohoOneDeepUrl(wc.getURL())
+      ) {
+        wc.loadURL(service.url).catch(() => {});
+      } else {
+        wc.reload();
+      }
     } catch {
       // ignore
     }
   } else if (isHeavyPortalApp(service)) {
-    if (entry.__portalBootPending) {
-      scheduleHeavyPortalWork(id, 'boot');
-    } else {
-      scheduleHeavyPortalWork(id, 'health');
-    }
+    schedulePortalHealthCheck(id);
   }
 
   // Only user-selected apps remain loaded after switching away.
