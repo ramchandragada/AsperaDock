@@ -133,10 +133,15 @@ export const DEFAULTS = {
   /** Hibernate idle background apps (keepWarm apps like WhatsApp are skipped). */
   hibernateMinutes: 30,
   /**
-   * How many apps stay loaded while you switch tabs.
-   * Rambox/Ferdium-style: keep several messaging apps warm so switching is instant.
+   * How many apps may be marked “priority / warm” (flame). Selection budget only —
+   * does not force that many Chromium tabs to stay loaded (see maxResidentViews).
    */
   maxWarmViews: 6,
+  /**
+   * Hard cap on how many guest WebContents stay loaded at once (includes active).
+   * Extra priority apps soft-wake on hover / click so RAM stays bounded.
+   */
+  maxResidentViews: 2,
 
   /** Toggleable global shortcuts */
   shortcuts: {
@@ -360,6 +365,22 @@ function migrateWarmKeepAlive(settings) {
     next.maxWarmViews = Math.min(
       6,
       Math.max(1, Number(next.maxWarmViews) || 6),
+    );
+  }
+  // Cap concurrent loaded guests so 5 warm WhatsApp/Gmail tabs cannot hold ~6 GB.
+  if (!next.residentCapV1) {
+    next = {
+      ...next,
+      residentCapV1: true,
+      maxResidentViews: Math.min(
+        3,
+        Math.max(2, Number(next.maxResidentViews) || 2),
+      ),
+    };
+  } else {
+    next.maxResidentViews = Math.min(
+      4,
+      Math.max(1, Number(next.maxResidentViews) || 2),
     );
   }
   return next;

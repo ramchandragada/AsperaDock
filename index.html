@@ -266,9 +266,14 @@
             <p class="hint-text">Unselected apps unload when you switch away. This timer applies to other idle background activity.</p>
           </label>
           <label class="field">
-            <span>Max warm apps in RAM</span>
+            <span>Max warm apps</span>
             <input id="set-max-warm" type="number" min="1" max="6" />
-            <p class="hint-text">Includes the active app. Maximum is 6. A value of 6 lets you mark 5 background apps as warm.</p>
+            <p class="hint-text">How many apps can stay loaded for instant switching (flame). Includes the active tab. Maximum is 6.</p>
+          </label>
+          <label class="field">
+            <span>Extra non-warm apps in RAM</span>
+            <input id="set-max-resident" type="number" min="1" max="4" />
+            <p class="hint-text">Spare slots for apps you open without the flame. Warm apps are never unloaded by this limit.</p>
           </label>
           <label class="switch-row">
             <input id="set-consumption" type="checkbox" />

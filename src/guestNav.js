@@ -57,6 +57,7 @@ export function isAuthOrLoginUrl(url) {
 
 /**
  * Only restore URLs that belong to this app (shared Zoho SSO can hop products).
+ * Zoho One is a portal — allow any *.zoho.in / *.zoho.com host for that app.
  */
 export function isUrlForService(service, url) {
   if (!service || !url) return false;
@@ -81,6 +82,21 @@ export function isUrlForService(service, url) {
     ) {
       return true;
     }
+
+    if (
+      service.appId === 'zoho-one' &&
+      (host.endsWith('.zoho.in') || host.endsWith('.zoho.com'))
+    ) {
+      return true;
+    }
+
+    if (
+      service.appId === 'arattai' &&
+      (host.endsWith('.arattai.in') || host === 'arattai.in')
+    ) {
+      return true;
+    }
+
     return false;
   } catch {
     return false;

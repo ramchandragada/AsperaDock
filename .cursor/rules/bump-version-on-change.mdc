@@ -1,16 +1,20 @@
 ---
-description: Always bump package.json version when shipping app changes
+description: Always bump version, build, push, and release Aspera Dock changes
 alwaysApply: true
 ---
 
-# Version bump on every change set
+# Version bump, ship, and release (no extra approval)
 
-Whenever you make user-facing or packaged Aspera Dock changes that will be committed/pushed:
+Whenever you make user-facing or packaged Aspera Dock changes:
 
 1. Check the latest GitHub release (`gh release list --limit 1`) and/or installed version.
-2. Bump `package.json` `version` to the **next patch** (or minor/major if the change warrants it) **before or with** the commit.
+2. Bump `package.json` `version` to the **next patch** (or minor/major if warranted) **before or with** the commit.
 3. Include the version bump in the same commit as the feature/fix when practical.
 4. Mention the new version in the commit message (e.g. `Add downloads button (v0.1.9).`).
-5. Push so CI can publish that release (Deploy workflow may also stamp from the latest tag — keep `package.json` ahead of or equal to the next expected release).
+5. Build the `.deb` (`npm run make`) and install locally when practical.
+6. **Always commit, push to `origin`, and publish a GitHub release** for that version — **do not wait for the user to ask**. Permission is standing; no extra approval needed for push/release of shipped versions.
+7. Attach the built `.deb` to the GitHub release when available (`gh release create` / `gh release upload`).
+8. Keep `package.json` ahead of or equal to the next expected release so CI/Deploy can stamp correctly.
 
 Do **not** leave `package.json` stuck on an old base version while shipping new builds.
+Do **not** ask “should I push/release?” after a versioned build — just do it.

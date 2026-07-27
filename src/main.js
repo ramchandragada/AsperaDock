@@ -11,6 +11,7 @@ import {
   Notification,
   dialog,
   powerMonitor,
+  clipboard,
 } from 'electron';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -264,6 +265,10 @@ function isLowMemoryMode() {
 function applyMemorySwitches() {
   const lean = isLowMemoryMode();
   const disabled = new Set(['SpareRendererForSitePerProcess']);
+  const resident = Math.max(
+    1,
+    Math.min(4, Number(settings.maxResidentViews) || 2),
+  );
 
   if (lean || settings.hardwareAcceleration === false) {
     app.disableHardwareAcceleration();
@@ -275,13 +280,58 @@ function applyMemorySwitches() {
     disabled.add('HardwareMediaKeyHandling');
   }
 
-  // Trim Chromium caches / spare processes. Do not cap V8's old-space heap:
-  // WhatsApp Web can exceed the old 384 MB limit and its renderer then dies.
-  // Low-memory mode controls usage through warm-view limits and hibernation.
   app.commandLine.appendSwitch('disable-features', [...disabled].join(','));
-  app.commandLine.appendSwitch('disk-cache-size', String((lean ? 32 : 64) * 1024 * 1024));
-  if (lean) {
-    app.commandLine.appendSwitch('renderer-process-limit', '4');
+  app.commandLine.appendSwitch(
+    'disk-cache-size',
+    String((lean ? 16 : 32) * 1024 * 1024),
+  );
+  app.commandLine.appendSwitch(
+    'renderer-process-limit',
+    String(Math.max(6, resident + 4)),
+  );
+}
+
+/**
+ * Active guest runs full speed. Background guests throttle only after their
+ * first successful load — throttling during boot leaves Zoho One / Arattai
+ * stuck on the splash forever.
+ */
+function applyGuestPerfMode(webContents, { active, loadedOnce = true } = {}) {
+  if (!webContents || webContents.isDestroyed()) return;
+  if (!active && !loadedOnce) return;
+  try {
+    webContents.setBackgroundThrottling(!active);
+  } catch {
+    // ignore
+  }
+}
+
+function syncAllGuestPerfModes() {
+  for (const [id, entry] of views.entries()) {
+    const wc = entry?.view?.webContents;
+    if (!wc || wc.isDestroyed()) continue;
+    applyGuestPerfMode(wc, {
+      active: !overlayOpen && !locked && id === activeServiceId,
+      loadedOnce: entry.loadedOnce === true,
+    });
+  }
+}
+
+/** Drop HTTP cache only — cookies / IndexedDB stay so sessions survive. */
+async function trimGuestHttpCache(partition) {
+  if (!partition) return;
+  try {
+    await session.fromPartition(partition).clearCache();
+  } catch {
+    // ignore
+  }
+}
+
+async function trimInactiveGuestCaches() {
+  for (const [id, entry] of views.entries()) {
+    if (id === activeServiceId) continue;
+    const partition = getService(id)?.partition || entry?.service?.partition;
+    if (partition) await trimGuestHttpCache(partition);
   }
 }
 
@@ -673,6 +723,13 @@ function maxWarm() {
   );
 }
 
+/** How many guest pages may stay loaded (active included). Priority marks are separate. */
+function maxResident() {
+  if (isLowMemoryMode()) return 2;
+  const n = Number(settings.maxResidentViews);
+  return Math.min(4, Math.max(1, Number.isFinite(n) ? n : 2));
+}
+
 function dockIsUserFocused() {
   return !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused());
 }
@@ -805,16 +862,21 @@ function setOverlayOpen(open) {
 
   if (overlayOpen) {
     detachAllViews();
+    syncAllGuestPerfModes();
     return;
   }
 
-  if (locked || !activeServiceId) return;
+  if (locked || !activeServiceId) {
+    syncAllGuestPerfModes();
+    return;
+  }
   const entry = views.get(activeServiceId);
   if (!entry) return;
   attachGuestView(entry.view);
   entry.__lastBounds = null;
   layoutActiveView();
   focusActiveContents();
+  syncAllGuestPerfModes();
 }
 
 function hideViewsForLock() {
@@ -1089,6 +1151,142 @@ function guestWebPreferences(service) {
 }
 
 /**
+ * Native right-click menu for guest pages (Cut / Copy / Paste / Select All…).
+ * Electron does not show Chromium's built-in menu unless we handle this event.
+ */
+function attachGuestContextMenu(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  webContents.on('context-menu', (_event, params) => {
+    if (webContents.isDestroyed()) return;
+
+    /** @type {Electron.MenuItemConstructorOptions[]} */
+    const template = [];
+
+    if (params.misspelledWord) {
+      for (const suggestion of params.dictionarySuggestions || []) {
+        template.push({
+          label: suggestion,
+          click: () => webContents.replaceMisspelling(suggestion),
+        });
+      }
+      if (params.dictionarySuggestions?.length) template.push({ type: 'separator' });
+      template.push({
+        label: 'Add to dictionary',
+        click: () =>
+          webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord),
+      });
+      template.push({ type: 'separator' });
+    }
+
+    if (params.linkURL) {
+      template.push({
+        label: 'Open link',
+        click: () => openExternalSafe(params.linkURL),
+      });
+      template.push({
+        label: 'Copy link address',
+        click: () => clipboard.writeText(params.linkURL),
+      });
+      template.push({ type: 'separator' });
+    }
+
+    if (params.hasImageContents && params.srcURL) {
+      template.push({
+        label: 'Copy image',
+        click: () => webContents.copyImageAt(params.x, params.y),
+      });
+      template.push({
+        label: 'Copy image address',
+        click: () => clipboard.writeText(params.srcURL),
+      });
+      template.push({
+        label: 'Save image as…',
+        click: () => webContents.downloadURL(params.srcURL),
+      });
+      template.push({ type: 'separator' });
+    }
+
+    const editable = params.isEditable;
+    const hasSelection = Boolean(params.selectionText);
+
+    if (editable || hasSelection) {
+      template.push({
+        label: 'Cut',
+        role: 'cut',
+        enabled: editable && hasSelection && params.editFlags?.canCut !== false,
+      });
+      template.push({
+        label: 'Copy',
+        role: 'copy',
+        enabled: hasSelection && params.editFlags?.canCopy !== false,
+      });
+      template.push({
+        label: 'Paste',
+        role: 'paste',
+        enabled: editable && params.editFlags?.canPaste !== false,
+      });
+      if (editable) {
+        template.push({
+          label: 'Paste and match style',
+          role: 'pasteAndMatchStyle',
+          enabled: params.editFlags?.canPaste !== false,
+        });
+        template.push({
+          label: 'Delete',
+          role: 'delete',
+          enabled: params.editFlags?.canDelete !== false,
+        });
+      }
+      template.push({ type: 'separator' });
+      template.push({
+        label: 'Select all',
+        role: 'selectAll',
+        enabled: params.editFlags?.canSelectAll !== false,
+      });
+    } else if (hasSelection) {
+      template.push({
+        label: 'Copy',
+        role: 'copy',
+        enabled: params.editFlags?.canCopy !== false,
+      });
+      template.push({ type: 'separator' });
+      template.push({ label: 'Select all', role: 'selectAll' });
+    } else {
+      // Always offer clipboard actions so users can paste into the page
+      // even when the hit-test did not mark an input (common in SPAs).
+      template.push({ label: 'Copy', role: 'copy' });
+      template.push({ label: 'Paste', role: 'paste' });
+      template.push({ label: 'Select all', role: 'selectAll' });
+    }
+
+    if (!template.length) return;
+    const menu = Menu.buildFromTemplate(template);
+    // params.x/y are relative to the guest WebContents; Menu.popup needs window coords.
+    let popupX = params.x;
+    let popupY = params.y;
+    try {
+      for (const entry of views.values()) {
+        if (entry?.view?.webContents === webContents) {
+          const bounds = entry.view.getBounds?.() || entry.__lastBounds;
+          if (bounds) {
+            popupX += bounds.x || 0;
+            popupY += bounds.y || 0;
+          }
+          break;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    menu.popup({
+      window: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+      x: Math.round(popupX),
+      y: Math.round(popupY),
+    });
+  });
+}
+
+/**
  * Window-open policy shared by a service view and any popup it spawns.
  * Genuine external links go to the OS browser; internal popups (Zoho CRM
  * child windows, SSO handshakes, about:blank targets) open as real windows
@@ -1213,12 +1411,15 @@ function createViewForService(service) {
   );
 
   configureGuestWindowOpen(webContents, service);
+  attachGuestContextMenu(webContents);
+  // Throttling is applied after first load (see did-finish-load below).
 
   // Real popup windows (Zoho CRM child views, SSO handshakes) inherit these
   // rules too, and must never be trapped inside a broken denied handle.
   webContents.on('did-create-window', (childWindow) => {
     const childWc = childWindow.webContents;
     configureGuestWindowOpen(childWc, service);
+    attachGuestContextMenu(childWc);
     attachPopupSessionAdopt(webContents, childWindow, service);
     if (isGoogleService(service)) {
       attachGoogleChromeSpoof(childWc, {
@@ -1377,6 +1578,13 @@ function createViewForService(service) {
       reclaimZohoHome(webContents, service, url, {
         enabled: settings.zohoReclaimEnabled !== false,
       });
+      const entry = views.get(service.id);
+      if (entry) {
+        entry.loadedOnce = true;
+        if (service.id !== activeServiceId) {
+          applyGuestPerfMode(webContents, { active: false, loadedOnce: true });
+        }
+      }
     } catch {
       // ignore
     }
@@ -1396,7 +1604,7 @@ function createViewForService(service) {
     webContents.setZoomFactor(Math.min(2, Math.max(0.5, zoom)));
   }
 
-  views.set(service.id, { view, lastUsed: Date.now() });
+  views.set(service.id, { view, lastUsed: Date.now(), loadedOnce: false, service });
   hibernatedAt.delete(service.id);
   watchWebContents(webContents, `app:${service.appId}:${service.id}`);
   return views.get(service.id);
@@ -1434,6 +1642,8 @@ function hibernateService(id, { force = false } = {}) {
       .fromPartition(service.partition)
       .cookies.flushStore()
       .catch(() => {});
+    // Free HTTP cache pages for this partition (session/cookies kept).
+    trimGuestHttpCache(service.partition).catch(() => {});
   }
 }
 
@@ -1521,20 +1731,75 @@ function reconcileWarmSelections() {
   }
 }
 
-/** Background wake for autoWakeMinutes — loads without stealing the active tab. */
+/** Background wake — loads without stealing the active tab. */
 function softWakeService(id) {
   if (views.has(id) || locked) return false;
   const service = getService(id);
   if (!service || service.config?.enabled === false) return false;
+
+  // Never park priority apps to make room — that made every switch reload.
+  // Only non-warm background views are evictable; budget is maxWarm overall.
+  const evictable = [...views.entries()]
+    .filter(([viewId]) => viewId !== activeServiceId && !isKeepWarmService(viewId))
+    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+  while (views.size >= maxWarm() && evictable.length) {
+    const [victimId] = evictable.shift();
+    hibernateService(victimId);
+  }
   if (views.size >= maxWarm()) return false;
   createViewForService(service);
   enforceWarmLimit();
   return views.has(id);
 }
 
+/**
+ * Soft-load every priority (keepWarm) app so tab switches stay instant.
+ * Staggered to avoid a CPU spike when several WhatsApp/Gmail tabs wake at once.
+ */
+let softWakeTimer = null;
+function softWakeKeepWarmApps(exceptId = null) {
+  if (softWakeTimer) {
+    clearTimeout(softWakeTimer);
+    softWakeTimer = null;
+  }
+  const pending = selectedWarmIds().filter(
+    (id) => id !== exceptId && !views.has(id),
+  );
+  if (!pending.length) return;
+
+  let i = 0;
+  const step = () => {
+    softWakeTimer = null;
+    if (locked) return;
+    while (i < pending.length && views.has(pending[i])) i += 1;
+    if (i >= pending.length) {
+      broadcastState();
+      return;
+    }
+    softWakeService(pending[i]);
+    i += 1;
+    broadcastState();
+    if (i < pending.length) softWakeTimer = setTimeout(step, 1200);
+  };
+  softWakeTimer = setTimeout(step, 400);
+}
+
+function enforceResidentLimit() {
+  // Cap only non-priority background apps. Flame/keepWarm tabs stay resident
+  // so switching does not reload WhatsApp/Gmail every time.
+  const evictable = [...views.entries()]
+    .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
+    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+
+  while (views.size > maxResident() && evictable.length) {
+    const [id] = evictable.shift();
+    hibernateService(id);
+  }
+}
+
 function enforceWarmLimit() {
-  // User-selected warm apps are protected. The selection limit reserves enough
-  // room for the active app, so only unselected background views are evictable.
+  // Drop unselected background views beyond the warm selection budget, then
+  // trim any leftover non-priority residents under the RAM spare cap.
   const evictable = [...views.entries()]
     .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
     .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
@@ -1543,6 +1808,7 @@ function enforceWarmLimit() {
     const [id] = evictable.shift();
     hibernateService(id);
   }
+  enforceResidentLimit();
 }
 
 function toggleKeepWarm(id) {
@@ -1557,8 +1823,8 @@ function toggleKeepWarm(id) {
         ok: false,
         error:
           limit > 0
-            ? `You can keep ${limit} background app${limit === 1 ? '' : 's'} warm (max ${MAX_WARM_VIEWS_CAP} apps in RAM including the active tab).`
-            : `Maximum is ${MAX_WARM_VIEWS_CAP} apps in RAM. Turn off another warm app first.`,
+            ? `You can keep ${limit} background app${limit === 1 ? '' : 's'} warm (max ${MAX_WARM_VIEWS_CAP} including the active tab).`
+            : `Maximum is ${MAX_WARM_VIEWS_CAP} warm apps. Turn off another warm app first.`,
       };
     }
   }
@@ -1620,6 +1886,18 @@ function activateService(id) {
   activeServiceId = id;
   settings = saveSettings({ lastActiveServiceId: id });
 
+  const wc = entry.view.webContents;
+  // Unthrottle immediately so SPAs finish booting when user switches in.
+  applyGuestPerfMode(wc, { active: true, loadedOnce: true });
+  // Background soft-wake can stall Zoho One / Arattai on splash — reload once.
+  if (!entry.loadedOnce && !wc.isLoading()) {
+    try {
+      wc.reload();
+    } catch {
+      // ignore
+    }
+  }
+
   // Only user-selected apps remain loaded after switching away.
   if (previousId && previousId !== id && !isKeepWarmService(previousId)) {
     hibernateService(previousId);
@@ -1636,8 +1914,13 @@ function activateService(id) {
     focusActiveContents();
   }
 
+  // Full-speed active tab; throttle every other warm renderer.
+  syncAllGuestPerfModes();
+
   unreadCounts.set(id, 0);
   enforceWarmLimit();
+  // Keep flame apps loaded in the background so the next switch is instant.
+  softWakeKeepWarmApps(id);
   refreshBadge();
   broadcastState();
 }
@@ -2509,6 +2792,7 @@ function scheduleChromeReload() {
 }
 
 function startHibernateTimer() {
+  let cacheTrimTicks = 0;
   setInterval(() => {
     const now = Date.now();
     for (const [id, entry] of views.entries()) {
@@ -2534,6 +2818,12 @@ function startHibernateTimer() {
       if (Date.now() - sleptAt >= mins * 60_000) {
         softWakeService(service.id);
       }
+    }
+    // Every ~10 minutes, drop HTTP caches for inactive warm guests.
+    cacheTrimTicks += 1;
+    if (cacheTrimTicks >= 20) {
+      cacheTrimTicks = 0;
+      trimInactiveGuestCaches().catch(() => {});
     }
     broadcastState();
   }, 30_000);
@@ -2604,6 +2894,15 @@ dockHandle('dock:get-state', () => currentState());
 dockHandle('dock:activate', (_e, id) => {
   activateService(id);
   return { ok: true };
+});
+dockHandle('dock:prefetch', (_e, id) => {
+  // Kept for compatibility; warm apps are soft-woken after activate instead
+  // (hover prefetch raced with clicks and unloaded other priority tabs).
+  if (!id || locked || id === activeServiceId) return { ok: false };
+  if (!isKeepWarmService(id)) return { ok: false };
+  softWakeService(id);
+  broadcastState();
+  return { ok: true, loaded: views.has(id) };
 });
 dockHandle('dock:add-service', (_e, appId, profileId) =>
   addService(appId, profileId || null),
@@ -2813,6 +3112,7 @@ dockHandle('dock:save-settings', (_e, patch) => {
   // Keep at least 2 warm slots so multi-WhatsApp switching still works.
   if (next.lowMemoryMode === true) {
     next.maxWarmViews = Math.min(3, Math.max(2, Number(next.maxWarmViews) || 3));
+    next.maxResidentViews = 2;
     next.hibernateMinutes = Math.min(
       10,
       Math.max(3, Number(next.hibernateMinutes) || 10),
@@ -2822,6 +3122,12 @@ dockHandle('dock:save-settings', (_e, patch) => {
     next.maxWarmViews = Math.min(
       MAX_WARM_VIEWS_CAP,
       Math.max(1, Number(next.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT),
+    );
+  }
+  if (next.maxResidentViews != null) {
+    next.maxResidentViews = Math.min(
+      4,
+      Math.max(1, Number(next.maxResidentViews) || 2),
     );
   }
   if (next.density != null && !['normal', 'large', 'huge'].includes(next.density)) {

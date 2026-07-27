@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('asperadock', {
   setInstanceProfile: (serviceId, profileId) =>
     ipcRenderer.invoke('dock:set-instance-profile', serviceId, profileId),
   toggleKeepWarm: (id) => ipcRenderer.invoke('dock:toggle-keep-warm', id),
+  prefetch: (id) => ipcRenderer.invoke('dock:prefetch', id),
   saveAppConfig: (id, patch) => ipcRenderer.invoke('dock:save-app-config', id, patch),
   appNavigate: (id, action) => ipcRenderer.invoke('dock:app-navigate', id, action),
   hibernate: (id) => ipcRenderer.invoke('dock:hibernate', id),

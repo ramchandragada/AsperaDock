@@ -338,7 +338,7 @@ function makeAppTab(service, index) {
     const warmMark = document.createElement('span');
     warmMark.className = 'app-mark warm-mark';
     warmMark.innerHTML = icon('flame');
-    warmMark.title = 'Kept warm in memory';
+    warmMark.title = 'Kept warm — instant switch';
     logo.appendChild(warmMark);
   }
   btn.appendChild(iconStack);
@@ -631,6 +631,7 @@ function fillSettingsForm() {
   set('set-proxy-bypass', s.proxyBypass ?? '<local>');
   set('set-hibernate', s.hibernateMinutes ?? 30);
   set('set-max-warm', Math.min(6, s.maxWarmViews ?? 6));
+  set('set-max-resident', Math.min(4, s.maxResidentViews ?? 2));
   set('set-low-memory', s.lowMemoryMode === true);
   set('set-consumption', s.consumptionMonitor);
   set('set-error-reporting', s.errorReportingEnabled !== false);
@@ -688,6 +689,7 @@ function readSettingsForm() {
     proxyBypass: val('set-proxy-bypass').trim() || '<local>',
     hibernateMinutes: Number(val('set-hibernate')) || 2,
     maxWarmViews: Math.min(6, Math.max(1, Number(val('set-max-warm')) || 6)),
+    maxResidentViews: Math.min(4, Math.max(1, Number(val('set-max-resident')) || 2)),
     lowMemoryMode: checked('set-low-memory'),
     consumptionMonitor: checked('set-consumption'),
     errorReportingEnabled: checked('set-error-reporting'),

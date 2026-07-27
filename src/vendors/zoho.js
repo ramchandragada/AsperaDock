@@ -32,6 +32,8 @@ export function reclaimServiceHomeIfWrongProduct(webContents, service, url, { en
   if (!enabled || !webContents || webContents.isDestroyed() || !service) return false;
   if (!url || isAuthOrLoginUrl(url)) return false;
   if (!isZohoService(service)) return false;
+  // Zoho One is a multi-app portal — never force-navigate away from in-portal pages.
+  if (service.appId === 'zoho-one') return false;
   if (isUrlForService(service, url)) return false;
   if (reclaimInFlight.has(service.id)) return false;
 

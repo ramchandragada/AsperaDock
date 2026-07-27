@@ -33,3 +33,19 @@ test('isUrlForService allows Zoho DC aliases for same product', () => {
   assert.equal(isUrlForService(mail, 'https://mail.zoho.com/zm/'), true);
   assert.equal(isUrlForService(mail, 'https://cliq.zoho.in/'), false);
 });
+
+test('isUrlForService allows Zoho One portal hosts', () => {
+  const one = { url: 'https://one.zoho.in/', appId: 'zoho-one' };
+  assert.equal(
+    isUrlForService(one, 'https://one.zoho.in/zohoone/aspera/home'),
+    true,
+  );
+  assert.equal(isUrlForService(one, 'https://home.zoho.in/'), true);
+  assert.equal(isUrlForService(one, 'https://crm.zoho.in/'), true);
+});
+
+test('isUrlForService allows Arattai hosts', () => {
+  const arattai = { url: 'https://web.arattai.in', appId: 'arattai' };
+  assert.equal(isUrlForService(arattai, 'https://web.arattai.in/'), true);
+  assert.equal(isUrlForService(arattai, 'https://api.arattai.in/x'), true);
+});
