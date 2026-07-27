@@ -1,5 +1,5 @@
 /**
- * Sentry bootstrap for Aspera Dock (main process).
+ * Sentry bootstrap for Aspera Hub (main process).
  *
  * Preferred error sink when a DSN is configured (Settings or ASPERADOCK_SENTRY_DSN).
  * Native crashes + JS exceptions go to Sentry; we still keep local JSON reports.
@@ -12,7 +12,7 @@ import { app } from 'electron';
 import * as Sentry from '@sentry/electron/main';
 
 /**
- * Aspera Dock Sentry project (org: zarpat, project: asperadock).
+ * Aspera Hub Sentry project (org: zarpat, project: asperadock).
  * A DSN is a write-only ingest key — safe to ship in the app so every company PC
  * reports automatically with no per-machine setup.
  */

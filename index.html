@@ -7,7 +7,7 @@
       content="default-src 'self' asperadock:; style-src 'self' 'unsafe-inline' asperadock:; script-src 'self' asperadock:; img-src 'self' data: asperadock:;"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Aspera Dock</title>
+    <title>Aspera Hub</title>
   </head>
   <body class="theme-light layout-top density-normal icon-size-normal">
     <div class="shell">
@@ -73,7 +73,7 @@
               <button type="button" data-action="about" class="chrome-menu-item">
                 <span class="chrome-menu-ico" data-ico="info"></span> About
               </button>
-              <div id="chrome-menu-version" class="chrome-menu-version">Aspera Dock</div>
+              <div id="chrome-menu-version" class="chrome-menu-version">Aspera Hub</div>
             </div>
           </div>
         </div>
@@ -84,7 +84,7 @@
           <div id="empty-state" class="empty-state hidden">
             <div class="empty-card">
               <img class="brand-wordmark" id="empty-brand" alt="Aspera" />
-              <h1>Aspera Dock</h1>
+              <h1>Aspera Hub</h1>
               <p id="empty-version" class="app-version-label">Version …</p>
               <p>Add WhatsApp, Arattai, Gmail, and Zoho from the Aspera catalog. Up to 10 apps. Names max 10 characters.</p>
               <button id="empty-add-btn" type="button" class="primary">Add your first app</button>
@@ -190,7 +190,7 @@
 
           <div class="section-rule"><span>Startup and window</span></div>
           <label class="field">
-            <span>Open Aspera Dock automatically on system startup</span>
+            <span>Open Aspera Hub automatically on system startup</span>
             <select id="set-autostart">
               <option value="false">No</option>
               <option value="true">Yes</option>
@@ -301,9 +301,9 @@
               id="set-sentry-dsn"
               type="password"
               autocomplete="off"
-              placeholder="Leave empty = built-in Aspera Dock project"
+              placeholder="Leave empty = built-in Aspera Hub project"
             />
-            <p class="hint-text">Reports already go to the Aspera Dock Sentry project. Only set this to use a different project.</p>
+            <p class="hint-text">Reports already go to the Aspera Hub Sentry project. Only set this to use a different project.</p>
           </label>
           <label class="field">
             <span>GitHub repo (only if target = GitHub)</span>
@@ -330,12 +330,12 @@
 
           <div class="section-rule"><span>Updates</span></div>
           <p class="settings-banner" id="settings-version-banner">
-            You are running <strong id="settings-running-version">Aspera Dock</strong>.
+            You are running <strong id="settings-running-version">Aspera Hub</strong>.
           </p>
           <label class="switch-row">
             <input id="set-auto-update" type="checkbox" />
             <span>
-              Keep Aspera Dock up to date automatically
+              Keep Aspera Hub up to date automatically
               <small>Downloads from GitHub Releases — includes Electron runtime</small>
             </span>
           </label>
@@ -663,7 +663,7 @@
     <div id="lock-screen" class="lock-screen hidden">
       <div class="lock-card">
         <div class="brand-mark" id="lock-brand" aria-hidden="true"></div>
-        <h1>Aspera Dock is locked</h1>
+        <h1>Aspera Hub is locked</h1>
         <input id="lock-password" type="password" placeholder="Password" />
         <button id="unlock-btn" type="button" class="primary">Unlock</button>
         <p id="lock-error" class="error"></p>

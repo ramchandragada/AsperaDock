@@ -1,15 +1,16 @@
-# Aspera Dock
+# Aspera Hub
 
-Lightweight company workspace desktop app for Linux Mint. Run multiple signed-in accounts of WhatsApp, Arattai, Google Workspace mail, Zoho Mail, Zoho CRM, Zoho Books, and Zoho One in one shell — built for refurbished PCs with **16 GB RAM**.
+Free Linux desktop workspace for WhatsApp, Arattai, Gmail, and Zoho — light on RAM, instant warm-app switching. **100% free.**
+
+Marketing site: [`website/`](./website/) (ready for **asperahub.com**).
 
 ## Why this design
 
 - **Electron + Chromium** for reliable WhatsApp / Google / Zoho web apps on Linux
-- **One active BrowserView** shown at a time
-- **Max 3 warm services** in RAM; older ones hibernate
-- **Auto-hibernate** after 5 minutes unused
+- **Up to 5 warm apps** stay fully loaded and full-speed
+- **Non-warm apps** load on click only
 - **Isolated sessions** per account (separate logins, no cookie bleed)
-- **Single instance** lock so staff do not open two docks by mistake
+- **Single instance** lock so you do not open two Hubs by mistake
 
 ## Features
 
@@ -103,5 +104,6 @@ Tunables in the same file: `HIBERNATE_AFTER_MS`, `MAX_WARM_VIEWS`, `SIDEBAR_WIDT
 
 ## Project name
 
-- App name: **Aspera Dock**
+- App name: **Aspera Hub**
 - Package / repo: **asperadock**
+- Profile data folder (unchanged): **`~/.config/Aspera Dock`** so upgrades keep WhatsApp/Zoho logins

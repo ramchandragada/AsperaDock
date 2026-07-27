@@ -1,9 +1,9 @@
 /**
- * Seamless self-update for Aspera Dock.
+ * Seamless self-update for Aspera Hub.
  *
  * Model: the whole app (including the bundled Electron runtime) is replaced by a
- * new build, so "update Aspera Dock" == "update Electron". Users never manage
- * Electron themselves — every runtime change ships inside an Aspera Dock update.
+ * new build, so "update Aspera Hub" == "update Electron". Users never manage
+ * Electron themselves — every runtime change ships inside an Aspera Hub update.
  *
  * How it works:
  *  - Fetches a small JSON manifest (latest.json) from updateFeedUrl.
@@ -197,7 +197,7 @@ export async function checkForUpdates({ silent = true } = {}) {
           title: 'Development build',
           message: `You are running a development build (v${currentVersion()}).`,
           detail:
-            'Updates apply to the installed Aspera Dock package (/usr/bin/asperadock), not this npm start session.\n\nQuit this window and launch Aspera Dock from the app menu to use the installed version.',
+            'Updates apply to the installed Aspera Hub package (/usr/bin/asperadock), not this npm start session.\n\nQuit this window and launch Aspera Hub from the app menu to use the installed version.',
           buttons: ['OK'],
         })
         .finally(() => afterDialog());
@@ -217,7 +217,7 @@ export async function checkForUpdates({ silent = true } = {}) {
           .showMessageBox(BrowserWindow.getAllWindows()[0], {
             type: 'info',
             title: 'Update installed',
-            message: `Aspera Dock ${debVer} is installed. Restart to use it.`,
+            message: `Aspera Hub ${debVer} is installed. Restart to use it.`,
             buttons: ['Restart now', 'Later'],
             defaultId: 0,
             cancelId: 1,
@@ -240,7 +240,7 @@ export async function checkForUpdates({ silent = true } = {}) {
         dialog
           .showMessageBox(BrowserWindow.getAllWindows()[0], {
             type: 'info',
-            title: 'Aspera Dock',
+            title: 'Aspera Hub',
             message: 'You are up to date.',
             detail: `Version ${currentVersion()} is the latest.`,
             buttons: ['OK'],
@@ -288,7 +288,7 @@ export async function checkForUpdates({ silent = true } = {}) {
           .showMessageBox(BrowserWindow.getAllWindows()[0], {
             type: 'info',
             title: 'Downloading update',
-            message: `Aspera Dock ${manifest.version} is already downloading.`,
+            message: `Aspera Hub ${manifest.version} is already downloading.`,
             detail: 'You will be prompted to install when the download finishes.',
             buttons: ['OK'],
           })
@@ -600,7 +600,7 @@ export async function installUpdate({ silentOnFail = false } = {}) {
           const choice = await dialog.showMessageBox(BrowserWindow.getAllWindows()[0], {
             type: 'info',
             title: 'Finish installing the update',
-            message: `Approve the install of Aspera Dock ${pendingUpdate?.version} in your package manager.`,
+            message: `Approve the install of Aspera Hub ${pendingUpdate?.version} in your package manager.`,
             detail:
               `The update file is:\n${downloadedPath}\n\n` +
               'When the package manager says the install is done, click Restart.\n' +
@@ -647,8 +647,8 @@ export async function installUpdate({ silentOnFail = false } = {}) {
         .showMessageBox(BrowserWindow.getAllWindows()[0], {
           type: 'error',
           title: 'Update failed to install',
-          message: 'Aspera Dock could not install the update automatically.',
-          detail: `${message}\n\nThe downloaded file is here:\n${downloadedPath}\n\nDouble-click the .deb to install it with your package manager, then reopen Aspera Dock.`,
+          message: 'Aspera Hub could not install the update automatically.',
+          detail: `${message}\n\nThe downloaded file is here:\n${downloadedPath}\n\nDouble-click the .deb to install it with your package manager, then reopen Aspera Hub.`,
           buttons: ['Open folder', 'OK'],
           defaultId: 0,
         })
@@ -761,7 +761,7 @@ function elevatedInstall(kind, filePath) {
     const display = process.env.DISPLAY || ':0';
     const xauth = process.env.XAUTHORITY || '';
     const rpmArgs = [
-      '--description=Aspera Dock update',
+      '--description=Aspera Hub update',
       `--setenv=DISPLAY=${display}`,
     ];
     if (xauth) rpmArgs.push(`--setenv=XAUTHORITY=${xauth}`);
@@ -782,7 +782,7 @@ function trySystemdPkexecInstall(filePath) {
   const display = process.env.DISPLAY || ':0';
   const xauth = process.env.XAUTHORITY || '';
   const args = [
-    '--description=Aspera Dock update',
+    '--description=Aspera Hub update',
     `--setenv=DISPLAY=${display}`,
   ];
   if (xauth) args.push(`--setenv=XAUTHORITY=${xauth}`);
@@ -832,7 +832,7 @@ function promptAvailable() {
     .showMessageBox(win, {
       type: 'info',
       title: 'Update available',
-      message: `Aspera Dock ${pendingUpdate.version} is available.`,
+      message: `Aspera Hub ${pendingUpdate.version} is available.`,
       detail: pendingUpdate.notes || 'Download now?',
       buttons: ['Download', 'Later'],
       defaultId: 0,
@@ -861,7 +861,7 @@ function promptReady({ force = false } = {}) {
     .showMessageBox(win, {
       type: 'info',
       title: 'Update ready',
-      message: `Aspera Dock ${pendingUpdate.version} is ready to install.`,
+      message: `Aspera Hub ${pendingUpdate.version} is ready to install.`,
       detail: pendingUpdate.mandatory
         ? 'This is a required update and will install now.'
         : 'Restart to apply the update.',

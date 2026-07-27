@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Aspera Hub — Free Linux workspace for WhatsApp, Gmail &amp; Zoho</title>
+    <meta
+      name="description"
+      content="Aspera Hub is a free Linux desktop app that keeps WhatsApp, Arattai, Gmail, and Zoho in one light workspace. Lower RAM than Rambox. Instant tab switching. 100% free."
+    />
+    <meta property="og:title" content="Aspera Hub" />
+    <meta
+      property="og:description"
+      content="Free Linux workspace for WhatsApp, Gmail, Zoho and more — built to stay light."
+    />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="assets/icon.png" type="image/png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="atmosphere" aria-hidden="true"></div>
+    <div class="grain" aria-hidden="true"></div>
+
+    <header class="site-header">
+      <a class="logo" href="#top" aria-label="Aspera Hub home">
+        <img src="assets/mark.png" alt="" width="36" height="36" />
+        <span>Aspera Hub</span>
+      </a>
+      <nav class="nav">
+        <a href="#why">Why Hub</a>
+        <a href="#features">Features</a>
+        <a href="#install">Install</a>
+        <a href="#faq">FAQ</a>
+      </nav>
+      <a class="btn btn-small btn-primary" href="#download">Download</a>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <p class="eyebrow">100% free · Linux · Open for everyone</p>
+        <h1 class="brand-hero">Aspera Hub</h1>
+        <p class="lede">
+          Your WhatsApp, Arattai, Gmail, and Zoho apps — together in one light
+          Linux workspace. Built for daily work, not for eating your RAM.
+        </p>
+        <div class="cta-row" id="download">
+          <a class="btn btn-primary btn-lg" id="download-deb" href="https://github.com/ramchandragada/AsperaDock/releases/latest">
+            Download .deb for Linux
+          </a>
+          <a class="btn btn-ghost btn-lg" href="https://github.com/ramchandragada/AsperaDock">
+            View on GitHub
+          </a>
+        </div>
+        <p class="meta" id="download-meta">Fetching latest release…</p>
+        <div class="hero-stage" aria-hidden="true">
+          <div class="hero-window">
+            <div class="hero-bar">
+              <span class="pill wa"></span>
+              <span class="pill wa"></span>
+              <span class="pill ar"></span>
+              <span class="pill zo"></span>
+              <span class="pill gm"></span>
+              <strong>ASPERA</strong>
+            </div>
+            <div class="hero-body">
+              <p>One shell. Many signed-in apps. Instant switches.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="strip reveal" id="why">
+        <div class="strip-card">
+          <strong>~3 GB</strong>
+          <span>typical with real work in Hub</span>
+        </div>
+        <div class="strip-card">
+          <strong>~8 GB+</strong>
+          <span>Rambox with only two WhatsApps idle</span>
+        </div>
+        <div class="strip-card">
+          <strong>₹0</strong>
+          <span>forever free — no trials, no paywall</span>
+        </div>
+      </section>
+
+      <section class="section reveal" id="features">
+        <div class="section-head">
+          <h2>Built for how you actually work</h2>
+          <p>
+            Keep the apps you live in warm and instant. Leave the rest cold until
+            you need them. Linux users no longer need a heavy third-party suite
+            or five browser windows.
+          </p>
+        </div>
+        <div class="feature-grid">
+          <article>
+            <h3>Warm apps, full speed</h3>
+            <p>
+              Mark up to five apps with the flame. They stay loaded and
+              unthrottled so WhatsApp, Gmail, and Zoho switch instantly.
+            </p>
+          </article>
+          <article>
+            <h3>Cold apps on demand</h3>
+            <p>
+              Rarely used tabs load only when you click them — so RAM stays
+              sensible on 16&nbsp;GB refurbished PCs.
+            </p>
+          </article>
+          <article>
+            <h3>Separate logins</h3>
+            <p>
+              Profiles isolate sessions. Run multiple WhatsApp or Gmail accounts
+              side by side without cookie bleed.
+            </p>
+          </article>
+          <article>
+            <h3>Company catalog</h3>
+            <p>
+              WhatsApp, Arattai, Gmail, Zoho Mail, CRM, Books, and Zoho One —
+              ready for Aspera teams, open for anyone on Linux.
+            </p>
+          </article>
+          <article>
+            <h3>Desktop polish</h3>
+            <p>
+              Unread badges, focus mode, mute, lock, tray, downloads, and
+              right-click copy/paste that just works.
+            </p>
+          </article>
+          <article>
+            <h3>Auto updates</h3>
+            <p>
+              Grab the latest .deb from GitHub Releases, or let Hub check for
+              updates in Settings.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section alt reveal" id="apps">
+        <div class="section-head">
+          <h2>Apps that belong on your desktop</h2>
+          <p>Start with messaging and mail. More apps can join the catalog later.</p>
+        </div>
+        <ul class="app-chips">
+          <li>WhatsApp</li>
+          <li>Arattai</li>
+          <li>Gmail</li>
+          <li>Zoho One</li>
+          <li>Zoho Mail</li>
+          <li>Zoho CRM</li>
+          <li>Zoho Books</li>
+        </ul>
+      </section>
+
+      <section class="section reveal" id="install">
+        <div class="section-head">
+          <h2>Install on Debian, Ubuntu &amp; Mint</h2>
+          <p>One package. Electron is bundled — you never install Chromium separately.</p>
+        </div>
+        <ol class="steps">
+          <li>
+            <strong>Download</strong>
+            <span>Get the latest <code>.deb</code> from the button above (or GitHub Releases).</span>
+          </li>
+          <li>
+            <strong>Install</strong>
+            <pre><code>sudo dpkg -i asperadock_*_amd64.deb
+sudo apt-get install -f   # only if dpkg reports missing deps</code></pre>
+          </li>
+          <li>
+            <strong>Launch</strong>
+            <span>Open <em>Aspera Hub</em> from your app menu, add your apps, mark your daily ones warm.</span>
+          </li>
+        </ol>
+        <p class="note">
+          Package id stays <code>asperadock</code> so upgrades are smooth. The app
+          you see is <strong>Aspera Hub</strong>.
+        </p>
+      </section>
+
+      <section class="section alt reveal" id="faq">
+        <div class="section-head">
+          <h2>FAQ</h2>
+        </div>
+        <div class="faq">
+          <details open>
+            <summary>Is Aspera Hub really free?</summary>
+            <p>Yes. 100% free for anyone. No subscription, no freemium wall.</p>
+          </details>
+          <details>
+            <summary>Which Linux distros?</summary>
+            <p>
+              Built and tested for Debian / Ubuntu / Linux Mint (amd64). Other
+              Debian-based desktops usually work with the same <code>.deb</code>.
+            </p>
+          </details>
+          <details>
+            <summary>How is this different from Rambox or a browser?</summary>
+            <p>
+              Hub is tuned for light multi-account work: warm/cold apps, isolated
+              profiles, and far lower idle RAM than typical Electron suites —
+              while still feeling like a real desktop app.
+            </p>
+          </details>
+          <details>
+            <summary>Will more apps be added?</summary>
+            <p>
+              Yes. The catalog can grow. Today’s focus is messaging, mail, and Zoho
+              for company use.
+            </p>
+          </details>
+          <details>
+            <summary>Where do my logins live?</summary>
+            <p>
+              Sessions stay on your machine under your user profile. Clearing a
+              session in Hub signs that app out locally.
+            </p>
+          </details>
+        </div>
+      </section>
+
+      <section class="closing reveal">
+        <h2>Linux deserves a lighter Hub</h2>
+        <p>Download free. Add your apps. Get back to work.</p>
+        <a class="btn btn-primary btn-lg" id="download-deb-footer" href="https://github.com/ramchandragada/AsperaDock/releases/latest">
+          Download .deb for Linux
+        </a>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div>
+        <img src="assets/mark.png" alt="" width="28" height="28" />
+        <span>Aspera Hub</span>
+      </div>
+      <p>Free forever · Made for Linux · by Aspera</p>
+      <a href="https://github.com/ramchandragada/AsperaDock">GitHub</a>
+    </footer>
+
+    <script src="main.js"></script>
+  </body>
+</html>

@@ -1,5 +1,5 @@
 /**
- * End-to-end Sentry verify: send one test event from Aspera Dock's DSN, then exit.
+ * End-to-end Sentry verify: send one test event from Aspera Hub's DSN, then exit.
  * Run: env -u ELECTRON_RUN_AS_NODE ./node_modules/electron/dist/electron scripts/test-sentry.cjs
  */
 const path = require('path');
@@ -26,7 +26,7 @@ async function boot() {
   const id = `manual-test-${Date.now().toString(36)}`;
   sentryCaptureError('manual-test', {
     id,
-    message: 'Manual test report from Aspera Dock verify script',
+    message: 'Manual test report from Aspera Hub verify script',
     reason: 'user-triggered-verify',
     context: { source: 'scripts/test-sentry.cjs' },
   });

@@ -116,7 +116,7 @@ const SHORTCUT_DEFS = [
       { id: 'focusMode', label: 'Focus mode', keys: 'Ctrl + Shift + D' },
       { id: 'mute', label: 'Mute', keys: 'Ctrl + Shift + M' },
       { id: 'hibernate', label: 'Hibernate background', keys: 'Ctrl + Shift + H' },
-      { id: 'lock', label: 'Lock Aspera Dock', keys: 'Ctrl + Shift + L' },
+      { id: 'lock', label: 'Lock Aspera Hub', keys: 'Ctrl + Shift + L' },
     ],
   },
 ];
@@ -395,8 +395,8 @@ function paintAppVersion() {
   const label = version ? (dev ? `Version ${version} (dev)` : `Version ${version}`) : '';
   const short = version ? (dev ? `v${version}·dev` : `v${version}`) : '';
   const full = version
-    ? (dev ? `Aspera Dock ${version} (dev)` : `Aspera Dock ${version}`)
-    : 'Aspera Dock';
+    ? (dev ? `Aspera Hub ${version} (dev)` : `Aspera Hub ${version}`)
+    : 'Aspera Hub';
 
   const emptyVer = document.getElementById('empty-version');
   if (emptyVer) emptyVer.textContent = label || 'Version …';

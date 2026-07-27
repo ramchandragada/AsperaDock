@@ -1,5 +1,5 @@
 /**
- * App catalog for Aspera Dock.
+ * App catalog for Aspera Hub.
  * Limits: max 10 apps total, up to 10 of the same app, tab names ≤ 10 chars.
  * Each instance is bound to a Profile (Electron session partition),
  * so multiple WhatsApp / Arattai / Gmail accounts stay signed in side by side.

@@ -2,7 +2,7 @@
 # Builds .deb (+ latest.json), publishes GitHub Release. Clients auto-update.
 # No fragmented installs: latest always comes from GitHub Releases.
 
-name: Deploy Aspera Dock
+name: Deploy Aspera Hub
 
 on:
   push:
@@ -94,7 +94,7 @@ jobs:
       - name: Summary
         run: |
           {
-            echo "## Deployed Aspera Dock \`${{ steps.ver.outputs.tag }}\`"
+            echo "## Deployed Aspera Hub \`${{ steps.ver.outputs.tag }}\`"
             echo ""
             echo "All company PCs will pick this up via auto-update."
             echo ""

@@ -117,6 +117,12 @@ if (
   app.commandLine.appendSwitch('no-sandbox');
 }
 
+// Keep the legacy profile directory after the Dock → Hub rename.
+// Electron would otherwise use productName ("Aspera Hub") under appData and
+// drop WhatsApp/Zoho sessions + settings.json. Must run before any userData use
+// (including the single-instance lock).
+app.setPath('userData', path.join(app.getPath('appData'), 'Aspera Dock'));
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
@@ -712,7 +718,7 @@ function addService(appId, profileId = null) {
   return { ok: true, id, profileId: resolvedProfileId };
 }
 
-/** Custom URLs are disabled — Aspera Dock only exposes the company catalog. */
+/** Custom URLs are disabled — Aspera Hub only exposes the company catalog. */
 function addCustomService() {
   return {
     ok: false,
@@ -822,7 +828,7 @@ function dockIsUserFocused() {
   return !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused());
 }
 
-/** Only focus guest content when the user already has Aspera Dock focused. */
+/** Only focus guest content when the user already has Aspera Hub focused. */
 function focusActiveContents() {
   if (!dockIsUserFocused() || overlayOpen || locked || !activeServiceId) return;
   const entry = views.get(activeServiceId);
@@ -1089,7 +1095,7 @@ function totalUnread() {
 
 function dockTitleBase() {
   const v = app.getVersion();
-  return app.isPackaged ? `Aspera Dock ${v}` : `Aspera Dock ${v} (dev)`;
+  return app.isPackaged ? `Aspera Hub ${v}` : `Aspera Hub ${v} (dev)`;
 }
 
 function refreshBadge() {
@@ -2314,7 +2320,7 @@ function updateTray() {
   const total = totalUnread();
   tray.setImage(createTrayIcon(total > 0));
   tray.setToolTip(
-    total > 0 ? `Aspera Dock (${total} unread)` : 'Aspera Dock',
+    total > 0 ? `Aspera Hub (${total} unread)` : 'Aspera Hub',
   );
 }
 
@@ -2347,7 +2353,7 @@ function ensureTray() {
 
   const context = Menu.buildFromTemplate([
     {
-      label: 'Show Aspera Dock',
+      label: 'Show Aspera Hub',
       click: () => raiseDockWindow(),
     },
     {
@@ -2420,8 +2426,8 @@ async function requestQuit() {
   if (settings.confirmQuit && mainWindow) {
     const result = await dialog.showMessageBox(mainWindow, {
       type: 'question',
-      title: 'Quit Aspera Dock?',
-      message: 'Quit Aspera Dock?',
+      title: 'Quit Aspera Hub?',
+      message: 'Quit Aspera Hub?',
       detail: 'Your app sessions will be saved.',
       buttons: ['Cancel', 'Quit'],
       defaultId: 0,
@@ -2499,10 +2505,10 @@ async function showTroubleshooting() {
   if (!mainWindow) return;
   const result = await dialog.showMessageBox(mainWindow, {
     type: 'info',
-    title: 'Aspera Dock troubleshooting',
+    title: 'Aspera Hub troubleshooting',
     message: 'Troubleshooting information',
     detail: [
-      `Aspera Dock ${app.getVersion()}`,
+      `Aspera Hub ${app.getVersion()}`,
       `Electron ${process.versions.electron}`,
       `Chrome ${process.versions.chrome}`,
       `Platform ${process.platform} ${process.arch}`,
@@ -2575,7 +2581,7 @@ function installApplicationMenu() {
           click: () => mainWindow?.webContents.send('dock:open-profiles'),
         },
         { type: 'separator' },
-        { label: 'Zoom Aspera Dock', submenu: zoomPresets },
+        { label: 'Zoom Aspera Hub', submenu: zoomPresets },
         {
           label: 'Actual Size',
           accelerator: 'CommandOrControl+0',
@@ -2675,7 +2681,7 @@ function installApplicationMenu() {
         },
         { type: 'separator' },
         {
-          label: 'About Aspera Dock',
+          label: 'About Aspera Hub',
           click: () => showAboutDialog(),
         },
       ],
@@ -2691,8 +2697,8 @@ function showAboutDialog() {
   dialog
     .showMessageBox(mainWindow, {
       type: 'info',
-      title: 'About Aspera Dock',
-      message: `Aspera Dock ${app.getVersion()}`,
+      title: 'About Aspera Hub',
+      message: `Aspera Hub ${app.getVersion()}`,
       detail:
         'Company workspace by Aspera — messaging and business apps in one dock.\n\n' +
         `Electron ${process.versions.electron} · Chrome ${process.versions.chrome}`,
@@ -2729,7 +2735,7 @@ function createWindow() {
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    title: `Aspera Dock ${app.getVersion()}`,
+    title: `Aspera Hub ${app.getVersion()}`,
     icon,
     backgroundColor: '#081230',
     show: false,
@@ -3380,8 +3386,8 @@ app.whenReady().then(async () => {
     process.getuid() === 0
   ) {
     dialog.showErrorBox(
-      'Aspera Dock',
-      'Do not run Aspera Dock as root.\n\nStart it from your normal user session.',
+      'Aspera Hub',
+      'Do not run Aspera Hub as root.\n\nStart it from your normal user session.',
     );
     app.quit();
     return;
@@ -3391,7 +3397,7 @@ app.whenReady().then(async () => {
 
   // Keep a friendly name in menus/About; WM class stays "asperadock" for the dock icon.
   if (process.platform !== 'linux') {
-    app.setName('Aspera Dock');
+    app.setName('Aspera Hub');
   }
   settings = loadSettings();
   try {

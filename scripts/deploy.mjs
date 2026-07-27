@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * One-command ship from your laptop → all Aspera Dock users via GitHub.
+ * One-command ship from your laptop → all Aspera Hub users via GitHub.
  *
  *   npm run deploy -- --notes "What changed"
  *
@@ -23,7 +23,7 @@ function run(cmd, args) {
 }
 
 const passthrough = process.argv.slice(2);
-console.log(`Deploying Aspera Dock v${pkg.version} to GitHub Releases…`);
+console.log(`Deploying Aspera Hub v${pkg.version} to GitHub Releases…`);
 run('npm', ['run', 'make']);
 run('node', ['scripts/publish-update.mjs', ...passthrough]);
 console.log('\nAll company PCs will auto-update on next check (or Help → Check for updates).');

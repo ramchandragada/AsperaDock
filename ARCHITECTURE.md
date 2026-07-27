@@ -1,4 +1,4 @@
-# Aspera Dock architecture
+# Aspera Hub architecture
 
 Company multi-app Electron workspace (WhatsApp, Arattai, Gmail, Zoho) on Linux.
 

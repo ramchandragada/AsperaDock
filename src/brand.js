@@ -8,7 +8,7 @@ import iconUrl from './assets/brand/icon.png';
 
 export const BRAND = {
   name: 'Aspera',
-  product: 'Aspera Dock',
+  product: 'Aspera Hub',
   wordmarkUrl,
   markUrl,
   iconUrl,

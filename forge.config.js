@@ -5,7 +5,7 @@ module.exports = {
   packagerConfig: {
     asar: true,
     executableName: 'asperadock',
-    name: 'Aspera Dock',
+    name: 'Aspera Hub',
     appBundleId: 'app.asperadock.desktop',
     // Stylized Aspera "A" only — not the full wordmark.
     icon: './assets/icon',
@@ -28,17 +28,17 @@ module.exports = {
       config: {
         options: {
           name: 'asperadock',
-          productName: 'Aspera Dock',
-          genericName: 'Aspera Dock',
+          productName: 'Aspera Hub',
+          genericName: 'Aspera Hub',
           description:
-            'Lightweight company workspace for WhatsApp, Arattai, Google Workspace, and Zoho',
+            'Aspera Hub — free Linux company workspace for WhatsApp, Arattai, Google Workspace, and Zoho',
           categories: ['Office', 'Network'],
           section: 'utils',
           maintainer: 'Aspera <support@aspera.local>',
           icon: './assets/icon.png',
           // Matches app.setName('asperadock') / --class=asperadock for GNOME dock icons.
           productDescription:
-            'Lightweight company workspace for WhatsApp, Arattai, Google Workspace, and Zoho',
+            'Aspera Hub — free Linux company workspace for WhatsApp, Arattai, Google Workspace, and Zoho',
         },
       },
     },

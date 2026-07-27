@@ -1,4 +1,4 @@
-# Contributing to Aspera Dock
+# Contributing to Aspera Hub
 
 ## Develop
 

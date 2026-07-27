@@ -1,5 +1,5 @@
 /**
- * Robust error / crash / freeze reporting for Aspera Dock.
+ * Robust error / crash / freeze reporting for Aspera Hub.
  *
  * - Saves structured JSON reports under userData/error-reports/
  * - Uploads to GitHub Issues by default (no custom server)
@@ -111,7 +111,7 @@ function baseReport(kind, payload = {}) {
     kind,
     createdAt: new Date().toISOString(),
     app: {
-      name: 'Aspera Dock',
+      name: 'Aspera Hub',
       version: pkgVersion(),
       packaged: app.isPackaged,
     },
@@ -487,7 +487,7 @@ export function startNativeCrashReporter() {
   const submitURL = String(settings.errorReportUrl || '').trim();
   try {
     crashReporter.start({
-      productName: 'Aspera Dock',
+      productName: 'Aspera Hub',
       companyName: 'Aspera',
       submitURL: submitURL || 'https://127.0.0.1/disabled', // required by API; upload ignored if unreachable
       uploadToServer: Boolean(submitURL),
@@ -496,7 +496,7 @@ export function startNativeCrashReporter() {
       rateLimit: true,
       globalExtra: {
         _companyName: 'Aspera',
-        _productName: 'Aspera Dock',
+        _productName: 'Aspera Hub',
         _version: pkgVersion(),
       },
     });
@@ -512,7 +512,7 @@ function markSessionStart() {
       // Previous run did not clear the lock → likely crash / force-kill / freeze reboot.
       const stale = fs.readFileSync(sessionFlagPath(), 'utf8');
       reportError('unclean-shutdown', {
-        message: 'Previous Aspera Dock session did not exit cleanly',
+        message: 'Previous Aspera Hub session did not exit cleanly',
         reason: 'session.lock still present on startup',
         previousSession: (() => {
           try {
@@ -659,8 +659,8 @@ export async function showPendingCrashDialog(mainWindow) {
   pauseFreezeWatch();
   const result = await dialog.showMessageBox(mainWindow, {
     type: 'warning',
-    title: 'Aspera Dock — error report',
-    message: 'Aspera Dock hit a problem last time.',
+    title: 'Aspera Hub — error report',
+    message: 'Aspera Hub hit a problem last time.',
     detail: `${latest.kind}: ${latest.message || 'No details'}\n\nA report was saved so we can fix it in the next build.`,
     buttons: ['Send report', 'Open reports folder', 'Dismiss'],
     defaultId: 2,

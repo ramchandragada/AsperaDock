@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Tiny local inbox for Aspera Dock error reports.
+ * Tiny local inbox for Aspera Hub error reports.
  *
  *   node scripts/error-inbox.mjs
  *   # listens on http://127.0.0.1:8787/asperadock/errors
@@ -56,6 +56,6 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`Aspera Dock error inbox listening on http://${HOST}:${PORT}/asperadock/errors`);
+  console.log(`Aspera Hub error inbox listening on http://${HOST}:${PORT}/asperadock/errors`);
   console.log(`Saving reports to ${OUT}`);
 });

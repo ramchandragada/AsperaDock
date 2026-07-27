@@ -1,4 +1,4 @@
-# Aspera Dock security
+# Aspera Hub security
 
 Threat model: company desktop dock embedding third-party web apps. Trust the dock shell; treat guest pages as untrusted.
 

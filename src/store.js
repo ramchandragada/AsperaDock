@@ -90,7 +90,7 @@ export const DEFAULTS = {
   /** sentry | github | url | none */
   errorReportTarget: 'sentry',
   /**
-   * Sentry DSN override. Empty = use the built-in Aspera Dock project
+   * Sentry DSN override. Empty = use the built-in Aspera Hub project
    * (zarpat/asperadock) from sentryMain.js. ASPERADOCK_SENTRY_DSN wins over both.
    */
   sentryDsn: '',

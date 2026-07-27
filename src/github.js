@@ -1,5 +1,5 @@
 /**
- * GitHub is the deployment host for Aspera Dock (no separate server needed).
+ * GitHub is the deployment host for Aspera Hub (no separate server needed).
  *
  * - Updates: GitHub Releases assets (latest.json + .deb / .AppImage / .rpm)
  * - Errors:  GitHub Issues in the same (or a dedicated) repository

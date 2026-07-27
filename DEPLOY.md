@@ -1,4 +1,4 @@
-# Ship Aspera Dock (no private server required)
+# Ship Aspera Hub (no private server required)
 
 Recommended stack:
 
@@ -10,13 +10,13 @@ Recommended stack:
 
 ## Continuous deploy (no fragmentation)
 
-Every push to `master` runs **Deploy Aspera Dock**:
+Every push to `master` runs **Deploy Aspera Hub**:
 
 1. Auto-bumps the patch version (`0.1.0` → `0.1.1` → …)
 2. Builds the `.deb`
 3. Publishes a GitHub Release with `latest.json` + the installer
 
-Company PCs already running Aspera Dock download and install that release automatically.
+Company PCs already running Aspera Hub download and install that release automatically.
 
 You do **not** need to copy `.deb` files by hand after the first install.
 
@@ -35,7 +35,7 @@ gh auth login          # once
 npm run deploy -- --notes "What changed"
 ```
 
-Or trigger the workflow: GitHub → Actions → Deploy Aspera Dock → Run workflow.
+Or trigger the workflow: GitHub → Actions → Deploy Aspera Hub → Run workflow.
 
 ## Sentry
 

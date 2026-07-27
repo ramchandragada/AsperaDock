@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Publish Aspera Dock updates to GitHub Releases (no server required).
+ * Publish Aspera Hub updates to GitHub Releases (no server required).
  *
  * From your laptop:
  *   1. Bump version in package.json
@@ -34,7 +34,7 @@ function arg(name, fallback = '') {
 }
 
 const channel = String(arg('channel', 'stable'));
-const notes = String(arg('notes', `Aspera Dock ${pkg.version}`));
+const notes = String(arg('notes', `Aspera Hub ${pkg.version}`));
 const mandatory = arg('mandatory', false) === true;
 const dryRun = arg('dry-run', false) === true;
 const skipGithub = arg('no-github', false) === true;
@@ -139,12 +139,12 @@ if (!hasGhAuth()) {
   process.exit(1);
 }
 
-const title = `Aspera Dock ${version}`;
+const title = `Aspera Hub ${version}`;
 const body = [
   notes,
   '',
   '## Install',
-  '- **Debian / Ubuntu / Mint:** download the `.deb` and install (or let Aspera Dock auto-update).',
+  '- **Debian / Ubuntu / Mint:** download the `.deb` and install (or let Aspera Hub auto-update).',
   '',
   '_Electron runtime is bundled — users never update Electron separately._',
 ].join('\n');
