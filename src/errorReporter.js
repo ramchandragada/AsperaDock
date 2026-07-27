@@ -31,6 +31,7 @@ import {
   sentryCaptureError,
   sentryAddBreadcrumb,
 } from './sentryMain.js';
+import { openExternalSafe } from './safeShell.js';
 
 const require = createRequire(import.meta.url);
 
@@ -358,7 +359,7 @@ export function openReportOnGithub(report) {
     `[manual] ${report?.kind || 'error'} · v${report?.app?.version || pkgVersion()}`,
   );
   const body = encodeURIComponent(formatIssueBody(report || {}).slice(0, 6000));
-  shell.openExternal(`${base}?title=${title}&body=${body}`);
+  openExternalSafe(`${base}?title=${title}&body=${body}`);
 }
 
 /**

@@ -62,11 +62,7 @@ const els = {
   appMenuEnabled: document.getElementById('app-menu-enabled'),
   appMenuSound: document.getElementById('app-menu-sound'),
   appMenuNotifications: document.getElementById('app-menu-notifications'),
-  appMenuBack: document.getElementById('app-menu-back'),
-  appMenuHome: document.getElementById('app-menu-home'),
-  appMenuRefresh: document.getElementById('app-menu-refresh'),
-  appMenuForward: document.getElementById('app-menu-forward'),
-  appMenuDevtools: document.getElementById('app-menu-devtools'),
+  appMenuWarm: document.getElementById('app-menu-warm'),
   editAppModal: document.getElementById('edit-app-modal'),
   editAppHeading: document.getElementById('edit-app-heading'),
   editAppLogo: document.getElementById('edit-app-logo'),
@@ -208,17 +204,15 @@ function paintToolbarIcons() {
   els.downloadsBtn.innerHTML = icon('download');
   els.searchBtn.innerHTML = icon('search');
   els.focusBtn.innerHTML = icon('focus');
-  els.menuBtn.innerHTML = asperaAppIconSvg(22);
+  els.menuBtn.innerHTML = asperaAppIconSvg(24);
   els.addAppBtn.innerHTML = icon('plus');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
   els.appMenuEdit.innerHTML = icon('settings');
   els.appMenuReload.innerHTML = icon('sync');
-  els.appMenuBack.innerHTML = icon('back');
-  els.appMenuHome.innerHTML = icon('home');
-  els.appMenuRefresh.innerHTML = icon('reload');
-  els.appMenuForward.innerHTML = icon('forward');
 
   // Brand surfaces
+  const chromeWordmark = document.getElementById('chrome-wordmark');
+  if (chromeWordmark) chromeWordmark.src = BRAND.wordmarkUrl;
   const emptyBrand = document.getElementById('empty-brand');
   if (emptyBrand) emptyBrand.src = BRAND.wordmarkUrl;
   const lockBrand = document.getElementById('lock-brand');
@@ -269,10 +263,10 @@ function applyChromeClasses() {
   document.body.classList.add('layout-top');
   document.body.classList.remove('layout-left', 'layout-right');
   for (const size of ['normal', 'large', 'huge']) {
-    document.body.classList.toggle(`density-${size}`, (s.density || 'large') === size);
+    document.body.classList.toggle(`density-${size}`, (s.density || 'normal') === size);
     document.body.classList.toggle(
       `icon-size-${size}`,
-      (s.appIconSize || 'large') === size,
+      (s.appIconSize || 'normal') === size,
     );
   }
   document.body.classList.toggle('hide-labels', !!s.hideAppLabels);
@@ -338,34 +332,15 @@ function makeAppTab(service, index) {
 
   iconStack.appendChild(logo);
 
-  const keepWarm = cfg.keepWarm === true;
-  const warmBtn = document.createElement('button');
-  warmBtn.type = 'button';
-  warmBtn.className = `warm-toggle${keepWarm ? ' selected' : ''}`;
-  warmBtn.innerHTML = icon('flame');
-  warmBtn.setAttribute('aria-pressed', String(keepWarm));
-  warmBtn.setAttribute(
-    'aria-label',
-    keepWarm ? `Allow ${service.name} to sleep` : `Keep ${service.name} warm`,
-  );
-  warmBtn.title = keepWarm
-    ? 'Warm app enabled — click to allow sleep'
-    : 'Keep this app warm in memory';
-  warmBtn.addEventListener('click', async (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    warmBtn.disabled = true;
-    const result = await window.asperadock.toggleKeepWarm?.(service.id);
-    if (result && !result.ok) {
-      alert(result.error || 'Could not change warm-app selection.');
-      warmBtn.disabled = false;
-    }
-  });
-  warmBtn.addEventListener('contextmenu', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-  });
-  iconStack.appendChild(warmBtn);
+  // Warm status is a read-only indicator; toggling lives in the right-click
+  // menu so it can't be flipped accidentally while switching apps.
+  if (cfg.keepWarm === true) {
+    const warmMark = document.createElement('span');
+    warmMark.className = 'app-mark warm-mark';
+    warmMark.innerHTML = icon('flame');
+    warmMark.title = 'Kept warm in memory';
+    logo.appendChild(warmMark);
+  }
   btn.appendChild(iconStack);
 
   if (cfg.showNameInTab !== false && !state.settings?.hideAppLabels) {
@@ -533,10 +508,15 @@ function renderNotificationCenter() {
 }
 
 /** Report measured chrome size so the BrowserView never overlaps wrapped rows. */
+let lastChromeReport = '';
 function reportChromeSize() {
-  const topHeight = els.topBar.getBoundingClientRect().height;
+  if (!els.topBar) return;
+  const top = Math.round(els.topBar.getBoundingClientRect().height);
+  const key = `0:0:${top}`;
+  if (key === lastChromeReport) return;
+  lastChromeReport = key;
   window.asperadock.setChromeSize?.({
-    top: Math.round(topHeight),
+    top,
     left: 0,
     right: 0,
   });
@@ -561,13 +541,9 @@ function renderCatalog() {
     btn.type = 'button';
     btn.className = 'primary';
     const totalFull = (app.totalApps || 0) >= (app.maxTotal || 10);
-    btn.textContent = !app.canAdd ? (totalFull ? 'Dock full' : 'Max') : app.isCustom ? 'Add URL…' : 'Add';
+    btn.textContent = !app.canAdd ? (totalFull ? 'Dock full' : 'Max') : 'Add';
     btn.disabled = !app.canAdd;
     btn.addEventListener('click', async () => {
-      if (app.isCustom) {
-        openCustomAppModal();
-        return;
-      }
       const result = await window.asperadock.addService(app.appId);
       if (!result.ok) alert(result.error || 'Could not add app');
     });
@@ -630,8 +606,8 @@ function fillSettingsForm() {
   };
 
   set('set-theme', s.theme || 'system');
-  set('set-density', s.density || 'large');
-  set('set-app-icon-size', s.appIconSize || 'large');
+  set('set-density', s.density || 'normal');
+  set('set-app-icon-size', s.appIconSize || 'normal');
   set('set-hide-labels', s.hideAppLabels);
   set('set-wrap-tabs', s.wrapAppTabs !== false);
   set('set-auto-hide-menu', s.autoHideMenuBar !== false);
@@ -654,7 +630,7 @@ function fillSettingsForm() {
   set('set-proxy-rules', s.proxyRules || '');
   set('set-proxy-bypass', s.proxyBypass ?? '<local>');
   set('set-hibernate', s.hibernateMinutes ?? 30);
-  set('set-max-warm', s.maxWarmViews ?? 5);
+  set('set-max-warm', Math.min(6, s.maxWarmViews ?? 6));
   set('set-low-memory', s.lowMemoryMode === true);
   set('set-consumption', s.consumptionMonitor);
   set('set-error-reporting', s.errorReportingEnabled !== false);
@@ -711,7 +687,7 @@ function readSettingsForm() {
     proxyRules: val('set-proxy-rules').trim(),
     proxyBypass: val('set-proxy-bypass').trim() || '<local>',
     hibernateMinutes: Number(val('set-hibernate')) || 2,
-    maxWarmViews: Math.min(10, Math.max(1, Number(val('set-max-warm')) || 5)),
+    maxWarmViews: Math.min(6, Math.max(1, Number(val('set-max-warm')) || 6)),
     lowMemoryMode: checked('set-low-memory'),
     consumptionMonitor: checked('set-consumption'),
     errorReportingEnabled: checked('set-error-reporting'),
@@ -802,6 +778,10 @@ function openAppMenu(service, x, y) {
   els.appMenuEnabled.checked = cfg.enabled !== false;
   els.appMenuSound.checked = cfg.allowSounds !== false;
   els.appMenuNotifications.checked = cfg.allowNotifications !== false;
+  if (els.appMenuWarm) {
+    els.appMenuWarm.checked = cfg.keepWarm === true;
+    els.appMenuWarm.disabled = false;
+  }
 
   els.appMenu.classList.remove('hidden');
   els.appMenu.style.left = '0px';
@@ -1354,22 +1334,18 @@ els.appMenuSound.addEventListener('change', () =>
 els.appMenuNotifications.addEventListener('change', () =>
   patchMenuFlag('allowNotifications', els.appMenuNotifications.checked),
 );
-els.appMenuBack.addEventListener('click', () =>
-  menuServiceId && window.asperadock.appNavigate(menuServiceId, 'back'),
-);
-els.appMenuHome.addEventListener('click', () =>
-  menuServiceId && window.asperadock.appNavigate(menuServiceId, 'home'),
-);
-els.appMenuRefresh.addEventListener('click', () =>
-  menuServiceId && window.asperadock.appNavigate(menuServiceId, 'reload'),
-);
-els.appMenuForward.addEventListener('click', () =>
-  menuServiceId && window.asperadock.appNavigate(menuServiceId, 'forward'),
-);
-els.appMenuDevtools.addEventListener('click', async () => {
+els.appMenuWarm?.addEventListener('change', async () => {
   if (!menuServiceId) return;
-  await window.asperadock.appNavigate(menuServiceId, 'devtools');
-  closeAppMenu();
+  const desired = els.appMenuWarm.checked;
+  els.appMenuWarm.disabled = true;
+  const result = await window.asperadock.toggleKeepWarm?.(menuServiceId);
+  els.appMenuWarm.disabled = false;
+  if (result && !result.ok) {
+    alert(result.error || 'Could not change warm-app selection.');
+    els.appMenuWarm.checked = !desired;
+  } else if (result && typeof result.keepWarm === 'boolean') {
+    els.appMenuWarm.checked = result.keepWarm;
+  }
 });
 
 els.editAppClose.addEventListener('click', closeEditApp);
@@ -1444,13 +1420,7 @@ els.profileNameInput?.addEventListener('keydown', (event) => {
 });
 
 function openCustomAppModal() {
-  closeSettings();
-  if (!els.customAppModal) return;
-  els.customAppUrl.value = '';
-  els.customAppName.value = '';
-  els.customAppModal.classList.remove('hidden');
-  window.asperadock.setOverlay(true);
-  requestAnimationFrame(() => els.customAppUrl?.focus());
+  alert('Custom apps are disabled — only the Aspera catalog is available.');
 }
 
 function closeCustomAppModal() {
@@ -1459,17 +1429,7 @@ function closeCustomAppModal() {
 }
 
 async function submitCustomApp() {
-  const url = (els.customAppUrl?.value || '').trim();
-  const name = (els.customAppName?.value || '').trim();
-  if (!url) {
-    els.customAppUrl?.focus();
-    return;
-  }
-  const result = await window.asperadock.addCustomService?.({ url, name });
-  if (!result?.ok) {
-    alert(result?.error || 'Could not add custom app');
-    return;
-  }
+  alert('Custom apps are disabled — only the Aspera catalog is available.');
   closeCustomAppModal();
 }
 
@@ -1707,6 +1667,9 @@ async function boot() {
         els.appMenuEnabled.checked = cfg.enabled !== false;
         els.appMenuSound.checked = cfg.allowSounds !== false;
         els.appMenuNotifications.checked = cfg.allowNotifications !== false;
+        if (els.appMenuWarm && document.activeElement !== els.appMenuWarm) {
+          els.appMenuWarm.checked = cfg.keepWarm === true;
+        }
       }
     }
   });

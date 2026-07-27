@@ -10,7 +10,9 @@ export const MAX_INSTANCES_PER_APP = 10;
 export const MAX_APPS_TOTAL = 10;
 export const MAX_APP_NAME_LENGTH = 10;
 /** Only the active tab stays warm by default — critical for 8–16 GB PCs. */
-export const MAX_WARM_VIEWS_DEFAULT = 5;
+export const MAX_WARM_VIEWS_DEFAULT = 6;
+/** Hard ceiling — settings UI and runtime both clamp to this. */
+export const MAX_WARM_VIEWS_CAP = 6;
 
 /** Synthetic catalog id for user-defined URLs (intranet, HRMS, Jira, …). */
 export const CUSTOM_APP_ID = 'custom';
@@ -59,7 +61,8 @@ export const APP_CATALOG = [
     appId: 'zoho-mail',
     name: 'Zoho Mail',
     title: 'Zoho Mail',
-    url: 'https://mail.zoho.com',
+    // India DC inbox — deep link so Zoho does not bounce to Cliq/Meeting.
+    url: 'https://mail.zoho.in/zm/',
     color: '#E42527',
     logo: 'zoho-mail',
   },
@@ -67,7 +70,7 @@ export const APP_CATALOG = [
     appId: 'zoho-crm',
     name: 'CRM',
     title: 'Zoho CRM',
-    url: 'https://crm.zoho.com',
+    url: 'https://crm.zoho.in/',
     color: '#F2801C',
     logo: 'zoho-crm',
   },
@@ -75,7 +78,7 @@ export const APP_CATALOG = [
     appId: 'zoho-books',
     name: 'Books',
     title: 'Zoho Books',
-    url: 'https://books.zoho.com',
+    url: 'https://books.zoho.in/',
     color: '#089949',
     logo: 'zoho-books',
   },
@@ -147,9 +150,9 @@ export function defaultInstanceTitle(entry, index) {
 }
 
 /** Layout chrome sizes (px) — must match CSS */
-export const TOP_APP_BAR_NORMAL = 84;
-export const TOP_APP_BAR_LARGE = 96;
-export const TOP_APP_BAR_HUGE = 110;
+export const TOP_APP_BAR_NORMAL = 70;
+export const TOP_APP_BAR_LARGE = 78;
+export const TOP_APP_BAR_HUGE = 88;
 
 export const INTERNAL_HOSTS = [
   'google.com',
@@ -168,7 +171,7 @@ export const INTERNAL_HOSTS = [
 ];
 
 export function getChromeMetrics(settings) {
-  const iconSize = settings.appIconSize || 'large';
+  const iconSize = settings.appIconSize || 'normal';
   const top =
     iconSize === 'normal'
       ? TOP_APP_BAR_NORMAL

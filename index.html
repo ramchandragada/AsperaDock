@@ -4,18 +4,21 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;"
+      content="default-src 'self' asperadock:; style-src 'self' 'unsafe-inline' asperadock:; script-src 'self' asperadock:; img-src 'self' data: asperadock:;"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Aspera Dock</title>
   </head>
-  <body class="theme-light layout-top density-large icon-size-large">
+  <body class="theme-light layout-top density-normal icon-size-normal">
     <div class="shell">
       <header id="top-bar" class="app-bar app-bar-top">
         <nav id="apps-top" class="apps-track" aria-label="Apps"></nav>
-        <button id="add-app-btn" type="button" class="icon-btn add-app-btn" title="Add app"></button>
-        <div class="chrome-spacer"></div>
+        <div class="chrome-brand" title="Aspera">
+          <img id="chrome-wordmark" class="chrome-wordmark" alt="Aspera" draggable="false" />
+        </div>
         <div class="chrome-actions">
+          <button id="add-app-btn" type="button" class="icon-btn add-app-btn" title="Add app"></button>
+          <span class="chrome-divider" aria-hidden="true"></span>
           <button id="downloads-btn" type="button" class="icon-btn" title="Open Downloads folder" aria-label="Open Downloads folder"></button>
           <button id="search-btn" type="button" class="icon-btn" title="Quick search (Ctrl+/)"></button>
           <button id="focus-btn" type="button" class="icon-btn" title="Focus mode — Ctrl+Shift+D"></button>
@@ -83,7 +86,7 @@
               <img class="brand-wordmark" id="empty-brand" alt="Aspera" />
               <h1>Aspera Dock</h1>
               <p id="empty-version" class="app-version-label">Version …</p>
-              <p>Add WhatsApp, Arattai, Gmail, Zoho — or any custom URL. Up to 10 apps total. Names max 10 characters.</p>
+              <p>Add WhatsApp, Arattai, Gmail, and Zoho from the Aspera catalog. Up to 10 apps. Names max 10 characters.</p>
               <button id="empty-add-btn" type="button" class="primary">Add your first app</button>
             </div>
           </div>
@@ -264,8 +267,8 @@
           </label>
           <label class="field">
             <span>Max warm apps in RAM</span>
-            <input id="set-max-warm" type="number" min="1" max="10" />
-            <p class="hint-text">Includes the active app, so a value of 5 lets you select 4 background apps. Lowering this disables extra warm selections.</p>
+            <input id="set-max-warm" type="number" min="1" max="6" />
+            <p class="hint-text">Includes the active app. Maximum is 6. A value of 6 lets you mark 5 background apps as warm.</p>
           </label>
           <label class="switch-row">
             <input id="set-consumption" type="checkbox" />
@@ -407,7 +410,7 @@
           </details>
 
           <div class="section-rule"><span>Add apps</span></div>
-          <p class="hint-text">Catalog + custom URL. Naming, sound, and advanced options are per app (right-click).</p>
+          <p class="hint-text">Aspera catalog only. Naming, sound, and advanced options are per app (right-click).</p>
           <div id="catalog-list" class="catalog-list"></div>
           <div id="instance-list" class="instance-list"></div>
         </div>
@@ -482,13 +485,10 @@
         <span>Notifications</span>
         <input id="app-menu-notifications" type="checkbox" />
       </label>
-      <div class="app-menu-nav">
-        <button id="app-menu-back" type="button" class="icon-btn" title="Back"></button>
-        <button id="app-menu-home" type="button" class="icon-btn" title="Home"></button>
-        <button id="app-menu-refresh" type="button" class="icon-btn" title="Refresh"></button>
-        <button id="app-menu-forward" type="button" class="icon-btn" title="Forward"></button>
-      </div>
-      <button id="app-menu-devtools" type="button" class="devtools-btn">Developer Tools</button>
+      <label class="app-toggle">
+        <span>Keep warm in memory</span>
+        <input id="app-menu-warm" type="checkbox" />
+      </label>
     </div>
 
     <!-- Edit app settings -->

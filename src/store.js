@@ -23,8 +23,8 @@ export const DEFAULTS = {
   // Top-bar presentation
   appsPosition: 'top',
   hideAppLabels: false,
-  density: 'large', // normal | large | huge — spacing / tile width only
-  appIconSize: 'large', // normal | large | huge
+  density: 'normal', // normal | large | huge — spacing / tile width only
+  appIconSize: 'normal', // normal | large | huge
   theme: 'system', // system | light | dark | darkest | glossy | mint
   autoHideMenuBar: true,
   /** Let the app bar grow to a second row instead of scrolling. */
@@ -54,6 +54,10 @@ export const DEFAULTS = {
   // Security
   lockEnabled: false,
   lockPasswordHash: '',
+  /** When false (default), ignore injectJs / stylishUrl from the UI. */
+  allowPageInjection: false,
+  /** When false (default), guest DevTools are blocked in packaged builds. */
+  allowGuestDevTools: false,
 
   // Compatibility (needs relaunch)
   /** Off by default — GPU process often costs 100–200 MB on Linux. */
@@ -126,7 +130,7 @@ export const DEFAULTS = {
    * How many apps stay loaded while you switch tabs.
    * Rambox/Ferdium-style: keep several messaging apps warm so switching is instant.
    */
-  maxWarmViews: 5,
+  maxWarmViews: 6,
 
   /** Toggleable global shortcuts */
   shortcuts: {
@@ -157,6 +161,8 @@ export const DEFAULTS = {
 
   // Session
   lastActiveServiceId: null,
+  /** Last non-login URL per service — restored after hibernate/relaunch. */
+  lastServiceUrls: {},
   serviceOrder: [],
   /**
    * User-added app instances.
@@ -319,6 +325,37 @@ function migrateWarmKeepAlive(settings) {
       };
     next = { ...next, ...migrated, displaySizingV1: true };
   }
+  // Company defaults: compact spacing so 10 apps fit on 24" screens.
+  if (!next.displaySizingV2) {
+    next = {
+      ...next,
+      density: 'normal',
+      appIconSize: 'normal',
+      displaySizingV2: true,
+    };
+  }
+  if (!next.displaySizingV3) {
+    next = {
+      ...next,
+      density: 'normal',
+      appIconSize: 'normal',
+      displaySizingV3: true,
+    };
+  }
+  // Company policy: never more than 6 warm apps in RAM.
+  if (!next.warmCap6V1) {
+    next = {
+      ...next,
+      maxWarmViews: 6,
+      warmCap6V1: true,
+      warmCap4V1: true,
+    };
+  } else {
+    next.maxWarmViews = Math.min(
+      6,
+      Math.max(1, Number(next.maxWarmViews) || 6),
+    );
+  }
   return next;
 }
 
@@ -365,10 +402,49 @@ export function saveSettings(patch) {
 }
 
 export function hashPassword(password) {
-  return crypto.createHash('sha256').update(String(password)).digest('hex');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const derived = crypto.scryptSync(String(password), salt, 64, {
+    N: 16384,
+    r: 8,
+    p: 1,
+  });
+  return `scrypt$${salt}$${derived.toString('hex')}`;
 }
 
-export function verifyPassword(password, hash) {
-  if (!hash) return false;
-  return hashPassword(password) === hash;
+/** Verify password. Supports legacy unsalted SHA-256 and scrypt$salt$hash. */
+export function verifyPassword(password, stored) {
+  if (!stored) return false;
+  const value = String(password);
+  const record = String(stored);
+  if (record.startsWith('scrypt$')) {
+    const parts = record.split('$');
+    if (parts.length !== 3) return false;
+    const [, salt, hashHex] = parts;
+    try {
+      const derived = crypto.scryptSync(value, salt, 64, {
+        N: 16384,
+        r: 8,
+        p: 1,
+      });
+      const expected = Buffer.from(hashHex, 'hex');
+      if (expected.length !== derived.length) return false;
+      return crypto.timingSafeEqual(expected, derived);
+    } catch {
+      return false;
+    }
+  }
+  // Legacy unsalted SHA-256 (pre-0.2.0) — still accept, then rehash on unlock.
+  const legacy = crypto.createHash('sha256').update(value).digest('hex');
+  try {
+    const a = Buffer.from(legacy, 'hex');
+    const b = Buffer.from(record, 'hex');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return legacy === record;
+  }
+}
+
+export function isLegacyPasswordHash(stored) {
+  return Boolean(stored && !String(stored).startsWith('scrypt$'));
 }

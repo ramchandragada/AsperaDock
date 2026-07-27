@@ -75,7 +75,12 @@ function currentVersion() {
 
 function updatesDir() {
   const dir = path.join(app.getPath('userData'), 'updates');
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(dir, 0o700);
+  } catch {
+    // ignore (e.g. unsupported on some FS)
+  }
   return dir;
 }
 
@@ -260,8 +265,8 @@ export async function checkForUpdates({ silent = true } = {}) {
       file,
     };
 
-    // Reuse a previously finished download (survives restart).
-    const existing = findDownloadedArtifact(manifest.version, file);
+    // Reuse a previously finished download only after SHA-256 re-verify.
+    const existing = await findDownloadedArtifact(manifest.version, file);
     if (existing) downloadedPath = existing;
 
     broadcast('available', {
@@ -329,6 +334,47 @@ async function sha256File(filePath) {
   });
 }
 
+/** Reject non-HTTPS artifact URLs (feed integrity alone is not enough). */
+function assertHttpsArtifactUrl(url) {
+  let parsed;
+  try {
+    parsed = new URL(String(url || ''));
+  } catch {
+    throw new Error('Invalid update artifact URL');
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Update artifacts must be HTTPS');
+  }
+  return parsed;
+}
+
+/**
+ * Verify on-disk artifact against the pending manifest SHA-256.
+ * Deletes the file and clears downloadedPath on mismatch / missing checksum.
+ */
+async function assertDownloadedIntegrity(filePath = downloadedPath) {
+  const expected = pendingUpdate?.file?.sha256;
+  if (!expected) {
+    throw new Error(
+      'Update rejected — release is missing a SHA-256 checksum. Refusing to install.',
+    );
+  }
+  if (!filePath || !fs.existsSync(filePath)) {
+    throw new Error('No update file available');
+  }
+  const got = await sha256File(filePath);
+  if (got.toLowerCase() !== String(expected).toLowerCase()) {
+    try {
+      fs.unlinkSync(filePath);
+    } catch {
+      // ignore
+    }
+    if (downloadedPath === filePath) downloadedPath = null;
+    throw new Error('Checksum mismatch — download rejected');
+  }
+  return filePath;
+}
+
 /** Stream-download the pending artifact, verify checksum, report progress. */
 export async function downloadUpdate() {
   if (!pendingUpdate?.file?.url) {
@@ -338,6 +384,7 @@ export async function downloadUpdate() {
   busy = true;
 
   const { url, sha256, size } = pendingUpdate.file;
+  assertHttpsArtifactUrl(url);
   const dest = path.join(updatesDir(), path.basename(new URL(url).pathname) || 'asperadock-update');
   const tmp = `${dest}.part`;
 
@@ -382,6 +429,15 @@ export async function downloadUpdate() {
         fs.unlinkSync(tmp);
         throw new Error('Checksum mismatch — download rejected');
       }
+    } else {
+      try {
+        if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+      } catch {
+        // ignore
+      }
+      throw new Error(
+        'Update rejected — release is missing a SHA-256 checksum. Refusing to install.',
+      );
     }
 
     fs.renameSync(tmp, dest);
@@ -419,8 +475,10 @@ export async function downloadUpdate() {
   }
 }
 
-function findDownloadedArtifact(version, file) {
+async function findDownloadedArtifact(version, file) {
   if (!version) return null;
+  const expected = file?.sha256;
+  if (!expected) return null;
   const candidates = [];
   if (file?.url) {
     try {
@@ -437,7 +495,18 @@ function findDownloadedArtifact(version, file) {
   for (const name of candidates) {
     if (!name) continue;
     const full = path.join(updatesDir(), name);
-    if (fs.existsSync(full)) return full;
+    if (!fs.existsSync(full)) continue;
+    try {
+      const got = await sha256File(full);
+      if (got.toLowerCase() === String(expected).toLowerCase()) return full;
+      try {
+        fs.unlinkSync(full);
+      } catch {
+        // ignore
+      }
+    } catch {
+      // ignore unreadable files
+    }
   }
   return null;
 }
@@ -492,6 +561,26 @@ export async function installUpdate({ silentOnFail = false } = {}) {
   if (!downloadedPath || !fs.existsSync(downloadedPath)) {
     const result = await downloadUpdate();
     if (!result.ok) return result;
+  }
+  try {
+    await assertDownloadedIntegrity(downloadedPath);
+  } catch (error) {
+    const message = String(error?.message || error);
+    broadcast('error', { message });
+    reportError('update-install', { message });
+    if (!silentOnFail) {
+      beforeDialog();
+      dialog
+        .showMessageBox(BrowserWindow.getAllWindows()[0], {
+          type: 'error',
+          title: 'Update rejected',
+          message: 'Could not verify the update package.',
+          detail: message,
+          buttons: ['OK'],
+        })
+        .finally(() => afterDialog());
+    }
+    return { ok: false, error: message };
   }
   const kind = pendingUpdate?.file?.kind || detectPackaging();
   broadcast('installing', { version: pendingUpdate?.version });

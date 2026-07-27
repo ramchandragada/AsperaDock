@@ -1,7 +1,7 @@
 import {
   app,
   BrowserWindow,
-  BrowserView,
+  WebContentsView,
   session,
   ipcMain,
   shell,
@@ -20,6 +20,7 @@ import {
   MAX_APPS_TOTAL,
   MAX_APP_NAME_LENGTH,
   MAX_WARM_VIEWS_DEFAULT,
+  MAX_WARM_VIEWS_CAP,
   INTERNAL_HOSTS,
   CUSTOM_APP_ID,
   isCustomAppId,
@@ -34,8 +35,10 @@ import {
   saveSettings,
   hashPassword,
   verifyPassword,
+  isLegacyPasswordHash,
   makeProfile,
   PRIMARY_PROFILE_ID,
+  DEFAULTS,
 } from './store.js';
 import { mergeAppConfig, MOBILE_USER_AGENT } from './appConfig.js';
 import { APP_ICON_PNG_DATA_URL } from './appIconData.js';
@@ -66,7 +69,16 @@ import {
   updateReadyForQuit,
 } from './updater.js';
 import { initSentryMain } from './sentryMain.js';
+import { openExternalSafe } from './safeShell.js';
+import {
+  registerChromeScheme,
+  attachChromeProtocolHandler,
+  chromeAppUrl,
+} from './chromeProtocol.js';
 import fs from 'node:fs';
+
+// Custom scheme must be registered before ready (A+ fuse: no file:// privileges).
+registerChromeScheme();
 
 const require = createRequire(import.meta.url);
 // Windows Squirrel first-run hook. Never hard-require it — Forge+Vite does not
@@ -79,6 +91,16 @@ if (process.platform === 'win32') {
   } catch {
     // ignore — module absent in packaged Linux builds
   }
+}
+
+// Root is unsupported for packaged builds (also breaks chrome-sandbox).
+if (
+  app.isPackaged &&
+  typeof process.getuid === 'function' &&
+  process.getuid() === 0
+) {
+  // Electron refuses root without this; still quit after a clear message.
+  app.commandLine.appendSwitch('no-sandbox');
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -99,8 +121,20 @@ if (process.platform === 'linux') {
   }
 }
 
-const CHROME_USER_AGENT =
-  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+const CHROME_VERSION = process.versions.chrome || '138.0.0.0';
+const CHROME_MAJOR = String(CHROME_VERSION).split('.')[0] || '138';
+/** Match the embedded Chromium build — Google rejects mismatched / Electron UAs. */
+const CHROME_USER_AGENT = `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROME_VERSION} Safari/537.36`;
+/** Softer Google accounts gate for embedded browsers. */
+const FIREFOX_ACCOUNTS_UA =
+  'Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0';
+const SEC_CH_UA = `"Google Chrome";v="${CHROME_MAJOR}", "Chromium";v="${CHROME_MAJOR}", "Not_A Brand";v="24"`;
+
+try {
+  app.userAgentFallback = CHROME_USER_AGENT;
+} catch {
+  // ignore if called too early in tests
+}
 
 /** Absolute path to a PNG the Linux WM can load for the taskbar icon. */
 function getAppIconPath() {
@@ -184,7 +218,7 @@ let mainWindow = null;
 let tray = null;
 let quitting = false;
 
-/** @type {Map<string, { view: BrowserView, lastUsed: number }>} */
+/** @type {Map<string, { view: WebContentsView, lastUsed: number }>} */
 const views = new Map();
 /** Last good in-app URL per service — used when recreating after hibernate/crash. */
 /** @type {Map<string, string>} */
@@ -198,7 +232,7 @@ const unreadCounts = new Map();
 /** @type {{ id: string, serviceId: string, title: string, body: string, at: number }[]} */
 let notificationLog = [];
 const NOTIFICATION_LOG_MAX = 40;
-/** Renderer-measured chrome size — keeps BrowserView aligned with wrapped rows. */
+/** Renderer-measured chrome size — keeps guest view aligned with wrapped rows. */
 let chromeSize = null;
 /** @type {Record<string, number>} */
 let appMemory = {};
@@ -525,64 +559,12 @@ function addService(appId, profileId = null) {
   return { ok: true, id, profileId: resolvedProfileId };
 }
 
-/** Add any https URL as a dock app (intranet, HRMS, Jira, Notion, …). */
-function addCustomService({ url, name, profileId = null } = {}) {
-  if (totalAppCount() >= MAX_APPS_TOTAL) {
-    return { ok: false, error: `Max ${MAX_APPS_TOTAL} apps in the dock` };
-  }
-  let parsed;
-  try {
-    const raw = String(url || '').trim();
-    parsed = new URL(raw.includes('://') ? raw : `https://${raw}`);
-  } catch {
-    return { ok: false, error: 'Enter a valid URL' };
-  }
-  if (!['http:', 'https:'].includes(parsed.protocol)) {
-    return { ok: false, error: 'URL must start with http:// or https://' };
-  }
-  const href = parsed.toString();
-  const label = clampAppName(
-    name || parsed.hostname.replace(/^www\./, '') || 'Custom',
-  );
-
-  let resolvedProfileId = profileId;
-  if (resolvedProfileId && !getProfile(resolvedProfileId)) {
-    return { ok: false, error: 'Profile not found' };
-  }
-  if (!resolvedProfileId) {
-    resolvedProfileId = getProfile(PRIMARY_PROFILE_ID)?.id || PRIMARY_PROFILE_ID;
-  }
-
-  const same = (settings.serviceInstances || []).some(
-    (i) =>
-      isCustomAppId(i.appId) &&
-      i.profileId === resolvedProfileId &&
-      String(i.url || '') === href,
-  );
-  if (same) {
-    return { ok: false, error: 'That URL is already on this profile' };
-  }
-
-  const slot = nextSlot(CUSTOM_APP_ID) || countInstances(CUSTOM_APP_ID) + 1;
-  const id = `custom-${slot}-${Date.now().toString(36)}`;
-  const instances = [
-    ...(settings.serviceInstances || []),
-    {
-      id,
-      appId: CUSTOM_APP_ID,
-      profileId: resolvedProfileId,
-      slot,
-      url: href,
-      name: label,
-      title: label,
-      color: '#3D5A80',
-    },
-  ];
-  const serviceOrder = [...(settings.serviceOrder || []), id];
-  settings = saveSettings({ serviceInstances: instances, serviceOrder });
-  broadcastState();
-  activateService(id);
-  return { ok: true, id, profileId: resolvedProfileId };
+/** Custom URLs are disabled — Aspera Dock only exposes the company catalog. */
+function addCustomService() {
+  return {
+    ok: false,
+    error: 'Custom apps are disabled — only the Aspera catalog is available.',
+  };
 }
 
 /** Move an app instance onto another profile (changes its Electron session). */
@@ -625,9 +607,15 @@ function removeService(id) {
   const service = getService(id);
   if (!service) return { ok: false, error: 'Not found' };
 
-  hibernateService(id);
+  const wasActive = activeServiceId === id;
+  hibernateService(id, { force: true });
   unreadCounts.delete(id);
   lastGoodUrls.delete(id);
+  if (settings.lastServiceUrls?.[id]) {
+    const lastServiceUrls = { ...settings.lastServiceUrls };
+    delete lastServiceUrls[id];
+    settings = saveSettings({ lastServiceUrls });
+  }
 
   const instances = (settings.serviceInstances || []).filter((i) => i.id !== id);
   const serviceOrder = (settings.serviceOrder || []).filter((x) => x !== id);
@@ -640,7 +628,7 @@ function removeService(id) {
   if (settings.lastActiveServiceId === id) patch.lastActiveServiceId = null;
   settings = saveSettings(patch);
 
-  if (activeServiceId === id) {
+  if (wasActive || activeServiceId === id) {
     activeServiceId = null;
     const next = orderedServices()[0];
     if (next) activateService(next.id);
@@ -665,7 +653,11 @@ function maxWarm() {
   if (isLowMemoryMode()) {
     return Math.min(3, Math.max(2, Number(settings.maxWarmViews) || 2));
   }
-  return Math.max(1, Number(settings.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT);
+  const n = Number(settings.maxWarmViews);
+  return Math.min(
+    MAX_WARM_VIEWS_CAP,
+    Math.max(1, Number.isFinite(n) ? n : MAX_WARM_VIEWS_DEFAULT),
+  );
 }
 
 function baseDomain(hostname) {
@@ -677,7 +669,8 @@ function isInternalUrl(url, service) {
   try {
     host = new URL(url).hostname;
   } catch {
-    return true;
+    // Fail closed — malformed URLs are never treated as in-dock.
+    return false;
   }
   let serviceHost = '';
   try {
@@ -687,6 +680,22 @@ function isInternalUrl(url, service) {
   }
   const allowed = [serviceHost, ...INTERNAL_HOSTS].filter(Boolean);
   return allowed.some((d) => host === d || host.endsWith(`.${d}`));
+}
+
+/** Dangerous or non-web schemes must never navigate inside a guest. */
+function isForbiddenGuestNavigation(url) {
+  try {
+    const protocol = new URL(String(url || '')).protocol.toLowerCase();
+    return ![
+      'http:',
+      'https:',
+      'about:',
+      'blob:',
+      'data:',
+    ].includes(protocol);
+  } catch {
+    return true;
+  }
 }
 
 function dockIsUserFocused() {
@@ -713,6 +722,95 @@ function raiseDockWindow() {
   mainWindow.focus();
 }
 
+function assertShellSender(event) {
+  if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.webContents) {
+    throw new Error('Dock window unavailable');
+  }
+  if (event.sender !== mainWindow.webContents) {
+    throw new Error('Unauthorized IPC sender');
+  }
+}
+
+/** IPC handlers that may only be invoked by the dock shell renderer. */
+function dockHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    assertShellSender(event);
+    return handler(event, ...args);
+  });
+}
+
+function buildGoogleChromeSpoofSource() {
+  const full = CHROME_VERSION;
+  const major = CHROME_MAJOR;
+  return `(() => {
+  try {
+    const full = ${JSON.stringify(full)};
+    const major = ${JSON.stringify(major)};
+    const brands = [
+      { brand: 'Chromium', version: major },
+      { brand: 'Google Chrome', version: major },
+      { brand: 'Not_A Brand', version: '24' },
+    ];
+    const fullVersionList = [
+      { brand: 'Chromium', version: full },
+      { brand: 'Google Chrome', version: full },
+      { brand: 'Not_A Brand', version: '24.0.0.0' },
+    ];
+    const high = {
+      architecture: 'x86', bitness: '64', brands, fullVersionList,
+      mobile: false, model: '', platform: 'Linux', platformVersion: '6.8.0',
+      uaFullVersion: full, wow64: false,
+    };
+    const uaData = {
+      brands, mobile: false, platform: 'Linux',
+      getHighEntropyValues: () => Promise.resolve(high),
+      toJSON: () => ({ brands, mobile: false, platform: 'Linux' }),
+    };
+    Object.defineProperty(Navigator.prototype, 'userAgentData', {
+      get: () => uaData, configurable: true,
+    });
+    const t = Date.now() / 1000;
+    const chrome = window.chrome || {};
+    chrome.app = chrome.app || {
+      isInstalled: false,
+      InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+      RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' },
+    };
+    chrome.runtime = chrome.runtime || {
+      OnInstalledReason: {}, OnRestartRequiredReason: {}, PlatformArch: {}, PlatformOs: {},
+      connect() {}, sendMessage() {},
+    };
+    chrome.loadTimes = chrome.loadTimes || function () {
+      return {
+        requestTime: t, startLoadTime: t, commitLoadTime: t,
+        finishDocumentLoadTime: t, finishLoadTime: t, firstPaintTime: t,
+        firstPaintAfterLoadTime: 0, navigationType: 'Other',
+        wasFetchedViaSpdy: true, wasNpnNegotiated: true,
+        npnNegotiatedProtocol: 'h2', wasAlternateProtocolAvailable: false,
+        connectionInfo: 'h2',
+      };
+    };
+    chrome.csi = chrome.csi || function () {
+      return { startE: Date.now(), onloadT: Date.now(), pageT: 1000, tran: 15 };
+    };
+    window.chrome = chrome;
+  } catch (e) {}
+})();`;
+}
+
+async function attachGoogleChromeSpoof(wc) {
+  if (!wc || wc.isDestroyed() || wc.__asperaGoogleSpoof) return;
+  wc.__asperaGoogleSpoof = true;
+  const source = buildGoogleChromeSpoofSource();
+  // Prefer page inject only — CDP debugger attach causes Linux paint flicker.
+  const inject = () => {
+    if (wc.isDestroyed()) return;
+    wc.executeJavaScript(source, true).catch(() => {});
+  };
+  wc.on('dom-ready', inject);
+  wc.on('did-finish-load', inject);
+}
+
 /**
  * Chrome offsets for the active view. The renderer reports its measured bar
  * size so wrapped tab rows and density changes stay in sync with the CSS.
@@ -731,39 +829,75 @@ function effectiveMetrics() {
   };
 }
 
+function attachGuestView(view) {
+  if (!mainWindow || !view || mainWindow.isDestroyed()) return;
+  try {
+    // WebContentsView (Electron 30+) — BrowserView bounds are unreliable on 37/Linux.
+    mainWindow.contentView.addChildView(view);
+  } catch {
+    // ignore
+  }
+}
+
+function detachGuestView(view) {
+  if (!mainWindow || !view || mainWindow.isDestroyed()) return;
+  try {
+    mainWindow.contentView.removeChildView(view);
+  } catch {
+    // ignore
+  }
+}
+
 function layoutActiveView() {
   if (!mainWindow || !activeServiceId || locked || overlayOpen) return;
+  if (mainWindow.isDestroyed()) return;
   const entry = views.get(activeServiceId);
-  if (!entry) return;
+  if (!entry?.view) return;
 
   const [width, height] = mainWindow.getContentSize();
   const m = effectiveMetrics();
   const right = m.right || 0;
-  entry.view.setBounds({
-    x: m.left,
-    y: m.top,
-    width: Math.max(0, width - m.left - right),
-    height: Math.max(0, height - m.top),
-  });
-  // Never autoResize — on Linux it expands over the HTML chrome after
-  // dialogs/reattach and looks like a "single app" fullscreen webview.
-  entry.view.setAutoResize({ width: false, height: false, horizontal: false, vertical: false });
-}
-
-function detachAllViews() {
-  if (!mainWindow) return;
-  for (const entry of views.values()) {
-    try {
-      mainWindow.removeBrowserView(entry.view);
-    } catch {
-      // ignore
-    }
+  // Always keep a floor under the measured bar so the guest never covers chrome.
+  const top = Math.max(64, m.top || 0);
+  const next = {
+    x: Math.max(0, m.left || 0),
+    y: top,
+    width: Math.max(1, width - (m.left || 0) - right),
+    height: Math.max(1, height - top),
+  };
+  // Skip identical layouts — repeated setBounds on Linux can flicker the guest.
+  const prev = entry.__lastBounds;
+  if (
+    prev &&
+    prev.x === next.x &&
+    prev.y === next.y &&
+    prev.width === next.width &&
+    prev.height === next.height
+  ) {
+    return;
+  }
+  entry.__lastBounds = next;
+  try {
+    entry.view.setBounds(next);
+  } catch {
+    // ignore
   }
 }
 
-/** BrowserView always paints above HTML — hide it while modals are open. */
+function detachAllViews() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  for (const entry of views.values()) {
+    detachGuestView(entry.view);
+  }
+}
+
+/** Guest views paint above the dock HTML — hide them while modals are open. */
 function setOverlayOpen(open) {
-  overlayOpen = !!open;
+  const next = !!open;
+  // No-op when unchanged. Re-adding/focusing the view on every state sync
+  // strobes the navy window background over the guest page on Linux.
+  if (next === overlayOpen) return;
+  overlayOpen = next;
   if (!mainWindow) return;
 
   if (overlayOpen) {
@@ -774,7 +908,8 @@ function setOverlayOpen(open) {
   if (locked || !activeServiceId) return;
   const entry = views.get(activeServiceId);
   if (!entry) return;
-  mainWindow.addBrowserView(entry.view);
+  attachGuestView(entry.view);
+  entry.__lastBounds = null;
   layoutActiveView();
   focusActiveContents();
 }
@@ -991,6 +1126,44 @@ function configureSession(partitionSession, partitionKey) {
     );
   });
 
+  // Google sign-in: spoof Client Hints as Chrome, and use a Firefox UA only on
+  // accounts.google.com (widely used workaround for the embedded-browser block).
+  partitionSession.webRequest.onBeforeSendHeaders(
+    {
+      urls: [
+        '*://*.google.com/*',
+        '*://google.com/*',
+        '*://*.googleusercontent.com/*',
+        '*://*.gstatic.com/*',
+        '*://*.googleapis.com/*',
+      ],
+    },
+    (details, callback) => {
+      const headers = { ...details.requestHeaders };
+      let host = '';
+      try {
+        host = new URL(details.url).hostname.toLowerCase();
+      } catch {
+        // ignore
+      }
+      if (host === 'accounts.google.com' || host.endsWith('.accounts.google.com')) {
+        headers['User-Agent'] = FIREFOX_ACCOUNTS_UA;
+        delete headers['sec-ch-ua'];
+        delete headers['sec-ch-ua-mobile'];
+        delete headers['sec-ch-ua-platform'];
+        delete headers['Sec-CH-UA'];
+        delete headers['Sec-CH-UA-Mobile'];
+        delete headers['Sec-CH-UA-Platform'];
+      } else {
+        headers['User-Agent'] = headers['User-Agent'] || CHROME_USER_AGENT;
+        headers['sec-ch-ua'] = SEC_CH_UA;
+        headers['sec-ch-ua-mobile'] = '?0';
+        headers['sec-ch-ua-platform'] = '"Linux"';
+      }
+      callback({ cancel: false, requestHeaders: headers });
+    },
+  );
+
   partitionSession.on('will-download', (_event, item) => {
     if (settings.downloadPath) {
       item.setSavePath(path.join(settings.downloadPath, item.getFilename()));
@@ -1014,6 +1187,129 @@ function configureSession(partitionSession, partitionKey) {
   });
 }
 
+function isGoogleService(service) {
+  if (!service) return false;
+  if (service.appId === 'gmail') return true;
+  try {
+    const host = new URL(service.url).hostname.toLowerCase();
+    return (
+      host === 'google.com' ||
+      host.endsWith('.google.com') ||
+      host === 'gmail.com' ||
+      host.endsWith('.gmail.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function guestWebPreferences(service) {
+  return {
+    session: session.fromPartition(service.partition),
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: true,
+    spellcheck: true,
+  };
+}
+
+function isGoogleMailAppUrl(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    return (
+      host === 'mail.google.com' ||
+      host.endsWith('.mail.google.com') ||
+      host === 'inbox.google.com'
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Window-open policy shared by a service view and any popup it spawns.
+ * Genuine external links go to the OS browser; internal popups (Zoho CRM
+ * child windows, SSO handshakes, about:blank targets) open as real windows
+ * that share the service session — denying them makes embedded apps like
+ * Zoho CRM hang forever waiting for the window handle.
+ *
+ * Google is special: OAuth often opens a popup that then becomes the full
+ * Gmail inbox. Keep http navigations in the dock tab, and if a blank popup
+ * still appears, fold the session back into the parent when it lands on Gmail.
+ */
+function configureGuestWindowOpen(wc, service) {
+  const linkMode =
+    getAppConfig(service.id).linkHandling || settings.linkHandling || 'block';
+  const googleish = isGoogleService(service);
+
+  wc.setWindowOpenHandler(({ url }) => {
+    const external =
+      linkMode === 'external' ||
+      (url.startsWith('http') && !isInternalUrl(url, service));
+    if (external) {
+      openExternalSafe(url);
+      return { action: 'deny' };
+    }
+
+    // Gmail/Google: keep sign-in inside the dock tab whenever we have a URL.
+    if (googleish && url.startsWith('http')) {
+      wc.loadURL(url).catch(() => {});
+      return { action: 'deny' };
+    }
+
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        autoHideMenuBar: true,
+        width: 1024,
+        height: 720,
+        webPreferences: guestWebPreferences(service),
+      },
+    };
+  });
+}
+
+/** If a Google auth popup becomes the full inbox, move it into the dock tab. */
+function attachPopupSessionAdopt(parentWc, childWindow, service) {
+  if (!isGoogleService(service)) return;
+
+  const childWc = childWindow.webContents;
+  let adopting = false;
+
+  const tryAdopt = () => {
+    if (adopting || childWindow.isDestroyed() || parentWc.isDestroyed()) return;
+    let popupUrl = '';
+    try {
+      popupUrl = childWc.getURL();
+    } catch {
+      return;
+    }
+    if (!popupUrl.startsWith('http') || isAuthOrLoginUrl(popupUrl)) return;
+    if (!isGoogleMailAppUrl(popupUrl)) return;
+
+    // Popup is the real Gmail app. Always fold it into the dock tab so the
+    // inbox does not live in a floating window while the tab shows marketing.
+    adopting = true;
+    parentWc.loadURL(popupUrl).catch(() => {});
+    rememberGoodUrl(service.id, popupUrl);
+    setTimeout(() => {
+      try {
+        if (!childWindow.isDestroyed()) childWindow.close();
+      } catch {
+        // ignore
+      }
+    }, 150);
+  };
+
+  childWc.on('did-navigate', tryAdopt);
+  childWc.on('did-navigate-in-page', tryAdopt);
+  childWc.on('did-finish-load', tryAdopt);
+  childWc.on('page-title-updated', tryAdopt);
+  // Catch the already-loaded case (title set before listeners).
+  setTimeout(tryAdopt, 300);
+}
+
 function createViewForService(service) {
   const cfg = getAppConfig(service.id);
   const partitionSession = session.fromPartition(service.partition);
@@ -1024,43 +1320,66 @@ function createViewForService(service) {
     (cfg.forceMobile ? MOBILE_USER_AGENT : CHROME_USER_AGENT);
   partitionSession.setUserAgent(ua);
 
-  const view = new BrowserView({
-    webPreferences: {
-      session: partitionSession,
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      spellcheck: true,
-    },
+  const view = new WebContentsView({
+    webPreferences: guestWebPreferences(service),
   });
+  // Seed non-fullscreen bounds before first attach (avoids a full-bleed flash).
+  try {
+    const m = effectiveMetrics();
+    view.setBounds({
+      x: 0,
+      y: Math.max(64, m.top || 70),
+      width: 800,
+      height: 600,
+    });
+  } catch {
+    // ignore
+  }
 
   const { webContents } = view;
   webContents.setUserAgent(ua);
   webContents.setAudioMuted(settings.muted || !cfg.allowSounds);
+  if (isGoogleService(service)) {
+    attachGoogleChromeSpoof(webContents).catch(() => {});
+  }
   const langs = cfg.spellChecker || settings.spellChecker || ['en-US'];
   webContents.session.setSpellCheckerLanguages(
     Array.isArray(langs) && langs.length ? langs : ['en-US'],
   );
 
-  const linkMode = cfg.linkHandling || settings.linkHandling || 'block';
-  webContents.setWindowOpenHandler(({ url }) => {
-    if (linkMode === 'external' || !isInternalUrl(url, service)) {
-      shell.openExternal(url);
-      return { action: 'deny' };
+  configureGuestWindowOpen(webContents, service);
+
+  // Real popup windows (Zoho CRM child views, SSO handshakes) inherit these
+  // rules too, and must never be trapped inside a broken denied handle.
+  webContents.on('did-create-window', (childWindow) => {
+    const childWc = childWindow.webContents;
+    configureGuestWindowOpen(childWc, service);
+    attachPopupSessionAdopt(webContents, childWindow, service);
+    if (isGoogleService(service)) {
+      attachGoogleChromeSpoof(childWc).catch(() => {});
     }
-    // Zoho/Google SSO often returns via window.open. Silently denying those
-    // popups leaves the tab stuck on Accounts profile instead of the app.
-    if (url.startsWith('http')) {
-      webContents.loadURL(url).catch(() => {});
-    }
-    return { action: 'deny' };
+    childWc.on('will-navigate', (event, url) => {
+      if (isForbiddenGuestNavigation(url)) {
+        event.preventDefault();
+        return;
+      }
+      if (!url.startsWith('http')) return;
+      if (isInternalUrl(url, service)) return;
+      event.preventDefault();
+      openExternalSafe(url);
+    });
+    watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
   });
 
   webContents.on('will-navigate', (event, url) => {
+    if (isForbiddenGuestNavigation(url)) {
+      event.preventDefault();
+      return;
+    }
     if (!url.startsWith('http')) return;
     if (isInternalUrl(url, service)) return;
     event.preventDefault();
-    shell.openExternal(url);
+    openExternalSafe(url);
   });
 
   webContents.on('page-title-updated', (_event, title) => {
@@ -1111,14 +1430,14 @@ function createViewForService(service) {
   webContents.on('dom-ready', async () => {
     applyFocusMode(webContents, service.id);
     const live = getAppConfig(service.id);
-    if (live.injectCss && live.injectCss.trim()) {
+    if (settings.allowPageInjection && live.injectCss && live.injectCss.trim()) {
       try {
         await webContents.insertCSS(live.injectCss);
       } catch {
         // ignore
       }
     }
-    if (live.stylishUrl && /^https?:\/\//i.test(live.stylishUrl.trim())) {
+    if (settings.allowPageInjection && live.stylishUrl && /^https?:\/\//i.test(live.stylishUrl.trim())) {
       try {
         const res = await fetch(live.stylishUrl.trim());
         if (res.ok) await webContents.insertCSS(await res.text());
@@ -1126,7 +1445,7 @@ function createViewForService(service) {
         // ignore
       }
     }
-    if (live.injectJs && live.injectJs.trim()) {
+    if (settings.allowPageInjection && live.injectJs && live.injectJs.trim()) {
       try {
         await webContents.executeJavaScript(live.injectJs, true);
       } catch {
@@ -1136,7 +1455,7 @@ function createViewForService(service) {
   });
 
   // A crashed guest used to remain in `views`, so activating its tab reattached
-  // a dead BrowserView and showed only the dock's grey background. Remove the
+  // a dead view and showed only the dock's grey background. Remove the
   // dead entry immediately; recreate it now when active, or on the next click
   // when it crashed in the background.
   webContents.on('render-process-gone', (_event, details) => {
@@ -1145,11 +1464,7 @@ function createViewForService(service) {
     const current = views.get(service.id);
     if (!current || current.view !== view) return;
 
-    try {
-      mainWindow?.removeBrowserView(view);
-    } catch {
-      // ignore
-    }
+    detachGuestView(view);
     views.delete(service.id);
     unreadCounts.delete(service.id);
     hibernatedAt.set(service.id, Date.now());
@@ -1177,13 +1492,16 @@ function createViewForService(service) {
 
   webContents.on('did-navigate', (_event, url) => {
     rememberGoodUrl(service.id, url);
+    reclaimServiceHomeIfWrongProduct(webContents, service, url);
   });
   webContents.on('did-navigate-in-page', (_event, url) => {
     rememberGoodUrl(service.id, url);
   });
   webContents.on('did-finish-load', () => {
     try {
-      rememberGoodUrl(service.id, webContents.getURL());
+      const url = webContents.getURL();
+      rememberGoodUrl(service.id, url);
+      reclaimServiceHomeIfWrongProduct(webContents, service, url);
     } catch {
       // ignore
     }
@@ -1209,20 +1527,39 @@ function createViewForService(service) {
   return views.get(service.id);
 }
 
-function hibernateService(id) {
+function hibernateService(id, { force = false } = {}) {
   const entry = views.get(id);
-  if (!entry || id === activeServiceId) return;
-  if (mainWindow) {
-    try {
-      mainWindow.removeBrowserView(entry.view);
-    } catch {
-      // ignore
-    }
+  if (!entry) return;
+  if (!force && id === activeServiceId) return;
+  const service = getService(id);
+  try {
+    const url = entry.view.webContents.getURL();
+    rememberGoodUrl(id, url);
+  } catch {
+    // ignore
   }
-  entry.view.webContents.close();
+  if (mainWindow) {
+    detachGuestView(entry.view);
+  }
+  try {
+    entry.view.webContents.close();
+  } catch {
+    // ignore
+  }
   views.delete(id);
   unreadCounts.delete(id);
   hibernatedAt.set(id, Date.now());
+  if (force && activeServiceId === id) {
+    activeServiceId = null;
+  }
+  // Persist cookies before the renderer is gone — otherwise Zoho/Gmail may
+  // treat the next wake as a fresh device and demand MFA / sign-in again.
+  if (service?.partition) {
+    session
+      .fromPartition(service.partition)
+      .cookies.flushStore()
+      .catch(() => {});
+  }
 }
 
 /** True for Zoho/Google login and MFA pages — never restore these as "home". */
@@ -1232,23 +1569,126 @@ function isAuthOrLoginUrl(url) {
     const host = u.hostname.toLowerCase();
     const pathName = u.pathname.toLowerCase();
     if (host.startsWith('accounts.')) return true;
-    if (/\/signin|\/login|\/logout|\/oauth/i.test(pathName)) return true;
+    if (host.includes('accounts.google.')) return true;
+    if (/\/signin|\/login|\/logout|\/oauth|\/oneauth|\/mfa|\/verify/i.test(pathName)) {
+      return true;
+    }
     return false;
   } catch {
     return true;
   }
 }
 
-/** Prefer the last in-app page; never cold-start on a login/QR screen. */
+/**
+ * Only restore URLs that belong to this app. Shared Zoho SSO cookies made
+ * Mail tabs remember Cliq/Meeting after a cross-product hop — reject those.
+ */
+function isUrlForService(service, url) {
+  if (!service || !url) return false;
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    let expected = '';
+    try {
+      expected = new URL(service.url).hostname.toLowerCase();
+    } catch {
+      return false;
+    }
+    if (!expected) return false;
+    if (host === expected || host.endsWith(`.${expected}`)) return true;
+
+    // Zoho DC aliases: mail.zoho.in ↔ mail.zoho.com (same product, first label).
+    const product = expected.split('.')[0];
+    const hostProduct = host.split('.')[0];
+    if (
+      product &&
+      hostProduct === product &&
+      (host.endsWith('.zoho.com') || host.endsWith('.zoho.in')) &&
+      (expected.endsWith('.zoho.com') || expected.endsWith('.zoho.in'))
+    ) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** Prefer the last in-app page; never cold-start on a login/QR / wrong-app screen. */
 function startUrlForService(service) {
-  const last = lastGoodUrls.get(service.id);
-  if (last && !isAuthOrLoginUrl(last)) return last;
+  const memory = lastGoodUrls.get(service.id);
+  const disk = (settings.lastServiceUrls || {})[service.id];
+  const last = memory || disk;
+  if (
+    last &&
+    !isAuthOrLoginUrl(last) &&
+    isUrlForService(service, last)
+  ) {
+    return last;
+  }
   return service.url;
 }
 
+let lastUrlSaveTimer = null;
 function rememberGoodUrl(serviceId, url) {
   if (!url || !String(url).startsWith('http') || isAuthOrLoginUrl(url)) return;
+  const service = getService(serviceId);
+  if (service && !isUrlForService(service, url)) return;
   lastGoodUrls.set(serviceId, url);
+  if (lastUrlSaveTimer) clearTimeout(lastUrlSaveTimer);
+  lastUrlSaveTimer = setTimeout(() => {
+    const prev = settings.lastServiceUrls || {};
+    if (prev[serviceId] === url) return;
+    settings = saveSettings({
+      lastServiceUrls: { ...prev, [serviceId]: url },
+    });
+  }, 1200);
+}
+
+function hydrateLastUrls() {
+  const map = settings.lastServiceUrls || {};
+  const cleaned = {};
+  let dirty = false;
+  for (const [id, url] of Object.entries(map)) {
+    if (typeof url !== 'string' || !url.startsWith('http') || isAuthOrLoginUrl(url)) {
+      dirty = true;
+      continue;
+    }
+    const service = getService(id);
+    if (service && !isUrlForService(service, url)) {
+      dirty = true;
+      continue;
+    }
+    cleaned[id] = url;
+    lastGoodUrls.set(id, url);
+  }
+  if (dirty) {
+    settings = saveSettings({ lastServiceUrls: cleaned });
+  }
+}
+
+/** Zoho Mail (etc.) must not stay on Cliq/Meeting after an in-app hop. */
+const reclaimInFlight = new Set();
+function reclaimServiceHomeIfWrongProduct(webContents, service, url) {
+  if (!service || !webContents || webContents.isDestroyed()) return;
+  if (!url || isAuthOrLoginUrl(url)) return;
+  if (isUrlForService(service, url)) return;
+  // Only reclaim Zoho product tabs — shared SSO often dumps the wrong app.
+  if (!String(service.appId || '').startsWith('zoho-')) return;
+  if (reclaimInFlight.has(service.id)) return;
+  reclaimInFlight.add(service.id);
+  const home = service.url;
+  webContents
+    .loadURL(home)
+    .catch(() => {})
+    .finally(() => {
+      setTimeout(() => reclaimInFlight.delete(service.id), 1500);
+    });
+}
+
+function flushAllSessionCookies() {
+  for (const appSession of allAppSessions()) {
+    appSession.cookies.flushStore().catch(() => {});
+  }
 }
 
 /** Warm status is chosen per app by the user; catalog type has no priority. */
@@ -1312,8 +1752,8 @@ function toggleKeepWarm(id) {
         ok: false,
         error:
           limit > 0
-            ? `You can keep ${limit} background app${limit === 1 ? '' : 's'} warm. Increase “Max warm apps in RAM” to select more.`
-            : 'Increase “Max warm apps in RAM” before selecting a warm app.',
+            ? `You can keep ${limit} background app${limit === 1 ? '' : 's'} warm (max ${MAX_WARM_VIEWS_CAP} apps in RAM including the active tab).`
+            : `Maximum is ${MAX_WARM_VIEWS_CAP} apps in RAM. Turn off another warm app first.`,
       };
     }
   }
@@ -1346,11 +1786,7 @@ function ensureLiveView(service) {
   if (existing) {
     const wc = existing.view?.webContents;
     if (wc && !wc.isDestroyed()) return existing;
-    try {
-      mainWindow?.removeBrowserView(existing.view);
-    } catch {
-      // ignore
-    }
+    detachGuestView(existing.view);
     try {
       if (wc && !wc.isDestroyed()) wc.close();
     } catch {
@@ -1385,8 +1821,13 @@ function activateService(id) {
   }
 
   if (!overlayOpen) {
-    mainWindow.addBrowserView(entry.view);
+    attachGuestView(entry.view);
+    entry.__lastBounds = null;
     layoutActiveView();
+    // Electron/Linux sometimes applies the first bounds late — re-assert.
+    setTimeout(() => layoutActiveView(), 16);
+    setTimeout(() => layoutActiveView(), 100);
+    setTimeout(() => layoutActiveView(), 300);
     focusActiveContents();
   }
 
@@ -1462,34 +1903,16 @@ function currentState() {
       appCount: appsUsingProfile(p.id).length,
       locked: p.id === PRIMARY_PROFILE_ID,
     })),
-    catalog: [
-      ...APP_CATALOG.map((a) => ({
-        ...a,
-        count: countInstances(a.appId),
-        max: MAX_INSTANCES_PER_APP,
-        totalApps: totalAppCount(),
-        maxTotal: MAX_APPS_TOTAL,
-        canAdd:
-          totalAppCount() < MAX_APPS_TOTAL &&
-          countInstances(a.appId) < MAX_INSTANCES_PER_APP,
-      })),
-      {
-        appId: CUSTOM_APP_ID,
-        name: 'Custom',
-        title: 'Custom app (any URL)',
-        url: '',
-        color: '#3D5A80',
-        logo: 'custom',
-        count: countInstances(CUSTOM_APP_ID),
-        max: MAX_INSTANCES_PER_APP,
-        totalApps: totalAppCount(),
-        maxTotal: MAX_APPS_TOTAL,
-        canAdd:
-          totalAppCount() < MAX_APPS_TOTAL &&
-          countInstances(CUSTOM_APP_ID) < MAX_INSTANCES_PER_APP,
-        isCustom: true,
-      },
-    ],
+    catalog: APP_CATALOG.map((a) => ({
+      ...a,
+      count: countInstances(a.appId),
+      max: MAX_INSTANCES_PER_APP,
+      totalApps: totalAppCount(),
+      maxTotal: MAX_APPS_TOTAL,
+      canAdd:
+        totalAppCount() < MAX_APPS_TOTAL &&
+        countInstances(a.appId) < MAX_INSTANCES_PER_APP,
+    })),
     limits: {
       maxAppsTotal: MAX_APPS_TOTAL,
       maxPerApp: MAX_INSTANCES_PER_APP,
@@ -1502,7 +1925,16 @@ function currentState() {
     totalUnread: totalUnread(),
     notifications: notificationLog,
     appMemory,
-    settings: { ...settings, lockPasswordHash: undefined },
+    settings: {
+      ...settings,
+      lockPasswordHash: undefined,
+      errorReportGithubToken: settings.errorReportGithubToken
+        ? '[configured]'
+        : '',
+      sentryDsn: settings.sentryDsn ? '[configured]' : '',
+      hasErrorReportGithubToken: Boolean(settings.errorReportGithubToken),
+      hasSentryDsnOverride: Boolean(settings.sentryDsn),
+    },
     locked,
   };
 }
@@ -1617,6 +2049,15 @@ function attachShortcuts(webContents) {
 function lockApp() {
   if (!settings.lockEnabled || !settings.lockPasswordHash) return;
   locked = true;
+  const resumeId = activeServiceId || settings.lastActiveServiceId || null;
+  if (resumeId) {
+    settings = saveSettings({ lastActiveServiceId: resumeId });
+  }
+  // Tear down guest views so sessions are not live behind the lock screen.
+  for (const id of [...views.keys()]) {
+    hibernateService(id, { force: true });
+  }
+  activeServiceId = null;
   hideViewsForLock();
   broadcastState();
 }
@@ -1625,8 +2066,17 @@ function unlockApp(password) {
   if (!verifyPassword(password, settings.lockPasswordHash)) {
     return { ok: false, error: 'Wrong password' };
   }
+  // Upgrade legacy unsalted SHA-256 hashes on successful unlock.
+  if (isLegacyPasswordHash(settings.lockPasswordHash)) {
+    settings = saveSettings({ lockPasswordHash: hashPassword(password) });
+  }
   locked = false;
-  if (activeServiceId) activateService(activeServiceId);
+  const resumeId =
+    activeServiceId ||
+    settings.lastActiveServiceId ||
+    orderedServices()[0]?.id ||
+    null;
+  if (resumeId) activateService(resumeId);
   else broadcastState();
   return { ok: true };
 }
@@ -1986,7 +2436,7 @@ function installApplicationMenu() {
           label: 'Support',
           accelerator: 'CommandOrControl+F1',
           click: () =>
-            shell.openExternal(
+            openExternalSafe(
               'https://github.com/ramchandragada/AsperaDock/issues/new',
             ),
         },
@@ -2093,6 +2543,8 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     applyWindowIcon(mainWindow);
+    // Company desktops: always open full-screen workspace.
+    mainWindow.maximize();
     mainWindow.show();
     // Some Linux panels only refresh the icon after the window is mapped.
     setTimeout(() => applyWindowIcon(mainWindow), 250);
@@ -2120,6 +2572,12 @@ function createWindow() {
     }, 1200);
   });
   mainWindow.on('resize', layoutActiveView);
+  mainWindow.on('maximize', () => {
+    setTimeout(() => layoutActiveView(), 50);
+    setTimeout(() => layoutActiveView(), 200);
+  });
+  mainWindow.on('unmaximize', () => setTimeout(() => layoutActiveView(), 50));
+  mainWindow.on('show', () => setTimeout(() => layoutActiveView(), 50));
   mainWindow.on('focus', () => focusActiveContents());
   attachShortcuts(mainWindow.webContents);
 
@@ -2198,15 +2656,32 @@ function createWindow() {
   });
 }
 
+function chromeIndexCandidates() {
+  const name =
+    typeof MAIN_WINDOW_VITE_NAME === 'string' && MAIN_WINDOW_VITE_NAME
+      ? MAIN_WINDOW_VITE_NAME
+      : 'main_window';
+  const appPath = app.getAppPath();
+  return [
+    path.join(appPath, '.vite', 'renderer', name, 'index.html'),
+    path.join(process.resourcesPath || '', 'app.asar', '.vite', 'renderer', name, 'index.html'),
+    path.join(__dirname, '..', 'renderer', name, 'index.html'),
+  ];
+}
+
 function loadDockChrome() {
-  if (!mainWindow) return;
-  if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (typeof MAIN_WINDOW_VITE_DEV_SERVER_URL === 'string' && MAIN_WINDOW_VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
-  } else {
-    mainWindow.loadFile(
-      path.join(__dirname, `../renderer/${MAIN_WINDOW_VITE_NAME}/index.html`),
-    );
+    return;
   }
+  // Packaged: custom scheme (works with GrantFileProtocolExtraPrivileges=false).
+  mainWindow.loadURL(chromeAppUrl('index.html')).catch((err) => {
+    reportError('chrome-load-failed', {
+      message: `Dock chrome scheme load failed: ${err?.message || err}`,
+      details: { url: chromeAppUrl('index.html'), candidates: chromeIndexCandidates() },
+    }).catch(() => {});
+  });
 }
 
 let chromeReloadTimer = null;
@@ -2222,8 +2697,8 @@ function scheduleChromeReload() {
   chromeReloadTimer = setTimeout(() => {
     chromeReloadTimer = null;
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    // Uncover the chrome so a blank bar cannot hide behind an app view.
-    detachAllViews();
+    // Do NOT detach guest views here — that caused Gmail-only flicker while
+    // chrome failed to load. Keep the guest; just retry the dock UI.
     loadDockChrome();
   }, 800 * chromeReloadTries);
 }
@@ -2260,24 +2735,24 @@ function startHibernateTimer() {
 }
 
 // —— IPC ——
-ipcMain.handle('dock:set-overlay', (_e, open) => {
+dockHandle('dock:set-overlay', (_e, open) => {
   setOverlayOpen(open);
   return { ok: true };
 });
 
-ipcMain.handle('dock:set-chrome-size', (_e, size) => {
+dockHandle('dock:set-chrome-size', (_e, size) => {
   chromeSize = size && typeof size === 'object' ? size : null;
   layoutActiveView();
   return { ok: true };
 });
 
-ipcMain.handle('dock:clear-notifications', () => {
+dockHandle('dock:clear-notifications', () => {
   notificationLog = [];
   broadcastState();
   return { ok: true };
 });
 
-ipcMain.handle('dock:mark-all-read', () => {
+dockHandle('dock:mark-all-read', () => {
   unreadCounts.clear();
   notificationLog = [];
   refreshBadge();
@@ -2285,12 +2760,12 @@ ipcMain.handle('dock:mark-all-read', () => {
   return { ok: true };
 });
 
-ipcMain.handle('dock:heartbeat', () => {
+dockHandle('dock:heartbeat', () => {
   noteHeartbeat();
   return { ok: true };
 });
 
-ipcMain.handle('dock:report-error', async (_e, payload = {}) => {
+dockHandle('dock:report-error', async (_e, payload = {}) => {
   const result = await reportError(payload.kind || 'renderer-error', {
     message: payload.message || 'Renderer error',
     error: payload.error || null,
@@ -2305,56 +2780,63 @@ ipcMain.handle('dock:report-error', async (_e, payload = {}) => {
   };
 });
 
-ipcMain.handle('dock:list-error-reports', () => listRecentReports(30));
-ipcMain.handle('dock:open-error-reports', () => {
+dockHandle('dock:list-error-reports', () => listRecentReports(30));
+dockHandle('dock:open-error-reports', () => {
   openReportsFolder();
   return { ok: true, dir: getReportsDir() };
 });
 
-ipcMain.handle('dock:update-status', () => getUpdateStatus());
-ipcMain.handle('dock:show-about', () => {
+dockHandle('dock:update-status', () => getUpdateStatus());
+dockHandle('dock:show-about', () => {
   showAboutDialog();
   return { version: app.getVersion() };
 });
-ipcMain.handle('dock:update-check', () => checkForUpdates({ silent: false }));
-ipcMain.handle('dock:update-download', () => downloadUpdate());
-ipcMain.handle('dock:update-install', () => installUpdate());
+dockHandle('dock:update-check', () => checkForUpdates({ silent: false }));
+dockHandle('dock:update-download', () => downloadUpdate());
+dockHandle('dock:update-install', () => installUpdate());
 
-ipcMain.handle('dock:get-state', () => currentState());
-ipcMain.handle('dock:activate', (_e, id) => {
+dockHandle('dock:get-state', () => currentState());
+dockHandle('dock:activate', (_e, id) => {
   activateService(id);
   return { ok: true };
 });
-ipcMain.handle('dock:add-service', (_e, appId, profileId) =>
+dockHandle('dock:add-service', (_e, appId, profileId) =>
   addService(appId, profileId || null),
 );
-ipcMain.handle('dock:add-custom-service', (_e, payload) =>
+dockHandle('dock:add-custom-service', (_e, payload) =>
   addCustomService(payload || {}),
 );
-ipcMain.handle('dock:find-in-page', (_e, text, options) =>
+dockHandle('dock:find-in-page', (_e, text, options) =>
   findInActivePage(text, options || {}),
 );
-ipcMain.handle('dock:stop-find', () => stopFindInActivePage());
-ipcMain.handle('dock:print-active', () => printActivePage());
-ipcMain.handle('dock:remove-service', (_e, id) => removeService(id));
-ipcMain.handle('dock:create-profile', (_e, name) => createProfile(name));
-ipcMain.handle('dock:rename-profile', (_e, id, name) => renameProfile(id, name));
-ipcMain.handle('dock:delete-profile', (_e, id) => deleteProfile(id));
-ipcMain.handle('dock:set-instance-profile', (_e, serviceId, profileId) =>
+dockHandle('dock:stop-find', () => stopFindInActivePage());
+dockHandle('dock:print-active', () => printActivePage());
+dockHandle('dock:remove-service', (_e, id) => removeService(id));
+dockHandle('dock:create-profile', (_e, name) => createProfile(name));
+dockHandle('dock:rename-profile', (_e, id, name) => renameProfile(id, name));
+dockHandle('dock:delete-profile', (_e, id) => deleteProfile(id));
+dockHandle('dock:set-instance-profile', (_e, serviceId, profileId) =>
   setInstanceProfile(serviceId, profileId),
 );
-ipcMain.handle('dock:toggle-keep-warm', (_e, id) => toggleKeepWarm(id));
-ipcMain.handle('dock:save-app-config', (_e, id, patch) => {
+dockHandle('dock:toggle-keep-warm', (_e, id) => toggleKeepWarm(id));
+dockHandle('dock:save-app-config', (_e, id, incoming) => {
   if (!getService(id)) return { ok: false, error: 'Not found' };
+  const patch = { ...(incoming || {}) };
+  // Company default: block page injection unless explicitly enabled.
+  if (!settings.allowPageInjection) {
+    delete patch.injectJs;
+    delete patch.injectCss;
+    delete patch.stylishUrl;
+  }
 
-  if (patch && patch.profileId != null) {
+  if (patch.profileId != null) {
     const moved = setInstanceProfile(id, patch.profileId);
     if (!moved.ok) return moved;
     delete patch.profileId;
   }
 
   const labels = { ...(settings.serviceLabels || {}) };
-  if (patch && (patch.name != null || patch.title != null)) {
+  if (patch.name != null || patch.title != null) {
     const service = getService(id);
     const entry = {};
     const name = patch.name != null ? clampAppName(patch.name) : '';
@@ -2369,7 +2851,7 @@ ipcMain.handle('dock:save-app-config', (_e, id, patch) => {
   }
 
   // Custom apps store URL / color on the instance record.
-  if (patch && (patch.url != null || patch.color != null)) {
+  if (patch.url != null || patch.color != null) {
     const instances = settings.serviceInstances || [];
     const idx = instances.findIndex((i) => i.id === id);
     if (idx >= 0 && isCustomAppId(instances[idx].appId)) {
@@ -2394,17 +2876,17 @@ ipcMain.handle('dock:save-app-config', (_e, id, patch) => {
       if (labels[id]?.name) updated.name = labels[id].name;
       const nextInstances = instances.map((i, n) => (n === idx ? updated : i));
       settings = saveSettings({ serviceInstances: nextInstances });
-      hibernateService(id);
-      if (activeServiceId === id) activateService(id);
+      hibernateService(id, { force: true });
+      if (activeServiceId === id || !views.has(id)) activateService(id);
     }
     delete patch.url;
     delete patch.color;
   }
 
-  const cfg = saveAppConfig(id, patch || {});
+  const cfg = saveAppConfig(id, patch);
   if (!cfg.enabled) {
-    if (activeServiceId === id) {
-      hibernateService(id);
+    hibernateService(id, { force: true });
+    if (activeServiceId === id || !activeServiceId) {
       activeServiceId = null;
       const next = orderedServices().find((s) => s.id !== id && s.config?.enabled);
       if (next) activateService(next.id);
@@ -2413,7 +2895,6 @@ ipcMain.handle('dock:save-app-config', (_e, id, patch) => {
         broadcastState();
       }
     } else {
-      hibernateService(id);
       broadcastState();
     }
   } else {
@@ -2424,7 +2905,7 @@ ipcMain.handle('dock:save-app-config', (_e, id, patch) => {
   }
   return { ok: true, config: cfg };
 });
-ipcMain.handle('dock:app-navigate', (_e, id, action) => {
+dockHandle('dock:app-navigate', (_e, id, action) => {
   const entry = views.get(id);
   if (!entry) return { ok: false };
   const wc = entry.view.webContents;
@@ -2435,34 +2916,81 @@ ipcMain.handle('dock:app-navigate', (_e, id, action) => {
     const service = getService(id);
     if (service) wc.loadURL(service.url);
   } else if (action === 'devtools') {
+    if (app.isPackaged && !settings.allowGuestDevTools) {
+      return { ok: false, error: 'Guest DevTools disabled' };
+    }
     if (wc.isDevToolsOpened()) wc.closeDevTools();
     else wc.openDevTools({ mode: 'detach' });
   }
   return { ok: true };
 });
-ipcMain.handle('dock:hibernate', (_e, id) => {
+dockHandle('dock:hibernate', (_e, id) => {
   hibernateService(id);
   broadcastState();
   return { ok: true };
 });
-ipcMain.handle('dock:hibernate-background', () => {
+dockHandle('dock:hibernate-background', () => {
   hibernateBackground();
   return { ok: true };
 });
-ipcMain.handle('dock:reload-active', () => {
+dockHandle('dock:reload-active', () => {
   reloadActive();
   return { ok: true };
 });
-ipcMain.handle('dock:toggle-focus', () => {
+dockHandle('dock:toggle-focus', () => {
   toggleFocusMode();
   return { focusMode: settings.focusMode };
 });
-ipcMain.handle('dock:toggle-mute', () => {
+dockHandle('dock:toggle-mute', () => {
   toggleMute();
   return { muted: settings.muted };
 });
-ipcMain.handle('dock:save-settings', (_e, patch) => {
-  const next = { ...patch };
+dockHandle('dock:save-settings', (_e, patch) => {
+  const incoming = patch && typeof patch === 'object' ? patch : {};
+  const adminOverride = process.env.ASPERADOCK_ADMIN === '1';
+  const blocked = new Set(['allowPageInjection', 'allowGuestDevTools', 'lockPasswordHash']);
+  const allowed = new Set([...Object.keys(DEFAULTS), 'lockPassword']);
+  const next = {};
+  for (const [key, value] of Object.entries(incoming)) {
+    if (!allowed.has(key)) continue;
+    if (blocked.has(key) && !adminOverride) continue;
+    next[key] = value;
+  }
+  // Renderer may receive redacted placeholders — never persist those.
+  if (next.errorReportGithubToken === '[configured]') {
+    delete next.errorReportGithubToken;
+  }
+  if (next.sentryDsn === '[configured]') {
+    delete next.sentryDsn;
+  }
+  if (next.errorReportUrl != null) {
+    const reportUrl = String(next.errorReportUrl || '').trim();
+    if (reportUrl) {
+      try {
+        const u = new URL(reportUrl);
+        if (u.protocol !== 'https:') {
+          return { ok: false, error: 'Error report URL must be HTTPS' };
+        }
+      } catch {
+        return { ok: false, error: 'Invalid error report URL' };
+      }
+    }
+    next.errorReportUrl = reportUrl;
+  }
+  if (next.updateFeedUrl != null) {
+    const feed = String(next.updateFeedUrl || '').trim();
+    if (feed) {
+      try {
+        const u = new URL(feed);
+        if (u.protocol !== 'https:') {
+          return { ok: false, error: 'Update feed must be HTTPS' };
+        }
+      } catch {
+        return { ok: false, error: 'Invalid update feed URL' };
+      }
+    }
+    next.updateFeedUrl = feed;
+  }
   if (next.lockPassword) {
     next.lockPasswordHash = hashPassword(next.lockPassword);
     delete next.lockPassword;
@@ -2471,7 +2999,7 @@ ipcMain.handle('dock:save-settings', (_e, patch) => {
     next.lockPasswordHash = '';
   }
   // Low-memory mode clamps warm/hibernate and turns GPU off (relaunch needed).
-  // Keep at least 3 warm slots so multi-WhatsApp switching still works.
+  // Keep at least 2 warm slots so multi-WhatsApp switching still works.
   if (next.lowMemoryMode === true) {
     next.maxWarmViews = Math.min(3, Math.max(2, Number(next.maxWarmViews) || 3));
     next.hibernateMinutes = Math.min(
@@ -2479,10 +3007,17 @@ ipcMain.handle('dock:save-settings', (_e, patch) => {
       Math.max(3, Number(next.hibernateMinutes) || 10),
     );
     next.hardwareAcceleration = false;
+  } else if (next.maxWarmViews != null) {
+    next.maxWarmViews = Math.min(
+      MAX_WARM_VIEWS_CAP,
+      Math.max(1, Number(next.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT),
+    );
   }
-  if (!['normal', 'large', 'huge'].includes(next.density)) next.density = 'large';
-  if (!['normal', 'large', 'huge'].includes(next.appIconSize)) {
-    next.appIconSize = 'large';
+  if (next.density != null && !['normal', 'large', 'huge'].includes(next.density)) {
+    next.density = 'normal';
+  }
+  if (next.appIconSize != null && !['normal', 'large', 'huge'].includes(next.appIconSize)) {
+    next.appIconSize = 'normal';
   }
   next.appsPosition = 'top';
   settings = saveSettings(next);
@@ -2510,32 +3045,32 @@ ipcMain.handle('dock:save-settings', (_e, patch) => {
   broadcastState();
   return currentState();
 });
-ipcMain.handle('dock:lock', () => {
+dockHandle('dock:lock', () => {
   lockApp();
   return { ok: true };
 });
-ipcMain.handle('dock:unlock', (_e, password) => unlockApp(password));
-ipcMain.handle('dock:clear-session', async (_e, id) => {
+dockHandle('dock:unlock', (_e, password) => unlockApp(password));
+dockHandle('dock:clear-session', async (_e, id) => {
   const service = getService(id);
   if (!service) return { ok: false };
-  hibernateService(id);
+  hibernateService(id, { force: true });
   // Clears the whole profile partition — every app on this profile signs out.
   const s = session.fromPartition(service.partition);
   await s.clearStorageData();
   await s.clearCache();
   for (const inst of appsUsingProfile(service.profileId)) {
     unreadCounts.delete(inst.id);
-    hibernateService(inst.id);
+    hibernateService(inst.id, { force: true });
   }
   broadcastState();
   return { ok: true, profileId: service.profileId };
 });
-ipcMain.handle('dock:reorder', (_e, order) => {
+dockHandle('dock:reorder', (_e, order) => {
   settings = saveSettings({ serviceOrder: order });
   broadcastState();
   return { ok: true };
 });
-ipcMain.handle('dock:pick-download-dir', async () => {
+dockHandle('dock:pick-download-dir', async () => {
   const { dialog } = await import('electron');
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
@@ -2543,7 +3078,7 @@ ipcMain.handle('dock:pick-download-dir', async () => {
   if (result.canceled || !result.filePaths[0]) return { path: null };
   return { path: result.filePaths[0] };
 });
-ipcMain.handle('dock:open-downloads', async () => {
+dockHandle('dock:open-downloads', async () => {
   const downloadDir = String(settings.downloadPath || '').trim() || app.getPath('downloads');
   try {
     fs.mkdirSync(downloadDir, { recursive: true });
@@ -2562,12 +3097,33 @@ function watchSystemIdle() {
   powerMonitor.on('suspend', lockIfEnabled);
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  if (
+    app.isPackaged &&
+    typeof process.getuid === 'function' &&
+    process.getuid() === 0
+  ) {
+    dialog.showErrorBox(
+      'Aspera Dock',
+      'Do not run Aspera Dock as root.\n\nStart it from your normal user session.',
+    );
+    app.quit();
+    return;
+  }
+
+  attachChromeProtocolHandler();
+
   // Keep a friendly name in menus/About; WM class stays "asperadock" for the dock icon.
   if (process.platform !== 'linux') {
     app.setName('Aspera Dock');
   }
   settings = loadSettings();
+  try {
+    const userData = app.getPath('userData');
+    fs.chmodSync(userData, 0o700);
+  } catch {
+    // ignore
+  }
   installErrorReporting({
     getSettings: () => settings,
     getContext: () => ({
@@ -2579,6 +3135,7 @@ app.whenReady().then(() => {
     }),
   });
   logBreadcrumb('app-ready');
+  hydrateLastUrls();
   createWindow();
   startHibernateTimer();
   startMemoryTimer();
@@ -2595,7 +3152,7 @@ app.whenReady().then(() => {
       // Let the renderer re-assert if a settings/menu overlay is still open.
       mainWindow?.webContents.send('dock:sync-overlay');
       setOverlayOpen(false);
-      // Re-layout after native dialogs — BrowserView can end up fullscreen otherwise.
+      // Re-layout after native dialogs — guest view can end up fullscreen otherwise.
       setTimeout(() => layoutActiveView(), 50);
       setTimeout(() => layoutActiveView(), 250);
     },
@@ -2617,6 +3174,16 @@ app.on('before-quit', () => {
   quitting = true;
   markCleanShutdown();
   logBreadcrumb('before-quit');
+  // Snapshot in-app URLs + flush cookies so the next launch stays signed in
+  // even for apps that were not marked warm.
+  for (const [id, entry] of views.entries()) {
+    try {
+      rememberGoodUrl(id, entry.view.webContents.getURL());
+    } catch {
+      // ignore
+    }
+  }
+  flushAllSessionCookies();
   // Seamless: apply a downloaded AppImage update in place while quitting so the
   // next launch is already the new version. deb/rpm need elevation, so those are
   // handled interactively during the session instead.

@@ -1,14 +1,14 @@
 :root {
-  --top-bar: 96px;
+  --top-bar: 78px;
   --left-bar: 96px;
-  --bg: #e9edf2;
+  --bg: #e8ecf3;
   --chrome: #f7f8fa;
   --chrome-2: #eef1f5;
-  --border: #dde2e8;
+  --border: #d5dde8;
   --text: #14181f;
-  --muted: #374151;
+  --muted: #4b5568;
   --label: #1a1f26;
-  --accent: #4f63e6;
+  --accent: #5a6ee6;
   --accent-soft: #e8ebfe;
   --danger: #e11d48;
   --badge: #ef4444;
@@ -20,6 +20,13 @@
   --apps-gap: 10px;
   --app-tab-pad-x: 12px;
   --app-accent: #64748b;
+  --bar-bg-top: #0d1a38;
+  --bar-bg-bottom: #081230;
+  --bar-fg: #e8edf8;
+  --bar-fg-muted: #a7b6d4;
+  --bar-hover: rgba(255, 255, 255, 0.09);
+  --bar-border: rgba(160, 175, 255, 0.16);
+  --bar-active: rgba(255, 255, 255, 0.1);
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   font-family: "Segoe UI Variable", "Segoe UI", "SF Pro Display", "Ubuntu", system-ui, sans-serif;
 }
@@ -39,37 +46,37 @@ body.theme-dark {
 }
 
 body.density-normal {
-  --app-tab-min: 86px;
+  --app-tab-min: 78px;
+  --apps-gap: 4px;
+  --app-tab-pad-x: 6px;
+}
+
+body.density-large {
+  --app-tab-min: 92px;
   --apps-gap: 6px;
   --app-tab-pad-x: 8px;
 }
 
-body.density-large {
-  --app-tab-min: 104px;
-  --apps-gap: 10px;
-  --app-tab-pad-x: 12px;
-}
-
 body.density-huge {
-  --app-tab-min: 122px;
-  --apps-gap: 14px;
-  --app-tab-pad-x: 16px;
+  --app-tab-min: 104px;
+  --apps-gap: 8px;
+  --app-tab-pad-x: 10px;
 }
 
 body.icon-size-normal {
-  --top-bar: 84px;
+  --top-bar: 70px;
   --app-icon: 44px;
   --app-label-size: 11.5px;
 }
 
 body.icon-size-large {
-  --top-bar: 96px;
+  --top-bar: 78px;
   --app-icon: 54px;
   --app-label-size: 12px;
 }
 
 body.icon-size-huge {
-  --top-bar: 110px;
+  --top-bar: 88px;
   --app-icon: 64px;
   --app-label-size: 13px;
 }
@@ -149,40 +156,52 @@ body {
   min-height: var(--top-bar);
   display: none;
   align-items: center;
+  gap: 4px;
   background:
-    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--accent) 8%, transparent) 0%, transparent 42%),
-    linear-gradient(180deg, #fbfcfd 0%, #f1f4f8 100%);
-  border-bottom: 1px solid var(--border);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 8px 24px rgba(15, 23, 42, 0.05);
+    radial-gradient(90% 120% at 88% 0%, rgba(90, 110, 230, 0.22) 0%, transparent 48%),
+    linear-gradient(180deg, var(--bar-bg-top) 0%, var(--bar-bg-bottom) 100%);
+  border-bottom: 1px solid #152448;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 10px 28px rgba(8, 18, 48, 0.28);
   z-index: 4;
-  padding: 6px 10px;
-  backdrop-filter: saturate(1.12);
+  padding: 3px 10px 2px;
+  color: var(--bar-fg);
+  /* Local tokens so app tabs / badges read correctly on navy chrome */
+  --label: var(--bar-fg);
+  --muted: var(--bar-fg-muted);
+  --border: var(--bar-border);
+  --active-bg: var(--bar-active);
+  --chrome: var(--bar-bg-bottom);
 }
 
-body.theme-dark .app-bar-top {
-  background:
-    radial-gradient(120% 140% at 0% 0%, color-mix(in srgb, var(--accent) 14%, transparent) 0%, transparent 45%),
-    linear-gradient(180deg, #161d27 0%, #121821 100%);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 22px rgba(0, 0, 0, 0.28);
-}
-
+body.theme-dark .app-bar-top,
 body.theme-darkest .app-bar-top {
-  background: linear-gradient(180deg, #0c0e12 0%, #08090c 100%);
+  background:
+    radial-gradient(90% 120% at 88% 0%, rgba(90, 110, 230, 0.18) 0%, transparent 48%),
+    linear-gradient(180deg, #0a142c 0%, #060d1f 100%);
+  border-bottom-color: #121c36;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 10px 28px rgba(0, 0, 0, 0.4);
 }
 
 body.theme-glossy .app-bar-top {
-  background: linear-gradient(180deg, #ffffff 0%, #e9eff8 100%);
+  background:
+    radial-gradient(90% 120% at 88% 0%, rgba(90, 110, 230, 0.2) 0%, transparent 48%),
+    linear-gradient(180deg, #101c3c 0%, #081230 100%);
 }
 
 body.theme-mint .app-bar-top {
-  background: linear-gradient(180deg, #ffffff 0%, #e7f4ee 100%);
+  --bar-bg-top: #0c2430;
+  --bar-bg-bottom: #071820;
+  background:
+    radial-gradient(90% 120% at 88% 0%, rgba(15, 157, 110, 0.2) 0%, transparent 48%),
+    linear-gradient(180deg, var(--bar-bg-top) 0%, var(--bar-bg-bottom) 100%);
+  border-bottom-color: #123040;
 }
 
 /* Wrap onto extra rows instead of scrolling when many apps are added */
 body.wrap-tabs.layout-top .app-bar-top {
   align-items: flex-start;
-  padding-top: 6px;
-  padding-bottom: 6px;
+  padding-top: 3px;
+  padding-bottom: 2px;
 }
 
 body.wrap-tabs .apps-track {
@@ -191,14 +210,10 @@ body.wrap-tabs .apps-track {
   row-gap: 4px;
 }
 
-body.wrap-tabs.layout-top .chrome-actions {
+body.wrap-tabs.layout-top .chrome-actions,
+body.wrap-tabs.layout-top .chrome-brand {
   align-self: center;
   height: auto;
-}
-
-body.wrap-tabs.layout-top .add-app-btn {
-  align-self: flex-start;
-  margin-top: 2px;
 }
 
 body.layout-top .app-bar-top {
@@ -210,10 +225,10 @@ body.layout-top .app-bar-top {
   align-items: center;
   gap: var(--apps-gap);
   overflow-x: auto;
-  /* Take all free width so wrap uses the full bar, not half of it. */
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
-  padding: 2px 6px;
+  max-width: min(100%, calc(100vw - 360px));
+  padding: 2px 4px;
   scrollbar-width: none;
 }
 
@@ -221,23 +236,118 @@ body.layout-top .app-bar-top {
   display: none;
 }
 
-.chrome-spacer {
-  /* Tiny gap only — never compete with the apps track for width. */
-  flex: 0 0 8px;
-  width: 8px;
-  min-width: 8px;
+.chrome-brand {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 110px;
+  padding: 0 10px;
+  pointer-events: none;
+}
+
+.chrome-wordmark {
+  display: block;
+  height: clamp(26px, calc(var(--top-bar) * 0.4), 36px);
+  width: auto;
+  max-width: min(180px, 24vw);
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
 }
 
 .chrome-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 6px 0 12px;
-  margin-left: auto;
-  border-left: 1px solid var(--border);
+  gap: 6px;
+  padding: 0 2px 0 10px;
+  margin-left: 0;
+  border-left: none;
   height: auto;
   align-self: center;
   flex-shrink: 0;
+}
+
+.chrome-divider {
+  width: 1px;
+  height: 28px;
+  margin: 0 4px;
+  background: var(--bar-border);
+  flex-shrink: 0;
+}
+
+/* Proportionate toolbar controls for the tall company bar */
+.app-bar-top .icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  color: var(--bar-fg-muted);
+}
+
+.app-bar-top .icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.app-bar-top .icon-btn:hover {
+  background: var(--bar-hover);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.app-bar-top .icon-btn.on {
+  background: rgba(90, 110, 230, 0.28);
+  color: #c8d0ff;
+}
+
+.app-bar-top .add-app-btn {
+  margin: 0;
+  color: #c8d0ff !important;
+  background: rgba(90, 110, 230, 0.22);
+  border: 1px solid rgba(160, 175, 255, 0.28);
+}
+
+.app-bar-top .add-app-btn:hover {
+  background: rgba(90, 110, 230, 0.34) !important;
+  color: #fff !important;
+}
+
+.app-bar-top .brand-avatar {
+  padding: 3px !important;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--bar-border);
+}
+
+.app-bar-top .brand-avatar .aspera-app-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+}
+
+.app-bar-top .app-badge {
+  box-shadow: 0 0 0 2px var(--bar-bg-bottom), 0 3px 8px rgba(239, 68, 68, 0.45);
+}
+
+.app-bar-top .app-tab:hover {
+  background: transparent;
+  border-color: rgba(160, 175, 255, 0.4);
+  box-shadow: none;
+  transform: none;
+}
+
+.app-bar-top .app-tab.active {
+  background: transparent;
+  border-color: #a0afff;
+  box-shadow: none;
+}
+
+.app-bar-top .app-label,
+.app-bar-top .app-tab.active .app-label {
+  color: #e8edf8;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  text-shadow: none;
+  opacity: 1;
 }
 
 .body-row {
@@ -448,17 +558,17 @@ body.layout-right .app-tab.drop-after {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 7px;
+  gap: 3px;
   height: auto;
-  min-height: calc(var(--top-bar) - 14px);
+  min-height: 0;
   min-width: var(--app-tab-min);
   max-width: calc(var(--app-tab-min) + 16px);
-  padding: 8px var(--app-tab-pad-x) 7px;
+  padding: 3px var(--app-tab-pad-x) 2px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--label);
   cursor: pointer;
-  border-radius: 16px;
+  border-radius: 12px;
   flex-shrink: 0;
   transition:
     background 0.16s var(--ease),
@@ -472,23 +582,21 @@ body.density-normal .app-tab {
 }
 
 .app-tab:hover {
-  background: color-mix(in srgb, var(--app-accent) 10%, transparent);
-  border-color: color-mix(in srgb, var(--app-accent) 22%, transparent);
-  box-shadow: 0 8px 20px color-mix(in srgb, var(--app-accent) 18%, transparent);
-  transform: translateY(-1px);
+  background: transparent;
+  border-color: color-mix(in srgb, var(--app-accent) 40%, transparent);
+  box-shadow: none;
+  transform: none;
 }
 
 body.theme-dark .app-tab:hover {
-  background: color-mix(in srgb, var(--app-accent) 16%, transparent);
-  border-color: color-mix(in srgb, var(--app-accent) 30%, transparent);
+  background: transparent;
+  border-color: color-mix(in srgb, var(--app-accent) 45%, transparent);
 }
 
 .app-tab.active {
-  background: color-mix(in srgb, var(--app-accent) 14%, var(--active-bg));
-  border-color: color-mix(in srgb, var(--app-accent) 38%, transparent);
-  box-shadow:
-    0 10px 24px color-mix(in srgb, var(--app-accent) 20%, transparent),
-    inset 0 -2px 0 var(--app-accent);
+  background: transparent;
+  border-color: color-mix(in srgb, var(--app-accent) 70%, transparent);
+  box-shadow: none;
 }
 
 .app-tab.sleep {
@@ -501,18 +609,16 @@ body.theme-dark .app-tab:hover {
 }
 
 .app-tab:active {
-  transform: translateY(0);
-  background: color-mix(in srgb, var(--app-accent) 18%, transparent);
+  transform: none;
+  background: transparent;
 }
 
 .app-tab:hover .app-icon.has-logo svg,
 .app-tab:hover .app-icon.has-logo .app-logo-img,
 .app-tab.active .app-icon.has-logo svg,
 .app-tab.active .app-icon.has-logo .app-logo-img {
-  transform: translateY(-1px) scale(1.04);
-  box-shadow:
-    0 8px 18px rgba(15, 23, 42, 0.18),
-    0 0 0 1px color-mix(in srgb, var(--app-accent) 35%, transparent);
+  transform: none;
+  box-shadow: none;
 }
 
 .app-tab[data-tooltip]::after {
@@ -654,7 +760,7 @@ body.hide-labels .app-label {
 }
 
 body.hide-labels .app-tab {
-  padding: 8px var(--app-tab-pad-x);
+  padding: 3px var(--app-tab-pad-x);
   min-width: var(--app-tab-min);
 }
 
@@ -673,7 +779,7 @@ body.hide-labels .app-tab {
 }
 
 .app-tab.active .app-label {
-  color: var(--text);
+  color: var(--label);
   font-weight: 800;
   opacity: 1;
 }
@@ -700,8 +806,6 @@ body.hide-labels .app-tab {
 
 .add-app-btn {
   flex-shrink: 0;
-  margin: 0 2px 0 4px;
-  color: var(--accent) !important;
 }
 
 .add-app-left {
@@ -771,13 +875,6 @@ body.theme-dark .chip:hover {
 
 .add-app-btn {
   flex-shrink: 0;
-  margin: 0 4px 0 6px;
-  color: var(--accent) !important;
-  background: rgba(15, 118, 110, 0.08);
-}
-
-.add-app-btn:hover {
-  background: rgba(15, 118, 110, 0.14) !important;
 }
 
 .icon-slot {
@@ -813,50 +910,24 @@ body.theme-dark .chip:hover {
   margin-bottom: 2px;
 }
 
-.warm-toggle {
-  position: absolute;
-  z-index: 5;
-  left: 50%;
-  bottom: -8px;
-  transform: translateX(-50%);
-  width: 20px;
-  height: 14px;
-  padding: 1px 3px;
-  border: 1px solid color-mix(in srgb, var(--label) 28%, transparent);
+/* Read-only warm indicator — toggled from the right-click menu. */
+.app-mark.warm-mark {
+  top: -3px;
+  right: -4px;
+  width: 15px;
+  height: 15px;
   border-radius: 999px;
-  background: var(--chrome);
-  color: #94a3b8;
-  cursor: pointer;
+  background: #f97316;
+  color: #fff;
   display: grid;
   place-items: center;
-  opacity: 0.78;
-  transition: color 0.14s var(--ease), background 0.14s var(--ease),
-    border-color 0.14s var(--ease), opacity 0.14s var(--ease), transform 0.14s var(--ease);
-}
-
-.warm-toggle:hover {
-  color: #f97316;
-  border-color: #fb923c;
-  opacity: 1;
-}
-
-.warm-toggle.selected {
-  color: #fff;
-  background: #f97316;
-  border-color: #ea580c;
-  opacity: 1;
   box-shadow: 0 0 0 1.5px var(--chrome);
 }
 
-.warm-toggle svg {
+.app-mark.warm-mark svg {
   width: 9px;
   height: 9px;
   display: block;
-}
-
-.warm-toggle:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 
 .app-tab:focus-visible {
@@ -1692,6 +1763,20 @@ kbd {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: #fafbfc;
+}
+
+/* Catalog/instance rows use .app-icon — pin size so dock icon vars cannot overflow. */
+.catalog-row .app-icon,
+.catalog-row .app-icon.has-logo svg,
+.catalog-row .app-icon.has-logo .app-logo-img,
+.catalog-row .app-icon-fallback,
+.instance-row .app-icon,
+.instance-row .app-icon.has-logo svg,
+.instance-row .app-icon.has-logo .app-logo-img,
+.instance-row .app-icon-fallback {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
 }
 
 body.theme-dark .catalog-row,

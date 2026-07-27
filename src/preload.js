@@ -5,8 +5,6 @@ contextBridge.exposeInMainWorld('asperadock', {
   activate: (id) => ipcRenderer.invoke('dock:activate', id),
   addService: (appId, profileId) =>
     ipcRenderer.invoke('dock:add-service', appId, profileId),
-  addCustomService: (payload) =>
-    ipcRenderer.invoke('dock:add-custom-service', payload),
   findInPage: (text, options) =>
     ipcRenderer.invoke('dock:find-in-page', text, options),
   stopFind: () => ipcRenderer.invoke('dock:stop-find'),
