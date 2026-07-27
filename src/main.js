@@ -293,6 +293,11 @@ function applyMemorySwitches() {
     'renderer-process-limit',
     String(Math.max(12, warm + 6)),
   );
+  // Keep warm SPA portals (Zoho One CRM) alive when the window is occluded /
+  // idle — otherwise the shell stays and the content pane goes blank.
+  app.commandLine.appendSwitch('disable-renderer-backgrounding');
+  app.commandLine.appendSwitch('disable-background-timer-throttling');
+  app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
 }
 
 /**
@@ -339,6 +344,68 @@ function syncAllGuestPerfModes() {
 function isHeavyPortalApp(service) {
   const id = service?.appId;
   return id === 'zoho-one' || id === 'arattai' || id === 'zoho-crm';}
+
+/**
+ * Zoho One CRM (and similar portals) often leave a blank content pane after the
+ * machine sits idle 10–20+ minutes — shell/nav stay, widgets die. Reload once
+ * when the user returns or re-opens the tab.
+ */
+const PORTAL_STALE_MS = 8 * 60_000;
+const PORTAL_RELOAD_COOLDOWN_MS = 45_000;
+
+function touchPortalPresence(entry) {
+  if (entry) entry.lastPresenceAt = Date.now();
+}
+
+function maybeRefreshStaleHeavyPortal(id, { reason = 'idle' } = {}) {
+  const entry = views.get(id);
+  if (!entry) return false;
+  const service = getService(id) || entry.service;
+  if (!isHeavyPortalApp(service)) return false;
+  const wc = entry.view?.webContents;
+  if (!wc || wc.isDestroyed() || wc.isLoading()) return false;
+
+  const now = Date.now();
+  const last = entry.lastPresenceAt || entry.lastUsed || 0;
+  if (!last || now - last < PORTAL_STALE_MS) return false;
+  if (
+    entry.__lastStaleReloadAt &&
+    now - entry.__lastStaleReloadAt < PORTAL_RELOAD_COOLDOWN_MS
+  ) {
+    return false;
+  }
+
+  entry.__lastStaleReloadAt = now;
+  entry.lastPresenceAt = now;
+  try {
+    rememberGoodUrl(id, wc.getURL());
+  } catch {
+    // ignore
+  }
+  try {
+    logBreadcrumb('portal-stale-reload', {
+      serviceId: id,
+      appId: service.appId,
+      reason,
+      idleMs: now - last,
+    });
+  } catch {
+    // ignore
+  }
+  try {
+    wc.reload();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function onUserReturnedFromIdle(reason = 'presence') {
+  if (activeServiceId) {
+    maybeRefreshStaleHeavyPortal(activeServiceId, { reason });
+    touchPortalPresence(views.get(activeServiceId));
+  }
+}
 
 /** Drop HTTP cache only — cookies / IndexedDB stay so sessions survive. */
 async function trimGuestHttpCache(partition) {
@@ -1921,8 +1988,13 @@ function activateService(id) {
   const previousId = activeServiceId;
   detachAllViews();
   const entry = ensureLiveView(service);
+  const wasStale =
+    isHeavyPortalApp(service) &&
+    entry.lastPresenceAt &&
+    Date.now() - entry.lastPresenceAt >= PORTAL_STALE_MS;
   entry.lastUsed = Date.now();
   entry.activatedOnce = true;
+  touchPortalPresence(entry);
   activeServiceId = id;
   settings = saveSettings({ lastActiveServiceId: id });
 
@@ -1935,8 +2007,10 @@ function activateService(id) {
     allowThrottle: true,
   });
   // Recreate path sometimes attaches a view that never started loading.
-  if (!entry.loadedOnce && !wc.isLoading()) {
+  // Heavy portals left idle ~10–20 min often show a blank CRM pane — reload.
+  if ((wasStale || !entry.loadedOnce) && !wc.isLoading()) {
     try {
+      if (wasStale) entry.__lastStaleReloadAt = Date.now();
       wc.reload();
     } catch {
       // ignore
@@ -2710,8 +2784,14 @@ function createWindow() {
     setTimeout(() => layoutActiveView(), 200);
   });
   mainWindow.on('unmaximize', () => setTimeout(() => layoutActiveView(), 50));
-  mainWindow.on('show', () => setTimeout(() => layoutActiveView(), 50));
-  mainWindow.on('focus', () => focusActiveContents());
+  mainWindow.on('show', () => {
+    setTimeout(() => layoutActiveView(), 50);
+    onUserReturnedFromIdle('window-show');
+  });
+  mainWindow.on('focus', () => {
+    focusActiveContents();
+    onUserReturnedFromIdle('window-focus');
+  });
   attachShortcuts(mainWindow.webContents);
 
   mainWindow.on('close', (event) => {
@@ -3258,6 +3338,39 @@ function watchSystemIdle() {
   };
   powerMonitor.on('lock-screen', lockIfEnabled);
   powerMonitor.on('suspend', lockIfEnabled);
+
+  // User walked away with Zoho One open — screen lock / sleep / long idle.
+  // When they return, refresh the portal so CRM is not a blank white pane.
+  const onResume = () => {
+    setTimeout(() => onUserReturnedFromIdle('power-resume'), 400);
+  };
+  powerMonitor.on('resume', onResume);
+  powerMonitor.on('unlock-screen', onResume);
+
+  let systemWasIdle = false;
+  setInterval(() => {
+    let idleSec = 0;
+    try {
+      idleSec = powerMonitor.getSystemIdleTime();
+    } catch {
+      return;
+    }
+    if (idleSec >= 8 * 60) systemWasIdle = true;
+    if (systemWasIdle && idleSec < 8) {
+      systemWasIdle = false;
+      onUserReturnedFromIdle('system-idle-end');
+    }
+    // Keep presence fresh while the user is actively using the dock.
+    if (
+      idleSec < 30 &&
+      activeServiceId &&
+      mainWindow &&
+      !mainWindow.isDestroyed() &&
+      mainWindow.isFocused()
+    ) {
+      touchPortalPresence(views.get(activeServiceId));
+    }
+  }, 15_000);
 }
 
 app.whenReady().then(async () => {
