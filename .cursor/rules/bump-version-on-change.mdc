@@ -1,11 +1,11 @@
 ---
-description: Always bump version, build, push, and release Aspera Dock changes
+description: Always bump version, build, push, and release Aspera Hub changes
 alwaysApply: true
 ---
 
 # Version bump, ship, and release (no extra approval)
 
-Whenever you make user-facing or packaged Aspera Dock changes:
+Whenever you make user-facing or packaged Aspera Hub changes:
 
 1. Check the latest GitHub release (`gh release list --limit 1`) and/or installed version.
 2. Bump `package.json` `version` to the **next patch** (or minor/major if warranted) **before or with** the commit.

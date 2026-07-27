@@ -355,12 +355,12 @@ function isHeavyPortalApp(service) {
 
 /**
  * Zoho One CRM (and similar portals) often leave a blank content pane after the
- * machine sits idle 10–20+ minutes — shell/nav stay, widgets die. Reload once
- * when the user returns or re-opens the tab.
+ * machine sits idle or the tab is hidden — shell/nav stay, widgets die.
  */
-const PORTAL_STALE_MS = 8 * 60_000;
-const PORTAL_RELOAD_COOLDOWN_MS = 45_000;
-const PORTAL_HEALTH_CHECK_MS = 3500;
+const PORTAL_STALE_MS = 2 * 60_000;
+const PORTAL_RELOAD_COOLDOWN_MS = 20_000;
+const PORTAL_HEALTH_CHECK_MS = 1600;
+const PORTAL_HEALTH_RETRY_MS = 3200;
 
 function touchPortalPresence(entry) {
   if (entry) entry.lastPresenceAt = Date.now();
@@ -928,18 +928,33 @@ function contentGuestBounds() {
 }
 
 /**
- * Keep warm guests attached at full size but hidden — Zoho CRM / SPA iframes
- * measure the viewport; parking them at 1×1 leaves a permanent blank pane.
+ * Keep warm guests attached at full size.
+ * Heavy portals (Zoho One) must stay "visible" to Chromium — setVisible(false)
+ * fires Page Visibility → CRM iframes freeze and never recover (blank white pane
+ * under an otherwise healthy Zoho shell). Park them off-screen instead.
  */
-function parkGuestView(entry) {
+function parkGuestView(entry, viewId = null) {
   if (!mainWindow || !entry?.view || mainWindow.isDestroyed()) return;
   try {
     mainWindow.contentView.addChildView(entry.view);
     const bounds = contentGuestBounds();
-    entry.view.setBounds(bounds);
-    entry.__lastBounds = bounds;
-    if (typeof entry.view.setVisible === 'function') {
-      entry.view.setVisible(false);
+    const service = (viewId && getService(viewId)) || entry.service;
+    if (isHeavyPortalApp(service)) {
+      const parked = {
+        ...bounds,
+        x: -Math.max(bounds.width, 1100) - 80,
+      };
+      entry.view.setBounds(parked);
+      entry.__lastBounds = parked;
+      if (typeof entry.view.setVisible === 'function') {
+        entry.view.setVisible(true);
+      }
+    } else {
+      entry.view.setBounds(bounds);
+      entry.__lastBounds = bounds;
+      if (typeof entry.view.setVisible === 'function') {
+        entry.view.setVisible(false);
+      }
     }
     entry.__parked = true;
   } catch {
@@ -947,12 +962,12 @@ function parkGuestView(entry) {
   }
 }
 
-/** Detach non-warm guests; park warm ones hidden (full size) so SPAs stay alive. */
+/** Detach non-warm guests; park warm ones off-screen / hidden so SPAs stay alive. */
 function parkBackgroundViews(exceptId = null) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   for (const [viewId, entry] of views.entries()) {
     if (viewId === exceptId) continue;
-    if (isKeepWarmService(viewId)) parkGuestView(entry);
+    if (isKeepWarmService(viewId)) parkGuestView(entry, viewId);
     else detachGuestView(entry.view);
   }
 }
@@ -963,20 +978,59 @@ function clearPortalTimer(entry, key) {
   entry[key] = null;
 }
 
-function schedulePortalHealthCheck(id) {
+function schedulePortalHealthCheck(id, delay = PORTAL_HEALTH_CHECK_MS) {
   const entry = views.get(id);
   if (!entry) return;
   clearPortalTimer(entry, '__portalHealthTimer');
   entry.__portalHealthTimer = setTimeout(() => {
     entry.__portalHealthTimer = null;
     runPortalHealthCheck(id);
-  }, PORTAL_HEALTH_CHECK_MS);
+  }, delay);
 }
 
 /**
- * Completely empty Zoho One (no shell) after a bad deep-URL restore — send the
- * user back to the portal home once. Do NOT treat normal about:blank CRM
- * iframes as failure (that caused reload loops).
+ * Spoof Page Visibility so Zoho CRM does not freeze when the Hub window is
+ * occluded or the view is parked off-screen.
+ */
+function attachPortalVisibilityKeepAlive(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  const script = `(() => {
+    try {
+      if (window.__asperaPortalVisible) return;
+      window.__asperaPortalVisible = true;
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        get: () => 'visible',
+      });
+      window.addEventListener(
+        'visibilitychange',
+        (e) => {
+          e.stopImmediatePropagation();
+        },
+        true,
+      );
+      document.addEventListener(
+        'visibilitychange',
+        (e) => {
+          e.stopImmediatePropagation();
+        },
+        true,
+      );
+    } catch (_) {}
+  })()`;
+  const inject = () => {
+    if (webContents.isDestroyed()) return;
+    webContents.executeJavaScript(script, true).catch(() => {});
+  };
+  webContents.on('dom-ready', inject);
+  webContents.on('did-finish-load', inject);
+  inject();
+}
+
+/**
+ * Detect Zoho One "shell OK, CRM pane blank" (the common failure mode) and
+ * recover with a single reload. Also catches a fully empty white page.
  */
 async function runPortalHealthCheck(id) {
   const entry = views.get(id);
@@ -1005,14 +1059,47 @@ async function runPortalHealthCheck(id) {
   try {
     looksBlank = await wc.executeJavaScript(
       `(() => {
-        const text = ((document.body && document.body.innerText) || '').trim();
-        if (text.length > 80) return false;
-        const hasChrome = !!(
-          document.querySelector('nav,header,[role="navigation"],iframe') ||
-          document.querySelector('[class*="zoho"],[id*="zoho"]')
-        );
-        // Truly empty white page — no portal chrome and almost no text.
-        return text.length < 24 && !hasChrome;
+        const vw = window.innerWidth || 0;
+        const vh = window.innerHeight || 0;
+        if (vw < 200 || vh < 200) return false;
+
+        // Large iframe with no usable document / about:blank → blank CRM pane.
+        for (const frame of document.querySelectorAll('iframe')) {
+          const r = frame.getBoundingClientRect();
+          if (r.width < vw * 0.35 || r.height < vh * 0.28) continue;
+          const src = String(frame.getAttribute('src') || frame.src || '');
+          if (!src || src === 'about:blank' || src.startsWith('about:blank')) {
+            return true;
+          }
+          try {
+            const doc = frame.contentDocument;
+            if (doc) {
+              const t = ((doc.body && doc.body.innerText) || '').trim();
+              const kids = doc.body ? doc.body.children.length : 0;
+              if (t.length < 24 && kids < 2) return true;
+            }
+          } catch (_) {
+            // cross-origin with a real src usually means content is loading OK
+          }
+        }
+
+        // Big empty content boxes under the Zoho shell (nav still painted).
+        let emptyArea = 0;
+        for (const el of document.querySelectorAll('main,section,div')) {
+          const r = el.getBoundingClientRect();
+          if (r.width < vw * 0.4 || r.height < vh * 0.35) continue;
+          const text = (el.innerText || '').trim();
+          if (text.length > 80) continue;
+          if (el.querySelectorAll('img,canvas,table,tr,li,button,a').length > 6) {
+            continue;
+          }
+          emptyArea += r.width * r.height;
+        }
+        if (emptyArea > vw * vh * 0.28) return true;
+
+        // Fully empty page (no shell).
+        const bodyText = ((document.body && document.body.innerText) || '').trim();
+        return bodyText.length < 24;
       })()`,
       true,
     );
@@ -1022,15 +1109,19 @@ async function runPortalHealthCheck(id) {
 
   if (!looksBlank) return;
   entry.__lastStaleReloadAt = now;
-  const home = service.url;
   try {
-    logBreadcrumb('portal-blank-home', {
+    logBreadcrumb('portal-blank-reload', {
       serviceId: id,
       appId: service.appId,
       from: String(currentUrl || '').slice(0, 200),
-      to: String(home).slice(0, 200),
     });
-    await wc.loadURL(home);
+    // Stay on the current portal route when possible — user is already in Sales/CRM.
+    if (service.appId === 'zoho-one' && isFragileZohoOneDeepUrl(currentUrl)) {
+      // Deep CRM URLs sometimes never recover — bounce to portal home.
+      await wc.loadURL(service.url);
+    } else {
+      wc.reload();
+    }
   } catch {
     // ignore
   }
@@ -1066,7 +1157,11 @@ function layoutActiveView() {
   }
   entry.__lastBounds = next;
   try {
+    if (typeof entry.view.setVisible === 'function') {
+      entry.view.setVisible(true);
+    }
     entry.view.setBounds(next);
+    entry.__parked = false;
   } catch {
     // ignore
   }
@@ -1655,6 +1750,9 @@ function createViewForService(service) {
 
   configureGuestWindowOpen(webContents, service);
   attachGuestContextMenu(webContents);
+  if (isHeavyPortalApp(service)) {
+    attachPortalVisibilityKeepAlive(webContents);
+  }
   // Throttling is applied after first load (see did-finish-load below).
 
   // Real popup windows (Zoho CRM child views, SSO handshakes) inherit these
@@ -1874,6 +1972,7 @@ function hibernateService(id, { force = false } = {}) {
   if (!entry) return;
   if (!force && id === activeServiceId) return;
   clearPortalTimer(entry, '__portalHealthTimer');
+  clearPortalTimer(entry, '__portalHealthTimer2');
   const service = getService(id);
   try {
     const url = entry.view.webContents.getURL();
@@ -2024,7 +2123,7 @@ function softWakeService(id) {
   createViewForService(service);
   if (id !== activeServiceId) {
     const warmed = views.get(id);
-    if (warmed && isKeepWarmService(id)) parkGuestView(warmed);
+    if (warmed && isKeepWarmService(id)) parkGuestView(warmed, id);
   }
   enforceWarmLimit();
   return views.has(id);
@@ -2194,8 +2293,16 @@ function activateService(id) {
       // ignore
     }
   } else if (isHeavyPortalApp(service)) {
-    schedulePortalHealthCheck(id);
+    // Switching back / un-parking often leaves CRM blank for 1–3s — check twice.
+    const switchedIn = Boolean(previousId && previousId !== id);
+    schedulePortalHealthCheck(id, switchedIn || entry.__parked ? 800 : PORTAL_HEALTH_CHECK_MS);
+    clearPortalTimer(entry, '__portalHealthTimer2');
+    entry.__portalHealthTimer2 = setTimeout(() => {
+      entry.__portalHealthTimer2 = null;
+      runPortalHealthCheck(id);
+    }, PORTAL_HEALTH_RETRY_MS);
   }
+  entry.__parked = false;
 
   // Only user-selected apps remain loaded after switching away.
   if (previousId && previousId !== id && !isKeepWarmService(previousId)) {
@@ -3528,6 +3635,7 @@ function watchSystemIdle() {
   powerMonitor.on('unlock-screen', onResume);
 
   let systemWasIdle = false;
+  let portalWasIdle = false;
   setInterval(() => {
     let idleSec = 0;
     try {
@@ -3539,6 +3647,13 @@ function watchSystemIdle() {
     if (systemWasIdle && idleSec < 8) {
       systemWasIdle = false;
       onUserReturnedFromIdle('system-idle-end');
+    }
+    // Zoho CRM often dies after only a couple of idle minutes.
+    if (idleSec >= 90) portalWasIdle = true;
+    if (portalWasIdle && idleSec < 8) {
+      portalWasIdle = false;
+      onUserReturnedFromIdle('short-idle-end');
+      if (activeServiceId) schedulePortalHealthCheck(activeServiceId, 600);
     }
     // Keep presence fresh while the user is actively using the dock.
     if (
