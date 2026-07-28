@@ -82,6 +82,8 @@ import {
   isUrlForService,
   isFragileZohoOneDeepUrl,
   safeStartUrlForService,
+  extractGoogleOutboundUrl,
+  isAllowedGmailTabUrl,
 } from './guestNav.js';
 import {
   isGoogleService,
@@ -1689,6 +1691,8 @@ function attachGuestContextMenu(webContents) {
  *
  * IMPORTANT: linkHandling "external" must NOT deny about:blank / internal Zoho
  * popups. That setting only forces true third-party links into the OS browser.
+ *
+ * Gmail: never load google.com/url?q=… or third-party sites into the Gmail tab.
  */
 function configureGuestWindowOpen(wc, service) {
   const googleish = isGoogleService(service);
@@ -1711,17 +1715,24 @@ function configureGuestWindowOpen(wc, service) {
     }
 
     if (raw.startsWith('http')) {
-      const internal = isInternalUrl(raw, service);
-      // Only true third-party URLs leave the dock (even when linkHandling is
-      // "external"). Denying Zoho/about:blank popups blanks the CRM pane.
-      if (!internal) {
-        openExternalSafe(raw);
+      if (googleish) {
+        const outbound = extractGoogleOutboundUrl(raw);
+        if (outbound) {
+          openExternalSafe(outbound);
+          return { action: 'deny' };
+        }
+        if (!isAllowedGmailTabUrl(raw)) {
+          openExternalSafe(raw);
+          return { action: 'deny' };
+        }
+        // Keep Gmail / accounts navigations inside the dock tab.
+        wc.loadURL(raw).catch(() => {});
         return { action: 'deny' };
       }
 
-      // Gmail/Google: keep sign-in inside the dock tab whenever we have a URL.
-      if (googleish) {
-        wc.loadURL(raw).catch(() => {});
+      const internal = isInternalUrl(raw, service);
+      if (!internal) {
+        openExternalSafe(raw);
         return { action: 'deny' };
       }
 
@@ -1734,6 +1745,53 @@ function configureGuestWindowOpen(wc, service) {
     }
 
     return { action: 'deny' };
+  });
+}
+
+/**
+ * Main-frame navigation gate for a guest. Gmail stays on mail/accounts only.
+ */
+function attachGuestNavigationGate(webContents, service) {
+  const gate = (event, url) => {
+    if (isForbiddenGuestNavigation(url)) {
+      event.preventDefault();
+      return;
+    }
+    if (!String(url || '').startsWith('http')) return;
+
+    if (isGoogleService(service)) {
+      const outbound = extractGoogleOutboundUrl(url);
+      if (outbound) {
+        event.preventDefault();
+        openExternalSafe(outbound);
+        return;
+      }
+      if (!isAllowedGmailTabUrl(url)) {
+        event.preventDefault();
+        openExternalSafe(url);
+        return;
+      }
+      return;
+    }
+
+    if (isInternalUrl(url, service)) return;
+    event.preventDefault();
+    openExternalSafe(url);
+  };
+
+  webContents.on('will-navigate', gate);
+  // Gmail /url → cybercrime.gov.in happens as a redirect after google.com loads.
+  webContents.on('will-redirect', gate);
+
+  // Safety net: if something still lands outside Gmail, open it externally + go home.
+  webContents.on('did-navigate', (_event, url) => {
+    if (!isGoogleService(service)) return;
+    if (!url || !String(url).startsWith('http')) return;
+    if (isAllowedGmailTabUrl(url)) return;
+    const outbound = extractGoogleOutboundUrl(url) || url;
+    openExternalSafe(outbound);
+    const home = startUrlForService(service);
+    webContents.loadURL(home).catch(() => {});
   });
 }
 
@@ -1820,6 +1878,7 @@ function createViewForService(service) {
 
   configureGuestWindowOpen(webContents, service);
   attachGuestContextMenu(webContents);
+  attachGuestNavigationGate(webContents, service);
   if (isHeavyPortalApp(service) || isKeepWarmService(service.id)) {
     attachPortalVisibilityKeepAlive(webContents);
   }
@@ -1834,6 +1893,7 @@ function createViewForService(service) {
     const childWc = childWindow.webContents;
     configureGuestWindowOpen(childWc, service);
     attachGuestContextMenu(childWc);
+    attachGuestNavigationGate(childWc, service);
     attachPopupSessionAdopt(webContents, childWindow, service);
     if (isGoogleService(service)) {
       attachGoogleChromeSpoof(childWc, {
@@ -1842,28 +1902,7 @@ function createViewForService(service) {
         enabled: settings.googleSpoofEnabled !== false,
       }).catch(() => {});
     }
-    childWc.on('will-navigate', (event, url) => {
-      if (isForbiddenGuestNavigation(url)) {
-        event.preventDefault();
-        return;
-      }
-      if (!url.startsWith('http')) return;
-      if (isInternalUrl(url, service)) return;
-      event.preventDefault();
-      openExternalSafe(url);
-    });
     watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
-  });
-
-  webContents.on('will-navigate', (event, url) => {
-    if (isForbiddenGuestNavigation(url)) {
-      event.preventDefault();
-      return;
-    }
-    if (!url.startsWith('http')) return;
-    if (isInternalUrl(url, service)) return;
-    event.preventDefault();
-    openExternalSafe(url);
   });
 
   webContents.on('page-title-updated', (_event, title) => {
@@ -2110,6 +2149,8 @@ function rememberGoodUrl(serviceId, url) {
   if (!url || !String(url).startsWith('http') || isAuthOrLoginUrl(url)) return;
   const service = getService(serviceId);
   if (service && !isUrlForService(service, url)) return;
+  // Never remember third-party pages that hijacked a Gmail tab.
+  if (isGoogleService(service) && !isAllowedGmailTabUrl(url)) return;
   // Never persist fragile Zoho One CRM deep links — they blank after restart.
   let storeUrl = url;
   if (service?.appId === 'zoho-one' && isFragileZohoOneDeepUrl(url)) {
@@ -3500,7 +3541,7 @@ dockHandle('dock:app-navigate', (_e, id, action) => {
   else if (action === 'reload') wc.reload();
   else if (action === 'home') {
     const service = getService(id);
-    if (service) wc.loadURL(service.url);
+    if (service) wc.loadURL(startUrlForService(service) || service.url);
   } else if (action === 'devtools') {
     if (app.isPackaged && !settings.allowGuestDevTools) {
       return { ok: false, error: 'Guest DevTools disabled' };

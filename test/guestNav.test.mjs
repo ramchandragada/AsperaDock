@@ -7,6 +7,8 @@ import {
   isUrlForService,
   isFragileZohoOneDeepUrl,
   safeStartUrlForService,
+  extractGoogleOutboundUrl,
+  isAllowedGmailTabUrl,
 } from '../src/guestNav.js';
 
 test('isForbiddenGuestNavigation blocks file and javascript', () => {
@@ -63,4 +65,17 @@ test('Zoho One deep CRM routes are fragile for cold start', () => {
     safeStartUrlForService(one, 'https://one.zoho.in/zohoone/aspera/home'),
     'https://one.zoho.in/zohoone/aspera/home',
   );
+});
+
+test('Gmail google.com/url wrappers extract outbound targets', () => {
+  const wrapped =
+    'https://www.google.com/url?q=https%3A%2F%2Fcybercrime.gov.in%2F&sa=D';
+  assert.equal(
+    extractGoogleOutboundUrl(wrapped),
+    'https://cybercrime.gov.in/',
+  );
+  assert.equal(isAllowedGmailTabUrl(wrapped), false);
+  assert.equal(isAllowedGmailTabUrl('https://mail.google.com/mail/u/0/#inbox'), true);
+  assert.equal(isAllowedGmailTabUrl('https://cybercrime.gov.in/'), false);
+  assert.equal(isAllowedGmailTabUrl('https://accounts.google.com/signin'), true);
 });

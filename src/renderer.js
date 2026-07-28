@@ -58,6 +58,7 @@ const els = {
   appMenu: document.getElementById('app-menu'),
   appMenuTitle: document.getElementById('app-menu-title'),
   appMenuEdit: document.getElementById('app-menu-edit'),
+  appMenuHome: document.getElementById('app-menu-home'),
   appMenuReload: document.getElementById('app-menu-reload'),
   appMenuEnabled: document.getElementById('app-menu-enabled'),
   appMenuSound: document.getElementById('app-menu-sound'),
@@ -208,6 +209,7 @@ function paintToolbarIcons() {
   els.addAppBtn.innerHTML = icon('plus');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
   els.appMenuEdit.innerHTML = icon('settings');
+  if (els.appMenuHome) els.appMenuHome.innerHTML = icon('home');
   els.appMenuReload.innerHTML = icon('sync');
 
   // Brand surfaces
@@ -1219,6 +1221,10 @@ els.chromeMenu.addEventListener('click', (event) => {
   if (action === 'shortcuts') openShortcuts();
   if (action === 'add-app') openAppsSettings();
   if (action === 'reload') window.asperadock.reloadActive();
+  if (action === 'home') {
+    const id = state?.activeServiceId;
+    if (id) window.asperadock.appNavigate?.(id, 'home');
+  }
   if (action === 'free-ram') window.asperadock.hibernateBackground();
   if (action === 'about') window.asperadock.showAbout?.();
   if (action === 'check-updates') {
@@ -1320,6 +1326,11 @@ async function patchMenuFlag(key, checked) {
 
 els.appMenuEdit.addEventListener('click', () => {
   if (menuServiceId) openEditApp(menuServiceId);
+});
+els.appMenuHome?.addEventListener('click', async () => {
+  if (!menuServiceId) return;
+  await window.asperadock.appNavigate(menuServiceId, 'home');
+  closeAppMenu();
 });
 els.appMenuReload.addEventListener('click', async () => {
   if (!menuServiceId) return;

@@ -56,6 +56,58 @@ export function isAuthOrLoginUrl(url) {
 }
 
 /**
+ * Gmail wraps outbound links as https://www.google.com/url?q=<external>.
+ * Those must open in the system browser — never replace the Gmail tab.
+ * @returns {string|null} external http(s) URL if this is a redirect wrapper
+ */
+export function extractGoogleOutboundUrl(url) {
+  try {
+    const u = new URL(String(url || ''));
+    const host = u.hostname.toLowerCase();
+    if (!host.endsWith('google.com') && host !== 'google.com') return null;
+    const path = u.pathname.toLowerCase();
+    if (path !== '/url' && !path.endsWith('/url')) return null;
+    const target =
+      u.searchParams.get('q') ||
+      u.searchParams.get('url') ||
+      u.searchParams.get('u');
+    if (!target) return null;
+    const decoded = decodeURIComponent(String(target).trim());
+    if (!/^https?:\/\//i.test(decoded)) return null;
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * URLs allowed to load inside a Gmail Hub tab (inbox / auth only).
+ * Everything else (news sites, gov portals, google.com/url wrappers) must leave.
+ */
+export function isAllowedGmailTabUrl(url) {
+  if (!url || isForbiddenGuestNavigation(url)) return false;
+  if (isAuthOrLoginUrl(url)) return true;
+  if (extractGoogleOutboundUrl(url)) return false;
+  try {
+    const u = new URL(String(url));
+    const host = u.hostname.toLowerCase();
+    if (host === 'mail.google.com' || host.endsWith('.mail.google.com')) return true;
+    if (host === 'inbox.google.com') return true;
+    if (host === 'accounts.google.com' || host.endsWith('.accounts.google.com')) {
+      return true;
+    }
+    if (host === 'accounts.youtube.com') return true;
+    if (host === 'contacts.google.com') return true;
+    if (host === 'ogs.google.com') return true;
+    // Rare Gmail chrome frames
+    if (host === 'workspace.google.com') return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Zoho One deep embedded-app routes (CRM / Books / etc. under cxapp-spaces)
  * often paint a blank white pane when restored as a cold start URL. Prefer the
  * portal home and let the user open Sales → CRM again (session stays signed in).
