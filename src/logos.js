@@ -5,6 +5,8 @@
  */
 
 import arattaiImg from './assets/logos/arattai.png';
+import chatgptImg from './assets/logos/chatgpt.ico';
+import claudeImg from './assets/logos/claude.ico';
 import zohoMailImg from './assets/logos/zoho-mail.png';
 import zohoCrmImg from './assets/logos/zoho-crm.png';
 import zohoOneImg from './assets/logos/zoho-one.png';
@@ -34,8 +36,6 @@ function imgLogo(src) {
 }
 
 const ZOHO_GREEN = '#089949';
-const CHATGPT_GREEN = '#10A37F';
-const CLAUDE_ORANGE = '#D97706';
 
 export const LOGOS = {
   whatsapp: brandMark('whatsapp', '#25D366'),
@@ -49,14 +49,8 @@ export const LOGOS = {
   'zoho-mail': imgLogo(zohoMailImg),
   'zoho-crm': imgLogo(zohoCrmImg),
   'zoho-one': imgLogo(zohoOneImg),
-  chatgpt: solidTile(
-    CHATGPT_GREEN,
-    `<path fill="#fff" d="M12 4.4a3 3 0 0 1 2.98 2.66A3 3 0 0 1 17.6 12a3 3 0 0 1-2.62 4.94A3 3 0 0 1 12 19.6a3 3 0 0 1-2.98-2.66A3 3 0 0 1 6.4 12a3 3 0 0 1 2.62-4.94A3 3 0 0 1 12 4.4Zm0 1.7a1.3 1.3 0 0 0-1.28 1.1l-.1.67-.66.12a1.3 1.3 0 0 0-.56 2.3l.52.44-.18.66a1.3 1.3 0 0 0 1.6 1.6l.66-.18.44.52a1.3 1.3 0 0 0 2.3-.56l.12-.66.67-.1a1.3 1.3 0 0 0 .55-2.3l-.52-.44.18-.66a1.3 1.3 0 0 0-1.6-1.6l-.66.18-.44-.52A1.3 1.3 0 0 0 12 6.1Z"/>`,
-  ),
-  claude: solidTile(
-    CLAUDE_ORANGE,
-    `<path fill="#fff" d="M7.2 6.2h9.6a2.2 2.2 0 0 1 2.2 2.2v7.2a2.2 2.2 0 0 1-2.2 2.2H7.2A2.2 2.2 0 0 1 5 15.6V8.4a2.2 2.2 0 0 1 2.2-2.2Zm0 1.8a.4.4 0 0 0-.4.4v7.2c0 .22.18.4.4.4h9.6c.22 0 .4-.18.4-.4V8.4a.4.4 0 0 0-.4-.4H7.2Zm2.3 2.1h1.7l1.1 1.8 1.1-1.8H15l-2 3 2 3h-1.7l-1.1-1.8-1.1 1.8H9.4l2-3-1.9-3Z"/>`,
-  ),
+  chatgpt: imgLogo(chatgptImg),
+  claude: imgLogo(claudeImg),
 
   'zoho-books': solidTile(
     ZOHO_GREEN,
