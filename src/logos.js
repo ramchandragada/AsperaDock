@@ -5,7 +5,7 @@
  */
 
 import arattaiImg from './assets/logos/arattai.png';
-import chatgptImg from './assets/logos/chatgpt.svg';
+import chatgptImg from './assets/logos/chatgpt.png';
 import claudeImg from './assets/logos/claude.png';
 import zohoMailImg from './assets/logos/zoho-mail.png';
 import zohoCrmImg from './assets/logos/zoho-crm.png';
