@@ -356,14 +356,14 @@ function isHeavyPortalApp(service) {
   return id === 'zoho-one' || id === 'arattai' || id === 'zoho-crm';}
 
 /**
- * Zoho One CRM blanks when Sales is opened after Finance/HR, or after tab
- * switches — shell/nav stay, content pane dies. Recover in-place (reload),
- * never bounce to portal home (that dumps the user on Personal).
+ * Zoho One / Arattai: only recover when the content pane is actually blank.
+ * Never blind-reload warm apps after tab switches or short idle — that is what
+ * made "warm" feel cold (full reload every time you came back).
  */
-const PORTAL_STALE_MS = 90_000;
-const PORTAL_RELOAD_COOLDOWN_MS = 12_000;
-const PORTAL_HEALTH_CHECK_MS = 900;
-const PORTAL_HEALTH_RETRY_MS = 2200;
+const PORTAL_STALE_MS = 10 * 60_000;
+const PORTAL_RELOAD_COOLDOWN_MS = 20_000;
+const PORTAL_HEALTH_CHECK_MS = 3500;
+const PORTAL_HEALTH_RETRY_MS = 6500;
 
 function touchPortalPresence(entry) {
   if (entry) entry.lastPresenceAt = Date.now();
@@ -376,6 +376,14 @@ function maybeRefreshStaleHeavyPortal(id, { reason = 'idle' } = {}) {
   if (!isHeavyPortalApp(service)) return false;
   const wc = entry.view?.webContents;
   if (!wc || wc.isDestroyed() || wc.isLoading()) return false;
+
+  // Warm apps must stay alive — never blind-reload them after idle/focus.
+  // Only run a blank-pane health check (and only if still active).
+  if (isKeepWarmService(id)) {
+    if (id === activeServiceId) schedulePortalHealthChecks(id);
+    touchPortalPresence(entry);
+    return false;
+  }
 
   const now = Date.now();
   const last = entry.lastPresenceAt || entry.lastUsed || 0;
@@ -950,6 +958,9 @@ function parkGuestView(entry, viewId = null) {
       entry.view.setVisible(true);
     }
     entry.__parked = true;
+    setGuestHubActiveFlag(entry.view.webContents, false);
+    // Keep warm portals "present" so idle logic never treats them as stale.
+    touchPortalPresence(entry);
   } catch {
     // ignore — may already be attached
   }
@@ -982,6 +993,8 @@ function schedulePortalHealthCheck(id, delay = PORTAL_HEALTH_CHECK_MS) {
 }
 
 function schedulePortalHealthChecks(id) {
+  // After un-parking, Zoho/Arattai need several seconds to paint — checking
+  // too early false-triggers a reload and feels like a cold start.
   schedulePortalHealthCheck(id, PORTAL_HEALTH_CHECK_MS);
   const entry = views.get(id);
   if (!entry) return;
@@ -994,6 +1007,7 @@ function schedulePortalHealthChecks(id) {
 
 /**
  * Spoof Page Visibility so Zoho CRM / Arattai do not freeze when parked.
+ * Also exposes __asperaHubActive so in-page guardians never reload background tabs.
  */
 function attachPortalVisibilityKeepAlive(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
@@ -1001,6 +1015,9 @@ function attachPortalVisibilityKeepAlive(webContents) {
     try {
       if (window.__asperaPortalVisible) return;
       window.__asperaPortalVisible = true;
+      if (typeof window.__asperaHubActive === 'undefined') {
+        window.__asperaHubActive = false;
+      }
       Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
       Object.defineProperty(document, 'visibilityState', {
         configurable: true,
@@ -1020,9 +1037,20 @@ function attachPortalVisibilityKeepAlive(webContents) {
   inject();
 }
 
+function setGuestHubActiveFlag(webContents, active) {
+  if (!webContents || webContents.isDestroyed()) return;
+  webContents
+    .executeJavaScript(
+      `window.__asperaHubActive = ${active ? 'true' : 'false'};`,
+      true,
+    )
+    .catch(() => {});
+}
+
 /**
  * In-page guardian for Zoho One: Finance/HR work, but Sales → CRM often paints
- * a blank pane after space switches. Auto-reload once when that happens.
+ * a blank pane after space switches. Auto-reload once when that happens —
+ * only while this tab is the active Hub app.
  */
 function attachZohoOneBlankGuardian(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
@@ -1030,7 +1058,8 @@ function attachZohoOneBlankGuardian(webContents) {
     if (window.__asperaZohoSalesGuardian) return;
     window.__asperaZohoSalesGuardian = true;
     let lastFixAt = 0;
-    const COOLDOWN = 12000;
+    let blankStrikes = 0;
+    const COOLDOWN = 20000;
 
     function salesContext() {
       const path = String(location.pathname || '').toLowerCase();
@@ -1039,7 +1068,6 @@ function attachZohoOneBlankGuardian(webContents) {
         return true;
       }
       if (path.includes('/crm/') && path.includes('/tab/')) return true;
-      // UI: Sales dropdown selected + CRM chrome without content.
       const text = ((document.body && document.body.innerText) || '').slice(0, 4000);
       return /\\bCRM\\b/.test(text) && /\\bSales\\b/.test(text) && /Workqueue|Analytics|My Requests/.test(text);
     }
@@ -1077,11 +1105,22 @@ function attachZohoOneBlankGuardian(webContents) {
     }
 
     function tryFix() {
+      if (!window.__asperaHubActive) return;
       const now = Date.now();
       if (now - lastFixAt < COOLDOWN) return;
-      if (!salesContext() || !looksBlank()) return;
+      if (!salesContext()) {
+        blankStrikes = 0;
+        return;
+      }
+      if (!looksBlank()) {
+        blankStrikes = 0;
+        return;
+      }
+      blankStrikes += 1;
+      // Require two blank samples so we never reload a tab that is still painting.
+      if (blankStrikes < 2) return;
+      blankStrikes = 0;
       lastFixAt = now;
-      // Prefer refreshing the dead CRM iframe; fall back to full reload.
       for (const frame of document.querySelectorAll('iframe')) {
         const r = frame.getBoundingClientRect();
         if (r.width < (window.innerWidth || 0) * 0.35) continue;
@@ -1097,10 +1136,10 @@ function attachZohoOneBlankGuardian(webContents) {
       try { location.reload(); } catch (_) {}
     }
 
-    setInterval(tryFix, 1800);
-    document.addEventListener('click', () => setTimeout(tryFix, 1800), true);
-    window.addEventListener('hashchange', () => setTimeout(tryFix, 1200));
-    window.addEventListener('popstate', () => setTimeout(tryFix, 1200));
+    setInterval(tryFix, 2500);
+    document.addEventListener('click', () => setTimeout(tryFix, 2200), true);
+    window.addEventListener('hashchange', () => setTimeout(tryFix, 1800));
+    window.addEventListener('popstate', () => setTimeout(tryFix, 1800));
   })()`;
   const inject = () => {
     if (webContents.isDestroyed()) return;
@@ -1184,7 +1223,17 @@ async function runPortalHealthCheck(id) {
     return;
   }
 
-  if (!looksBlank) return;
+  if (!looksBlank) {
+    entry.__blankStrikes = 0;
+    return;
+  }
+  entry.__blankStrikes = (entry.__blankStrikes || 0) + 1;
+  // Warm portals paint slowly after un-park — require two blank samples.
+  if (entry.__blankStrikes < 2) {
+    schedulePortalHealthCheck(id, 2000);
+    return;
+  }
+  entry.__blankStrikes = 0;
   entry.__lastStaleReloadAt = now;
   try {
     logBreadcrumb('portal-blank-reload', {
@@ -2082,8 +2131,22 @@ function createViewForService(service) {
     lastUsed: Date.now(),
     loadedOnce: false,
     service,
+    lastPresenceAt: Date.now(),
   });
   hibernatedAt.delete(service.id);
+  setGuestHubActiveFlag(webContents, service.id === activeServiceId);
+  webContents.on('render-process-gone', (_event, details) => {
+    try {
+      logBreadcrumb('guest-renderer-gone', {
+        serviceId: service.id,
+        appId: service.appId,
+        reason: details?.reason,
+        exitCode: details?.exitCode,
+      });
+    } catch {
+      // ignore
+    }
+  });
   watchWebContents(webContents, `app:${service.appId}:${service.id}`);
   return views.get(service.id);
 }
@@ -2381,36 +2444,39 @@ function activateService(id) {
   const previousId = activeServiceId;
   parkBackgroundViews(id);
   const entry = ensureLiveView(service);
+  const keepWarm = isKeepWarmService(id);
+  // Blind stale-reload destroyed warm Zoho/Arattai after ~90s away.
+  // Warm apps: never reload on activate — only blank health checks (delayed).
   const wasStale =
+    !keepWarm &&
     isHeavyPortalApp(service) &&
     entry.lastPresenceAt &&
     Date.now() - entry.lastPresenceAt >= PORTAL_STALE_MS;
   entry.lastUsed = Date.now();
   entry.activatedOnce = true;
+  entry.__blankStrikes = 0;
   touchPortalPresence(entry);
   activeServiceId = id;
   settings = saveSettings({ lastActiveServiceId: id });
 
   const wc = entry.view.webContents;
-  // Unthrottle immediately so SPAs finish booting when user switches in.
   applyGuestPerfMode(wc, {
     active: true,
     loadedOnce: true,
-    keepWarm: isKeepWarmService(id),
+    keepWarm,
     allowThrottle: true,
   });
-  // Recreate path sometimes attaches a view that never started loading.
-  // Heavy portals left idle ~10–20 min often show a blank CRM pane — reload.
+  setGuestHubActiveFlag(wc, true);
+
   if (wasStale && !wc.isLoading()) {
     try {
       entry.__lastStaleReloadAt = Date.now();
-      // Reload in place — do not bounce Zoho One to portal home (Personal).
       wc.reload();
     } catch {
       // ignore
     }
   } else if (isHeavyPortalApp(service)) {
-    // Switching back / un-parking / in-app Sales often leaves CRM blank — check twice.
+    // Delayed blank checks only — do not reload a healthy warm tab.
     schedulePortalHealthChecks(id);
   }
   entry.__parked = false;
@@ -2424,19 +2490,16 @@ function activateService(id) {
     attachGuestView(entry.view);
     entry.__lastBounds = null;
     layoutActiveView();
-    // Electron/Linux sometimes applies the first bounds late — re-assert.
     setTimeout(() => layoutActiveView(), 16);
     setTimeout(() => layoutActiveView(), 100);
     setTimeout(() => layoutActiveView(), 300);
     focusActiveContents();
   }
 
-  // Full-speed active tab; throttle every other warm renderer.
   syncAllGuestPerfModes();
 
   unreadCounts.set(id, 0);
   enforceWarmLimit();
-  // Keep flame apps loaded in the background so the next switch is instant.
   softWakeKeepWarmApps(id);
   refreshBadge();
   broadcastState();
@@ -3759,22 +3822,17 @@ function watchSystemIdle() {
       systemWasIdle = false;
       onUserReturnedFromIdle('system-idle-end');
     }
-    // Zoho CRM often dies after only a couple of idle minutes.
-    if (idleSec >= 90) portalWasIdle = true;
+    // Long away: when user returns, blank-check the active portal (no blind reload for warm).
+    if (idleSec >= 3 * 60) portalWasIdle = true;
     if (portalWasIdle && idleSec < 8) {
       portalWasIdle = false;
       onUserReturnedFromIdle('short-idle-end');
-      if (activeServiceId) schedulePortalHealthCheck(activeServiceId, 600);
     }
-    // Keep presence fresh while the user is actively using the dock.
-    if (
-      idleSec < 30 &&
-      activeServiceId &&
-      mainWindow &&
-      !mainWindow.isDestroyed() &&
-      mainWindow.isFocused()
-    ) {
-      touchPortalPresence(views.get(activeServiceId));
+    // Warm portals stay "present" forever while loaded — never mark them stale.
+    for (const [id, entry] of views.entries()) {
+      if (isKeepWarmService(id) || id === activeServiceId) {
+        touchPortalPresence(entry);
+      }
     }
   }, 15_000);
 }
