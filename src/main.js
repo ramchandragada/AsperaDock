@@ -84,6 +84,7 @@ import {
   safeStartUrlForService,
   extractGoogleOutboundUrl,
   isAllowedGmailTabUrl,
+  isGoogleOwnedUrl,
 } from './guestNav.js';
 import {
   isGoogleService,
@@ -1781,6 +1782,12 @@ function configureGuestWindowOpen(wc, service) {
           openExternalSafe(outbound);
           return { action: 'deny' };
         }
+        if (isGoogleOwnedUrl(raw) && !isAllowedGmailTabUrl(raw)) {
+          // Malformed internal Google handoff URLs (drive/accounts continue=...)
+          // should not spawn external error tabs. Reset to Gmail home.
+          wc.loadURL(startUrlForService(service) || service.url).catch(() => {});
+          return { action: 'deny' };
+        }
         if (!isAllowedGmailTabUrl(raw)) {
           openExternalSafe(raw);
           return { action: 'deny' };
@@ -1826,6 +1833,11 @@ function attachGuestNavigationGate(webContents, service) {
         openExternalSafe(outbound);
         return;
       }
+      if (isGoogleOwnedUrl(url) && !isAllowedGmailTabUrl(url)) {
+        event.preventDefault();
+        webContents.loadURL(startUrlForService(service) || service.url).catch(() => {});
+        return;
+      }
       if (!isAllowedGmailTabUrl(url)) {
         event.preventDefault();
         openExternalSafe(url);
@@ -1848,8 +1860,9 @@ function attachGuestNavigationGate(webContents, service) {
     if (!isGoogleService(service)) return;
     if (!url || !String(url).startsWith('http')) return;
     if (isAllowedGmailTabUrl(url)) return;
-    const outbound = extractGoogleOutboundUrl(url) || url;
-    openExternalSafe(outbound);
+    const outbound = extractGoogleOutboundUrl(url);
+    if (outbound) openExternalSafe(outbound);
+    else if (!isGoogleOwnedUrl(url)) openExternalSafe(url);
     const home = startUrlForService(service);
     webContents.loadURL(home).catch(() => {});
   });

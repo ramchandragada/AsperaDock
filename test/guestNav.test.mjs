@@ -9,6 +9,7 @@ import {
   safeStartUrlForService,
   extractGoogleOutboundUrl,
   isAllowedGmailTabUrl,
+  isGoogleOwnedUrl,
 } from '../src/guestNav.js';
 
 test('isForbiddenGuestNavigation blocks file and javascript', () => {
@@ -78,4 +79,14 @@ test('Gmail google.com/url wrappers extract outbound targets', () => {
   assert.equal(isAllowedGmailTabUrl('https://mail.google.com/mail/u/0/#inbox'), true);
   assert.equal(isAllowedGmailTabUrl('https://cybercrime.gov.in/'), false);
   assert.equal(isAllowedGmailTabUrl('https://accounts.google.com/signin'), true);
+});
+
+test('isGoogleOwnedUrl recognizes first-party Google domains', () => {
+  assert.equal(
+    isGoogleOwnedUrl('https://drive.google.com/accounts/SetOSID?continue=https://drive.google.com/'),
+    true,
+  );
+  assert.equal(isGoogleOwnedUrl('https://accounts.google.com/signin/v2'), true);
+  assert.equal(isGoogleOwnedUrl('https://mail.google.com/mail/u/0/#inbox'), true);
+  assert.equal(isGoogleOwnedUrl('https://example.com/'), false);
 });

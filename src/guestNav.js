@@ -80,6 +80,23 @@ export function extractGoogleOutboundUrl(url) {
   }
 }
 
+/** Any first-party Google URL (google.com / googleusercontent.com / gstatic.com). */
+export function isGoogleOwnedUrl(url) {
+  try {
+    const host = new URL(String(url || '')).hostname.toLowerCase();
+    return (
+      host === 'google.com' ||
+      host.endsWith('.google.com') ||
+      host === 'googleusercontent.com' ||
+      host.endsWith('.googleusercontent.com') ||
+      host === 'gstatic.com' ||
+      host.endsWith('.gstatic.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * URLs allowed to load inside a Gmail Hub tab (inbox / auth only).
  * Everything else (news sites, gov portals, google.com/url wrappers) must leave.
