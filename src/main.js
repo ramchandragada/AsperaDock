@@ -1023,6 +1023,7 @@ function scheduleZohoSalesRecovery(id) {
   clearZohoSalesRecoveryTimers(entry);
   entry.__zohoSalesRecoveryTimers = ZOHO_SALES_RECOVERY_DELAYS_MS.map((delay) =>
     setTimeout(() => {
+      // Blank-only checks — never blind-refresh a healthy Sales dashboard.
       runPortalHealthCheck(id, { salesRecovery: true });
     }, delay),
   );
@@ -1072,8 +1073,8 @@ function setGuestHubActiveFlag(webContents, active) {
 
 /**
  * In-page guardian for Zoho One: Finance/HR work, but Sales → CRM often paints
- * a blank pane after space switches. Proactively refresh the CRM iframe when
- * entering Sales, and recover if the content pane stays blank.
+ * a blank pane after space switches. Recover only when the content pane is
+ * still blank — never blind-refresh a healthy CRM iframe.
  */
 function attachZohoOneBlankGuardian(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
@@ -1085,9 +1086,8 @@ function attachZohoOneBlankGuardian(webContents) {
     let wasSales = false;
     let salesEnterAt = 0;
     let salesEnterToken = 0;
-    const COOLDOWN = 10000;
-    const SALES_IFRAME_REFRESH_MS = 4000;
-    const SALES_BLANK_CHECK_MS = 6500;
+    const COOLDOWN = 12000;
+    const SALES_BLANK_CHECK_MS = [4500, 7500, 11000];
 
     function salesContext() {
       const path = String(location.pathname || '').toLowerCase();
@@ -1137,16 +1137,17 @@ function attachZohoOneBlankGuardian(webContents) {
         } catch (_) {}
       }
 
+      // Cross-origin CRM iframe: detect large empty content panes under the shell.
       let emptyArea = 0;
       for (const el of document.querySelectorAll('main,section,div')) {
         const r = el.getBoundingClientRect();
         if (r.width < vw * 0.42 || r.height < vh * 0.38) continue;
         const text = (el.innerText || '').trim();
-        if (text.length > 100) continue;
-        if (el.querySelectorAll('img,canvas,table,tr,li,button,input,a').length > 8) continue;
+        if (text.length > 80) continue;
+        if (el.querySelectorAll('img,canvas,table,tr,li,button,input,a').length > 6) continue;
         emptyArea += r.width * r.height;
       }
-      return emptyArea > vw * vh * 0.3;
+      return emptyArea > vw * vh * 0.28;
     }
 
     function tryFix({ force = false } = {}) {
@@ -1162,9 +1163,9 @@ function attachZohoOneBlankGuardian(webContents) {
         return;
       }
       blankStrikes += 1;
-      const paintGrace = salesEnterAt && now - salesEnterAt < 3500;
+      const paintGrace = salesEnterAt && now - salesEnterAt < 4000;
       if (!force && paintGrace) return;
-      if (!force && blankStrikes < 1) return;
+      if (!force && blankStrikes < 2) return;
       blankStrikes = 0;
       lastFixAt = now;
       if (refreshCrmIframe()) return;
@@ -1174,44 +1175,40 @@ function attachZohoOneBlankGuardian(webContents) {
     function onSalesEnter() {
       salesEnterAt = Date.now();
       const token = ++salesEnterToken;
-      // CRM often sticks blank after HR/other space switches — wake the iframe once.
-      setTimeout(() => {
-        if (token !== salesEnterToken || !salesContext() || !window.__asperaHubActive) return;
-        refreshCrmIframe();
-      }, SALES_IFRAME_REFRESH_MS);
-      setTimeout(() => {
-        if (token !== salesEnterToken || !salesContext() || !window.__asperaHubActive) return;
-        if (looksBlank()) tryFix({ force: true });
-      }, SALES_BLANK_CHECK_MS);
-      setTimeout(() => {
-        if (token !== salesEnterToken || !salesContext() || !window.__asperaHubActive) return;
-        if (looksBlank()) tryFix({ force: true });
-      }, SALES_BLANK_CHECK_MS + 3000);
+      blankStrikes = 0;
+      for (const delay of SALES_BLANK_CHECK_MS) {
+        setTimeout(() => {
+          if (token !== salesEnterToken || !salesContext() || !window.__asperaHubActive) return;
+          if (!looksBlank()) return;
+          tryFix({ force: true });
+        }, delay);
+      }
     }
 
     function trackSalesContext() {
       const nowSales = salesContext();
       if (nowSales && !wasSales) onSalesEnter();
+      if (!nowSales) blankStrikes = 0;
       wasSales = nowSales;
     }
 
     setInterval(() => {
       trackSalesContext();
       tryFix();
-    }, 2000);
+    }, 2500);
     document.addEventListener('click', (e) => {
       const t = e.target;
       const label = String((t && (t.innerText || t.textContent)) || '').trim();
       if (/^Sales$/i.test(label.slice(0, 40))) onSalesEnter();
-      setTimeout(() => tryFix(), 2200);
+      setTimeout(() => tryFix(), 2500);
     }, true);
     window.addEventListener('hashchange', () => {
       trackSalesContext();
-      setTimeout(() => tryFix(), 1800);
+      setTimeout(() => tryFix(), 2000);
     });
     window.addEventListener('popstate', () => {
       trackSalesContext();
-      setTimeout(() => tryFix(), 1800);
+      setTimeout(() => tryFix(), 2000);
     });
     trackSalesContext();
   })()`;
@@ -1272,37 +1269,6 @@ async function runPortalHealthCheck(id, { salesRecovery = false } = {}) {
     return false;
   })()`;
 
-  if (salesRecovery && service.appId === 'zoho-one') {
-    try {
-      const shouldWake = await wc.executeJavaScript(
-        `(() => {
-          const path = String(location.pathname || '').toLowerCase();
-          const href = String(location.href || '').toLowerCase();
-          if (path.includes('/cxapp-spaces/sales') || href.includes('/cxapp-spaces/sales')) {
-            return true;
-          }
-          const text = ((document.body && document.body.innerText) || '').slice(0, 5000);
-          return /\\bCRM\\b/.test(text) && /\\b(Home|Workqueue|Modules|Reports|Analytics)\\b/.test(text);
-        })()`,
-        true,
-      );
-      const refreshGap = now - (entry.__lastSalesIframeRefreshAt || 0);
-      if (shouldWake && refreshGap > 5000) {
-        const refreshed = await wc.executeJavaScript(refreshIframeScript, true);
-        if (refreshed) {
-          entry.__lastSalesIframeRefreshAt = now;
-          logBreadcrumb('portal-sales-iframe-refresh', {
-            serviceId: id,
-            from: String(currentUrl || '').slice(0, 200),
-          });
-          return;
-        }
-      }
-    } catch {
-      // continue to blank check
-    }
-  }
-
   try {
     looksBlank = await wc.executeJavaScript(
       `(() => {
@@ -1332,8 +1298,8 @@ async function runPortalHealthCheck(id, { salesRecovery = false } = {}) {
           const r = el.getBoundingClientRect();
           if (r.width < vw * 0.4 || r.height < vh * 0.35) continue;
           const text = (el.innerText || '').trim();
-          if (text.length > 100) continue;
-          if (el.querySelectorAll('img,canvas,table,tr,li,button,a').length > 8) {
+          if (text.length > 80) continue;
+          if (el.querySelectorAll('img,canvas,table,tr,li,button,a').length > 6) {
             continue;
           }
           emptyArea += r.width * r.height;
@@ -1349,14 +1315,65 @@ async function runPortalHealthCheck(id, { salesRecovery = false } = {}) {
     return;
   }
 
+  // Cross-origin CRM iframe often defeats DOM blank checks — sample pixels.
+  if (
+    !looksBlank &&
+    service.appId === 'zoho-one' &&
+    (salesRecovery || isZohoSales) &&
+    typeof wc.capturePage === 'function'
+  ) {
+    try {
+      const img = await wc.capturePage();
+      const size = img?.getSize?.() || {};
+      const w = size.width || 0;
+      const h = size.height || 0;
+      if (w > 200 && h > 200) {
+        // Sample the lower-right content region (below Zoho chrome).
+        const crop = {
+          x: Math.floor(w * 0.28),
+          y: Math.floor(h * 0.28),
+          width: Math.floor(w * 0.55),
+          height: Math.floor(h * 0.55),
+        };
+        const region = img.crop(crop);
+        const png = region.toPNG();
+        // Tiny / near-empty PNG of a flat white region is much smaller than a dashboard.
+        // Also check average luminance via a cheap byte scan of PNG is unreliable;
+        // use JPEG size heuristic + bitmap if available.
+        let whiteRatio = 0;
+        if (typeof region.toBitmap === 'function') {
+          const buf = region.toBitmap();
+          let white = 0;
+          let samples = 0;
+          // BGRA pixels — sample every 32nd pixel.
+          for (let i = 0; i + 3 < buf.length; i += 32 * 4) {
+            const b = buf[i];
+            const g = buf[i + 1];
+            const r = buf[i + 2];
+            samples += 1;
+            if (r > 245 && g > 245 && b > 245) white += 1;
+          }
+          whiteRatio = samples ? white / samples : 0;
+        } else {
+          // Fallback: very small compressed PNG usually means flat color.
+          whiteRatio = png.length < 12_000 ? 0.95 : 0;
+        }
+        if (whiteRatio > 0.92) looksBlank = true;
+      }
+    } catch {
+      // ignore capture failures
+    }
+  }
+
   if (!looksBlank) {
     entry.__blankStrikes = 0;
+    clearZohoSalesRecoveryTimers(entry);
     return;
   }
   entry.__blankStrikes = (entry.__blankStrikes || 0) + 1;
-  const requiredStrikes = salesRecovery || isZohoSales ? 1 : 2;
+  const requiredStrikes = 2;
   if (entry.__blankStrikes < requiredStrikes) {
-    schedulePortalHealthCheck(id, salesRecovery ? 1200 : 2000);
+    schedulePortalHealthCheck(id, salesRecovery ? 1500 : 2000);
     return;
   }
   entry.__blankStrikes = 0;
@@ -1371,6 +1388,8 @@ async function runPortalHealthCheck(id, { salesRecovery = false } = {}) {
           serviceId: id,
           from: String(currentUrl || '').slice(0, 200),
         });
+        // Re-check once after paint — do not keep blind-refreshing.
+        schedulePortalHealthCheck(id, 4000);
         return;
       }
     } catch {
