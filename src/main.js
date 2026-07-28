@@ -362,8 +362,10 @@ function isHeavyPortalApp(service) {
  */
 const PORTAL_STALE_MS = 10 * 60_000;
 const PORTAL_RELOAD_COOLDOWN_MS = 20_000;
+const PORTAL_RELOAD_COOLDOWN_SALES_MS = 8000;
 const PORTAL_HEALTH_CHECK_MS = 3500;
 const PORTAL_HEALTH_RETRY_MS = 6500;
+const ZOHO_SALES_RECOVERY_DELAYS_MS = [1500, 3500, 5500, 8000];
 
 function touchPortalPresence(entry) {
   if (entry) entry.lastPresenceAt = Date.now();
@@ -1005,6 +1007,27 @@ function schedulePortalHealthChecks(id) {
   }, PORTAL_HEALTH_RETRY_MS);
 }
 
+function clearZohoSalesRecoveryTimers(entry) {
+  if (!entry?.__zohoSalesRecoveryTimers?.length) return;
+  for (const t of entry.__zohoSalesRecoveryTimers) clearTimeout(t);
+  entry.__zohoSalesRecoveryTimers = [];
+}
+
+/** Faster blank checks after Zoho One Sales space activation (HR → Sales, etc.). */
+function scheduleZohoSalesRecovery(id) {
+  const entry = views.get(id);
+  const service = getService(id) || entry?.service;
+  if (!entry || service?.appId !== 'zoho-one') return;
+  if (id !== activeServiceId || locked || overlayOpen) return;
+
+  clearZohoSalesRecoveryTimers(entry);
+  entry.__zohoSalesRecoveryTimers = ZOHO_SALES_RECOVERY_DELAYS_MS.map((delay) =>
+    setTimeout(() => {
+      runPortalHealthCheck(id, { salesRecovery: true });
+    }, delay),
+  );
+}
+
 /**
  * Spoof Page Visibility so Zoho CRM / Arattai do not freeze when parked.
  * Also exposes __asperaHubActive so in-page guardians never reload background tabs.
@@ -1049,8 +1072,8 @@ function setGuestHubActiveFlag(webContents, active) {
 
 /**
  * In-page guardian for Zoho One: Finance/HR work, but Sales → CRM often paints
- * a blank pane after space switches. Auto-reload once when that happens —
- * only while this tab is the active Hub app.
+ * a blank pane after space switches. Proactively refresh the CRM iframe when
+ * entering Sales, and recover if the content pane stays blank.
  */
 function attachZohoOneBlankGuardian(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
@@ -1059,7 +1082,12 @@ function attachZohoOneBlankGuardian(webContents) {
     window.__asperaZohoSalesGuardian = true;
     let lastFixAt = 0;
     let blankStrikes = 0;
-    const COOLDOWN = 20000;
+    let wasSales = false;
+    let salesEnterAt = 0;
+    let salesEnterToken = 0;
+    const COOLDOWN = 10000;
+    const SALES_IFRAME_REFRESH_MS = 4000;
+    const SALES_BLANK_CHECK_MS = 6500;
 
     function salesContext() {
       const path = String(location.pathname || '').toLowerCase();
@@ -1068,8 +1096,25 @@ function attachZohoOneBlankGuardian(webContents) {
         return true;
       }
       if (path.includes('/crm/') && path.includes('/tab/')) return true;
-      const text = ((document.body && document.body.innerText) || '').slice(0, 4000);
+      const text = ((document.body && document.body.innerText) || '').slice(0, 5000);
       return /\\bCRM\\b/.test(text) && /\\bSales\\b/.test(text) && /Workqueue|Analytics|My Requests/.test(text);
+    }
+
+    function refreshCrmIframe() {
+      const vw = window.innerWidth || 0;
+      const vh = window.innerHeight || 0;
+      for (const frame of document.querySelectorAll('iframe')) {
+        const r = frame.getBoundingClientRect();
+        if (r.width < vw * 0.35 || r.height < vh * 0.25) continue;
+        const src = String(frame.getAttribute('src') || frame.src || '');
+        if (src && !src.startsWith('about:blank')) {
+          try {
+            frame.src = src;
+            return true;
+          } catch (_) {}
+        }
+      }
+      return false;
     }
 
     function looksBlank() {
@@ -1104,10 +1149,10 @@ function attachZohoOneBlankGuardian(webContents) {
       return emptyArea > vw * vh * 0.3;
     }
 
-    function tryFix() {
+    function tryFix({ force = false } = {}) {
       if (!window.__asperaHubActive) return;
       const now = Date.now();
-      if (now - lastFixAt < COOLDOWN) return;
+      if (!force && now - lastFixAt < COOLDOWN) return;
       if (!salesContext()) {
         blankStrikes = 0;
         return;
@@ -1117,29 +1162,58 @@ function attachZohoOneBlankGuardian(webContents) {
         return;
       }
       blankStrikes += 1;
-      // Require two blank samples so we never reload a tab that is still painting.
-      if (blankStrikes < 2) return;
+      const paintGrace = salesEnterAt && now - salesEnterAt < 3500;
+      if (!force && paintGrace) return;
+      if (!force && blankStrikes < 1) return;
       blankStrikes = 0;
       lastFixAt = now;
-      for (const frame of document.querySelectorAll('iframe')) {
-        const r = frame.getBoundingClientRect();
-        if (r.width < (window.innerWidth || 0) * 0.35) continue;
-        if (r.height < (window.innerHeight || 0) * 0.28) continue;
-        const src = String(frame.src || '');
-        if (src && !src.startsWith('about:blank')) {
-          try {
-            frame.src = src;
-            return;
-          } catch (_) {}
-        }
-      }
+      if (refreshCrmIframe()) return;
       try { location.reload(); } catch (_) {}
     }
 
-    setInterval(tryFix, 2500);
-    document.addEventListener('click', () => setTimeout(tryFix, 2200), true);
-    window.addEventListener('hashchange', () => setTimeout(tryFix, 1800));
-    window.addEventListener('popstate', () => setTimeout(tryFix, 1800));
+    function onSalesEnter() {
+      salesEnterAt = Date.now();
+      const token = ++salesEnterToken;
+      // CRM often sticks blank after HR/other space switches — wake the iframe once.
+      setTimeout(() => {
+        if (token !== salesEnterToken || !salesContext() || !window.__asperaHubActive) return;
+        refreshCrmIframe();
+      }, SALES_IFRAME_REFRESH_MS);
+      setTimeout(() => {
+        if (token !== salesEnterToken || !salesContext() || !window.__asperaHubActive) return;
+        if (looksBlank()) tryFix({ force: true });
+      }, SALES_BLANK_CHECK_MS);
+      setTimeout(() => {
+        if (token !== salesEnterToken || !salesContext() || !window.__asperaHubActive) return;
+        if (looksBlank()) tryFix({ force: true });
+      }, SALES_BLANK_CHECK_MS + 3000);
+    }
+
+    function trackSalesContext() {
+      const nowSales = salesContext();
+      if (nowSales && !wasSales) onSalesEnter();
+      wasSales = nowSales;
+    }
+
+    setInterval(() => {
+      trackSalesContext();
+      tryFix();
+    }, 2000);
+    document.addEventListener('click', (e) => {
+      const t = e.target;
+      const label = String((t && (t.innerText || t.textContent)) || '').trim();
+      if (/^Sales$/i.test(label.slice(0, 40))) onSalesEnter();
+      setTimeout(() => tryFix(), 2200);
+    }, true);
+    window.addEventListener('hashchange', () => {
+      trackSalesContext();
+      setTimeout(() => tryFix(), 1800);
+    });
+    window.addEventListener('popstate', () => {
+      trackSalesContext();
+      setTimeout(() => tryFix(), 1800);
+    });
+    trackSalesContext();
   })()`;
   const inject = () => {
     if (webContents.isDestroyed()) return;
@@ -1153,7 +1227,7 @@ function attachZohoOneBlankGuardian(webContents) {
 /**
  * Detect blank portal content and recover with reload (stay on current route).
  */
-async function runPortalHealthCheck(id) {
+async function runPortalHealthCheck(id, { salesRecovery = false } = {}) {
   const entry = views.get(id);
   const service = getService(id) || entry?.service;
   if (!entry || !isHeavyPortalApp(service)) return;
@@ -1162,10 +1236,10 @@ async function runPortalHealthCheck(id) {
   if (!wc || wc.isDestroyed() || wc.isLoading()) return;
 
   const now = Date.now();
-  if (
-    entry.__lastStaleReloadAt &&
-    now - entry.__lastStaleReloadAt < PORTAL_RELOAD_COOLDOWN_MS
-  ) {
+  const cooldownMs = salesRecovery
+    ? PORTAL_RELOAD_COOLDOWN_SALES_MS
+    : PORTAL_RELOAD_COOLDOWN_MS;
+  if (entry.__lastStaleReloadAt && now - entry.__lastStaleReloadAt < cooldownMs) {
     return;
   }
 
@@ -1175,6 +1249,58 @@ async function runPortalHealthCheck(id) {
     currentUrl = wc.getURL();
   } catch {
     return;
+  }
+
+  const isZohoSales =
+    service.appId === 'zoho-one' &&
+    /cxapp-spaces\/sales|\/crm\/.*\/tab\//i.test(String(currentUrl || ''));
+
+  const refreshIframeScript = `(() => {
+    const vw = window.innerWidth || 0;
+    const vh = window.innerHeight || 0;
+    for (const frame of document.querySelectorAll('iframe')) {
+      const r = frame.getBoundingClientRect();
+      if (r.width < vw * 0.35 || r.height < vh * 0.25) continue;
+      const src = String(frame.getAttribute('src') || frame.src || '');
+      if (src && !src.startsWith('about:blank')) {
+        try {
+          frame.src = src;
+          return true;
+        } catch (_) {}
+      }
+    }
+    return false;
+  })()`;
+
+  if (salesRecovery && service.appId === 'zoho-one') {
+    try {
+      const shouldWake = await wc.executeJavaScript(
+        `(() => {
+          const path = String(location.pathname || '').toLowerCase();
+          const href = String(location.href || '').toLowerCase();
+          if (path.includes('/cxapp-spaces/sales') || href.includes('/cxapp-spaces/sales')) {
+            return true;
+          }
+          const text = ((document.body && document.body.innerText) || '').slice(0, 5000);
+          return /\\bCRM\\b/.test(text) && /\\b(Home|Workqueue|Modules|Reports|Analytics)\\b/.test(text);
+        })()`,
+        true,
+      );
+      const refreshGap = now - (entry.__lastSalesIframeRefreshAt || 0);
+      if (shouldWake && refreshGap > 5000) {
+        const refreshed = await wc.executeJavaScript(refreshIframeScript, true);
+        if (refreshed) {
+          entry.__lastSalesIframeRefreshAt = now;
+          logBreadcrumb('portal-sales-iframe-refresh', {
+            serviceId: id,
+            from: String(currentUrl || '').slice(0, 200),
+          });
+          return;
+        }
+      }
+    } catch {
+      // continue to blank check
+    }
   }
 
   try {
@@ -1228,13 +1354,30 @@ async function runPortalHealthCheck(id) {
     return;
   }
   entry.__blankStrikes = (entry.__blankStrikes || 0) + 1;
-  // Warm portals paint slowly after un-park — require two blank samples.
-  if (entry.__blankStrikes < 2) {
-    schedulePortalHealthCheck(id, 2000);
+  const requiredStrikes = salesRecovery || isZohoSales ? 1 : 2;
+  if (entry.__blankStrikes < requiredStrikes) {
+    schedulePortalHealthCheck(id, salesRecovery ? 1200 : 2000);
     return;
   }
   entry.__blankStrikes = 0;
   entry.__lastStaleReloadAt = now;
+
+  if (service.appId === 'zoho-one' && (salesRecovery || isZohoSales)) {
+    try {
+      const refreshed = await wc.executeJavaScript(refreshIframeScript, true);
+      if (refreshed) {
+        entry.__lastSalesIframeRefreshAt = now;
+        logBreadcrumb('portal-sales-iframe-refresh', {
+          serviceId: id,
+          from: String(currentUrl || '').slice(0, 200),
+        });
+        return;
+      }
+    } catch {
+      // fall through to reload
+    }
+  }
+
   try {
     logBreadcrumb('portal-blank-reload', {
       serviceId: id,
@@ -2079,6 +2222,9 @@ function createViewForService(service) {
       !overlayOpen
     ) {
       schedulePortalHealthChecks(service.id);
+      if (service.appId === 'zoho-one') {
+        scheduleZohoSalesRecovery(service.id);
+      }
     }
   });
   webContents.on('did-finish-load', () => {
@@ -2478,6 +2624,16 @@ function activateService(id) {
   } else if (isHeavyPortalApp(service)) {
     // Delayed blank checks only — do not reload a healthy warm tab.
     schedulePortalHealthChecks(id);
+    if (service.appId === 'zoho-one') {
+      try {
+        const url = entry.view?.webContents?.getURL?.() || '';
+        if (/cxapp-spaces\/sales|\/crm\/.*\/tab\//i.test(url)) {
+          scheduleZohoSalesRecovery(id);
+        }
+      } catch {
+        // ignore
+      }
+    }
   }
   entry.__parked = false;
 
