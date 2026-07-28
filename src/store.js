@@ -115,9 +115,9 @@ export const DEFAULTS = {
   updateChannel: 'stable', // stable | beta
   /** Download updates automatically in the background. */
   autoUpdateDownload: true,
-  /** Install silently on next quit (no prompt). Mandatory updates always install. */
-  autoUpdateInstall: false,
-  updateCheckMinutes: 180,
+  /** Install immediately after download (prompts for password on deb/rpm). */
+  autoUpdateInstall: true,
+  updateCheckMinutes: 30,
 
   /**
    * Lean mode for refurbished / low-RAM PCs:
@@ -384,6 +384,13 @@ function migrateWarmKeepAlive(settings) {
       hibernateMinutes: Math.max(45, Number(next.hibernateMinutes) || 45),
       maxWarmViews: 5,
       maxResidentViews: 5,
+      autoUpdateEnabled: true,
+      autoUpdateDownload: true,
+      autoUpdateInstall: true,
+      updateCheckMinutes: Math.min(
+        60,
+        Math.max(30, Number(next.updateCheckMinutes) || 30),
+      ),
     };
   }
   // Keep legacy keys so older migrations stay idempotent.

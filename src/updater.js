@@ -437,8 +437,12 @@ export async function downloadUpdate() {
     busy = false;
     broadcast('downloaded', { version: pendingUpdate.version, path: dest });
 
-    if (settings().autoUpdateInstall === true && !pendingUpdate.mandatory) {
-      // Silent: install on next quit (see maybeInstallOnQuit).
+    if (settings().autoUpdateInstall === true) {
+      // Performance/productivity default: apply as soon as download finishes.
+      // deb/rpm will trigger a native password prompt through pkexec.
+      installUpdate({ silentOnFail: false }).catch((err) =>
+        reportError('update-install', { message: String(err) }),
+      );
     } else {
       promptReady();
     }
