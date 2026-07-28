@@ -353,10 +353,21 @@ function syncAllGuestPerfModes() {
 /** SPAs that need an unthrottled first boot (then stay full-speed if warm). */
 function isHeavyPortalApp(service) {
   const id = service?.appId;
-  return id === 'zoho-one' || id === 'arattai' || id === 'zoho-crm';}
+  return id === 'zoho-one' || id === 'arattai' || id === 'zoho-crm';
+}
 
 /**
- * Zoho One / Arattai: only recover when the content pane is actually blank.
+ * Auto blank-pane recovery is only needed for Zoho portal spaces.
+ * Arattai can look "blank enough" during fast tab restores and was getting
+ * unnecessary reloads on every switch.
+ */
+function shouldRunPortalBlankRecovery(service) {
+  const id = service?.appId;
+  return id === 'zoho-one' || id === 'zoho-crm';
+}
+
+/**
+ * Zoho portals: only recover when the content pane is actually blank.
  * Never blind-reload warm apps after tab switches or short idle — that is what
  * made "warm" feel cold (full reload every time you came back).
  */
@@ -373,7 +384,7 @@ function maybeRefreshStaleHeavyPortal(id, { reason = 'idle' } = {}) {
   const entry = views.get(id);
   if (!entry) return false;
   const service = getService(id) || entry.service;
-  if (!isHeavyPortalApp(service)) return false;
+  if (!shouldRunPortalBlankRecovery(service)) return false;
   const wc = entry.view?.webContents;
   if (!wc || wc.isDestroyed() || wc.isLoading()) return false;
 
@@ -1156,7 +1167,7 @@ function attachZohoOneBlankGuardian(webContents) {
 async function runPortalHealthCheck(id) {
   const entry = views.get(id);
   const service = getService(id) || entry?.service;
-  if (!entry || !isHeavyPortalApp(service)) return;
+  if (!entry || !shouldRunPortalBlankRecovery(service)) return;
   if (id !== activeServiceId || locked || overlayOpen) return;
   const wc = entry.view?.webContents;
   if (!wc || wc.isDestroyed() || wc.isLoading()) return;
@@ -2073,7 +2084,7 @@ function createViewForService(service) {
     rememberGoodUrl(service.id, url);
     // Zoho One Sales/Finance/HR are in-page space switches — CRM often blanks here.
     if (
-      isHeavyPortalApp(service) &&
+      shouldRunPortalBlankRecovery(service) &&
       service.id === activeServiceId &&
       !locked &&
       !overlayOpen
@@ -2103,7 +2114,7 @@ function createViewForService(service) {
             !isHeavyPortalApp(service) ||
             entry.activatedOnce === true,
         });
-        if (isHeavyPortalApp(service) && service.id === activeServiceId) {
+        if (shouldRunPortalBlankRecovery(service) && service.id === activeServiceId) {
           schedulePortalHealthChecks(service.id);
         }
       }
@@ -2449,7 +2460,7 @@ function activateService(id) {
   // Warm apps: never reload on activate — only blank health checks (delayed).
   const wasStale =
     !keepWarm &&
-    isHeavyPortalApp(service) &&
+    shouldRunPortalBlankRecovery(service) &&
     entry.lastPresenceAt &&
     Date.now() - entry.lastPresenceAt >= PORTAL_STALE_MS;
   entry.lastUsed = Date.now();
@@ -2475,7 +2486,7 @@ function activateService(id) {
     } catch {
       // ignore
     }
-  } else if (isHeavyPortalApp(service)) {
+  } else if (shouldRunPortalBlankRecovery(service)) {
     // Delayed blank checks only — do not reload a healthy warm tab.
     schedulePortalHealthChecks(id);
   }
