@@ -174,7 +174,7 @@ async function fetchManifest() {
 /**
  * @returns {Promise<{available:boolean, version?:string, notes?:string, mandatory?:boolean, error?:string}>}
  */
-export async function checkForUpdates({ silent = true } = {}) {
+export async function checkForUpdates({ silent = true, promptOnAvailable = false } = {}) {
   // An explicit "Check for updates" always runs, even with auto-update off.
   if (silent && settings().autoUpdateEnabled === false) {
     return { available: false, disabled: true };
@@ -296,6 +296,8 @@ export async function checkForUpdates({ silent = true } = {}) {
       } else {
         promptAvailable();
       }
+    } else if (promptOnAvailable) {
+      promptAvailable();
     } else if (settings().autoUpdateDownload !== false && file) {
       downloadUpdate().catch((err) => reportError('update-download', { message: String(err) }));
     }
@@ -915,7 +917,8 @@ export function startAutoUpdate() {
   stopAutoUpdate();
   if (settings().autoUpdateEnabled === false) return;
   // Kick off shortly after launch, then on an interval.
-  setTimeout(() => checkForUpdates({ silent: true }), 8000);
+  // On app open, prompt the user when an update is found.
+  setTimeout(() => checkForUpdates({ silent: true, promptOnAvailable: true }), 8000);
   const mins = Math.max(30, Number(settings().updateCheckMinutes) || CHECK_INTERVAL_MIN);
   checkTimer = setInterval(() => checkForUpdates({ silent: true }), mins * 60_000);
   if (typeof checkTimer.unref === 'function') checkTimer.unref();
