@@ -2283,8 +2283,8 @@ function isKeepWarmService(id) {
 }
 
 function warmSelectionLimit() {
-  // All warm slots are usable; active tab may also be warm.
-  return Math.max(1, maxWarm());
+  // Keep one slot for the active tab so "warm apps" means background warm apps.
+  return Math.max(1, maxWarm() - 1);
 }
 
 function selectedWarmIds() {

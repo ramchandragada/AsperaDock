@@ -131,7 +131,7 @@ export const DEFAULTS = {
   linkHandling: 'block', // block | external
   spellChecker: ['en-US'],
   /** Hibernate idle background apps (keepWarm apps like WhatsApp are skipped). */
-  hibernateMinutes: 30,
+  hibernateMinutes: 45,
   /**
    * How many apps stay fully loaded for instant switching (includes active).
    * Cap is 5 — usability first; non-warm apps load on click only.
@@ -372,6 +372,19 @@ function migrateWarmKeepAlive(settings) {
       5,
       Math.max(1, Number(next.maxWarmViews) || 5),
     );
+  }
+  // Performance-first rollout defaults:
+  // keep 4 background warm apps (+1 active), avoid low-memory compromises.
+  if (!next.performanceDefaultsV1) {
+    next = {
+      ...next,
+      performanceDefaultsV1: true,
+      lowMemoryMode: false,
+      hardwareAcceleration: true,
+      hibernateMinutes: Math.max(45, Number(next.hibernateMinutes) || 45),
+      maxWarmViews: 5,
+      maxResidentViews: 5,
+    };
   }
   // Keep legacy keys so older migrations stay idempotent.
   if (!next.residentCapV1) next = { ...next, residentCapV1: true };
