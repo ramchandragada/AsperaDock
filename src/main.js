@@ -1959,8 +1959,17 @@ function configureGuestWindowOpen(wc, service) {
         return { action: 'deny' };
       }
 
+      // Google OAuth / SSO popups must stay in-app for all services
+      // (ChatGPT, Claude, etc. use "Sign in with Google").
+      if (isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) {
+        return allowPopup();
+      }
+
       const internal = isInternalUrl(raw, service);
       if (!internal) {
+        // Never open broken Google consent/handoff URLs externally —
+        // they produce 400 error tabs in the default browser.
+        if (isGoogleOwnedUrl(raw)) return { action: 'deny' };
         openExternalSafe(raw);
         return { action: 'deny' };
       }
@@ -2008,7 +2017,15 @@ function attachGuestNavigationGate(webContents, service) {
       return;
     }
 
+    // Allow Google OAuth/SSO flows for any app (ChatGPT, Claude, etc.).
+    if (isAuthOrLoginUrl(url) && isGoogleOwnedUrl(url)) return;
+
     if (isInternalUrl(url, service)) return;
+    // Suppress broken Google consent URLs — they 400 in external browsers.
+    if (isGoogleOwnedUrl(url)) {
+      event.preventDefault();
+      return;
+    }
     event.preventDefault();
     openExternalSafe(url);
   };
