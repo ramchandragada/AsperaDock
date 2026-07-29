@@ -116,6 +116,10 @@ export function isAllowedGmailTabUrl(url) {
     if (host === 'accounts.youtube.com') return true;
     if (host === 'contacts.google.com') return true;
     if (host === 'ogs.google.com') return true;
+    // Attachment previews / downloads
+    if (host.endsWith('.googleusercontent.com') || host === 'googleusercontent.com') return true;
+    // Google Drive viewer (linked files in emails)
+    if (host === 'drive.google.com' || host === 'docs.google.com') return true;
     // Rare Gmail chrome frames
     if (host === 'workspace.google.com') return true;
     return false;
