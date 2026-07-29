@@ -245,6 +245,8 @@ let quitting = false;
 
 /** @type {Map<string, { view: WebContentsView, lastUsed: number }>} */
 const views = new Map();
+/** Child popup windows grouped by service id (OAuth/CRM popouts/etc). */
+const servicePopups = new Map();
 /** Last good in-app URL per service — used when recreating after hibernate/crash. */
 /** @type {Map<string, string>} */
 const lastGoodUrls = new Map();
@@ -267,6 +269,35 @@ let activeServiceId = null;
 let locked = false;
 let overlayOpen = false;
 let settings = loadSettings();
+
+function trackServicePopup(serviceId, popupWindow) {
+  if (!serviceId || !popupWindow) return;
+  let set = servicePopups.get(serviceId);
+  if (!set) {
+    set = new Set();
+    servicePopups.set(serviceId, set);
+  }
+  set.add(popupWindow);
+  popupWindow.once('closed', () => {
+    const current = servicePopups.get(serviceId);
+    if (!current) return;
+    current.delete(popupWindow);
+    if (!current.size) servicePopups.delete(serviceId);
+  });
+}
+
+function closeServicePopups(serviceId) {
+  const set = servicePopups.get(serviceId);
+  if (!set || !set.size) return;
+  for (const win of [...set]) {
+    try {
+      if (!win.isDestroyed()) win.close();
+    } catch {
+      // ignore
+    }
+  }
+  servicePopups.delete(serviceId);
+}
 
 /** High performance is the default — low memory is opt-in only. */
 function isLowMemoryMode() {
@@ -2143,6 +2174,7 @@ function createViewForService(service) {
   // rules too, and must never be trapped inside a broken denied handle.
   webContents.on('did-create-window', (childWindow) => {
     const childWc = childWindow.webContents;
+    trackServicePopup(service.id, childWindow);
     configureGuestWindowOpen(childWc, service);
     attachGuestContextMenu(childWc);
     attachGuestNavigationGate(childWc, service);
@@ -2361,6 +2393,9 @@ function hibernateService(id, { force = false } = {}) {
   const entry = views.get(id);
   if (!entry) return;
   if (!force && id === activeServiceId) return;
+  // Popouts are often the biggest hidden RAM users (Zoho CRM, OAuth windows).
+  // When an app is hibernated, close its popups too.
+  closeServicePopups(id);
   clearPortalTimer(entry, '__portalHealthTimer');
   clearPortalTimer(entry, '__portalHealthTimer2');
   const service = getService(id);
