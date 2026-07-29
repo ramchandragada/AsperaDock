@@ -131,14 +131,14 @@ export const DEFAULTS = {
   linkHandling: 'block', // block | external
   spellChecker: ['en-US'],
   /** Hibernate idle background apps (keepWarm apps like WhatsApp are skipped). */
-  hibernateMinutes: 45,
+  hibernateMinutes: 30,
   /**
    * How many apps stay fully loaded for instant switching (includes active).
-   * Cap is 5 — usability first; non-warm apps load on click only.
+   * Cap is 5; default 3 keeps RAM under ~4GB on 16GB machines.
    */
-  maxWarmViews: 5,
+  maxWarmViews: 3,
   /** Legacy field — no longer parks warm apps (usability over RAM). */
-  maxResidentViews: 5,
+  maxResidentViews: 3,
 
   /** Toggleable global shortcuts */
   shortcuts: {
@@ -374,16 +374,13 @@ function migrateWarmKeepAlive(settings) {
     );
   }
   // Performance-first rollout defaults:
-  // keep 4 background warm apps (+1 active), avoid low-memory compromises.
+  // keep 2 background warm apps (+1 active = 3 loaded), avoid low-memory compromises.
   if (!next.performanceDefaultsV1) {
     next = {
       ...next,
       performanceDefaultsV1: true,
       lowMemoryMode: false,
       hardwareAcceleration: true,
-      hibernateMinutes: Math.max(45, Number(next.hibernateMinutes) || 45),
-      maxWarmViews: 5,
-      maxResidentViews: 5,
       autoUpdateEnabled: true,
       autoUpdateDownload: true,
       autoUpdateInstall: true,
@@ -391,6 +388,16 @@ function migrateWarmKeepAlive(settings) {
         60,
         Math.max(30, Number(next.updateCheckMinutes) || 30),
       ),
+    };
+  }
+  // RAM-aware defaults: 3 loaded views fits 16GB machines (~4GB for Aspera Hub).
+  if (!next.warmDefaultsV2) {
+    next = {
+      ...next,
+      warmDefaultsV2: true,
+      maxWarmViews: 3,
+      maxResidentViews: 3,
+      hibernateMinutes: Math.min(30, Math.max(5, Number(next.hibernateMinutes) || 30)),
     };
   }
   // Keep legacy keys so older migrations stay idempotent.

@@ -9,8 +9,8 @@
 export const MAX_INSTANCES_PER_APP = 10;
 export const MAX_APPS_TOTAL = 10;
 export const MAX_APP_NAME_LENGTH = 10;
-/** Default: 5 apps stay loaded (active + up to 4 background warm). */
-export const MAX_WARM_VIEWS_DEFAULT = 5;
+/** Default: 3 apps stay loaded (active + up to 2 background warm). */
+export const MAX_WARM_VIEWS_DEFAULT = 3;
 /** Hard ceiling — settings UI and runtime both clamp to this. */
 export const MAX_WARM_VIEWS_CAP = 5;
 
