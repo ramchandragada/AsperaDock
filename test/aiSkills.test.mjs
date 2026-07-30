@@ -35,17 +35,29 @@ test('language instructions cover EN Hindi Marathi', () => {
   assert.match(languageInstruction('mr'), /Marathi/);
 });
 
-test('summarize prompt includes selection and language', () => {
+test('summarize prompt requests English Hindi and Marathi', () => {
   const prompt = buildSummarizePrompt({
     text: 'Please send the invoice tomorrow',
     appName: 'WhatsApp',
-    language: 'hi',
   });
   assert.match(prompt, /invoice tomorrow/);
-  assert.match(prompt, /Hindi/);
+  assert.match(prompt, /## English/);
+  assert.match(prompt, /## Hindi/);
+  assert.match(prompt, /## Marathi/);
   assert.match(prompt, /WhatsApp/);
 });
 
+test('suggest-reply prompt requests EN HI MR drafts', () => {
+  const prompt = buildSuggestReplyPrompt({
+    text: 'Can we meet at 3pm?',
+    appName: 'Arattai',
+  });
+  assert.match(prompt, /meet at 3pm/);
+  assert.match(prompt, /## English replies/);
+  assert.match(prompt, /## Hindi replies/);
+  assert.match(prompt, /## Marathi replies/);
+  assert.match(prompt, /Arattai/);
+});
 test('catch-up prompt lists notification items', () => {
   const prompt = buildCatchMeUpPrompt({
     language: 'mr',
