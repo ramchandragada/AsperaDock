@@ -270,8 +270,9 @@ let locked = false;
 let overlayOpen = false;
 /** @type {null | 'full' | 'drawer' | 'menu'} */
 let overlayMode = null;
-/** Extra right inset (px) so side drawers / chrome menus stay above HTML. */
+/** Extra insets (px) so side drawers / floating menus stay above HTML. */
 let overlayRightInset = 0;
+let overlayLeftInset = 0;
 let settings = loadSettings();
 
 function trackServicePopup(serviceId, popupWindow) {
@@ -1470,13 +1471,14 @@ function layoutActiveView() {
 
   const [width, height] = mainWindow.getContentSize();
   const m = effectiveMetrics();
+  const left = (m.left || 0) + (overlayLeftInset || 0);
   const right = (m.right || 0) + (overlayRightInset || 0);
   // Always keep a floor under the measured bar so the guest never covers chrome.
   const top = Math.max(64, m.top || 0);
   const next = {
-    x: Math.max(0, m.left || 0),
+    x: Math.max(0, left),
     y: top,
-    width: Math.max(1, width - (m.left || 0) - right),
+    width: Math.max(1, width - left - right),
     height: Math.max(1, height - top),
   };
   // Skip identical layouts — repeated setBounds on Linux can flicker the guest.
@@ -1513,7 +1515,7 @@ function detachAllViews() {
  * Guest views paint above dock HTML.
  * - full: hide guest (lock / centered dialogs)
  * - drawer: keep guest visible, shrink from the right (Settings / Edit / Profiles)
- * - menu: keep guest visible, optional right inset for chrome dropdowns
+ * - menu: keep guest visible, optional left/right inset for floating menus
  */
 function setOverlayOpen(open, options = {}) {
   const next = !!open;
@@ -1526,11 +1528,16 @@ function setOverlayOpen(open, options = {}) {
     next && (mode === 'drawer' || mode === 'menu')
       ? Math.max(0, Number(options.rightInset) || (mode === 'drawer' ? 440 : 0))
       : 0;
+  const leftInset =
+    next && (mode === 'drawer' || mode === 'menu')
+      ? Math.max(0, Number(options.leftInset) || 0)
+      : 0;
 
   if (
     next === overlayOpen &&
     mode === overlayMode &&
-    rightInset === overlayRightInset
+    rightInset === overlayRightInset &&
+    leftInset === overlayLeftInset
   ) {
     return;
   }
@@ -1538,6 +1545,7 @@ function setOverlayOpen(open, options = {}) {
   overlayOpen = next;
   overlayMode = mode;
   overlayRightInset = rightInset;
+  overlayLeftInset = leftInset;
   if (!mainWindow) return;
 
   if (overlayOpen && overlayMode === 'full') {

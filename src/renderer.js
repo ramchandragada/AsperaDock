@@ -763,6 +763,30 @@ function anyOverlayOpen() {
   );
 }
 
+/** Keep a left/right strip clear so the HTML app menu sits above the guest. */
+function overlayForAppMenu() {
+  const rect = els.appMenu.getBoundingClientRect();
+  const pad = 10;
+  const winW = window.innerWidth || 1200;
+  const menuRight = Math.ceil(rect.right + pad);
+  const menuLeft = Math.floor(Math.max(0, rect.left - pad));
+  // Prefer the side that leaves the most guest space visible.
+  if (menuRight <= winW * 0.55) {
+    return {
+      open: true,
+      mode: 'menu',
+      leftInset: Math.min(menuRight, Math.round(winW * 0.45)),
+      rightInset: 0,
+    };
+  }
+  return {
+    open: true,
+    mode: 'menu',
+    leftInset: 0,
+    rightInset: Math.min(winW - menuLeft, Math.round(winW * 0.45)),
+  };
+}
+
 /** Rambox-style overlays: keep guest app visible whenever possible. */
 function syncOverlayFromModals() {
   const lockedOpen = !!state.locked;
@@ -780,7 +804,7 @@ function syncOverlayFromModals() {
   const chromeOpen = !els.chromeMenu.classList.contains('hidden');
   const appMenuOpen = !els.appMenu.classList.contains('hidden');
 
-  if (fullOpen || appMenuOpen) {
+  if (fullOpen) {
     window.asperadock.setOverlay({ open: true, mode: 'full' });
     return;
   }
@@ -790,6 +814,10 @@ function syncOverlayFromModals() {
       mode: 'drawer',
       rightInset: Math.min(440, Math.round(window.innerWidth * 0.94)),
     });
+    return;
+  }
+  if (appMenuOpen) {
+    window.asperadock.setOverlay(overlayForAppMenu());
     return;
   }
   if (notifOpen || chromeOpen) {
@@ -824,8 +852,8 @@ function openAppMenu(service, x, y) {
   els.appMenu.classList.remove('hidden');
   els.appMenu.style.left = '0px';
   els.appMenu.style.top = '0px';
-  // HTML menu must sit above the guest — full overlay for this menu only.
-  window.asperadock.setOverlay({ open: true, mode: 'full' });
+  // Keep the guest visible — only clear a strip so this HTML menu can paint above it.
+  window.asperadock.setOverlay({ open: true, mode: 'menu', leftInset: 236, rightInset: 0 });
 
   requestAnimationFrame(() => {
     const pad = 8;
@@ -840,6 +868,7 @@ function openAppMenu(service, x, y) {
     }
     els.appMenu.style.left = `${Math.max(pad, left)}px`;
     els.appMenu.style.top = `${Math.max(pad, top)}px`;
+    window.asperadock.setOverlay(overlayForAppMenu());
   });
 }
 
