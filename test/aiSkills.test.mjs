@@ -59,3 +59,10 @@ test('catch-up prompt lists notification items', () => {
   assert.match(prompt, /Gmail/);
   assert.match(prompt, /Invoice/);
 });
+
+test('OpenRouter default is not a dead gemini-2.0-flash-001 slug', () => {
+  const openrouter = getAiProvider('openrouter');
+  assert.equal(openrouter.id, 'openrouter');
+  assert.notEqual(openrouter.defaultModel, 'google/gemini-2.0-flash-001');
+  assert.ok(openrouter.defaultModel);
+});

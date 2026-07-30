@@ -1399,9 +1399,17 @@ window.asperadock.onOpenEditApp?.((id) => {
 window.asperadock.onChromeAction?.(handleChromeAction);
 window.asperadock.onOpenAiSettings?.(openAiSettings);
 
-document.getElementById('set-ai-provider')?.addEventListener('change', () => {
+document.getElementById('set-ai-provider')?.addEventListener('change', async () => {
+  const providerId = document.getElementById('set-ai-provider')?.value || 'gemini';
   const keyInput = document.getElementById('set-ai-key');
   if (keyInput) keyInput.value = '';
+  await window.asperadock.aiSetProvider?.(providerId);
+  state = (await window.asperadock.getState?.()) || state;
+  // Keep model field in sync if we cleared a dead OpenRouter override.
+  const modelInput = document.getElementById('set-ai-model');
+  if (modelInput && state.settings) {
+    modelInput.value = state.settings.aiModel || '';
+  }
   refreshAiKeyStatus();
 });
 
@@ -1412,6 +1420,8 @@ document.getElementById('ai-save-key')?.addEventListener('click', async () => {
     alert('Paste an API key first.');
     return;
   }
+  // Persist provider selection together with the key (do not wait for Settings → Save).
+  await window.asperadock.aiSetProvider?.(providerId);
   const result = await window.asperadock.aiSetKey?.(providerId, apiKey);
   if (!result?.ok) {
     alert(result?.error || 'Could not save API key');
@@ -1419,7 +1429,6 @@ document.getElementById('ai-save-key')?.addEventListener('click', async () => {
   }
   const keyInput = document.getElementById('set-ai-key');
   if (keyInput) keyInput.value = '';
-  // Refresh state so configured flags update.
   state = (await window.asperadock.getState?.()) || state;
   refreshAiKeyStatus();
 });

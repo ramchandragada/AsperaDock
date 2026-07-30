@@ -2036,8 +2036,19 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
 }
 
 function aiSettingsSnapshot() {
-  const provider = getAiProvider(settings.aiProvider);
-  const model = String(settings.aiModel || '').trim() || provider.defaultModel;
+  const rawId = String(settings.aiProvider || '').trim();
+  const provider = getAiProvider(rawId || 'gemini');
+  // If settings still point at a removed/unknown id, getAiProvider falls back —
+  // keep the resolved provider.id as source of truth for the API call.
+  let model = String(settings.aiModel || '').trim();
+  // Migrate dead OpenRouter default that looked like a direct Gemini call.
+  if (
+    provider.id === 'openrouter' &&
+    (!model || model === 'google/gemini-2.0-flash-001')
+  ) {
+    model = provider.defaultModel;
+  }
+  if (!model) model = provider.defaultModel;
   const language = ['en', 'hi', 'mr'].includes(settings.aiLanguage)
     ? settings.aiLanguage
     : 'en';
@@ -2166,7 +2177,7 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
       text,
       loading: false,
     });
-    return { ok: true, text };
+    return { ok: true, text, provider: provider.id, model };
   } catch (error) {
     const message = String(error?.message || error);
     pushAiResult({
@@ -4668,7 +4679,12 @@ dockHandle('dock:ai-status', () => ({
   providers: listConfiguredAiProviders(),
 }));
 dockHandle('dock:ai-set-key', (_e, providerId, apiKey) => {
-  const result = setAiProviderKey(providerId, apiKey);
+  const id = String(providerId || '').trim();
+  const result = setAiProviderKey(id, apiKey);
+  if (result.ok && id) {
+    // Selecting a provider + saving its key must also switch the active provider.
+    settings = saveSettings({ aiProvider: id });
+  }
   broadcastState();
   return result;
 });
@@ -4676,6 +4692,24 @@ dockHandle('dock:ai-clear-key', (_e, providerId) => {
   const result = clearAiProviderKey(providerId);
   broadcastState();
   return result;
+});
+dockHandle('dock:ai-set-provider', (_e, providerId) => {
+  const id = String(providerId || '').trim();
+  const provider = getAiProvider(id);
+  if (!id || provider.id !== id) {
+    return { ok: false, error: 'Unknown AI provider' };
+  }
+  const patch = { aiProvider: id };
+  // Clear obsolete OpenRouter model override so the new default is used.
+  if (
+    id === 'openrouter' &&
+    String(settings.aiModel || '').trim() === 'google/gemini-2.0-flash-001'
+  ) {
+    patch.aiModel = '';
+  }
+  settings = saveSettings(patch);
+  broadcastState();
+  return { ok: true, provider: id };
 });
 dockHandle('dock:ai-catch-up', (_e, opts) =>
   runAsperaAiSkill('catch-up', opts || {}),

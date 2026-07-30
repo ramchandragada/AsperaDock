@@ -29,13 +29,16 @@ export const AI_PROVIDERS = Object.freeze([
     id: 'openrouter',
     name: 'OpenRouter',
     freeTierFriendly: true,
-    defaultModel: 'google/gemini-2.0-flash-001',
+    // OpenRouter model IDs look like "google/…" but traffic still goes to openrouter.ai
+    defaultModel: 'openrouter/free',
     models: [
-      'google/gemini-2.0-flash-001',
+      'openrouter/free',
+      'google/gemini-flash-latest',
+      'google/gemma-4-26b-a4b-it:free',
       'openai/gpt-4o-mini',
       'meta-llama/llama-3.3-70b-instruct',
     ],
-    keyHint: 'openrouter.ai keys (many free models)',
+    keyHint: 'openrouter.ai keys — model IDs may say google/… but still use OpenRouter',
   },
   {
     id: 'grok',
