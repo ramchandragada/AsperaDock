@@ -1999,12 +1999,17 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
   closeNotifCenterWindow();
   closeAiResultWindow();
 
-  const menuW = 456;
-  const menuH = 660;
   const content = mainWindow.getContentBounds();
+  const margin = 10;
+  // Use nearly the full guest/workspace height so long EN/HI/MR text is readable.
+  const menuW = Math.min(
+    580,
+    Math.max(440, Math.floor(content.width * 0.45)),
+  );
+  const menuH = Math.max(360, content.height - margin * 2);
   const pos = clampFloatPosition(
-    content.x + content.width - menuW - 16,
-    content.y + Math.max(48, content.height * 0.08),
+    content.x + content.width - menuW - margin,
+    content.y + margin,
     menuW,
     menuH,
   );

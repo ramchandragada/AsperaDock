@@ -15,47 +15,48 @@ export function buildAiResultHtml(dark = false) {
   html, body {
     margin:0; padding:0; width:100%; height:100%;
     background:transparent; overflow:hidden;
-    font:500 13px/1.45 "Segoe UI","Ubuntu","Cantarell",sans-serif;
+    font:500 16px/1.55 "Segoe UI","Ubuntu","Cantarell",sans-serif;
     color:${text}; user-select:text;
   }
   .card {
     margin:4px; width:calc(100% - 8px); height:calc(100% - 8px); box-sizing:border-box;
     background:${bg}; border:1px solid ${border}; border-radius:14px;
-    box-shadow:0 12px 40px rgba(15,23,42,0.22); padding:12px;
-    display:flex; flex-direction:column; gap:10px; min-height:0;
+    box-shadow:0 12px 40px rgba(15,23,42,0.22); padding:14px 16px;
+    display:flex; flex-direction:column; gap:12px; min-height:0;
   }
-  .head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; flex:0 0 auto; }
-  .head strong { font-size:14px; }
-  .meta { color:${muted}; font-size:11px; font-weight:600; margin-top:2px; }
-  .actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex:0 0 auto; }
+  .head strong { font-size:17px; font-weight:700; }
+  .meta { color:${muted}; font-size:12px; font-weight:600; margin-top:3px; line-height:1.4; }
+  .actions { display:flex; gap:8px; flex-wrap:wrap; }
   .btn {
-    border:0; border-radius:8px; padding:7px 10px; font:inherit; font-size:12px; font-weight:700;
+    border:0; border-radius:9px; padding:9px 12px; font:inherit; font-size:13px; font-weight:700;
     cursor:pointer; background:${card}; color:inherit;
   }
   .btn.primary { background:#2563eb; color:#fff; }
   .btn:disabled { opacity:0.55; cursor:default; }
   .toolbar {
-    flex:0 0 auto; display:none; gap:8px; flex-wrap:wrap; align-items:center;
-    padding:8px 10px; border-radius:10px; background:${card};
+    flex:0 0 auto; display:none; gap:10px; flex-wrap:wrap; align-items:center;
+    padding:10px 12px; border-radius:10px; background:${card};
   }
   .toolbar.show { display:flex; }
-  .toolbar .hint { color:${muted}; font-size:11px; font-weight:600; }
+  .toolbar .hint { color:${muted}; font-size:12px; font-weight:600; line-height:1.4; }
   .scroll {
-    flex:1 1 auto; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:10px;
-    padding-right:2px;
+    flex:1 1 auto; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:12px;
+    padding-right:4px;
   }
   .body {
     flex:0 0 auto;
-    background:${card}; border-radius:10px; padding:10px 12px; min-height:80px;
+    background:${card}; border-radius:12px; padding:14px 16px; min-height:120px;
     white-space:pre-wrap; word-break:break-word; font-weight:500;
+    font-size:16px; line-height:1.6;
   }
   .body.error { color:#b91c1c; }
   .body.loading { color:${muted}; }
   .section-label {
     flex:0 0 auto;
-    font-size:11px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:${muted};
+    font-size:12px; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; color:${muted};
   }
-  .replies-block { display:none; flex-direction:column; gap:8px; flex:0 0 auto; }
+  .replies-block { display:none; flex-direction:column; gap:10px; flex:0 0 auto; }
   .replies-block.show { display:flex; }
 </style>
 </head>
