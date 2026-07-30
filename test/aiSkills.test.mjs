@@ -87,27 +87,38 @@ test('Anthropic normalizes retired haiku model ids', () => {
   );
 });
 
-test('AI provider auto-route puts free first and Anthropic last', () => {
-  const order = aiProviderRouteOrder().map((p) => p.id);
-  assert.equal(order[order.length - 1], 'anthropic');
-  assert.ok(order.indexOf('gemini') < order.indexOf('anthropic'));
-  assert.ok(order.indexOf('openrouter') < order.indexOf('anthropic'));
+test('AI provider try order is Gemini → Grok → SambaNova → OpenRouter → Anthropic', () => {
+  assert.deepEqual(aiProviderRouteOrder().map((p) => p.id), [
+    'gemini',
+    'grok',
+    'sambanova',
+    'openrouter',
+    'anthropic',
+  ]);
   assert.deepEqual(
-    configuredProvidersInRouteOrder(['anthropic', 'gemini', 'openrouter']).map(
-      (p) => p.id,
-    ),
-    ['gemini', 'openrouter', 'anthropic'],
+    configuredProvidersInRouteOrder([
+      'anthropic',
+      'openrouter',
+      'gemini',
+      'grok',
+    ]).map((p) => p.id),
+    ['gemini', 'grok', 'openrouter', 'anthropic'],
+  );
+  assert.deepEqual(
+    configuredProvidersInRouteOrder(['openrouter', 'anthropic']).map((p) => p.id),
+    ['openrouter', 'anthropic'],
   );
   assert.deepEqual(
     configuredProvidersInRouteOrder(['anthropic']).map((p) => p.id),
     ['anthropic'],
   );
+  // Preferred-id arg must not reorder (speed: always Gemini first when keyed).
   assert.deepEqual(
     configuredProvidersInRouteOrder(
       ['anthropic', 'gemini', 'openrouter'],
       'openrouter',
     ).map((p) => p.id),
-    ['openrouter', 'gemini', 'anthropic'],
+    ['gemini', 'openrouter', 'anthropic'],
   );
   assert.equal(getAiProvider('openrouter').defaultModel, 'google/gemini-2.0-flash-001');
 });

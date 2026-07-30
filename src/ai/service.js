@@ -155,18 +155,18 @@ export async function runAiCompletion({
 }
 
 /**
- * Try configured providers automatically.
- * Preferred provider (if keyed) is tried first for speed; otherwise free-tier first,
- * Anthropic last. Uses each provider's default model.
+ * Try configured providers in fixed order:
+ * Gemini → Grok → SambaNova → OpenRouter → Anthropic.
+ * Stops at the first success (no needless provider switching).
  */
-export async function runAiCompletionWithFailover(prompt, { preferredProviderId } = {}) {
+export async function runAiCompletionWithFailover(prompt) {
   const configured = listConfiguredAiProviders()
     .filter((p) => p.configured)
     .map((p) => p.id);
-  const order = configuredProvidersInRouteOrder(configured, preferredProviderId);
+  const order = configuredProvidersInRouteOrder(configured);
   if (!order.length) {
     throw new Error(
-      'Add at least one AI API key in Settings → Aspera AI (Gemini or OpenRouter recommended).',
+      'Add at least one AI API key in Settings → Aspera AI (Gemini recommended for speed).',
     );
   }
 

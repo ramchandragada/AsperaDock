@@ -592,43 +592,14 @@ function renderInstances() {
   }
 }
 
-function refreshAiPreferredProviderSelect() {
-  const select = document.getElementById('set-ai-provider');
-  if (!select) return;
-  const providers = state.ai?.providers || [];
-  const configured = providers.filter((p) => p.configured);
-  const current =
-    state.settings?.aiProvider || state.ai?.provider || configured[0]?.id || 'gemini';
-  select.replaceChildren();
-  if (!configured.length) {
-    const opt = document.createElement('option');
-    opt.value = '';
-    opt.textContent = 'Save an API key first';
-    select.appendChild(opt);
-    select.disabled = true;
-    return;
-  }
-  select.disabled = false;
-  for (const p of configured) {
-    const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.freeTierFriendly
-      ? `${p.name} (free-tier)`
-      : `${p.name} (paid)`;
-    select.appendChild(opt);
-  }
-  select.value = configured.some((p) => p.id === current)
-    ? current
-    : configured[0].id;
-}
-
 function refreshAiRouteHint() {
   const el = document.getElementById('ai-route-hint');
   if (!el) return;
   const order = state.ai?.routeOrder || [];
   const providers = state.ai?.providers || [];
   if (!order.length) {
-    el.textContent = 'No API keys saved yet — add at least one provider below.';
+    el.textContent =
+      'No API keys saved yet — add Gemini first for the fastest summarize.';
     return;
   }
   const names = order.map((id) => {
@@ -638,7 +609,7 @@ function refreshAiRouteHint() {
   el.textContent =
     names.length === 1
       ? `Will use: ${names[0]}.`
-      : `Try order (preferred first): ${names.join(' → ')}.`;
+      : `Try order (stop at first success): ${names.join(' → ')}.`;
 }
 
 /** Providers currently showing the key input (new key or edit). */
@@ -662,11 +633,16 @@ function renderAiProviderKeys() {
     title.textContent = provider.name;
     const badge = document.createElement('div');
     badge.className = 'ai-provider-key-badge';
-    badge.textContent = provider.freeTierFriendly
-      ? 'Free-tier friendly'
-      : provider.id === 'anthropic'
-        ? 'Paid · tried last'
-        : 'Paid';
+    badge.textContent =
+      provider.id === 'gemini'
+        ? 'Tried 1st · fastest'
+        : provider.id === 'grok'
+          ? 'Tried 2nd'
+          : provider.id === 'sambanova'
+            ? 'Tried 3rd'
+            : provider.id === 'openrouter'
+              ? 'Tried 4th'
+              : 'Tried last · paid';
     head.append(title, badge);
 
     const status = document.createElement('p');
@@ -707,7 +683,6 @@ function renderAiProviderKeys() {
         aiKeyEditMode.delete(provider.id);
         state = (await window.asperadock.getState?.()) || state;
         renderAiProviderKeys();
-        refreshAiPreferredProviderSelect();
         refreshAiRouteHint();
       });
       actions.append(editBtn, deleteBtn);
@@ -739,7 +714,6 @@ function renderAiProviderKeys() {
         input.value = '';
         state = (await window.asperadock.getState?.()) || state;
         renderAiProviderKeys();
-        refreshAiPreferredProviderSelect();
         refreshAiRouteHint();
       });
 
@@ -762,7 +736,6 @@ function renderAiProviderKeys() {
     root.appendChild(row);
   }
 
-  refreshAiPreferredProviderSelect();
   refreshAiRouteHint();
 }
 
@@ -811,7 +784,6 @@ function fillSettingsForm() {
   set('set-ai-language', s.aiLanguage || 'en');
   aiKeyEditMode.clear();
   renderAiProviderKeys();
-  refreshAiPreferredProviderSelect();
   set('set-proxy-mode', s.proxyMode || 'none');
   set('set-proxy-rules', s.proxyRules || '');
   set('set-proxy-bypass', s.proxyBypass ?? '<local>');
@@ -870,7 +842,6 @@ function readSettingsForm() {
     lockEnabled: val('set-lock-enabled') === 'true',
     lockOnSystemIdle: checked('set-lock-idle'),
     aiEnabled: checked('set-ai-enabled'),
-    aiProvider: val('set-ai-provider') || state.settings?.aiProvider || 'gemini',
     aiLanguage: val('set-ai-language'),
     proxyMode: val('set-proxy-mode'),
     proxyRules: val('set-proxy-rules').trim(),
@@ -1555,15 +1526,6 @@ window.asperadock.onOpenEditApp?.((id) => {
 });
 window.asperadock.onChromeAction?.(handleChromeAction);
 window.asperadock.onOpenAiSettings?.(openAiSettings);
-
-document.getElementById('set-ai-provider')?.addEventListener('change', async () => {
-  const providerId = document.getElementById('set-ai-provider')?.value || '';
-  if (!providerId) return;
-  await window.asperadock.aiSetProvider?.(providerId);
-  state = (await window.asperadock.getState?.()) || state;
-  refreshAiPreferredProviderSelect();
-  refreshAiRouteHint();
-});
 
 document.getElementById('ai-catch-up-btn')?.addEventListener('click', () => {
   window.asperadock.aiCatchUp?.({

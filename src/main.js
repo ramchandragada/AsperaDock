@@ -2095,9 +2095,8 @@ function aiSettingsSnapshot() {
   const configured = listConfiguredAiProviders()
     .filter((p) => p.configured)
     .map((p) => p.id);
-  const preferredId = String(settings.aiProvider || '').trim();
-  const order = configuredProvidersInRouteOrder(configured, preferredId);
-  const provider = order[0] || getAiProvider(preferredId || 'gemini');
+  const order = configuredProvidersInRouteOrder(configured);
+  const provider = order[0] || getAiProvider(settings.aiProvider || 'gemini');
   let model = String(settings.aiModel || '').trim();
   if (provider.id === 'openrouter' && (!model || model === 'openrouter/free')) {
     model = provider.defaultModel;
@@ -2106,21 +2105,19 @@ function aiSettingsSnapshot() {
     model = normalizeAnthropicModel(model || provider.defaultModel);
   }
   if (!model) model = provider.defaultModel;
-  return { provider, model, language, routeOrder: order, preferredId };
+  return { provider, model, language, routeOrder: order };
 }
 
 /**
- * Keep settings.aiProvider pointing at a configured provider.
- * Do not force-overwrite a user preference that still has a key.
+ * Keep settings.aiProvider pointing at the first configured provider in the
+ * fixed try order (Gemini → … → Anthropic).
  */
 function syncPreferredAiProvider() {
   const configured = listConfiguredAiProviders()
     .filter((p) => p.configured)
     .map((p) => p.id);
-  const current = String(settings.aiProvider || '').trim();
-  if (current && configured.includes(current)) return current;
   const order = configuredProvidersInRouteOrder(configured);
-  const nextId = order[0]?.id || current || 'gemini';
+  const nextId = order[0]?.id || 'gemini';
   if (nextId !== settings.aiProvider) {
     settings = saveSettings({ aiProvider: nextId });
   }
@@ -2193,13 +2190,13 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
     return { ok: false, error: 'Aspera AI is turned off in Settings.' };
   }
 
-  const { language, routeOrder, preferredId } = aiSettingsSnapshot();
+  const { language, routeOrder } = aiSettingsSnapshot();
   if (!routeOrder.length) {
     mainWindow?.webContents.send('dock:chrome-action', 'settings');
     return {
       ok: false,
       error:
-        'Add at least one AI API key in Settings → Aspera AI (Gemini or OpenRouter recommended).',
+        'Add at least one AI API key in Settings → Aspera AI (Gemini recommended for speed).',
     };
   }
 
@@ -2244,13 +2241,8 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
       throw new Error('Unknown skill');
     }
 
-    const result = await runAiCompletionWithFailover(prompt, {
-      preferredProviderId: preferredId,
-    });
-    // Stick to the provider that answered quickly for the next run.
-    if (result.providerId && result.providerId !== settings.aiProvider) {
-      settings = saveSettings({ aiProvider: result.providerId });
-    }
+    const result = await runAiCompletionWithFailover(prompt);
+    syncPreferredAiProvider();
     if (skill === 'summarize') {
       aiResultContext = {
         skill: 'summarize',
@@ -2303,7 +2295,7 @@ async function runSuggestRepliesFromAiResult() {
   if (!ctx?.selectionText) {
     return { ok: false, error: 'No message context for reply suggestions.' };
   }
-  const { routeOrder, preferredId } = aiSettingsSnapshot();
+  const { routeOrder } = aiSettingsSnapshot();
   if (!routeOrder.length) {
     return {
       ok: false,
@@ -2327,12 +2319,8 @@ async function runSuggestRepliesFromAiResult() {
       text: ctx.selectionText,
       appName: ctx.appName,
     });
-    const result = await runAiCompletionWithFailover(prompt, {
-      preferredProviderId: preferredId,
-    });
-    if (result.providerId && result.providerId !== settings.aiProvider) {
-      settings = saveSettings({ aiProvider: result.providerId });
-    }
+    const result = await runAiCompletionWithFailover(prompt);
+    syncPreferredAiProvider();
     aiResultContext = {
       ...ctx,
       repliesText: result.text,
@@ -3863,7 +3851,6 @@ function currentState() {
         listConfiguredAiProviders()
           .filter((p) => p.configured)
           .map((p) => p.id),
-        settings.aiProvider,
       ).map((p) => p.id),
     },
     settings: {
@@ -4863,7 +4850,6 @@ dockHandle('dock:ai-status', () => ({
     listConfiguredAiProviders()
       .filter((p) => p.configured)
       .map((p) => p.id),
-    settings.aiProvider,
   ).map((p) => p.id),
 }));
 dockHandle('dock:ai-set-key', (_e, providerId, apiKey) => {

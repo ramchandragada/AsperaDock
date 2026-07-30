@@ -13,6 +13,19 @@ export const AI_LANGUAGES = Object.freeze([
 ]);
 
 /**
+ * Fixed try order for speed (also UI order):
+ * Gemini → Grok → SambaNova → OpenRouter → Anthropic.
+ * Only providers with a saved key are tried; stop at the first success.
+ */
+export const AI_PROVIDER_TRY_ORDER = Object.freeze([
+  'gemini',
+  'grok',
+  'sambanova',
+  'openrouter',
+  'anthropic',
+]);
+
+/**
  * BYOK providers for employees.
  * Anthropic is supported but not free-tier friendly — keep as optional paid key.
  */
@@ -24,22 +37,6 @@ export const AI_PROVIDERS = Object.freeze([
     defaultModel: 'gemini-2.0-flash',
     models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'],
     keyHint: 'AI Studio API key (aistudio.google.com)',
-  },
-  {
-    id: 'openrouter',
-    name: 'OpenRouter',
-    freeTierFriendly: true,
-    // Prefer a fast Flash model — openrouter/free often queues and feels very slow.
-    defaultModel: 'google/gemini-2.0-flash-001',
-    models: [
-      'google/gemini-2.0-flash-001',
-      'google/gemini-flash-latest',
-      'google/gemma-4-26b-a4b-it:free',
-      'openrouter/free',
-      'openai/gpt-4o-mini',
-      'meta-llama/llama-3.3-70b-instruct',
-    ],
-    keyHint: 'openrouter.ai keys — model IDs may say google/… but still use OpenRouter',
   },
   {
     id: 'grok',
@@ -56,6 +53,22 @@ export const AI_PROVIDERS = Object.freeze([
     defaultModel: 'Meta-Llama-3.3-70B-Instruct',
     models: ['Meta-Llama-3.3-70B-Instruct', 'Meta-Llama-3.1-8B-Instruct'],
     keyHint: 'cloud.sambanova.ai API key',
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    freeTierFriendly: true,
+    // Prefer a fast Flash model — openrouter/free often queues and feels very slow.
+    defaultModel: 'google/gemini-2.0-flash-001',
+    models: [
+      'google/gemini-2.0-flash-001',
+      'google/gemini-flash-latest',
+      'google/gemma-4-26b-a4b-it:free',
+      'openrouter/free',
+      'openai/gpt-4o-mini',
+      'meta-llama/llama-3.3-70b-instruct',
+    ],
+    keyHint: 'openrouter.ai keys — model IDs may say google/… but still use OpenRouter',
   },
   {
     id: 'anthropic',
@@ -88,37 +101,23 @@ export function normalizeAnthropicModel(model) {
   return map[raw] || raw || 'claude-haiku-4-5';
 }
 
-/**
- * Auto-routing order: free-tier friendly providers first (catalog order),
- * then other paid providers, Anthropic always last.
- * Optional preferredId is tried first when it has a key (faster for power users).
- */
+/** Providers in fixed try order (Gemini first … Anthropic last). */
 export function aiProviderRouteOrder() {
-  const free = [];
-  const paid = [];
-  let anthropic = null;
-  for (const p of AI_PROVIDERS) {
-    if (p.id === 'anthropic') {
-      anthropic = p;
-      continue;
-    }
-    if (p.freeTierFriendly) free.push(p);
-    else paid.push(p);
-  }
-  return anthropic ? [...free, ...paid, anthropic] : [...free, ...paid];
+  return AI_PROVIDER_TRY_ORDER.map((id) =>
+    AI_PROVIDERS.find((p) => p.id === id),
+  ).filter(Boolean);
 }
 
-/** Filter route order to providers that have a saved key (`configuredIds`). */
-export function configuredProvidersInRouteOrder(configuredIds, preferredId) {
+/**
+ * Filter route order to providers that have a saved key.
+ * Always Gemini → Grok → SambaNova → OpenRouter → Anthropic among configured keys.
+ * Does not reorder for a “preferred” provider (that was making OpenRouter sticky/slow).
+ */
+export function configuredProvidersInRouteOrder(configuredIds) {
   const have = new Set(
     (configuredIds || []).map((id) => String(id || '').trim()).filter(Boolean),
   );
-  const base = aiProviderRouteOrder().filter((p) => have.has(p.id));
-  const prefer = String(preferredId || '').trim();
-  if (!prefer || !have.has(prefer)) return base;
-  const preferred = base.find((p) => p.id === prefer);
-  if (!preferred) return base;
-  return [preferred, ...base.filter((p) => p.id !== prefer)];
+  return aiProviderRouteOrder().filter((p) => have.has(p.id));
 }
 
 export function getAiProvider(id) {

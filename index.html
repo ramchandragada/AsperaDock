@@ -247,20 +247,15 @@
           <div class="section-rule" id="ai-settings-section"><span>Aspera AI</span></div>
           <p class="hint-text">
             Employee skills for <strong>WhatsApp, Arattai, Gmail, Zoho Mail</strong> only.
-            Save an API key for each provider you use. Skills try your
-            <strong>preferred provider first</strong> (for speed), then other free-tier keys,
-            with <strong>Anthropic last</strong>. Avoid OpenRouter’s slow <code>openrouter/free</code>
-            router when possible — Gemini Flash is preferred.
+            Save an API key for each provider you use. Skills try keys in this fixed order
+            and stop at the first success:
+            <strong>Gemini → Grok → SambaNova → OpenRouter → Anthropic</strong>.
+            Save a <strong>Gemini</strong> key for the fastest summarize.
             <strong>Summarize</strong> returns English + Hindi + Marathi, with optional reply drafts.
           </p>
           <label class="switch-row">
             <input id="set-ai-enabled" type="checkbox" />
             <span>Enable Aspera AI</span>
-          </label>
-          <label class="field">
-            <span>Preferred provider (tried first)</span>
-            <select id="set-ai-provider"></select>
-            <p class="hint-text">Pick the fastest key you have. Others are still used as backup.</p>
           </label>
           <label class="field">
             <span>Catch me up language</span>
