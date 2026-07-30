@@ -185,17 +185,68 @@ function broadcast(event, payload = {}) {
   }
 }
 
-async function fetchManifest() {
-  const url = feedUrl();
+async function fetchJson(url) {
   const res = await fetch(url, {
     headers: {
+      Accept: 'application/json',
       'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
       'X-AsperaDock-Version': currentVersion(),
     },
+    cache: 'no-store',
   });
   if (!res.ok) throw new Error(`Feed responded ${res.status}`);
-  const manifest = await res.json();
+  return res.json();
+}
+
+/** GitHub CDN can lag on /releases/latest/download — API is fresher. */
+async function fetchLatestTagFromGithubApi() {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${GITHUB_SLUG}/releases/latest`, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'AsperaHub-Updater',
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+      },
+      cache: 'no-store',
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const tag = String(data?.tag_name || '').replace(/^v/, '').trim();
+    return tag || null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchManifest() {
+  const bust = `t=${Date.now()}&cv=${encodeURIComponent(currentVersion())}`;
+  const base = feedUrl();
+  const primaryUrl = `${base}${base.includes('?') ? '&' : '?'}${bust}`;
+  let manifest = await fetchJson(primaryUrl);
   if (!manifest || !manifest.version) throw new Error('Manifest missing version');
+
+  // Default GitHub feed only — verify against Releases API when CDN is stale.
+  const usingDefaultGithub =
+    !String(settings().updateFeedUrl || '').trim() &&
+    String(settings().updateChannel || 'stable') === 'stable';
+  if (usingDefaultGithub) {
+    const apiVer = await fetchLatestTagFromGithubApi();
+    if (apiVer && compareVersions(apiVer, manifest.version) > 0) {
+      const tagUrl = `https://github.com/${GITHUB_SLUG}/releases/download/v${apiVer}/latest.json?${bust}`;
+      try {
+        const fresh = await fetchJson(tagUrl);
+        if (fresh?.version && compareVersions(fresh.version, manifest.version) > 0) {
+          manifest = fresh;
+        }
+      } catch {
+        // Keep CDN manifest if tag asset fetch fails.
+      }
+    }
+  }
+
+  if (!manifest?.version) throw new Error('Manifest missing version');
   return manifest;
 }
 
@@ -255,7 +306,10 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
           type: 'info',
           title: 'Aspera Hub',
           message: 'You are up to date.',
-          detail: `Installed package and running app are both v${currentVersion()} (latest).`,
+          detail:
+            `Running v${currentVersion()}` +
+            (debVer && debVer !== currentVersion() ? ` · package v${debVer}` : '') +
+            `\nLatest feed: v${manifest.version}`,
           buttons: ['OK'],
         });
       }
@@ -268,7 +322,7 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
           type: 'info',
           title: 'Aspera Hub',
           message: 'You are up to date.',
-          detail: `Version ${currentVersion()} is the latest on GitHub Releases.`,
+          detail: `Running v${currentVersion()}\nLatest on GitHub Releases: v${manifest.version}`,
           buttons: ['OK'],
         });
       }
