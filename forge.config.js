@@ -77,6 +77,11 @@ module.exports = {
             config: 'vite.preload.config.mjs',
             target: 'preload',
           },
+          {
+            entry: 'src/aiResultPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
         ],
         renderer: [
           {

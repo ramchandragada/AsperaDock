@@ -244,6 +244,49 @@
             <span>Lock when the system locks or sleeps</span>
           </label>
 
+          <div class="section-rule" id="ai-settings-section"><span>Aspera AI</span></div>
+          <p class="hint-text">
+            Employee skills for <strong>WhatsApp, Arattai, Gmail, Zoho Mail</strong> only.
+            Bring your own API key (Gemini, OpenRouter, Grok, SambaNova, or Anthropic).
+            Anthropic is paid — free-tier users should use Gemini or OpenRouter.
+          </p>
+          <label class="switch-row">
+            <input id="set-ai-enabled" type="checkbox" />
+            <span>Enable Aspera AI</span>
+          </label>
+          <label class="field">
+            <span>Provider</span>
+            <select id="set-ai-provider">
+              <option value="gemini">Google Gemini (free-tier friendly)</option>
+              <option value="openrouter">OpenRouter (free-tier friendly)</option>
+              <option value="grok">xAI Grok</option>
+              <option value="sambanova">SambaNova</option>
+              <option value="anthropic">Anthropic Claude (paid)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Model (optional override)</span>
+            <input id="set-ai-model" type="text" placeholder="Leave blank for provider default" />
+          </label>
+          <label class="field">
+            <span>Reply language</span>
+            <select id="set-ai-language">
+              <option value="en">English</option>
+              <option value="hi">Hindi (हिन्दी)</option>
+              <option value="mr">Marathi (मराठी)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>API key for selected provider</span>
+            <input id="set-ai-key" type="password" placeholder="Paste key — leave blank to keep current" autocomplete="off" />
+            <p class="hint-text" id="ai-key-status">No key saved yet for this provider.</p>
+          </label>
+          <div class="row-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px;">
+            <button id="ai-save-key" type="button" class="ghost-btn">Save API key</button>
+            <button id="ai-clear-key" type="button" class="ghost-btn">Clear key</button>
+            <button id="ai-catch-up-btn" type="button" class="ghost-btn">Catch me up</button>
+          </div>
+
           <div class="section-rule"><span>Proxy</span></div>
           <label class="field">
             <span>Proxy mode</span>

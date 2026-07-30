@@ -39,6 +39,12 @@ contextBridge.exposeInMainWorld('asperadock', {
   openNotifCenter: (payload) => ipcRenderer.invoke('dock:open-notif-center', payload),
   closeNotifCenter: () => ipcRenderer.invoke('dock:close-notif-center'),
   toggleNotifCenter: (payload) => ipcRenderer.invoke('dock:toggle-notif-center', payload),
+  aiStatus: () => ipcRenderer.invoke('dock:ai-status'),
+  aiSetKey: (providerId, apiKey) =>
+    ipcRenderer.invoke('dock:ai-set-key', providerId, apiKey),
+  aiClearKey: (providerId) => ipcRenderer.invoke('dock:ai-clear-key', providerId),
+  aiCatchUp: (opts) => ipcRenderer.invoke('dock:ai-catch-up', opts),
+  aiSummarize: (opts) => ipcRenderer.invoke('dock:ai-summarize', opts),
   setOverlay: (open) => ipcRenderer.invoke('dock:set-overlay', open),
   setChromeSize: (size) => ipcRenderer.invoke('dock:set-chrome-size', size),
   clearNotifications: () => ipcRenderer.invoke('dock:clear-notifications'),
@@ -91,6 +97,11 @@ contextBridge.exposeInMainWorld('asperadock', {
     const listener = (_event, action) => callback(action);
     ipcRenderer.on('dock:chrome-action', listener);
     return () => ipcRenderer.removeListener('dock:chrome-action', listener);
+  },
+  onOpenAiSettings: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('dock:open-ai-settings', listener);
+    return () => ipcRenderer.removeListener('dock:open-ai-settings', listener);
   },
   onOpenFind: (callback) => {
     const listener = () => callback();

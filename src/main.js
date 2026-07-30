@@ -19,6 +19,20 @@ import { createRequire } from 'node:module';
 import { buildAppMenuHtml } from './appMenuHtml.js';
 import { buildChromeMenuHtml } from './chromeMenuHtml.js';
 import { buildNotifCenterHtml } from './notifCenterHtml.js';
+import { buildAiResultHtml } from './aiResultHtml.js';
+import {
+  AI_ALLOWED_APP_IDS,
+  AI_LANGUAGES,
+  getAiProvider,
+  isAiAllowedAppId,
+} from './ai/catalog.js';
+import {
+  clearAiProviderKey,
+  getAiProviderKey,
+  listConfiguredAiProviders,
+  setAiProviderKey,
+} from './ai/keys.js';
+import { promptForSkill, runAiCompletion } from './ai/service.js';
 import {
   APP_CATALOG,
   MAX_INSTANCES_PER_APP,
@@ -284,6 +298,8 @@ let appMenuServiceId = null;
 let chromeMenuWindow = null;
 /** Floating notification center. */
 let notifCenterWindow = null;
+/** Floating Aspera AI result panel. */
+let aiResultWindow = null;
 let settings = loadSettings();
 
 function trackServicePopup(serviceId, popupWindow) {
@@ -988,6 +1004,19 @@ function notifCenterHandle(channel, handler) {
   });
 }
 
+function aiResultHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !aiResultWindow ||
+      aiResultWindow.isDestroyed() ||
+      event.sender !== aiResultWindow.webContents
+    ) {
+      throw new Error('Unauthorized ai-result IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
 /**
  * Chrome offsets for the active view. The renderer reports its measured bar
  * size so wrapped tab rows and density changes stay in sync with the CSS.
@@ -1671,10 +1700,25 @@ function closeNotifCenterWindow() {
   }
 }
 
+function closeAiResultWindow() {
+  if (!aiResultWindow || aiResultWindow.isDestroyed()) {
+    aiResultWindow = null;
+    return;
+  }
+  const win = aiResultWindow;
+  aiResultWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
 function closeAllFloatMenus() {
   closeAppContextMenu();
   closeChromeMenuWindow();
   closeNotifCenterWindow();
+  closeAiResultWindow();
 }
 
 function clampFloatPosition(screenX, screenY, menuW, menuH) {
@@ -1798,7 +1842,7 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
   closeChromeMenuWindow();
 
   const menuW = 234;
-  const menuH = 560;
+  const menuH = 640;
   const content = mainWindow.getContentBounds();
   const anchorX = content.x + (Number(x) || 0);
   const anchorY = content.y + (Number(y) || 0);
@@ -1931,6 +1975,211 @@ function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } =
   return { ok: true };
 }
 
+function pushAiResult(payload) {
+  if (!aiResultWindow || aiResultWindow.isDestroyed()) return;
+  try {
+    aiResultWindow.webContents.send('ai-result:init', payload);
+  } catch {
+    // ignore
+  }
+}
+
+function openAiResultWindow({ title, meta, dark = false } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAiResultWindow();
+
+  const menuW = 436;
+  const menuH = 580;
+  const content = mainWindow.getContentBounds();
+  const pos = clampFloatPosition(
+    content.x + content.width - menuW - 16,
+    content.y + Math.max(64, content.height * 0.12),
+    menuW,
+    menuH,
+  );
+
+  aiResultWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'aiResultPreload.js',
+  });
+
+  const win = aiResultWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildAiResultHtml(!!dark))}`,
+  );
+  win.webContents.once('did-finish-load', () => {
+    pushAiResult({
+      title: title || 'Aspera AI',
+      meta: meta || '',
+      loading: true,
+      text: 'Working…',
+    });
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  // Keep the panel open while reading — do not auto-close on blur.
+  win.on('closed', () => {
+    if (aiResultWindow === win) aiResultWindow = null;
+  });
+  return { ok: true };
+}
+
+function aiSettingsSnapshot() {
+  const provider = getAiProvider(settings.aiProvider);
+  const model = String(settings.aiModel || '').trim() || provider.defaultModel;
+  const language = ['en', 'hi', 'mr'].includes(settings.aiLanguage)
+    ? settings.aiLanguage
+    : 'en';
+  return { provider, model, language };
+}
+
+function collectCatchUpItems() {
+  const services = orderedServices().filter((s) => isAiAllowedAppId(s.appId));
+  const byId = new Map(services.map((s) => [s.id, s]));
+  const items = [];
+
+  for (const note of notificationLog || []) {
+    const service = byId.get(note.serviceId);
+    if (!service) continue;
+    items.push({
+      appId: service.appId,
+      appName: service.name || service.defaultName || service.appId,
+      unread: unreadCounts.get(service.id) || 0,
+      title: note.title || '',
+      body: settings.hideNotificationContent ? '' : note.body || '',
+      at: note.at || 0,
+    });
+  }
+
+  for (const service of services) {
+    const unread = unreadCounts.get(service.id) || 0;
+    if (unread <= 0) continue;
+    if (items.some((i) => i.appId === service.appId && i.unread === unread)) continue;
+    items.push({
+      appId: service.appId,
+      appName: service.name || service.defaultName || service.appId,
+      unread,
+      title: `${unread} unread`,
+      body: '',
+      at: Date.now(),
+    });
+  }
+
+  return items.slice(0, 30);
+}
+
+async function getActiveSelectionText() {
+  if (!activeServiceId) return '';
+  const entry = views.get(activeServiceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return '';
+  try {
+    const text = await wc.executeJavaScript(
+      `(() => {
+        try { return String(window.getSelection?.()?.toString() || ''); }
+        catch (e) { return ''; }
+      })()`,
+      true,
+    );
+    return String(text || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+function activeAiService() {
+  if (!activeServiceId) return null;
+  const service = getService(activeServiceId);
+  if (!service || !isAiAllowedAppId(service.appId)) return null;
+  return service;
+}
+
+async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}) {
+  if (settings.aiEnabled === false) {
+    return { ok: false, error: 'Aspera AI is turned off in Settings.' };
+  }
+
+  const { provider, model, language } = aiSettingsSnapshot();
+  if (!getAiProviderKey(provider.id)) {
+    mainWindow?.webContents.send('dock:chrome-action', 'settings');
+    return {
+      ok: false,
+      error: `Add your ${provider.name} API key in Settings → Aspera AI.`,
+    };
+  }
+
+  const langLabel =
+    AI_LANGUAGES.find((l) => l.id === language)?.label || 'English';
+  const skillTitle =
+    skill === 'catch-up' ? 'Catch me up' : 'Summarize selection';
+
+  openAiResultWindow({
+    title: `Aspera AI · ${skillTitle}`,
+    meta: `${provider.name} · ${model} · ${langLabel}`,
+    dark,
+  });
+
+  try {
+    let prompt;
+    if (skill === 'catch-up') {
+      const items = collectCatchUpItems();
+      prompt = promptForSkill('catch-up', { items, language });
+    } else if (skill === 'summarize') {
+      const service = activeAiService();
+      if (!service) {
+        throw new Error(
+          'Summarize works only in WhatsApp, Arattai, Gmail, or Zoho Mail. Open one of those apps first.',
+        );
+      }
+      const text = String(selectionText || (await getActiveSelectionText()) || '').trim();
+      if (!text) {
+        throw new Error('Select text in the app first, then run Summarize.');
+      }
+      prompt = promptForSkill('summarize', {
+        text,
+        appName: service.name || service.defaultName || service.appId,
+        language,
+      });
+    } else {
+      throw new Error('Unknown skill');
+    }
+
+    const text = await runAiCompletion({
+      providerId: provider.id,
+      model,
+      prompt,
+    });
+    pushAiResult({
+      title: `Aspera AI · ${skillTitle}`,
+      meta: `${provider.name} · ${model} · ${langLabel}`,
+      text,
+      loading: false,
+    });
+    return { ok: true, text };
+  } catch (error) {
+    const message = String(error?.message || error);
+    pushAiResult({
+      title: `Aspera AI · ${skillTitle}`,
+      meta: `${provider.name} · ${model} · ${langLabel}`,
+      error: message,
+      text: message,
+      loading: false,
+    });
+    return { ok: false, error: message };
+  }
+}
+
 async function handleAppMenuAction(type, value) {
   const id = appMenuServiceId;
   if (!id || !getService(id)) return { ok: false };
@@ -2001,6 +2250,21 @@ function handleChromeMenuAction(type) {
   closeChromeMenuWindow();
   if (!type) return { ok: false };
 
+  if (type === 'catch-up') {
+    const dark = false;
+    runAsperaAiSkill('catch-up', { dark }).catch(() => {});
+    return { ok: true };
+  }
+  if (type === 'summarize') {
+    runAsperaAiSkill('summarize', { dark: false }).catch(() => {});
+    return { ok: true };
+  }
+  if (type === 'ai-settings') {
+    mainWindow?.webContents.send('dock:chrome-action', 'settings');
+    // Renderer will scroll/focus AI section if we send a dedicated event.
+    mainWindow?.webContents.send('dock:open-ai-settings');
+    return { ok: true };
+  }
   if (type === 'search') {
     mainWindow?.webContents.send('dock:chrome-action', 'search');
     return { ok: true };
@@ -2396,6 +2660,24 @@ function attachGuestContextMenu(webContents) {
 
     const editable = params.isEditable;
     const hasSelection = Boolean(params.selectionText);
+
+    const service = getService(activeServiceId);
+    if (
+      hasSelection &&
+      service &&
+      isAiAllowedAppId(service.appId) &&
+      settings.aiEnabled !== false
+    ) {
+      template.push({
+        label: 'Summarize with Aspera AI',
+        click: () => {
+          runAsperaAiSkill('summarize', {
+            selectionText: String(params.selectionText || ''),
+          }).catch(() => {});
+        },
+      });
+      template.push({ type: 'separator' });
+    }
 
     if (editable || hasSelection) {
       template.push({
@@ -3383,6 +3665,15 @@ function currentState() {
     totalUnread: totalUnread(),
     notifications: notificationLog,
     appMemory,
+    ai: {
+      enabled: settings.aiEnabled !== false,
+      provider: settings.aiProvider || 'gemini',
+      model: settings.aiModel || '',
+      language: settings.aiLanguage || 'en',
+      allowedAppIds: AI_ALLOWED_APP_IDS,
+      languages: AI_LANGUAGES,
+      providers: listConfiguredAiProviders(),
+    },
     settings: {
       ...settings,
       lockPasswordHash: undefined,
@@ -4359,6 +4650,39 @@ notifCenterHandle('notif-center:close', () => {
   closeNotifCenterWindow();
   return { ok: true };
 });
+aiResultHandle('ai-result:copy', (_e, text) => {
+  clipboard.writeText(String(text || ''));
+  return { ok: true };
+});
+aiResultHandle('ai-result:close', () => {
+  closeAiResultWindow();
+  return { ok: true };
+});
+dockHandle('dock:ai-status', () => ({
+  enabled: settings.aiEnabled !== false,
+  provider: settings.aiProvider || 'gemini',
+  model: settings.aiModel || '',
+  language: settings.aiLanguage || 'en',
+  allowedAppIds: AI_ALLOWED_APP_IDS,
+  languages: AI_LANGUAGES,
+  providers: listConfiguredAiProviders(),
+}));
+dockHandle('dock:ai-set-key', (_e, providerId, apiKey) => {
+  const result = setAiProviderKey(providerId, apiKey);
+  broadcastState();
+  return result;
+});
+dockHandle('dock:ai-clear-key', (_e, providerId) => {
+  const result = clearAiProviderKey(providerId);
+  broadcastState();
+  return result;
+});
+dockHandle('dock:ai-catch-up', (_e, opts) =>
+  runAsperaAiSkill('catch-up', opts || {}),
+);
+dockHandle('dock:ai-summarize', (_e, opts) =>
+  runAsperaAiSkill('summarize', opts || {}),
+);
 dockHandle('dock:toggle-keep-warm', (_e, id) => toggleKeepWarm(id));
 dockHandle('dock:save-app-config', (_e, id, incoming) => {
   if (!getService(id)) return { ok: false, error: 'Not found' };

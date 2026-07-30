@@ -34,6 +34,12 @@ const ICO = {
     '<path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.7-3"/><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.7 3"/><path d="M21 3.5V9h-5.5"/><path d="M3 20.5V15h5.5"/>',
   ),
   info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>'),
+  spark: svg(
+    '<path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m5.6 5.6 2.1 2.1"/><path d="m16.3 16.3 2.1 2.1"/><path d="m16.3 7.7 2.1-2.1"/><path d="m5.6 18.4 2.1-2.1"/><circle cx="12" cy="12" r="3"/>',
+  ),
+  list: svg(
+    '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
+  ),
 };
 
 function item(action, icon, label, id = '') {
@@ -72,6 +78,10 @@ export function buildChromeMenuHtml(dark = false) {
 </head>
 <body>
   <div class="card">
+    ${item('catch-up', ICO.list, 'Catch me up')}
+    ${item('summarize', ICO.spark, 'Summarize selection')}
+    ${item('ai-settings', ICO.settings, 'Aspera AI settings')}
+    <hr />
     ${item('search', ICO.search, 'Quick search')}
     ${item('focus', ICO.focus, 'Focus mode', 'focus-item')}
     ${item('mute', ICO.unmute, 'Mute', 'mute-item')}

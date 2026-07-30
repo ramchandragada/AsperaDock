@@ -592,6 +592,31 @@ function renderInstances() {
   }
 }
 
+function refreshAiKeyStatus() {
+  const status = document.getElementById('ai-key-status');
+  if (!status) return;
+  const providerId =
+    document.getElementById('set-ai-provider')?.value ||
+    state.ai?.provider ||
+    'gemini';
+  const providers = state.ai?.providers || [];
+  const entry = providers.find((p) => p.id === providerId);
+  const name = entry?.name || providerId;
+  status.textContent = entry?.configured
+    ? `API key saved for ${name}.`
+    : `No key saved yet for ${name}.`;
+}
+
+function openAiSettings() {
+  openSettings();
+  requestAnimationFrame(() => {
+    document.getElementById('ai-settings-section')?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'start',
+    });
+  });
+}
+
 function fillSettingsForm() {
   const s = state.settings || {};
   draft = { ...s };
@@ -623,6 +648,12 @@ function fillSettingsForm() {
   set('set-lock-enabled', String(!!s.lockEnabled));
   set('set-lock-password', '');
   set('set-lock-idle', s.lockOnSystemIdle);
+  set('set-ai-enabled', s.aiEnabled !== false);
+  set('set-ai-provider', s.aiProvider || 'gemini');
+  set('set-ai-model', s.aiModel || '');
+  set('set-ai-language', s.aiLanguage || 'en');
+  set('set-ai-key', '');
+  refreshAiKeyStatus();
   set('set-proxy-mode', s.proxyMode || 'none');
   set('set-proxy-rules', s.proxyRules || '');
   set('set-proxy-bypass', s.proxyBypass ?? '<local>');
@@ -680,6 +711,10 @@ function readSettingsForm() {
     confirmQuit: checked('set-confirm-quit'),
     lockEnabled: val('set-lock-enabled') === 'true',
     lockOnSystemIdle: checked('set-lock-idle'),
+    aiEnabled: checked('set-ai-enabled'),
+    aiProvider: val('set-ai-provider'),
+    aiModel: val('set-ai-model').trim(),
+    aiLanguage: val('set-ai-language'),
     proxyMode: val('set-proxy-mode'),
     proxyRules: val('set-proxy-rules').trim(),
     proxyBypass: val('set-proxy-bypass').trim() || '<local>',
@@ -1140,9 +1175,20 @@ function toggleChromeMenu() {
 function handleChromeAction(action) {
   if (action === 'search') openSearch();
   if (action === 'settings') openSettings();
+  if (action === 'ai-settings') openAiSettings();
   if (action === 'profiles') openProfiles();
   if (action === 'shortcuts') openShortcuts();
   if (action === 'add-app') openAppsSettings();
+  if (action === 'catch-up') {
+    window.asperadock.aiCatchUp?.({
+      dark: document.body.classList.contains('theme-dark'),
+    });
+  }
+  if (action === 'summarize') {
+    window.asperadock.aiSummarize?.({
+      dark: document.body.classList.contains('theme-dark'),
+    });
+  }
   if (action === 'check-updates') {
     runUpdateCheck();
   }
@@ -1351,6 +1397,45 @@ window.asperadock.onOpenEditApp?.((id) => {
   if (id) openEditApp(id);
 });
 window.asperadock.onChromeAction?.(handleChromeAction);
+window.asperadock.onOpenAiSettings?.(openAiSettings);
+
+document.getElementById('set-ai-provider')?.addEventListener('change', () => {
+  const keyInput = document.getElementById('set-ai-key');
+  if (keyInput) keyInput.value = '';
+  refreshAiKeyStatus();
+});
+
+document.getElementById('ai-save-key')?.addEventListener('click', async () => {
+  const providerId = document.getElementById('set-ai-provider')?.value || 'gemini';
+  const apiKey = document.getElementById('set-ai-key')?.value || '';
+  if (!apiKey.trim()) {
+    alert('Paste an API key first.');
+    return;
+  }
+  const result = await window.asperadock.aiSetKey?.(providerId, apiKey);
+  if (!result?.ok) {
+    alert(result?.error || 'Could not save API key');
+    return;
+  }
+  const keyInput = document.getElementById('set-ai-key');
+  if (keyInput) keyInput.value = '';
+  // Refresh state so configured flags update.
+  state = (await window.asperadock.getState?.()) || state;
+  refreshAiKeyStatus();
+});
+
+document.getElementById('ai-clear-key')?.addEventListener('click', async () => {
+  const providerId = document.getElementById('set-ai-provider')?.value || 'gemini';
+  await window.asperadock.aiClearKey?.(providerId);
+  state = (await window.asperadock.getState?.()) || state;
+  refreshAiKeyStatus();
+});
+
+document.getElementById('ai-catch-up-btn')?.addEventListener('click', () => {
+  window.asperadock.aiCatchUp?.({
+    dark: document.body.classList.contains('theme-dark'),
+  });
+});
 
 async function patchMenuFlag(key, checked) {
   if (!menuServiceId) return;

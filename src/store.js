@@ -120,6 +120,15 @@ export const DEFAULTS = {
   updateCheckMinutes: 30,
 
   /**
+   * Aspera AI (BYOK) — employee skills for WhatsApp / Arattai / Gmail / Zoho Mail.
+   * API keys are stored separately via OS encryption (ai-provider-keys.json).
+   */
+  aiEnabled: true,
+  aiProvider: 'gemini', // gemini | openrouter | grok | sambanova | anthropic
+  aiModel: '',
+  aiLanguage: 'en', // en | hi | mr
+
+  /**
    * Lean mode for refurbished / low-RAM PCs:
    * disables GPU accel, keeps fewer warm apps, hibernates faster.
    * Needs relaunch for hardwareAcceleration.
