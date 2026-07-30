@@ -102,4 +102,12 @@ test('AI provider auto-route puts free first and Anthropic last', () => {
     configuredProvidersInRouteOrder(['anthropic']).map((p) => p.id),
     ['anthropic'],
   );
+  assert.deepEqual(
+    configuredProvidersInRouteOrder(
+      ['anthropic', 'gemini', 'openrouter'],
+      'openrouter',
+    ).map((p) => p.id),
+    ['openrouter', 'gemini', 'anthropic'],
+  );
+  assert.equal(getAiProvider('openrouter').defaultModel, 'google/gemini-2.0-flash-001');
 });

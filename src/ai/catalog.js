@@ -29,12 +29,13 @@ export const AI_PROVIDERS = Object.freeze([
     id: 'openrouter',
     name: 'OpenRouter',
     freeTierFriendly: true,
-    // OpenRouter model IDs look like "google/…" but traffic still goes to openrouter.ai
-    defaultModel: 'openrouter/free',
+    // Prefer a fast Flash model — openrouter/free often queues and feels very slow.
+    defaultModel: 'google/gemini-2.0-flash-001',
     models: [
-      'openrouter/free',
+      'google/gemini-2.0-flash-001',
       'google/gemini-flash-latest',
       'google/gemma-4-26b-a4b-it:free',
+      'openrouter/free',
       'openai/gpt-4o-mini',
       'meta-llama/llama-3.3-70b-instruct',
     ],
@@ -90,6 +91,7 @@ export function normalizeAnthropicModel(model) {
 /**
  * Auto-routing order: free-tier friendly providers first (catalog order),
  * then other paid providers, Anthropic always last.
+ * Optional preferredId is tried first when it has a key (faster for power users).
  */
 export function aiProviderRouteOrder() {
   const free = [];
@@ -107,11 +109,16 @@ export function aiProviderRouteOrder() {
 }
 
 /** Filter route order to providers that have a saved key (`configuredIds`). */
-export function configuredProvidersInRouteOrder(configuredIds) {
+export function configuredProvidersInRouteOrder(configuredIds, preferredId) {
   const have = new Set(
     (configuredIds || []).map((id) => String(id || '').trim()).filter(Boolean),
   );
-  return aiProviderRouteOrder().filter((p) => have.has(p.id));
+  const base = aiProviderRouteOrder().filter((p) => have.has(p.id));
+  const prefer = String(preferredId || '').trim();
+  if (!prefer || !have.has(prefer)) return base;
+  const preferred = base.find((p) => p.id === prefer);
+  if (!preferred) return base;
+  return [preferred, ...base.filter((p) => p.id !== prefer)];
 }
 
 export function getAiProvider(id) {

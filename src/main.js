@@ -2018,6 +2018,7 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
   });
 
   const win = aiResultWindow;
+  attachAiResultContextMenu(win.webContents);
   win.loadURL(
     `data:text/html;charset=utf-8,${encodeURIComponent(buildAiResultHtml(!!dark))}`,
   );
@@ -2045,6 +2046,43 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
   return { ok: true };
 }
 
+/** Right-click Copy / Select all inside the floating AI result panel. */
+function attachAiResultContextMenu(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  webContents.on('context-menu', (_event, params) => {
+    if (webContents.isDestroyed()) return;
+    const hasSelection = Boolean(params.selectionText);
+    /** @type {Electron.MenuItemConstructorOptions[]} */
+    const template = [
+      {
+        label: 'Copy',
+        role: 'copy',
+        enabled: hasSelection,
+      },
+      {
+        label: 'Copy all',
+        click: () => {
+          const text = [
+            aiResultContext?.summaryText,
+            aiResultContext?.repliesText,
+          ]
+            .filter(Boolean)
+            .join('\n\n—\n\n');
+          if (text) clipboard.writeText(text);
+        },
+        enabled: Boolean(
+          aiResultContext?.summaryText || aiResultContext?.repliesText,
+        ),
+      },
+      { type: 'separator' },
+      { label: 'Select all', role: 'selectAll' },
+    ];
+    Menu.buildFromTemplate(template).popup({
+      window: BrowserWindow.fromWebContents(webContents) || undefined,
+    });
+  });
+}
+
 function aiSettingsSnapshot() {
   const language = ['en', 'hi', 'mr'].includes(settings.aiLanguage)
     ? settings.aiLanguage
@@ -2052,23 +2090,32 @@ function aiSettingsSnapshot() {
   const configured = listConfiguredAiProviders()
     .filter((p) => p.configured)
     .map((p) => p.id);
-  const order = configuredProvidersInRouteOrder(configured);
-  const provider = order[0] || getAiProvider(settings.aiProvider || 'gemini');
+  const preferredId = String(settings.aiProvider || '').trim();
+  const order = configuredProvidersInRouteOrder(configured, preferredId);
+  const provider = order[0] || getAiProvider(preferredId || 'gemini');
   let model = String(settings.aiModel || '').trim();
+  if (provider.id === 'openrouter' && (!model || model === 'openrouter/free')) {
+    model = provider.defaultModel;
+  }
   if (provider.id === 'anthropic') {
     model = normalizeAnthropicModel(model || provider.defaultModel);
   }
   if (!model) model = provider.defaultModel;
-  return { provider, model, language, routeOrder: order };
+  return { provider, model, language, routeOrder: order, preferredId };
 }
 
-/** Keep settings.aiProvider pointing at the first configured free-tier (or only) provider. */
+/**
+ * Keep settings.aiProvider pointing at a configured provider.
+ * Do not force-overwrite a user preference that still has a key.
+ */
 function syncPreferredAiProvider() {
   const configured = listConfiguredAiProviders()
     .filter((p) => p.configured)
     .map((p) => p.id);
+  const current = String(settings.aiProvider || '').trim();
+  if (current && configured.includes(current)) return current;
   const order = configuredProvidersInRouteOrder(configured);
-  const nextId = order[0]?.id || settings.aiProvider || 'gemini';
+  const nextId = order[0]?.id || current || 'gemini';
   if (nextId !== settings.aiProvider) {
     settings = saveSettings({ aiProvider: nextId });
   }
@@ -2141,7 +2188,7 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
     return { ok: false, error: 'Aspera AI is turned off in Settings.' };
   }
 
-  const { language, routeOrder } = aiSettingsSnapshot();
+  const { language, routeOrder, preferredId } = aiSettingsSnapshot();
   if (!routeOrder.length) {
     mainWindow?.webContents.send('dock:chrome-action', 'settings');
     return {
@@ -2192,7 +2239,13 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
       throw new Error('Unknown skill');
     }
 
-    const result = await runAiCompletionWithFailover(prompt);
+    const result = await runAiCompletionWithFailover(prompt, {
+      preferredProviderId: preferredId,
+    });
+    // Stick to the provider that answered quickly for the next run.
+    if (result.providerId && result.providerId !== settings.aiProvider) {
+      settings = saveSettings({ aiProvider: result.providerId });
+    }
     if (skill === 'summarize') {
       aiResultContext = {
         skill: 'summarize',
@@ -2245,7 +2298,7 @@ async function runSuggestRepliesFromAiResult() {
   if (!ctx?.selectionText) {
     return { ok: false, error: 'No message context for reply suggestions.' };
   }
-  const { routeOrder } = aiSettingsSnapshot();
+  const { routeOrder, preferredId } = aiSettingsSnapshot();
   if (!routeOrder.length) {
     return {
       ok: false,
@@ -2269,7 +2322,12 @@ async function runSuggestRepliesFromAiResult() {
       text: ctx.selectionText,
       appName: ctx.appName,
     });
-    const result = await runAiCompletionWithFailover(prompt);
+    const result = await runAiCompletionWithFailover(prompt, {
+      preferredProviderId: preferredId,
+    });
+    if (result.providerId && result.providerId !== settings.aiProvider) {
+      settings = saveSettings({ aiProvider: result.providerId });
+    }
     aiResultContext = {
       ...ctx,
       repliesText: result.text,
@@ -3800,6 +3858,7 @@ function currentState() {
         listConfiguredAiProviders()
           .filter((p) => p.configured)
           .map((p) => p.id),
+        settings.aiProvider,
       ).map((p) => p.id),
     },
     settings: {
@@ -4799,6 +4858,7 @@ dockHandle('dock:ai-status', () => ({
     listConfiguredAiProviders()
       .filter((p) => p.configured)
       .map((p) => p.id),
+    settings.aiProvider,
   ).map((p) => p.id),
 }));
 dockHandle('dock:ai-set-key', (_e, providerId, apiKey) => {

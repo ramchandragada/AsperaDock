@@ -23,7 +23,7 @@ async function callOpenAiCompatible({
     body: JSON.stringify({
       model,
       temperature: 0.3,
-      max_tokens: 2000,
+      max_tokens: 1600,
       messages: [
         {
           role: 'system',
@@ -51,7 +51,7 @@ async function callGemini({ apiKey, model, prompt }) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: 2000 },
+      generationConfig: { temperature: 0.3, maxOutputTokens: 1600 },
     }),
   });
   const data = await res.json().catch(() => ({}));
@@ -75,7 +75,7 @@ async function callAnthropic({ apiKey, model, prompt }) {
     },
     body: JSON.stringify({
       model: resolved,
-      max_tokens: 2000,
+      max_tokens: 1600,
       temperature: 0.3,
       system: 'You are Aspera AI, a concise workplace assistant for employees.',
       messages: [{ role: 'user', content: prompt }],
@@ -155,14 +155,15 @@ export async function runAiCompletion({
 }
 
 /**
- * Try configured providers automatically: free-tier first, Anthropic last.
- * Uses each provider's default model (manual model override is ignored for failover).
+ * Try configured providers automatically.
+ * Preferred provider (if keyed) is tried first for speed; otherwise free-tier first,
+ * Anthropic last. Uses each provider's default model.
  */
-export async function runAiCompletionWithFailover(prompt) {
+export async function runAiCompletionWithFailover(prompt, { preferredProviderId } = {}) {
   const configured = listConfiguredAiProviders()
     .filter((p) => p.configured)
     .map((p) => p.id);
-  const order = configuredProvidersInRouteOrder(configured);
+  const order = configuredProvidersInRouteOrder(configured, preferredProviderId);
   if (!order.length) {
     throw new Error(
       'Add at least one AI API key in Settings → Aspera AI (Gemini or OpenRouter recommended).',
@@ -171,7 +172,11 @@ export async function runAiCompletionWithFailover(prompt) {
 
   const errors = [];
   for (const provider of order) {
-    const model = provider.defaultModel;
+    let model = provider.defaultModel;
+    // Migrate users stuck on the slow openrouter/free router.
+    if (provider.id === 'openrouter' && model === 'openrouter/free') {
+      model = 'google/gemini-2.0-flash-001';
+    }
     try {
       const text = await runAiCompletion({
         providerId: provider.id,
