@@ -755,36 +755,11 @@ function anyOverlayOpen() {
     !els.profilesModal?.classList.contains('hidden') ||
     !els.profileNameModal?.classList.contains('hidden') ||
     !els.customAppModal?.classList.contains('hidden') ||
-    !els.appMenu.classList.contains('hidden') ||
     !els.shortcutsModal.classList.contains('hidden') ||
     !els.chromeMenu.classList.contains('hidden') ||
     !els.notifCenter.classList.contains('hidden') ||
     state.locked
   );
-}
-
-/** Keep a left/right strip clear so the HTML app menu sits above the guest. */
-function overlayForAppMenu() {
-  const rect = els.appMenu.getBoundingClientRect();
-  const pad = 10;
-  const winW = window.innerWidth || 1200;
-  const menuRight = Math.ceil(rect.right + pad);
-  const menuLeft = Math.floor(Math.max(0, rect.left - pad));
-  // Prefer the side that leaves the most guest space visible.
-  if (menuRight <= winW * 0.55) {
-    return {
-      open: true,
-      mode: 'menu',
-      leftInset: Math.min(menuRight, Math.round(winW * 0.45)),
-      rightInset: 0,
-    };
-  }
-  return {
-    open: true,
-    mode: 'menu',
-    leftInset: 0,
-    rightInset: Math.min(winW - menuLeft, Math.round(winW * 0.45)),
-  };
 }
 
 /** Rambox-style overlays: keep guest app visible whenever possible. */
@@ -802,7 +777,6 @@ function syncOverlayFromModals() {
     !els.profilesModal?.classList.contains('hidden');
   const notifOpen = !els.notifCenter.classList.contains('hidden');
   const chromeOpen = !els.chromeMenu.classList.contains('hidden');
-  const appMenuOpen = !els.appMenu.classList.contains('hidden');
 
   if (fullOpen) {
     window.asperadock.setOverlay({ open: true, mode: 'full' });
@@ -814,10 +788,6 @@ function syncOverlayFromModals() {
       mode: 'drawer',
       rightInset: Math.min(440, Math.round(window.innerWidth * 0.94)),
     });
-    return;
-  }
-  if (appMenuOpen) {
-    window.asperadock.setOverlay(overlayForAppMenu());
     return;
   }
   if (notifOpen || chromeOpen) {
@@ -832,43 +802,22 @@ function syncOverlayFromModals() {
 }
 
 function closeAppMenu() {
-  els.appMenu.classList.add('hidden');
   menuServiceId = null;
-  syncOverlayFromModals();
+  // Keep legacy in-page node hidden; real menu is a floating child window.
+  els.appMenu?.classList.add('hidden');
+  window.asperadock.closeAppMenu?.();
 }
 
 function openAppMenu(service, x, y) {
   menuServiceId = service.id;
-  const cfg = service.config || {};
-  els.appMenuTitle.textContent = service.name;
-  els.appMenuEnabled.checked = cfg.enabled !== false;
-  els.appMenuSound.checked = cfg.allowSounds !== false;
-  els.appMenuNotifications.checked = cfg.allowNotifications !== false;
-  if (els.appMenuWarm) {
-    els.appMenuWarm.checked = cfg.keepWarm === true;
-    els.appMenuWarm.disabled = false;
-  }
-
-  els.appMenu.classList.remove('hidden');
-  els.appMenu.style.left = '0px';
-  els.appMenu.style.top = '0px';
-  // Keep the guest visible — only clear a strip so this HTML menu can paint above it.
-  window.asperadock.setOverlay({ open: true, mode: 'menu', leftInset: 236, rightInset: 0 });
-
-  requestAnimationFrame(() => {
-    const pad = 8;
-    const rect = els.appMenu.getBoundingClientRect();
-    let left = x;
-    let top = y;
-    if (left + rect.width > window.innerWidth - pad) {
-      left = window.innerWidth - rect.width - pad;
-    }
-    if (top + rect.height > window.innerHeight - pad) {
-      top = window.innerHeight - rect.height - pad;
-    }
-    els.appMenu.style.left = `${Math.max(pad, left)}px`;
-    els.appMenu.style.top = `${Math.max(pad, top)}px`;
-    window.asperadock.setOverlay(overlayForAppMenu());
+  els.appMenu?.classList.add('hidden');
+  // Guest WebContentsView always paints above dock HTML — float a child window
+  // so the menu sits on top without shifting/resizing the running app (Rambox).
+  window.asperadock.openAppMenu?.({
+    serviceId: service.id,
+    x,
+    y,
+    dark: document.body.classList.contains('theme-dark'),
   });
 }
 
@@ -1384,13 +1333,16 @@ window.asperadock.onFindResult?.((data) => {
   els.findStatus.textContent = `${data.activeMatchOrdinal || 0}/${data.matches}`;
 });
 window.asperadock.onSyncOverlay?.(syncOverlayFromModals);
+window.asperadock.onOpenEditApp?.((id) => {
+  if (id) openEditApp(id);
+});
 
 async function patchMenuFlag(key, checked) {
   if (!menuServiceId) return;
   await window.asperadock.saveAppConfig(menuServiceId, { [key]: checked });
 }
 
-els.appMenuEdit.addEventListener('click', () => {
+els.appMenuEdit?.addEventListener('click', () => {
   if (menuServiceId) openEditApp(menuServiceId);
 });
 els.appMenuHome?.addEventListener('click', async () => {
@@ -1398,17 +1350,17 @@ els.appMenuHome?.addEventListener('click', async () => {
   await window.asperadock.appNavigate(menuServiceId, 'home');
   closeAppMenu();
 });
-els.appMenuReload.addEventListener('click', async () => {
+els.appMenuReload?.addEventListener('click', async () => {
   if (!menuServiceId) return;
   await window.asperadock.appNavigate(menuServiceId, 'reload');
 });
-els.appMenuEnabled.addEventListener('change', () =>
+els.appMenuEnabled?.addEventListener('change', () =>
   patchMenuFlag('enabled', els.appMenuEnabled.checked),
 );
-els.appMenuSound.addEventListener('change', () =>
+els.appMenuSound?.addEventListener('change', () =>
   patchMenuFlag('allowSounds', els.appMenuSound.checked),
 );
-els.appMenuNotifications.addEventListener('change', () =>
+els.appMenuNotifications?.addEventListener('change', () =>
   patchMenuFlag('allowNotifications', els.appMenuNotifications.checked),
 );
 els.appMenuWarm?.addEventListener('change', async () => {
@@ -1585,10 +1537,6 @@ document.addEventListener('click', (event) => {
   if (!els.notifCenter.classList.contains('hidden')) {
     if (!event.target.closest('.menu-wrap')) closeNotificationCenter();
   }
-  if (els.appMenu.classList.contains('hidden')) return;
-  if (els.appMenu.contains(event.target)) return;
-  if (event.target.closest?.('.app-tab')) return;
-  closeAppMenu();
 });
 
 document.addEventListener('keydown', (event) => {
@@ -1598,10 +1546,10 @@ document.addEventListener('keydown', (event) => {
     else if (!els.profileNameModal?.classList.contains('hidden')) closeProfileNameModal(null);
     else if (!els.chromeMenu.classList.contains('hidden')) closeChromeMenu();
     else if (!els.notifCenter.classList.contains('hidden')) closeNotificationCenter();
-    else if (!els.appMenu.classList.contains('hidden')) closeAppMenu();
     else if (!els.profilesModal?.classList.contains('hidden')) closeProfiles();
     else if (!els.editAppModal.classList.contains('hidden')) closeEditApp();
     else if (!els.shortcutsModal.classList.contains('hidden')) closeShortcuts();
+    else closeAppMenu();
   }
 });
 
@@ -1736,19 +1684,6 @@ async function boot() {
   window.asperadock.onState((next) => {
     state = next;
     render();
-    if (menuServiceId && !els.appMenu.classList.contains('hidden')) {
-      const service = getServiceById(menuServiceId);
-      if (service) {
-        els.appMenuTitle.textContent = service.name;
-        const cfg = service.config || {};
-        els.appMenuEnabled.checked = cfg.enabled !== false;
-        els.appMenuSound.checked = cfg.allowSounds !== false;
-        els.appMenuNotifications.checked = cfg.allowNotifications !== false;
-        if (els.appMenuWarm && document.activeElement !== els.appMenuWarm) {
-          els.appMenuWarm.checked = cfg.keepWarm === true;
-        }
-      }
-    }
   });
 }
 

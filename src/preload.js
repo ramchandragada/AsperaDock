@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld('asperadock', {
   reorder: (order) => ipcRenderer.invoke('dock:reorder', order),
   pickDownloadDir: () => ipcRenderer.invoke('dock:pick-download-dir'),
   openDownloads: () => ipcRenderer.invoke('dock:open-downloads'),
+  openAppMenu: (payload) => ipcRenderer.invoke('dock:open-app-menu', payload),
+  closeAppMenu: () => ipcRenderer.invoke('dock:close-app-menu'),
   setOverlay: (open) => ipcRenderer.invoke('dock:set-overlay', open),
   setChromeSize: (size) => ipcRenderer.invoke('dock:set-chrome-size', size),
   clearNotifications: () => ipcRenderer.invoke('dock:clear-notifications'),
@@ -73,6 +75,11 @@ contextBridge.exposeInMainWorld('asperadock', {
     const listener = () => callback();
     ipcRenderer.on('dock:open-search', listener);
     return () => ipcRenderer.removeListener('dock:open-search', listener);
+  },
+  onOpenEditApp: (callback) => {
+    const listener = (_event, id) => callback(id);
+    ipcRenderer.on('dock:open-edit-app', listener);
+    return () => ipcRenderer.removeListener('dock:open-edit-app', listener);
   },
   onOpenFind: (callback) => {
     const listener = () => callback();

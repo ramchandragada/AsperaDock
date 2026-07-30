@@ -12,9 +12,11 @@ import {
   dialog,
   powerMonitor,
   clipboard,
+  screen,
 } from 'electron';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { buildAppMenuHtml } from './appMenuHtml.js';
 import {
   APP_CATALOG,
   MAX_INSTANCES_PER_APP,
@@ -273,6 +275,9 @@ let overlayMode = null;
 /** Extra insets (px) so side drawers / floating menus stay above HTML. */
 let overlayRightInset = 0;
 let overlayLeftInset = 0;
+/** Floating app right-click menu (child window — paints above WebContentsView guests). */
+let appMenuWindow = null;
+let appMenuServiceId = null;
 let settings = loadSettings();
 
 function trackServicePopup(serviceId, popupWindow) {
@@ -937,6 +942,20 @@ function dockHandle(channel, handler) {
   });
 }
 
+/** IPC for the floating app-menu child window (not the dock shell). */
+function appMenuHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !appMenuWindow ||
+      appMenuWindow.isDestroyed() ||
+      event.sender !== appMenuWindow.webContents
+    ) {
+      throw new Error('Unauthorized app-menu IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
 /**
  * Chrome offsets for the active view. The renderer reports its measured bar
  * size so wrapped tab rows and density changes stay in sync with the CSS.
@@ -1575,6 +1594,180 @@ function setOverlayOpen(open, options = {}) {
 
 function hideViewsForLock() {
   detachAllViews();
+}
+
+function closeAppContextMenu() {
+  appMenuServiceId = null;
+  if (!appMenuWindow || appMenuWindow.isDestroyed()) {
+    appMenuWindow = null;
+    return;
+  }
+  const win = appMenuWindow;
+  appMenuWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Rambox-style: float the HTML app menu above the guest without resizing it.
+ * In-page HTML cannot paint over WebContentsView, so use a frameless child window.
+ */
+function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
+  const service = getService(serviceId);
+  if (!service || !mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeAppContextMenu();
+
+  const cfg = getAppConfig(serviceId);
+  const menuW = 236;
+  const menuH = 292;
+  const content = mainWindow.getContentBounds();
+  let screenX = Math.round(content.x + (Number(x) || 0));
+  let screenY = Math.round(content.y + (Number(y) || 0));
+
+  const display = screen.getDisplayNearestPoint({ x: screenX, y: screenY });
+  const wa = display.workArea;
+  if (screenX + menuW > wa.x + wa.width - 8) screenX = wa.x + wa.width - menuW - 8;
+  if (screenY + menuH > wa.y + wa.height - 8) screenY = wa.y + wa.height - menuH - 8;
+  if (screenX < wa.x + 8) screenX = wa.x + 8;
+  if (screenY < wa.y + 8) screenY = wa.y + 8;
+
+  appMenuServiceId = serviceId;
+  appMenuWindow = new BrowserWindow({
+    parent: mainWindow,
+    modal: false,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    show: false,
+    width: menuW,
+    height: menuH,
+    x: screenX,
+    y: screenY,
+    backgroundColor: '#00000000',
+    hasShadow: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'appMenuPreload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+
+  const win = appMenuWindow;
+  win.setMenuBarVisibility(false);
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildAppMenuHtml(!!dark))}`,
+  );
+
+  const pushState = () => {
+    if (!win || win.isDestroyed() || appMenuServiceId !== serviceId) return;
+    const latest = getAppConfig(serviceId);
+    win.webContents.send('app-menu:init', {
+      serviceId,
+      name: service.name || service.defaultName || 'App',
+      enabled: latest.enabled !== false,
+      sound: latest.allowSounds !== false,
+      notifications: latest.allowNotifications !== false,
+      warm: latest.keepWarm === true,
+    });
+  };
+
+  win.webContents.once('did-finish-load', pushState);
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  win.on('blur', () => {
+    // Close when the user clicks the guest/chrome (menu is no longer focused).
+    setTimeout(() => {
+      if (appMenuWindow === win) closeAppContextMenu();
+    }, 120);
+  });
+  win.on('closed', () => {
+    if (appMenuWindow === win) {
+      appMenuWindow = null;
+      appMenuServiceId = null;
+    }
+  });
+
+  return { ok: true };
+}
+
+async function handleAppMenuAction(type, value) {
+  const id = appMenuServiceId;
+  if (!id || !getService(id)) return { ok: false };
+
+  if (type === 'home') {
+    const entry = views.get(id);
+    const service = getService(id);
+    if (entry?.view?.webContents && !entry.view.webContents.isDestroyed()) {
+      const home = startUrlForService(service) || service.url;
+      if (home) entry.view.webContents.loadURL(home).catch(() => {});
+    }
+    closeAppContextMenu();
+    return { ok: true };
+  }
+  if (type === 'reload') {
+    const entry = views.get(id);
+    if (entry?.view?.webContents && !entry.view.webContents.isDestroyed()) {
+      entry.view.webContents.reload();
+    }
+    return { ok: true };
+  }
+  if (type === 'edit') {
+    closeAppContextMenu();
+    mainWindow?.webContents.send('dock:open-edit-app', id);
+    return { ok: true };
+  }
+  if (type === 'enabled') {
+    saveAppConfig(id, { enabled: !!value });
+    broadcastState();
+    if (!value && id === activeServiceId) {
+      // Stay on tab but guest may show disabled — mirror existing save path.
+    }
+    return { ok: true };
+  }
+  if (type === 'sound') {
+    saveAppConfig(id, { allowSounds: !!value });
+    broadcastState();
+    return { ok: true };
+  }
+  if (type === 'notifications') {
+    saveAppConfig(id, { allowNotifications: !!value });
+    broadcastState();
+    return { ok: true };
+  }
+  if (type === 'warm') {
+    const want = !!value;
+    const have = isKeepWarmService(id);
+    const result =
+      want === have ? { ok: true, keepWarm: have } : toggleKeepWarm(id);
+    if (appMenuWindow && !appMenuWindow.isDestroyed()) {
+      const latest = getAppConfig(id);
+      const svc = getService(id);
+      appMenuWindow.webContents.send('app-menu:init', {
+        serviceId: id,
+        name: svc?.name || svc?.defaultName || 'App',
+        enabled: latest.enabled !== false,
+        sound: latest.allowSounds !== false,
+        notifications: latest.allowNotifications !== false,
+        warm: latest.keepWarm === true,
+      });
+    }
+    return result;
+  }
+  return { ok: false };
 }
 
 function applyFocusMode(webContents, serviceId) {
@@ -2718,6 +2911,7 @@ function ensureLiveView(service) {
 }
 
 function activateService(id) {
+  closeAppContextMenu();
   const service = getService(id);
   if (!service || !mainWindow || locked) return;
   const cfg = getAppConfig(id);
@@ -3011,6 +3205,7 @@ function attachShortcuts(webContents) {
 
 function lockApp() {
   if (!settings.lockEnabled || !settings.lockPasswordHash) return;
+  closeAppContextMenu();
   locked = true;
   const resumeId = activeServiceId || settings.lastActiveServiceId || null;
   if (resumeId) {
@@ -3808,6 +4003,18 @@ dockHandle('dock:delete-profile', (_e, id) => deleteProfile(id));
 dockHandle('dock:set-instance-profile', (_e, serviceId, profileId) =>
   setInstanceProfile(serviceId, profileId),
 );
+dockHandle('dock:open-app-menu', (_e, payload) =>
+  openAppContextMenu(payload || {}),
+);
+dockHandle('dock:close-app-menu', () => {
+  closeAppContextMenu();
+  return { ok: true };
+});
+appMenuHandle('app-menu:action', (_e, type, value) => handleAppMenuAction(type, value));
+appMenuHandle('app-menu:close', () => {
+  closeAppContextMenu();
+  return { ok: true };
+});
 dockHandle('dock:toggle-keep-warm', (_e, id) => toggleKeepWarm(id));
 dockHandle('dock:save-app-config', (_e, id, incoming) => {
   if (!getService(id)) return { ok: false, error: 'Not found' };

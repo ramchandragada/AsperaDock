@@ -62,6 +62,11 @@ module.exports = {
             config: 'vite.preload.config.mjs',
             target: 'preload',
           },
+          {
+            entry: 'src/appMenuPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
         ],
         renderer: [
           {
