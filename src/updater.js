@@ -45,6 +45,7 @@ let reportError = () => {};
 let beforeDialog = () => {};
 let afterDialog = () => {};
 let beforeRelaunch = () => {};
+let mainWindowProvider = () => null;
 let checkTimer = null;
 
 /** @type {{version:string, notes?:string, mandatory?:boolean, file?:object}|null} */
@@ -54,16 +55,43 @@ let busy = false;
 
 export function configureUpdater({
   getSettings,
+  getMainWindow,
   onError,
   onBeforeDialog,
   onAfterDialog,
   onBeforeRelaunch,
 } = {}) {
   if (getSettings) settingsProvider = getSettings;
+  if (getMainWindow) mainWindowProvider = getMainWindow;
   if (onError) reportError = onError;
   if (onBeforeDialog) beforeDialog = onBeforeDialog;
   if (onAfterDialog) afterDialog = onAfterDialog;
   if (onBeforeRelaunch) beforeRelaunch = onBeforeRelaunch;
+}
+
+function dialogParent() {
+  try {
+    const fromProvider = mainWindowProvider?.();
+    if (fromProvider && !fromProvider.isDestroyed()) return fromProvider;
+  } catch {
+    // ignore
+  }
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && !focused.isDestroyed()) return focused;
+  const all = BrowserWindow.getAllWindows().filter((w) => w && !w.isDestroyed());
+  return all[0] || undefined;
+}
+
+async function showUpdateBox(options) {
+  beforeDialog();
+  try {
+    const parent = dialogParent();
+    // Never pass `undefined` as the first arg — Electron treats it as options and the dialog fails.
+    if (parent) return await dialog.showMessageBox(parent, options);
+    return await dialog.showMessageBox(options);
+  } finally {
+    afterDialog();
+  }
 }
 
 function settings() {
@@ -183,24 +211,21 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
   // Already downloaded and waiting? Re-offer it instead of doing nothing.
   if (!silent && pendingUpdate && downloadedPath && fs.existsSync(downloadedPath)) {
     clearSnooze();
-    promptReady({ force: true });
+    await promptReady({ force: true });
     return { available: true, version: pendingUpdate.version, downloaded: true };
   }
   // Dev / npm start uses package.json 0.1.0 forever — don't spam "install .deb" nags.
   if (detectPackaging() === 'dev') {
     broadcast('up-to-date', { version: `${currentVersion()} (dev)` });
     if (!silent) {
-      beforeDialog();
-      dialog
-        .showMessageBox(BrowserWindow.getAllWindows()[0], {
-          type: 'info',
-          title: 'Development build',
-          message: `You are running a development build (v${currentVersion()}).`,
-          detail:
-            'Updates apply to the installed Aspera Hub package (/usr/bin/asperadock), not this npm start session.\n\nQuit this window and launch Aspera Hub from the app menu to use the installed version.',
-          buttons: ['OK'],
-        })
-        .finally(() => afterDialog());
+      await showUpdateBox({
+        type: 'info',
+        title: 'Development build',
+        message: `You are running a development build (v${currentVersion()}).`,
+        detail:
+          'Updates apply to the installed Aspera Hub package (/usr/bin/asperadock), not this npm start session.\n\nQuit this window and launch Aspera Hub from the app menu to use the installed version.',
+        buttons: ['OK'],
+      });
     }
     return { available: false, version: currentVersion(), dev: true };
   }
@@ -212,48 +237,48 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
     // Package already on disk (manual/systemd install) but this process is stale.
     if (debVer && compareVersions(debVer, manifest.version) >= 0) {
       if (compareVersions(currentVersion(), manifest.version) < 0) {
-        beforeDialog();
-        dialog
-          .showMessageBox(BrowserWindow.getAllWindows()[0], {
-            type: 'info',
-            title: 'Update installed',
-            message: `Aspera Hub ${debVer} is installed. Restart to use it.`,
-            buttons: ['Restart now', 'Later'],
-            defaultId: 0,
-            cancelId: 1,
-          })
-          .then((r) => {
-            afterDialog();
-            if (r.response === 0) relaunchAndExit();
-            else snoozeUpdate(manifest.version);
-          })
-          .catch(() => afterDialog());
+        const r = await showUpdateBox({
+          type: 'info',
+          title: 'Update installed',
+          message: `Aspera Hub ${debVer} is installed. Restart to use it.`,
+          buttons: ['Restart now', 'Later'],
+          defaultId: 0,
+          cancelId: 1,
+        });
+        if (r.response === 0) relaunchAndExit();
+        else snoozeUpdate(manifest.version);
         return { available: false, version: debVer, pendingRelaunch: true };
       }
       broadcast('up-to-date', { version: currentVersion() });
+      if (!silent) {
+        await showUpdateBox({
+          type: 'info',
+          title: 'Aspera Hub',
+          message: 'You are up to date.',
+          detail: `Installed package and running app are both v${currentVersion()} (latest).`,
+          buttons: ['OK'],
+        });
+      }
       return { available: false, version: currentVersion() };
     }
     if (!newer) {
       broadcast('up-to-date', { version: currentVersion() });
       if (!silent) {
-        beforeDialog();
-        dialog
-          .showMessageBox(BrowserWindow.getAllWindows()[0], {
-            type: 'info',
-            title: 'Aspera Hub',
-            message: 'You are up to date.',
-            detail: `Version ${currentVersion()} is the latest.`,
-            buttons: ['OK'],
-          })
-          .finally(() => afterDialog());
+        await showUpdateBox({
+          type: 'info',
+          title: 'Aspera Hub',
+          message: 'You are up to date.',
+          detail: `Version ${currentVersion()} is the latest on GitHub Releases.`,
+          buttons: ['OK'],
+        });
       }
       return { available: false, version: currentVersion() };
     }
 
-    // A manual check overrides an earlier "Later".
-    if (!silent) clearSnooze();
+    // Manual check or startup prompt overrides an earlier "Later".
+    if (!silent || promptOnAvailable) clearSnooze();
 
-    if (silent && !manifest.mandatory && isUpdateSnoozed(manifest.version)) {
+    if (silent && !promptOnAvailable && !manifest.mandatory && isUpdateSnoozed(manifest.version)) {
       broadcast('snoozed', { version: manifest.version });
       return { available: true, snoozed: true, version: manifest.version };
     }
@@ -281,23 +306,20 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
     // no UI looked like the menu item was broken (80MB+ silent fetch).
     if (!silent) {
       if (downloadedPath && fs.existsSync(downloadedPath)) {
-        promptReady({ force: true });
+        await promptReady({ force: true });
       } else if (busy) {
-        beforeDialog();
-        dialog
-          .showMessageBox(BrowserWindow.getAllWindows()[0], {
-            type: 'info',
-            title: 'Downloading update',
-            message: `Aspera Hub ${manifest.version} is already downloading.`,
-            detail: 'You will be prompted to install when the download finishes.',
-            buttons: ['OK'],
-          })
-          .finally(() => afterDialog());
+        await showUpdateBox({
+          type: 'info',
+          title: 'Downloading update',
+          message: `Aspera Hub ${manifest.version} is already downloading.`,
+          detail: 'You will be prompted to install when the download finishes.',
+          buttons: ['OK'],
+        });
       } else {
-        promptAvailable();
+        await promptAvailable();
       }
     } else if (promptOnAvailable) {
-      promptAvailable();
+      await promptAvailable();
     } else if (settings().autoUpdateDownload !== false && file) {
       downloadUpdate().catch((err) => reportError('update-download', { message: String(err) }));
     }
@@ -312,16 +334,13 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
     broadcast('error', { message });
     reportError('update-check', { message });
     if (!silent) {
-      beforeDialog();
-      dialog
-        .showMessageBox(BrowserWindow.getAllWindows()[0], {
-          type: 'error',
-          title: 'Update check failed',
-          message: 'Could not check for updates.',
-          detail: message,
-          buttons: ['OK'],
-        })
-        .finally(() => afterDialog());
+      await showUpdateBox({
+        type: 'error',
+        title: 'Update check failed',
+        message: 'Could not check for updates.',
+        detail: message,
+        buttons: ['OK'],
+      });
     }
     return { available: false, error: message };
   }
@@ -446,7 +465,7 @@ export async function downloadUpdate() {
         reportError('update-install', { message: String(err) }),
       );
     } else {
-      promptReady();
+      await promptReady();
     }
     return { ok: true, path: dest };
   } catch (error) {
@@ -459,16 +478,13 @@ export async function downloadUpdate() {
     const message = String(error?.message || error);
     broadcast('error', { message });
     reportError('update-download', { message });
-    beforeDialog();
-    dialog
-      .showMessageBox(BrowserWindow.getAllWindows()[0], {
-        type: 'error',
-        title: 'Update download failed',
-        message: 'Could not download the update.',
-        detail: message,
-        buttons: ['OK'],
-      })
-      .finally(() => afterDialog());
+    await showUpdateBox({
+      type: 'error',
+      title: 'Update download failed',
+      message: 'Could not download the update.',
+      detail: message,
+      buttons: ['OK'],
+    });
     return { ok: false, error: message };
   }
 }
@@ -567,16 +583,13 @@ export async function installUpdate({ silentOnFail = false } = {}) {
     broadcast('error', { message });
     reportError('update-install', { message });
     if (!silentOnFail) {
-      beforeDialog();
-      dialog
-        .showMessageBox(BrowserWindow.getAllWindows()[0], {
-          type: 'error',
-          title: 'Update rejected',
-          message: 'Could not verify the update package.',
-          detail: message,
-          buttons: ['OK'],
-        })
-        .finally(() => afterDialog());
+      await showUpdateBox({
+        type: 'error',
+        title: 'Update rejected',
+        message: 'Could not verify the update package.',
+        detail: message,
+        buttons: ['OK'],
+      });
     }
     return { ok: false, error: message };
   }
@@ -602,8 +615,7 @@ export async function installUpdate({ silentOnFail = false } = {}) {
         // version to catch up, then relaunch. Never claim success early.
         const applied = await waitForDebVersion(pendingUpdate?.version, 90_000);
         if (!applied) {
-          beforeDialog();
-          const choice = await dialog.showMessageBox(BrowserWindow.getAllWindows()[0], {
+          const choice = await showUpdateBox({
             type: 'info',
             title: 'Finish installing the update',
             message: `Approve the install of Aspera Hub ${pendingUpdate?.version} in your package manager.`,
@@ -615,7 +627,6 @@ export async function installUpdate({ silentOnFail = false } = {}) {
             defaultId: 0,
             cancelId: 2,
           });
-          afterDialog();
           if (choice.response === 1) {
             shell.showItemInFolder(downloadedPath);
             return { ok: false, manual: true, error: 'Waiting for manual install' };
@@ -648,21 +659,15 @@ export async function installUpdate({ silentOnFail = false } = {}) {
     broadcast('error', { message });
     reportError('update-install', { message });
     if (!silentOnFail) {
-      beforeDialog();
-      dialog
-        .showMessageBox(BrowserWindow.getAllWindows()[0], {
-          type: 'error',
-          title: 'Update failed to install',
-          message: 'Aspera Hub could not install the update automatically.',
-          detail: `${message}\n\nThe downloaded file is here:\n${downloadedPath}\n\nDouble-click the .deb to install it with your package manager, then reopen Aspera Hub.`,
-          buttons: ['Open folder', 'OK'],
-          defaultId: 0,
-        })
-        .then((r) => {
-          afterDialog();
-          if (r.response === 0) shell.showItemInFolder(downloadedPath);
-        })
-        .catch(() => afterDialog());
+      const r = await showUpdateBox({
+        type: 'error',
+        title: 'Update failed to install',
+        message: 'Aspera Hub could not install the update automatically.',
+        detail: `${message}\n\nThe downloaded file is here:\n${downloadedPath}\n\nDouble-click the .deb to install it with your package manager, then reopen Aspera Hub.`,
+        buttons: ['Open folder', 'OK'],
+        defaultId: 0,
+      });
+      if (r.response === 0) shell.showItemInFolder(downloadedPath);
     }
     return { ok: false, error: message };
   }
@@ -830,12 +835,10 @@ function spawnSystemdRun(argv) {
   }
 }
 
-function promptAvailable() {
-  const win = BrowserWindow.getAllWindows()[0];
-  if (!win || !pendingUpdate) return;
-  beforeDialog();
-  dialog
-    .showMessageBox(win, {
+async function promptAvailable() {
+  if (!pendingUpdate) return;
+  try {
+    const r = await showUpdateBox({
       type: 'info',
       title: 'Update available',
       message: `Aspera Hub ${pendingUpdate.version} is available.`,
@@ -843,28 +846,31 @@ function promptAvailable() {
       buttons: ['Download', 'Later'],
       defaultId: 0,
       cancelId: 1,
-    })
-    .then((r) => {
-      afterDialog();
-      if (r.response === 0) {
-        downloadUpdate().catch((err) =>
-          reportError('update-download', { message: String(err) }),
-        );
-      } else {
-        snoozeUpdate(pendingUpdate?.version);
-      }
-    })
-    .catch(() => afterDialog());
+    });
+    if (r.response === 0) {
+      downloadUpdate().catch((err) =>
+        reportError('update-download', { message: String(err) }),
+      );
+    } else {
+      snoozeUpdate(pendingUpdate?.version);
+    }
+  } catch (error) {
+    reportError('update-prompt', { message: String(error?.message || error) });
+    // Dialog failed (focus/parent issues on some Linux sessions) — still fetch if allowed.
+    if (settings().autoUpdateDownload !== false && pendingUpdate?.file) {
+      downloadUpdate().catch((err) =>
+        reportError('update-download', { message: String(err) }),
+      );
+    }
+  }
 }
 
-function promptReady({ force = false } = {}) {
-  const win = BrowserWindow.getAllWindows()[0];
-  if (!win || !pendingUpdate) return;
+async function promptReady({ force = false } = {}) {
+  if (!pendingUpdate) return;
   if (!force && !pendingUpdate.mandatory && isUpdateSnoozed(pendingUpdate.version)) return;
   if (force) clearSnooze();
-  beforeDialog();
-  dialog
-    .showMessageBox(win, {
+  try {
+    const r = await showUpdateBox({
       type: 'info',
       title: 'Update ready',
       message: `Aspera Hub ${pendingUpdate.version} is ready to install.`,
@@ -876,13 +882,22 @@ function promptReady({ force = false } = {}) {
         : ['Install & restart', 'Later'],
       defaultId: 0,
       cancelId: pendingUpdate.mandatory ? 0 : 1,
-    })
-    .then((r) => {
-      afterDialog();
-      if (r.response === 0) installUpdate();
-      else snoozeUpdate(pendingUpdate?.version);
-    })
-    .catch(() => afterDialog());
+    });
+    if (r.response === 0) {
+      installUpdate().catch((err) =>
+        reportError('update-install', { message: String(err) }),
+      );
+    } else {
+      snoozeUpdate(pendingUpdate?.version);
+    }
+  } catch (error) {
+    reportError('update-prompt', { message: String(error?.message || error) });
+    if (settings().autoUpdateInstall === true || pendingUpdate?.mandatory) {
+      installUpdate({ silentOnFail: true }).catch((err) =>
+        reportError('update-install', { message: String(err) }),
+      );
+    }
+  }
 }
 
 /** Called from before-quit: silently apply a downloaded update if configured. */

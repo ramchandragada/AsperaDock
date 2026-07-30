@@ -3462,8 +3462,9 @@ function beforeDialogSafe() {
 function afterDialogSafe() {
   try {
     resumeFreezeWatch();
-    mainWindow?.webContents.send('dock:sync-overlay');
+    // Close dialog overlay first, then let the renderer re-open Settings/menu if still visible.
     setOverlayOpen(false);
+    mainWindow?.webContents.send('dock:sync-overlay');
     setTimeout(() => layoutActiveView(), 50);
   } catch {
     // ignore
@@ -4173,17 +4174,15 @@ app.whenReady().then(async () => {
   watchSystemIdle();
   configureUpdater({
     getSettings: () => settings,
+    getMainWindow: () => mainWindow,
     onError: (kind, payload) => reportError(kind, payload).catch(() => {}),
+    // Native OS dialogs already draw above BrowserViews — do not detach guests
+    // (full overlay) or Linux sessions can lose focus and never show the box.
     onBeforeDialog: () => {
-      setOverlayOpen(true);
       pauseFreezeWatch();
     },
     onAfterDialog: () => {
       resumeFreezeWatch();
-      // Let the renderer re-assert if a settings/menu overlay is still open.
-      mainWindow?.webContents.send('dock:sync-overlay');
-      setOverlayOpen(false);
-      // Re-layout after native dialogs — guest view can end up fullscreen otherwise.
       setTimeout(() => layoutActiveView(), 50);
       setTimeout(() => layoutActiveView(), 250);
     },
