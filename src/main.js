@@ -1797,8 +1797,8 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
   closeNotifCenterWindow();
   closeChromeMenuWindow();
 
-  const menuW = 226;
-  const menuH = 420;
+  const menuW = 234;
+  const menuH = 560;
   const content = mainWindow.getContentBounds();
   const anchorX = content.x + (Number(x) || 0);
   const anchorY = content.y + (Number(y) || 0);
@@ -1820,7 +1820,13 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
 
   const versionLabel = `Aspera Hub ${app.getVersion()}${app.isPackaged ? '' : ' (dev)'}`;
   win.webContents.once('did-finish-load', () => {
-    if (!win.isDestroyed()) win.webContents.send('chrome-menu:init', { versionLabel });
+    if (!win.isDestroyed()) {
+      win.webContents.send('chrome-menu:init', {
+        versionLabel,
+        focusMode: !!settings.focusMode,
+        muted: !!settings.muted,
+      });
+    }
   });
   win.once('ready-to-show', () => {
     if (!win.isDestroyed()) {
@@ -1995,6 +2001,18 @@ function handleChromeMenuAction(type) {
   closeChromeMenuWindow();
   if (!type) return { ok: false };
 
+  if (type === 'search') {
+    mainWindow?.webContents.send('dock:chrome-action', 'search');
+    return { ok: true };
+  }
+  if (type === 'focus') {
+    toggleFocusMode();
+    return { ok: true };
+  }
+  if (type === 'mute') {
+    toggleMute();
+    return { ok: true };
+  }
   if (type === 'reload') {
     if (activeServiceId) {
       const wc = views.get(activeServiceId)?.view?.webContents;

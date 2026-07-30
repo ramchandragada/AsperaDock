@@ -20,9 +20,6 @@
           <button id="add-app-btn" type="button" class="icon-btn add-app-btn" title="Add app"></button>
           <span class="chrome-divider" aria-hidden="true"></span>
           <button id="downloads-btn" type="button" class="icon-btn" title="Open Downloads folder" aria-label="Open Downloads folder"></button>
-          <button id="search-btn" type="button" class="icon-btn" title="Quick search (Ctrl+/)"></button>
-          <button id="focus-btn" type="button" class="icon-btn" title="Focus mode — Ctrl+Shift+D"></button>
-          <button id="mute-btn" type="button" class="icon-btn" title="Mute — Ctrl+Shift+M"></button>
           <div class="menu-wrap">
             <button id="notif-btn" type="button" class="icon-btn badge-host" title="Notifications">
               <span class="icon-slot"></span>
@@ -46,6 +43,16 @@
           <div class="menu-wrap">
             <button id="menu-btn" type="button" class="icon-btn brand-avatar" title="Menu" aria-label="Menu"></button>
             <div id="app-chrome-menu" class="chrome-menu hidden" role="menu">
+              <button type="button" data-action="search" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="search"></span> Quick search
+              </button>
+              <button type="button" data-action="focus" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="focus"></span> Focus mode
+              </button>
+              <button type="button" data-action="mute" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="unmute"></span> Mute
+              </button>
+              <hr />
               <button type="button" data-action="settings" class="chrome-menu-item">
                 <span class="chrome-menu-ico" data-ico="settings"></span> Settings
               </button>

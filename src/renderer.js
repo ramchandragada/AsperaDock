@@ -202,15 +202,13 @@ function bindAppTabDrag(btn, service) {
 }
 
 function paintToolbarIcons() {
-  els.downloadsBtn.innerHTML = icon('download');
-  els.searchBtn.innerHTML = icon('search');
-  els.focusBtn.innerHTML = icon('focus');
-  els.menuBtn.innerHTML = asperaAppIconSvg(24);
-  els.addAppBtn.innerHTML = icon('plus');
+  if (els.downloadsBtn) els.downloadsBtn.innerHTML = icon('download');
+  if (els.menuBtn) els.menuBtn.innerHTML = asperaAppIconSvg(24);
+  if (els.addAppBtn) els.addAppBtn.innerHTML = icon('plus');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
-  els.appMenuEdit.innerHTML = icon('settings');
+  if (els.appMenuEdit) els.appMenuEdit.innerHTML = icon('settings');
   if (els.appMenuHome) els.appMenuHome.innerHTML = icon('home');
-  els.appMenuReload.innerHTML = icon('sync');
+  if (els.appMenuReload) els.appMenuReload.innerHTML = icon('sync');
 
   // Brand surfaces
   const chromeWordmark = document.getElementById('chrome-wordmark');
@@ -419,16 +417,11 @@ function paintAppVersion() {
 function renderChromeActions() {
   const s = state.settings || {};
   const folder = String(s.downloadPath || '').trim();
-  els.downloadsBtn.title = folder
-    ? `Open Downloads folder\n${folder}`
-    : 'Open Downloads folder';
-  els.focusBtn.classList.toggle('on', !!s.focusMode);
-  els.focusBtn.title = s.focusMode
-    ? 'Focus on — Ctrl+Shift+D'
-    : 'Focus mode — Ctrl+Shift+D';
-  els.muteBtn.classList.toggle('on', !!s.muted);
-  els.muteBtn.innerHTML = icon(s.muted ? 'mute' : 'unmute');
-  els.muteBtn.title = s.muted ? 'Unmute — Ctrl+Shift+M' : 'Mute — Ctrl+Shift+M';
+  if (els.downloadsBtn) {
+    els.downloadsBtn.title = folder
+      ? `Open Downloads folder\n${folder}`
+      : 'Open Downloads folder';
+  }
 
   const total = state.totalUnread || 0;
   if (total > 0) {
@@ -1143,6 +1136,7 @@ function toggleChromeMenu() {
 }
 
 function handleChromeAction(action) {
+  if (action === 'search') openSearch();
   if (action === 'settings') openSettings();
   if (action === 'profiles') openProfiles();
   if (action === 'shortcuts') openShortcuts();
@@ -1231,9 +1225,7 @@ function render() {
   requestAnimationFrame(reportChromeSize);
 }
 
-els.focusBtn.addEventListener('click', () => window.asperadock.toggleFocus());
-els.muteBtn.addEventListener('click', () => window.asperadock.toggleMute());
-els.downloadsBtn.addEventListener('click', async () => {
+els.downloadsBtn?.addEventListener('click', async () => {
   const result = await window.asperadock.openDownloads?.();
   if (result && !result.ok) {
     alert(`Could not open Downloads folder.\n${result.error || result.path || ''}`);
@@ -1244,7 +1236,6 @@ els.menuBtn.addEventListener('click', (event) => {
   toggleChromeMenu();
 });
 els.settingsClose.addEventListener('click', closeSettings);
-els.searchBtn.addEventListener('click', openSearch);
 els.addAppBtn.addEventListener('click', openAppsSettings);
 els.emptyAddBtn.addEventListener('click', openAppsSettings);
 
@@ -1254,6 +1245,8 @@ els.chromeMenu?.addEventListener('click', (event) => {
   const action = btn.dataset.action;
   closeChromeMenu();
   handleChromeAction(action);
+  if (action === 'focus') window.asperadock.toggleFocus?.();
+  if (action === 'mute') window.asperadock.toggleMute?.();
   if (action === 'reload') window.asperadock.reloadActive();
   if (action === 'home') {
     const id = state?.activeServiceId;

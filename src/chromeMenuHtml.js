@@ -5,6 +5,14 @@ function svg(path) {
 }
 
 const ICO = {
+  search: svg('<circle cx="11" cy="11" r="7.5"/><path d="m21 21-4.4-4.4"/>'),
+  focus: svg('<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/>'),
+  mute: svg(
+    '<path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/>',
+  ),
+  unmute: svg(
+    '<path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M19.1 4.9a10 10 0 0 1 0 14.2"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/>',
+  ),
   settings: svg(
     '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.65 1.65 0 0 0 15 19.4a1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6 1.65 1.65 0 0 0 10 3.09V3a2 2 0 0 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
   ),
@@ -28,8 +36,9 @@ const ICO = {
   info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>'),
 };
 
-function item(action, icon, label) {
-  return `<button type="button" class="item" data-action="${action}"><span class="ico">${icon}</span>${label}</button>`;
+function item(action, icon, label, id = '') {
+  const idAttr = id ? ` id="${id}"` : '';
+  return `<button type="button" class="item" data-action="${action}"${idAttr}><span class="ico">${icon}</span><span class="label">${label}</span></button>`;
 }
 
 export function buildChromeMenuHtml(dark = false) {
@@ -46,7 +55,7 @@ export function buildChromeMenuHtml(dark = false) {
 <style>
   html, body { margin:0; padding:0; background:transparent; overflow:hidden; font:500 13px/1.3 "Segoe UI","Ubuntu","Cantarell",sans-serif; color:${text}; user-select:none; }
   .card {
-    margin:4px; width:210px; box-sizing:border-box;
+    margin:4px; width:220px; box-sizing:border-box;
     background:${bg}; border:1px solid ${border}; border-radius:12px;
     box-shadow:0 12px 40px rgba(15,23,42,0.22); padding:6px; display:grid; gap:2px;
   }
@@ -55,13 +64,18 @@ export function buildChromeMenuHtml(dark = false) {
     color:inherit; text-align:left; padding:9px 10px; border-radius:8px; cursor:pointer; font:inherit;
   }
   .item:hover { background:${hover}; }
-  .ico { width:18px; height:18px; display:grid; place-items:center; color:${muted}; }
+  .ico { width:18px; height:18px; display:grid; place-items:center; color:${muted}; flex:0 0 auto; }
+  .label { min-width:0; }
   hr { border:none; border-top:1px solid ${border}; margin:4px 0; }
   .ver { padding:6px 10px 4px; font-size:11px; font-weight:600; color:${muted}; }
 </style>
 </head>
 <body>
   <div class="card">
+    ${item('search', ICO.search, 'Quick search')}
+    ${item('focus', ICO.focus, 'Focus mode', 'focus-item')}
+    ${item('mute', ICO.unmute, 'Mute', 'mute-item')}
+    <hr />
     ${item('settings', ICO.settings, 'Settings')}
     ${item('profiles', ICO.users, 'Profiles')}
     ${item('shortcuts', ICO.keyboard, 'Shortcuts')}
@@ -78,10 +92,25 @@ export function buildChromeMenuHtml(dark = false) {
   </div>
   <script>
     const api = window.chromeMenuApi;
-    api.onInit((data) => {
-      const el = document.getElementById('version');
-      if (el && data?.versionLabel) el.textContent = data.versionLabel;
-    });
+    const muteIcoOn = ${JSON.stringify(ICO.mute)};
+    const muteIcoOff = ${JSON.stringify(ICO.unmute)};
+    function applyState(data) {
+      const ver = document.getElementById('version');
+      if (ver && data?.versionLabel) ver.textContent = data.versionLabel;
+      const focus = document.getElementById('focus-item');
+      if (focus) {
+        const label = focus.querySelector('.label');
+        if (label) label.textContent = data?.focusMode ? 'Focus mode on' : 'Focus mode';
+      }
+      const mute = document.getElementById('mute-item');
+      if (mute) {
+        const label = mute.querySelector('.label');
+        const ico = mute.querySelector('.ico');
+        if (label) label.textContent = data?.muted ? 'Unmute' : 'Mute';
+        if (ico) ico.innerHTML = data?.muted ? muteIcoOn : muteIcoOff;
+      }
+    }
+    api.onInit(applyState);
     document.querySelectorAll('[data-action]').forEach((btn) => {
       btn.addEventListener('click', () => api.action(btn.dataset.action));
     });
