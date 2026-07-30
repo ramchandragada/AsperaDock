@@ -1,5 +1,9 @@
-import { getAiProvider, normalizeAnthropicModel } from './catalog.js';
-import { getAiProviderKey } from './keys.js';
+import {
+  configuredProvidersInRouteOrder,
+  getAiProvider,
+  normalizeAnthropicModel,
+} from './catalog.js';
+import { getAiProviderKey, listConfiguredAiProviders } from './keys.js';
 import { buildCatchMeUpPrompt, buildSummarizePrompt } from './skills.js';
 
 async function callOpenAiCompatible({
@@ -148,6 +152,44 @@ export async function runAiCompletion({
       'X-Title': 'Aspera Hub',
     },
   });
+}
+
+/**
+ * Try configured providers automatically: free-tier first, Anthropic last.
+ * Uses each provider's default model (manual model override is ignored for failover).
+ */
+export async function runAiCompletionWithFailover(prompt) {
+  const configured = listConfiguredAiProviders()
+    .filter((p) => p.configured)
+    .map((p) => p.id);
+  const order = configuredProvidersInRouteOrder(configured);
+  if (!order.length) {
+    throw new Error(
+      'Add at least one AI API key in Settings → Aspera AI (Gemini or OpenRouter recommended).',
+    );
+  }
+
+  const errors = [];
+  for (const provider of order) {
+    const model = provider.defaultModel;
+    try {
+      const text = await runAiCompletion({
+        providerId: provider.id,
+        model,
+        prompt,
+      });
+      return { text, providerId: provider.id, model, providerName: provider.name };
+    } catch (error) {
+      const message = String(error?.message || error);
+      errors.push(`${provider.name}: ${message}`);
+    }
+  }
+
+  throw new Error(
+    errors.length
+      ? `All configured AI providers failed:\n${errors.join('\n')}`
+      : 'No AI provider available',
+  );
 }
 
 export function promptForSkill(skill, payload) {

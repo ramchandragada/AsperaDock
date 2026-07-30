@@ -23,17 +23,20 @@ import { buildAiResultHtml } from './aiResultHtml.js';
 import {
   AI_ALLOWED_APP_IDS,
   AI_LANGUAGES,
+  configuredProvidersInRouteOrder,
   getAiProvider,
   isAiAllowedAppId,
   normalizeAnthropicModel,
 } from './ai/catalog.js';
 import {
   clearAiProviderKey,
-  getAiProviderKey,
   listConfiguredAiProviders,
   setAiProviderKey,
 } from './ai/keys.js';
-import { promptForSkill, runAiCompletion } from './ai/service.js';
+import {
+  promptForSkill,
+  runAiCompletionWithFailover,
+} from './ai/service.js';
 import {
   APP_CATALOG,
   MAX_INSTANCES_PER_APP,
@@ -2037,28 +2040,33 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
 }
 
 function aiSettingsSnapshot() {
-  const rawId = String(settings.aiProvider || '').trim();
-  const provider = getAiProvider(rawId || 'gemini');
-  // If settings still point at a removed/unknown id, getAiProvider falls back —
-  // keep the resolved provider.id as source of truth for the API call.
-  let model = String(settings.aiModel || '').trim();
-  // Migrate dead OpenRouter default that looked like a direct Gemini call.
-  if (
-    provider.id === 'openrouter' &&
-    (!model || model === 'google/gemini-2.0-flash-001')
-  ) {
-    model = provider.defaultModel;
-  }
-  // Migrate retired Anthropic model ids (e.g. claude-3-5-haiku-latest).
-  if (provider.id === 'anthropic') {
-    const normalized = normalizeAnthropicModel(model || provider.defaultModel);
-    if (normalized !== model) model = normalized;
-  }
-  if (!model) model = provider.defaultModel;
   const language = ['en', 'hi', 'mr'].includes(settings.aiLanguage)
     ? settings.aiLanguage
     : 'en';
-  return { provider, model, language };
+  const configured = listConfiguredAiProviders()
+    .filter((p) => p.configured)
+    .map((p) => p.id);
+  const order = configuredProvidersInRouteOrder(configured);
+  const provider = order[0] || getAiProvider(settings.aiProvider || 'gemini');
+  let model = String(settings.aiModel || '').trim();
+  if (provider.id === 'anthropic') {
+    model = normalizeAnthropicModel(model || provider.defaultModel);
+  }
+  if (!model) model = provider.defaultModel;
+  return { provider, model, language, routeOrder: order };
+}
+
+/** Keep settings.aiProvider pointing at the first configured free-tier (or only) provider. */
+function syncPreferredAiProvider() {
+  const configured = listConfiguredAiProviders()
+    .filter((p) => p.configured)
+    .map((p) => p.id);
+  const order = configuredProvidersInRouteOrder(configured);
+  const nextId = order[0]?.id || settings.aiProvider || 'gemini';
+  if (nextId !== settings.aiProvider) {
+    settings = saveSettings({ aiProvider: nextId });
+  }
+  return nextId;
 }
 
 function collectCatchUpItems() {
@@ -2127,12 +2135,13 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
     return { ok: false, error: 'Aspera AI is turned off in Settings.' };
   }
 
-  const { provider, model, language } = aiSettingsSnapshot();
-  if (!getAiProviderKey(provider.id)) {
+  const { language, routeOrder } = aiSettingsSnapshot();
+  if (!routeOrder.length) {
     mainWindow?.webContents.send('dock:chrome-action', 'settings');
     return {
       ok: false,
-      error: `Add your ${provider.name} API key in Settings → Aspera AI.`,
+      error:
+        'Add at least one AI API key in Settings → Aspera AI (Gemini or OpenRouter recommended).',
     };
   }
 
@@ -2140,10 +2149,11 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
     AI_LANGUAGES.find((l) => l.id === language)?.label || 'English';
   const skillTitle =
     skill === 'catch-up' ? 'Catch me up' : 'Summarize selection';
+  const routeHint = routeOrder.map((p) => p.name).join(' → ');
 
   openAiResultWindow({
     title: `Aspera AI · ${skillTitle}`,
-    meta: `${provider.name} · ${model} · ${langLabel}`,
+    meta: `Auto · ${routeHint} · ${langLabel}`,
     dark,
   });
 
@@ -2172,23 +2182,24 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
       throw new Error('Unknown skill');
     }
 
-    const text = await runAiCompletion({
-      providerId: provider.id,
-      model,
-      prompt,
-    });
+    const result = await runAiCompletionWithFailover(prompt);
     pushAiResult({
       title: `Aspera AI · ${skillTitle}`,
-      meta: `${provider.name} · ${model} · ${langLabel}`,
-      text,
+      meta: `${result.providerName} · ${result.model} · ${langLabel}`,
+      text: result.text,
       loading: false,
     });
-    return { ok: true, text, provider: provider.id, model };
+    return {
+      ok: true,
+      text: result.text,
+      provider: result.providerId,
+      model: result.model,
+    };
   } catch (error) {
     const message = String(error?.message || error);
     pushAiResult({
       title: `Aspera AI · ${skillTitle}`,
-      meta: `${provider.name} · ${model} · ${langLabel}`,
+      meta: `Auto · ${routeHint} · ${langLabel}`,
       error: message,
       text: message,
       loading: false,
@@ -3690,6 +3701,11 @@ function currentState() {
       allowedAppIds: AI_ALLOWED_APP_IDS,
       languages: AI_LANGUAGES,
       providers: listConfiguredAiProviders(),
+      routeOrder: configuredProvidersInRouteOrder(
+        listConfiguredAiProviders()
+          .filter((p) => p.configured)
+          .map((p) => p.id),
+      ).map((p) => p.id),
     },
     settings: {
       ...settings,
@@ -4683,19 +4699,22 @@ dockHandle('dock:ai-status', () => ({
   allowedAppIds: AI_ALLOWED_APP_IDS,
   languages: AI_LANGUAGES,
   providers: listConfiguredAiProviders(),
+  routeOrder: configuredProvidersInRouteOrder(
+    listConfiguredAiProviders()
+      .filter((p) => p.configured)
+      .map((p) => p.id),
+  ).map((p) => p.id),
 }));
 dockHandle('dock:ai-set-key', (_e, providerId, apiKey) => {
   const id = String(providerId || '').trim();
   const result = setAiProviderKey(id, apiKey);
-  if (result.ok && id) {
-    // Selecting a provider + saving its key must also switch the active provider.
-    settings = saveSettings({ aiProvider: id });
-  }
+  if (result.ok) syncPreferredAiProvider();
   broadcastState();
   return result;
 });
 dockHandle('dock:ai-clear-key', (_e, providerId) => {
   const result = clearAiProviderKey(providerId);
+  syncPreferredAiProvider();
   broadcastState();
   return result;
 });
@@ -4705,15 +4724,8 @@ dockHandle('dock:ai-set-provider', (_e, providerId) => {
   if (!id || provider.id !== id) {
     return { ok: false, error: 'Unknown AI provider' };
   }
-  const patch = { aiProvider: id };
-  // Clear obsolete OpenRouter model override so the new default is used.
-  if (
-    id === 'openrouter' &&
-    String(settings.aiModel || '').trim() === 'google/gemini-2.0-flash-001'
-  ) {
-    patch.aiModel = '';
-  }
-  settings = saveSettings(patch);
+  // Manual preference is stored but skills auto-route free-first → Anthropic last.
+  settings = saveSettings({ aiProvider: id });
   broadcastState();
   return { ok: true, provider: id };
 });

@@ -86,6 +86,34 @@ export function normalizeAnthropicModel(model) {
   };
   return map[raw] || raw || 'claude-haiku-4-5';
 }
+
+/**
+ * Auto-routing order: free-tier friendly providers first (catalog order),
+ * then other paid providers, Anthropic always last.
+ */
+export function aiProviderRouteOrder() {
+  const free = [];
+  const paid = [];
+  let anthropic = null;
+  for (const p of AI_PROVIDERS) {
+    if (p.id === 'anthropic') {
+      anthropic = p;
+      continue;
+    }
+    if (p.freeTierFriendly) free.push(p);
+    else paid.push(p);
+  }
+  return anthropic ? [...free, ...paid, anthropic] : [...free, ...paid];
+}
+
+/** Filter route order to providers that have a saved key (`configuredIds`). */
+export function configuredProvidersInRouteOrder(configuredIds) {
+  const have = new Set(
+    (configuredIds || []).map((id) => String(id || '').trim()).filter(Boolean),
+  );
+  return aiProviderRouteOrder().filter((p) => have.has(p.id));
+}
+
 export function getAiProvider(id) {
   return AI_PROVIDERS.find((p) => p.id === id) || AI_PROVIDERS[0];
 }

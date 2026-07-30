@@ -592,19 +592,145 @@ function renderInstances() {
   }
 }
 
-function refreshAiKeyStatus() {
-  const status = document.getElementById('ai-key-status');
-  if (!status) return;
-  const providerId =
-    document.getElementById('set-ai-provider')?.value ||
-    state.ai?.provider ||
-    'gemini';
+function refreshAiRouteHint() {
+  const el = document.getElementById('ai-route-hint');
+  if (!el) return;
+  const order = state.ai?.routeOrder || [];
   const providers = state.ai?.providers || [];
-  const entry = providers.find((p) => p.id === providerId);
-  const name = entry?.name || providerId;
-  status.textContent = entry?.configured
-    ? `API key saved for ${name}.`
-    : `No key saved yet for ${name}.`;
+  if (!order.length) {
+    el.textContent = 'No API keys saved yet — add at least one provider below.';
+    return;
+  }
+  const names = order.map((id) => {
+    const p = providers.find((x) => x.id === id);
+    return p?.name || id;
+  });
+  el.textContent =
+    names.length === 1
+      ? `Active provider: ${names[0]}.`
+      : `Auto-try order: ${names.join(' → ')}.`;
+}
+
+/** Providers currently showing the key input (new key or edit). */
+const aiKeyEditMode = new Set();
+
+function renderAiProviderKeys() {
+  const root = document.getElementById('ai-provider-keys');
+  if (!root) return;
+  const providers = state.ai?.providers || [];
+  root.replaceChildren();
+
+  for (const provider of providers) {
+    const row = document.createElement('div');
+    row.className = 'ai-provider-key-row';
+    row.dataset.providerId = provider.id;
+
+    const head = document.createElement('div');
+    head.className = 'ai-provider-key-head';
+    const title = document.createElement('div');
+    title.className = 'ai-provider-key-title';
+    title.textContent = provider.name;
+    const badge = document.createElement('div');
+    badge.className = 'ai-provider-key-badge';
+    badge.textContent = provider.freeTierFriendly
+      ? 'Free-tier friendly'
+      : provider.id === 'anthropic'
+        ? 'Paid · tried last'
+        : 'Paid';
+    head.append(title, badge);
+
+    const status = document.createElement('p');
+    status.className = 'ai-provider-key-status';
+    const editing = aiKeyEditMode.has(provider.id);
+    if (provider.configured && !editing) {
+      status.classList.add('is-saved');
+      status.textContent = 'API key saved';
+    } else if (provider.configured && editing) {
+      status.textContent = 'Enter a new key to replace the saved one.';
+    } else {
+      status.textContent = 'No API key saved';
+    }
+
+    const hint = document.createElement('p');
+    hint.className = 'ai-provider-key-hint';
+    hint.textContent = provider.keyHint || '';
+
+    const actions = document.createElement('div');
+    actions.className = 'ai-provider-key-actions';
+
+    if (provider.configured && !editing) {
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'ghost-btn';
+      editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', () => {
+        aiKeyEditMode.add(provider.id);
+        renderAiProviderKeys();
+      });
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'ghost-btn';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.addEventListener('click', async () => {
+        if (!confirm(`Delete the saved API key for ${provider.name}?`)) return;
+        await window.asperadock.aiClearKey?.(provider.id);
+        aiKeyEditMode.delete(provider.id);
+        state = (await window.asperadock.getState?.()) || state;
+        renderAiProviderKeys();
+        refreshAiRouteHint();
+      });
+      actions.append(editBtn, deleteBtn);
+    } else {
+      const input = document.createElement('input');
+      input.type = 'password';
+      input.autocomplete = 'off';
+      input.placeholder = provider.configured
+        ? 'Paste new API key'
+        : 'Paste API key';
+      input.setAttribute('aria-label', `${provider.name} API key`);
+
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.className = 'ghost-btn';
+      saveBtn.textContent = 'Save';
+      saveBtn.addEventListener('click', async () => {
+        const apiKey = input.value || '';
+        if (!apiKey.trim()) {
+          alert('Paste an API key first.');
+          return;
+        }
+        const result = await window.asperadock.aiSetKey?.(provider.id, apiKey);
+        if (!result?.ok) {
+          alert(result?.error || 'Could not save API key');
+          return;
+        }
+        aiKeyEditMode.delete(provider.id);
+        input.value = '';
+        state = (await window.asperadock.getState?.()) || state;
+        renderAiProviderKeys();
+        refreshAiRouteHint();
+      });
+
+      actions.append(input, saveBtn);
+
+      if (provider.configured && editing) {
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'ghost-btn';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', () => {
+          aiKeyEditMode.delete(provider.id);
+          renderAiProviderKeys();
+        });
+        actions.append(cancelBtn);
+      }
+    }
+
+    row.append(head, status, hint, actions);
+    root.appendChild(row);
+  }
+
+  refreshAiRouteHint();
 }
 
 function openAiSettings() {
@@ -649,11 +775,9 @@ function fillSettingsForm() {
   set('set-lock-password', '');
   set('set-lock-idle', s.lockOnSystemIdle);
   set('set-ai-enabled', s.aiEnabled !== false);
-  set('set-ai-provider', s.aiProvider || 'gemini');
-  set('set-ai-model', s.aiModel || '');
   set('set-ai-language', s.aiLanguage || 'en');
-  set('set-ai-key', '');
-  refreshAiKeyStatus();
+  aiKeyEditMode.clear();
+  renderAiProviderKeys();
   set('set-proxy-mode', s.proxyMode || 'none');
   set('set-proxy-rules', s.proxyRules || '');
   set('set-proxy-bypass', s.proxyBypass ?? '<local>');
@@ -712,8 +836,6 @@ function readSettingsForm() {
     lockEnabled: val('set-lock-enabled') === 'true',
     lockOnSystemIdle: checked('set-lock-idle'),
     aiEnabled: checked('set-ai-enabled'),
-    aiProvider: val('set-ai-provider'),
-    aiModel: val('set-ai-model').trim(),
     aiLanguage: val('set-ai-language'),
     proxyMode: val('set-proxy-mode'),
     proxyRules: val('set-proxy-rules').trim(),
@@ -1398,47 +1520,6 @@ window.asperadock.onOpenEditApp?.((id) => {
 });
 window.asperadock.onChromeAction?.(handleChromeAction);
 window.asperadock.onOpenAiSettings?.(openAiSettings);
-
-document.getElementById('set-ai-provider')?.addEventListener('change', async () => {
-  const providerId = document.getElementById('set-ai-provider')?.value || 'gemini';
-  const keyInput = document.getElementById('set-ai-key');
-  if (keyInput) keyInput.value = '';
-  await window.asperadock.aiSetProvider?.(providerId);
-  state = (await window.asperadock.getState?.()) || state;
-  // Keep model field in sync if we cleared a dead OpenRouter override.
-  const modelInput = document.getElementById('set-ai-model');
-  if (modelInput && state.settings) {
-    modelInput.value = state.settings.aiModel || '';
-  }
-  refreshAiKeyStatus();
-});
-
-document.getElementById('ai-save-key')?.addEventListener('click', async () => {
-  const providerId = document.getElementById('set-ai-provider')?.value || 'gemini';
-  const apiKey = document.getElementById('set-ai-key')?.value || '';
-  if (!apiKey.trim()) {
-    alert('Paste an API key first.');
-    return;
-  }
-  // Persist provider selection together with the key (do not wait for Settings → Save).
-  await window.asperadock.aiSetProvider?.(providerId);
-  const result = await window.asperadock.aiSetKey?.(providerId, apiKey);
-  if (!result?.ok) {
-    alert(result?.error || 'Could not save API key');
-    return;
-  }
-  const keyInput = document.getElementById('set-ai-key');
-  if (keyInput) keyInput.value = '';
-  state = (await window.asperadock.getState?.()) || state;
-  refreshAiKeyStatus();
-});
-
-document.getElementById('ai-clear-key')?.addEventListener('click', async () => {
-  const providerId = document.getElementById('set-ai-provider')?.value || 'gemini';
-  await window.asperadock.aiClearKey?.(providerId);
-  state = (await window.asperadock.getState?.()) || state;
-  refreshAiKeyStatus();
-});
 
 document.getElementById('ai-catch-up-btn')?.addEventListener('click', () => {
   window.asperadock.aiCatchUp?.({

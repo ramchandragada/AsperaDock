@@ -1544,6 +1544,85 @@ body.theme-dark .shortcut-row {
   font-size: 13px;
 }
 
+.ai-provider-keys {
+  display: grid;
+  gap: 10px;
+  margin: 4px 0 10px;
+}
+
+.ai-provider-key-row {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #f7f8fa;
+  display: grid;
+  gap: 8px;
+}
+
+body.theme-dark .ai-provider-key-row {
+  background: var(--chrome-2);
+}
+
+.ai-provider-key-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ai-provider-key-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.ai-provider-key-badge {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ai-provider-key-status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ai-provider-key-status.is-saved {
+  color: #1a7f37;
+}
+
+body.theme-dark .ai-provider-key-status.is-saved {
+  color: #3fb950;
+}
+
+.ai-provider-key-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.ai-provider-key-actions input[type='password'] {
+  flex: 1 1 180px;
+  min-width: 140px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font: inherit;
+}
+
+body.theme-dark .ai-provider-key-actions input[type='password'] {
+  background: var(--chrome-1, #1c1f26);
+}
+
+.ai-provider-key-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+
 .field input,
 .field select,
 .search-card input,

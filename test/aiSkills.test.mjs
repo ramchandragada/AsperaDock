@@ -6,6 +6,8 @@ import {
   languageInstruction,
   getAiProvider,
   normalizeAnthropicModel,
+  aiProviderRouteOrder,
+  configuredProvidersInRouteOrder,
 } from '../src/ai/catalog.js';
 import { buildCatchMeUpPrompt, buildSummarizePrompt } from '../src/ai/skills.js';
 
@@ -70,5 +72,22 @@ test('Anthropic normalizes retired haiku model ids', () => {
   assert.equal(
     normalizeAnthropicModel('claude-sonnet-4-20250514'),
     'claude-sonnet-4-6',
+  );
+});
+
+test('AI provider auto-route puts free first and Anthropic last', () => {
+  const order = aiProviderRouteOrder().map((p) => p.id);
+  assert.equal(order[order.length - 1], 'anthropic');
+  assert.ok(order.indexOf('gemini') < order.indexOf('anthropic'));
+  assert.ok(order.indexOf('openrouter') < order.indexOf('anthropic'));
+  assert.deepEqual(
+    configuredProvidersInRouteOrder(['anthropic', 'gemini', 'openrouter']).map(
+      (p) => p.id,
+    ),
+    ['gemini', 'openrouter', 'anthropic'],
+  );
+  assert.deepEqual(
+    configuredProvidersInRouteOrder(['anthropic']).map((p) => p.id),
+    ['anthropic'],
   );
 });
