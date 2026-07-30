@@ -25,6 +25,7 @@ import {
   AI_LANGUAGES,
   getAiProvider,
   isAiAllowedAppId,
+  normalizeAnthropicModel,
 } from './ai/catalog.js';
 import {
   clearAiProviderKey,

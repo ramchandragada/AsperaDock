@@ -5,6 +5,7 @@ import {
   isAiAllowedAppId,
   languageInstruction,
   getAiProvider,
+  normalizeAnthropicModel,
 } from '../src/ai/catalog.js';
 import { buildCatchMeUpPrompt, buildSummarizePrompt } from '../src/ai/skills.js';
 
