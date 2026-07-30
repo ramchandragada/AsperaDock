@@ -756,8 +756,6 @@ function anyOverlayOpen() {
     !els.profileNameModal?.classList.contains('hidden') ||
     !els.customAppModal?.classList.contains('hidden') ||
     !els.shortcutsModal.classList.contains('hidden') ||
-    !els.chromeMenu.classList.contains('hidden') ||
-    !els.notifCenter.classList.contains('hidden') ||
     state.locked
   );
 }
@@ -775,8 +773,6 @@ function syncOverlayFromModals() {
     !els.settingsModal.classList.contains('hidden') ||
     !els.editAppModal.classList.contains('hidden') ||
     !els.profilesModal?.classList.contains('hidden');
-  const notifOpen = !els.notifCenter.classList.contains('hidden');
-  const chromeOpen = !els.chromeMenu.classList.contains('hidden');
 
   if (fullOpen) {
     window.asperadock.setOverlay({ open: true, mode: 'full' });
@@ -787,14 +783,6 @@ function syncOverlayFromModals() {
       open: true,
       mode: 'drawer',
       rightInset: Math.min(440, Math.round(window.innerWidth * 0.94)),
-    });
-    return;
-  }
-  if (notifOpen || chromeOpen) {
-    window.asperadock.setOverlay({
-      open: true,
-      mode: 'menu',
-      rightInset: notifOpen ? 360 : 230,
     });
     return;
   }
@@ -1097,39 +1085,74 @@ function closeShortcuts() {
 }
 
 function closeNotificationCenter() {
-  els.notifCenter.classList.add('hidden');
-  syncOverlayFromModals();
+  els.notifCenter?.classList.add('hidden');
+  window.asperadock.closeNotifCenter?.();
 }
 
 function openNotificationCenter() {
   closeAppMenu();
-  closeChromeMenu();
-  renderNotificationCenter();
-  els.notifCenter.classList.remove('hidden');
-  syncOverlayFromModals();
+  els.notifCenter?.classList.add('hidden');
+  const btn = els.notifBtn?.getBoundingClientRect?.();
+  window.asperadock.openNotifCenter?.({
+    x: btn ? btn.right : window.innerWidth - 16,
+    y: btn ? btn.bottom + 6 : 64,
+    align: 'right',
+    dark: document.body.classList.contains('theme-dark'),
+  });
 }
 
 function toggleNotificationCenter() {
-  if (els.notifCenter.classList.contains('hidden')) openNotificationCenter();
-  else closeNotificationCenter();
+  closeAppMenu();
+  els.notifCenter?.classList.add('hidden');
+  const btn = els.notifBtn?.getBoundingClientRect?.();
+  window.asperadock.toggleNotifCenter?.({
+    x: btn ? btn.right : window.innerWidth - 16,
+    y: btn ? btn.bottom + 6 : 64,
+    align: 'right',
+    dark: document.body.classList.contains('theme-dark'),
+  });
 }
 
 function closeChromeMenu() {
-  els.chromeMenu.classList.add('hidden');
-  syncOverlayFromModals();
+  els.chromeMenu?.classList.add('hidden');
+  window.asperadock.closeChromeMenu?.();
 }
 
 function openChromeMenu() {
   closeAppMenu();
-  closeNotificationCenter();
-  els.chromeMenu.classList.remove('hidden');
-  // Keep guest visible; shrink from the right so this dropdown is clickable.
-  syncOverlayFromModals();
+  els.chromeMenu?.classList.add('hidden');
+  const btn = els.menuBtn?.getBoundingClientRect?.();
+  window.asperadock.openChromeMenu?.({
+    x: btn ? btn.right : window.innerWidth - 16,
+    y: btn ? btn.bottom + 6 : 64,
+    align: 'right',
+    dark: document.body.classList.contains('theme-dark'),
+  });
 }
 
 function toggleChromeMenu() {
-  if (els.chromeMenu.classList.contains('hidden')) openChromeMenu();
-  else closeChromeMenu();
+  closeAppMenu();
+  els.chromeMenu?.classList.add('hidden');
+  const btn = els.menuBtn?.getBoundingClientRect?.();
+  window.asperadock.toggleChromeMenu?.({
+    x: btn ? btn.right : window.innerWidth - 16,
+    y: btn ? btn.bottom + 6 : 64,
+    align: 'right',
+    dark: document.body.classList.contains('theme-dark'),
+  });
+}
+
+function handleChromeAction(action) {
+  if (action === 'settings') openSettings();
+  if (action === 'profiles') openProfiles();
+  if (action === 'shortcuts') openShortcuts();
+  if (action === 'add-app') openAppsSettings();
+  if (action === 'check-updates') {
+    setUpdateStatus('Checking for updates…');
+    Promise.resolve(window.asperadock.updateCheck?.())
+      .catch((err) => setUpdateStatus(`Update error: ${err?.message || err}`))
+      .finally(() => refreshUpdateStatus());
+  }
 }
 
 function closeSettings() {
@@ -1205,7 +1228,6 @@ function render() {
     renderInstances();
   }
   if (!els.profilesModal?.classList.contains('hidden')) renderProfiles();
-  if (!els.notifCenter.classList.contains('hidden')) renderNotificationCenter();
   requestAnimationFrame(reportChromeSize);
 }
 
@@ -1226,15 +1248,12 @@ els.searchBtn.addEventListener('click', openSearch);
 els.addAppBtn.addEventListener('click', openAppsSettings);
 els.emptyAddBtn.addEventListener('click', openAppsSettings);
 
-els.chromeMenu.addEventListener('click', (event) => {
+els.chromeMenu?.addEventListener('click', (event) => {
   const btn = event.target.closest('[data-action]');
   if (!btn) return;
   const action = btn.dataset.action;
   closeChromeMenu();
-  if (action === 'settings') openSettings();
-  if (action === 'profiles') openProfiles();
-  if (action === 'shortcuts') openShortcuts();
-  if (action === 'add-app') openAppsSettings();
+  handleChromeAction(action);
   if (action === 'reload') window.asperadock.reloadActive();
   if (action === 'home') {
     const id = state?.activeServiceId;
@@ -1242,13 +1261,6 @@ els.chromeMenu.addEventListener('click', (event) => {
   }
   if (action === 'free-ram') window.asperadock.hibernateBackground();
   if (action === 'about') window.asperadock.showAbout?.();
-  if (action === 'check-updates') {
-    setUpdateStatus('Checking for updates…');
-    // Native dialogs come from the main process; await so errors surface in status.
-    Promise.resolve(window.asperadock.updateCheck?.())
-      .catch((err) => setUpdateStatus(`Update error: ${err?.message || err}`))
-      .finally(() => refreshUpdateStatus());
-  }
 });
 
 els.settingsSave.addEventListener('click', async () => {
@@ -1336,6 +1348,7 @@ window.asperadock.onSyncOverlay?.(syncOverlayFromModals);
 window.asperadock.onOpenEditApp?.((id) => {
   if (id) openEditApp(id);
 });
+window.asperadock.onChromeAction?.(handleChromeAction);
 
 async function patchMenuFlag(key, checked) {
   if (!menuServiceId) return;
@@ -1530,26 +1543,19 @@ els.editAppModal.addEventListener('click', (event) => {
   if (event.target === els.editAppModal) closeEditApp();
 });
 
-document.addEventListener('click', (event) => {
-  if (!els.chromeMenu.classList.contains('hidden')) {
-    if (!event.target.closest('.menu-wrap')) closeChromeMenu();
-  }
-  if (!els.notifCenter.classList.contains('hidden')) {
-    if (!event.target.closest('.menu-wrap')) closeNotificationCenter();
-  }
-});
-
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     if (!els.findBar?.classList.contains('hidden')) closeFindBar();
     else if (!els.customAppModal?.classList.contains('hidden')) closeCustomAppModal();
     else if (!els.profileNameModal?.classList.contains('hidden')) closeProfileNameModal(null);
-    else if (!els.chromeMenu.classList.contains('hidden')) closeChromeMenu();
-    else if (!els.notifCenter.classList.contains('hidden')) closeNotificationCenter();
     else if (!els.profilesModal?.classList.contains('hidden')) closeProfiles();
     else if (!els.editAppModal.classList.contains('hidden')) closeEditApp();
     else if (!els.shortcutsModal.classList.contains('hidden')) closeShortcuts();
-    else closeAppMenu();
+    else {
+      closeChromeMenu();
+      closeNotificationCenter();
+      closeAppMenu();
+    }
   }
 });
 

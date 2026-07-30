@@ -17,6 +17,8 @@ import {
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { buildAppMenuHtml } from './appMenuHtml.js';
+import { buildChromeMenuHtml } from './chromeMenuHtml.js';
+import { buildNotifCenterHtml } from './notifCenterHtml.js';
 import {
   APP_CATALOG,
   MAX_INSTANCES_PER_APP,
@@ -278,6 +280,10 @@ let overlayLeftInset = 0;
 /** Floating app right-click menu (child window — paints above WebContentsView guests). */
 let appMenuWindow = null;
 let appMenuServiceId = null;
+/** Floating chrome (Aspera) menu — same overlay approach. */
+let chromeMenuWindow = null;
+/** Floating notification center. */
+let notifCenterWindow = null;
 let settings = loadSettings();
 
 function trackServicePopup(serviceId, popupWindow) {
@@ -956,6 +962,32 @@ function appMenuHandle(channel, handler) {
   });
 }
 
+function chromeMenuHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !chromeMenuWindow ||
+      chromeMenuWindow.isDestroyed() ||
+      event.sender !== chromeMenuWindow.webContents
+    ) {
+      throw new Error('Unauthorized chrome-menu IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
+function notifCenterHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !notifCenterWindow ||
+      notifCenterWindow.isDestroyed() ||
+      event.sender !== notifCenterWindow.webContents
+    ) {
+      throw new Error('Unauthorized notif-center IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
 /**
  * Chrome offsets for the active view. The renderer reports its measured bar
  * size so wrapped tab rows and density changes stay in sync with the CSS.
@@ -1611,32 +1643,54 @@ function closeAppContextMenu() {
   }
 }
 
-/**
- * Rambox-style: float the HTML app menu above the guest without resizing it.
- * In-page HTML cannot paint over WebContentsView, so use a frameless child window.
- */
-function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
-  const service = getService(serviceId);
-  if (!service || !mainWindow || mainWindow.isDestroyed()) return { ok: false };
+function closeChromeMenuWindow() {
+  if (!chromeMenuWindow || chromeMenuWindow.isDestroyed()) {
+    chromeMenuWindow = null;
+    return;
+  }
+  const win = chromeMenuWindow;
+  chromeMenuWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
 
+function closeNotifCenterWindow() {
+  if (!notifCenterWindow || notifCenterWindow.isDestroyed()) {
+    notifCenterWindow = null;
+    return;
+  }
+  const win = notifCenterWindow;
+  notifCenterWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
+function closeAllFloatMenus() {
   closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+}
 
-  const cfg = getAppConfig(serviceId);
-  const menuW = 236;
-  const menuH = 292;
-  const content = mainWindow.getContentBounds();
-  let screenX = Math.round(content.x + (Number(x) || 0));
-  let screenY = Math.round(content.y + (Number(y) || 0));
-
+function clampFloatPosition(screenX, screenY, menuW, menuH) {
   const display = screen.getDisplayNearestPoint({ x: screenX, y: screenY });
   const wa = display.workArea;
-  if (screenX + menuW > wa.x + wa.width - 8) screenX = wa.x + wa.width - menuW - 8;
-  if (screenY + menuH > wa.y + wa.height - 8) screenY = wa.y + wa.height - menuH - 8;
-  if (screenX < wa.x + 8) screenX = wa.x + 8;
-  if (screenY < wa.y + 8) screenY = wa.y + 8;
+  let x = screenX;
+  let y = screenY;
+  if (x + menuW > wa.x + wa.width - 8) x = wa.x + wa.width - menuW - 8;
+  if (y + menuH > wa.y + wa.height - 8) y = wa.y + wa.height - menuH - 8;
+  if (x < wa.x + 8) x = wa.x + 8;
+  if (y < wa.y + 8) y = wa.y + 8;
+  return { x: Math.round(x), y: Math.round(y) };
+}
 
-  appMenuServiceId = serviceId;
-  appMenuWindow = new BrowserWindow({
+function createFloatBrowserWindow({ width, height, x, y, preload }) {
+  const win = new BrowserWindow({
     parent: mainWindow,
     modal: false,
     frame: false,
@@ -1648,22 +1702,55 @@ function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
     fullscreenable: false,
     skipTaskbar: true,
     show: false,
-    width: menuW,
-    height: menuH,
-    x: screenX,
-    y: screenY,
+    width,
+    height,
+    x,
+    y,
     backgroundColor: '#00000000',
     hasShadow: true,
     webPreferences: {
-      preload: path.join(__dirname, 'appMenuPreload.js'),
+      preload: path.join(__dirname, preload),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
     },
   });
+  win.setMenuBarVisibility(false);
+  return win;
+}
+
+/**
+ * Rambox-style: float the HTML app menu above the guest without resizing it.
+ * In-page HTML cannot paint over WebContentsView, so use a frameless child window.
+ */
+function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
+  const service = getService(serviceId);
+  if (!service || !mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAppContextMenu();
+
+  const menuW = 236;
+  const menuH = 292;
+  const content = mainWindow.getContentBounds();
+  const pos = clampFloatPosition(
+    content.x + (Number(x) || 0),
+    content.y + (Number(y) || 0),
+    menuW,
+    menuH,
+  );
+
+  appMenuServiceId = serviceId;
+  appMenuWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'appMenuPreload.js',
+  });
 
   const win = appMenuWindow;
-  win.setMenuBarVisibility(false);
   win.loadURL(
     `data:text/html;charset=utf-8,${encodeURIComponent(buildAppMenuHtml(!!dark))}`,
   );
@@ -1689,7 +1776,6 @@ function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
     }
   });
   win.on('blur', () => {
-    // Close when the user clicks the guest/chrome (menu is no longer focused).
     setTimeout(() => {
       if (appMenuWindow === win) closeAppContextMenu();
     }, 120);
@@ -1699,6 +1785,141 @@ function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
       appMenuWindow = null;
       appMenuServiceId = null;
     }
+  });
+
+  return { ok: true };
+}
+
+function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeAppContextMenu();
+  closeNotifCenterWindow();
+  closeChromeMenuWindow();
+
+  const menuW = 226;
+  const menuH = 420;
+  const content = mainWindow.getContentBounds();
+  const anchorX = content.x + (Number(x) || 0);
+  const anchorY = content.y + (Number(y) || 0);
+  const rawX = align === 'right' ? anchorX - menuW : anchorX;
+  const pos = clampFloatPosition(rawX, anchorY, menuW, menuH);
+
+  chromeMenuWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'chromeMenuPreload.js',
+  });
+
+  const win = chromeMenuWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildChromeMenuHtml(!!dark))}`,
+  );
+
+  const versionLabel = `Aspera Hub ${app.getVersion()}${app.isPackaged ? '' : ' (dev)'}`;
+  win.webContents.once('did-finish-load', () => {
+    if (!win.isDestroyed()) win.webContents.send('chrome-menu:init', { versionLabel });
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  win.on('blur', () => {
+    setTimeout(() => {
+      if (chromeMenuWindow === win) closeChromeMenuWindow();
+    }, 120);
+  });
+  win.on('closed', () => {
+    if (chromeMenuWindow === win) chromeMenuWindow = null;
+  });
+
+  return { ok: true };
+}
+
+function buildNotifCenterData() {
+  const notifications = (notificationLog || []).slice(0, 40).map((item) => {
+    const service = getService(item.serviceId);
+    return {
+      serviceId: item.serviceId,
+      title: item.title,
+      body: item.body,
+      at: item.at,
+      logo: service?.logo || null,
+      color: service?.color || '#e2e8f0',
+    };
+  });
+  const monitorOn = !!settings.consumptionMonitor;
+  const memoryRows = monitorOn
+    ? (settings.serviceInstances || [])
+        .map((service) => ({
+          name: service.name || service.defaultName || 'App',
+          mb: Number(appMemory?.[service.id]) || 0,
+        }))
+        .filter((row) => row.mb > 0)
+        .sort((a, b) => b.mb - a.mb)
+    : [];
+  return { notifications, monitorOn, memoryRows };
+}
+
+function pushNotifCenterData() {
+  if (!notifCenterWindow || notifCenterWindow.isDestroyed()) return;
+  try {
+    notifCenterWindow.webContents.send('notif-center:init', buildNotifCenterData());
+  } catch {
+    // ignore
+  }
+}
+
+function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+
+  const menuW = 356;
+  const menuH = 540;
+  const content = mainWindow.getContentBounds();
+  const anchorX = content.x + (Number(x) || 0);
+  const anchorY = content.y + (Number(y) || 0);
+  const rawX = align === 'right' ? anchorX - menuW : anchorX;
+  const pos = clampFloatPosition(rawX, anchorY, menuW, menuH);
+
+  notifCenterWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'notifCenterPreload.js',
+  });
+
+  const win = notifCenterWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildNotifCenterHtml(!!dark))}`,
+  );
+
+  win.webContents.once('did-finish-load', () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('notif-center:init', buildNotifCenterData());
+    }
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  win.on('blur', () => {
+    setTimeout(() => {
+      if (notifCenterWindow === win) closeNotifCenterWindow();
+    }, 120);
+  });
+  win.on('closed', () => {
+    if (notifCenterWindow === win) notifCenterWindow = null;
   });
 
   return { ok: true };
@@ -1766,6 +1987,68 @@ async function handleAppMenuAction(type, value) {
       });
     }
     return result;
+  }
+  return { ok: false };
+}
+
+function handleChromeMenuAction(type) {
+  closeChromeMenuWindow();
+  if (!type) return { ok: false };
+
+  if (type === 'reload') {
+    if (activeServiceId) {
+      const wc = views.get(activeServiceId)?.view?.webContents;
+      if (wc && !wc.isDestroyed()) wc.reload();
+    }
+    return { ok: true };
+  }
+  if (type === 'home') {
+    if (activeServiceId) {
+      const service = getService(activeServiceId);
+      const wc = views.get(activeServiceId)?.view?.webContents;
+      if (service && wc && !wc.isDestroyed()) {
+        const home = startUrlForService(service) || service.url;
+        if (home) wc.loadURL(home).catch(() => {});
+      }
+    }
+    return { ok: true };
+  }
+  if (type === 'free-ram') {
+    hibernateBackground();
+    broadcastState();
+    return { ok: true };
+  }
+  if (type === 'about') {
+    showAboutDialog();
+    return { ok: true };
+  }
+  if (type === 'check-updates') {
+    checkForUpdates({ silent: false }).catch(() => {});
+    return { ok: true };
+  }
+
+  // UI drawers/modals live in the dock renderer.
+  mainWindow?.webContents.send('dock:chrome-action', type);
+  return { ok: true };
+}
+
+function handleNotifCenterAction(type, value) {
+  if (type === 'clear') {
+    notificationLog = [];
+    broadcastState();
+    return { ok: true };
+  }
+  if (type === 'read-all') {
+    unreadCounts.clear();
+    notificationLog = [];
+    refreshBadge();
+    broadcastState();
+    return { ok: true };
+  }
+  if (type === 'activate') {
+    closeNotifCenterWindow();
+    if (value) activateService(value);
+    return { ok: true };
   }
   return { ok: false };
 }
@@ -2911,7 +3194,7 @@ function ensureLiveView(service) {
 }
 
 function activateService(id) {
-  closeAppContextMenu();
+  closeAllFloatMenus();
   const service = getService(id);
   if (!service || !mainWindow || locked) return;
   const cfg = getAppConfig(id);
@@ -3098,6 +3381,7 @@ function currentState() {
 
 function broadcastState() {
   mainWindow?.webContents.send('dock:state', currentState());
+  pushNotifCenterData();
 }
 
 function shortcutOn(id) {
@@ -3205,7 +3489,7 @@ function attachShortcuts(webContents) {
 
 function lockApp() {
   if (!settings.lockEnabled || !settings.lockPasswordHash) return;
-  closeAppContextMenu();
+  closeAllFloatMenus();
   locked = true;
   const resumeId = activeServiceId || settings.lastActiveServiceId || null;
   if (resumeId) {
@@ -4010,9 +4294,51 @@ dockHandle('dock:close-app-menu', () => {
   closeAppContextMenu();
   return { ok: true };
 });
+dockHandle('dock:open-chrome-menu', (_e, payload) =>
+  openChromeMenuWindow(payload || {}),
+);
+dockHandle('dock:close-chrome-menu', () => {
+  closeChromeMenuWindow();
+  return { ok: true };
+});
+dockHandle('dock:toggle-chrome-menu', (_e, payload) => {
+  if (chromeMenuWindow && !chromeMenuWindow.isDestroyed()) {
+    closeChromeMenuWindow();
+    return { ok: true, open: false };
+  }
+  openChromeMenuWindow(payload || {});
+  return { ok: true, open: true };
+});
+dockHandle('dock:open-notif-center', (_e, payload) =>
+  openNotifCenterWindow(payload || {}),
+);
+dockHandle('dock:close-notif-center', () => {
+  closeNotifCenterWindow();
+  return { ok: true };
+});
+dockHandle('dock:toggle-notif-center', (_e, payload) => {
+  if (notifCenterWindow && !notifCenterWindow.isDestroyed()) {
+    closeNotifCenterWindow();
+    return { ok: true, open: false };
+  }
+  openNotifCenterWindow(payload || {});
+  return { ok: true, open: true };
+});
 appMenuHandle('app-menu:action', (_e, type, value) => handleAppMenuAction(type, value));
 appMenuHandle('app-menu:close', () => {
   closeAppContextMenu();
+  return { ok: true };
+});
+chromeMenuHandle('chrome-menu:action', (_e, type) => handleChromeMenuAction(type));
+chromeMenuHandle('chrome-menu:close', () => {
+  closeChromeMenuWindow();
+  return { ok: true };
+});
+notifCenterHandle('notif-center:action', (_e, type, value) =>
+  handleNotifCenterAction(type, value),
+);
+notifCenterHandle('notif-center:close', () => {
+  closeNotifCenterWindow();
   return { ok: true };
 });
 dockHandle('dock:toggle-keep-warm', (_e, id) => toggleKeepWarm(id));

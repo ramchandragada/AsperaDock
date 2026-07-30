@@ -67,6 +67,16 @@ module.exports = {
             config: 'vite.preload.config.mjs',
             target: 'preload',
           },
+          {
+            entry: 'src/chromeMenuPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/notifCenterPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
         ],
         renderer: [
           {
