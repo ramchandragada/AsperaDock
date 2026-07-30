@@ -27,6 +27,7 @@ const els = {
   menuBtn: document.getElementById('menu-btn'),
   chromeMenu: document.getElementById('app-chrome-menu'),
   downloadsBtn: document.getElementById('downloads-btn'),
+  checkUpdatesBtn: document.getElementById('check-updates-btn'),
   searchBtn: document.getElementById('search-btn'),
   globalBadge: document.getElementById('global-badge'),
   notifBtn: document.getElementById('notif-btn'),
@@ -203,6 +204,7 @@ function bindAppTabDrag(btn, service) {
 
 function paintToolbarIcons() {
   if (els.downloadsBtn) els.downloadsBtn.innerHTML = icon('download');
+  if (els.checkUpdatesBtn) els.checkUpdatesBtn.innerHTML = icon('sync');
   if (els.menuBtn) els.menuBtn.innerHTML = asperaAppIconSvg(24);
   if (els.addAppBtn) els.addAppBtn.innerHTML = icon('plus');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
@@ -1142,10 +1144,7 @@ function handleChromeAction(action) {
   if (action === 'shortcuts') openShortcuts();
   if (action === 'add-app') openAppsSettings();
   if (action === 'check-updates') {
-    setUpdateStatus('Checking for updates…');
-    Promise.resolve(window.asperadock.updateCheck?.())
-      .catch((err) => setUpdateStatus(`Update error: ${err?.message || err}`))
-      .finally(() => refreshUpdateStatus());
+    runUpdateCheck();
   }
 }
 
@@ -1225,11 +1224,21 @@ function render() {
   requestAnimationFrame(reportChromeSize);
 }
 
+function runUpdateCheck() {
+  setUpdateStatus('Checking for updates…');
+  return Promise.resolve(window.asperadock.updateCheck?.())
+    .catch((err) => setUpdateStatus(`Update error: ${err?.message || err}`))
+    .finally(() => refreshUpdateStatus());
+}
+
 els.downloadsBtn?.addEventListener('click', async () => {
   const result = await window.asperadock.openDownloads?.();
   if (result && !result.ok) {
     alert(`Could not open Downloads folder.\n${result.error || result.path || ''}`);
   }
+});
+els.checkUpdatesBtn?.addEventListener('click', () => {
+  runUpdateCheck();
 });
 els.menuBtn.addEventListener('click', (event) => {
   event.stopPropagation();
@@ -1639,10 +1648,8 @@ async function refreshUpdateStatus() {
   }
 }
 
-document.getElementById('check-updates')?.addEventListener('click', async () => {
-  setUpdateStatus('Checking for updates…');
-  await window.asperadock.updateCheck?.();
-  refreshUpdateStatus();
+document.getElementById('check-updates')?.addEventListener('click', () => {
+  runUpdateCheck();
 });
 
 window.asperadock.onUpdateEvent?.((data) => {
