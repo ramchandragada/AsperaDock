@@ -60,12 +60,32 @@ export const AI_PROVIDERS = Object.freeze([
     id: 'anthropic',
     name: 'Anthropic Claude',
     freeTierFriendly: false,
-    defaultModel: 'claude-3-5-haiku-latest',
-    models: ['claude-3-5-haiku-latest', 'claude-sonnet-4-20250514'],
+    defaultModel: 'claude-haiku-4-5',
+    models: [
+      'claude-haiku-4-5',
+      'claude-haiku-4-5-20251001',
+      'claude-sonnet-4-6',
+      'claude-sonnet-4-5',
+    ],
     keyHint: 'Paid console.anthropic.com key (not free-tier)',
   },
 ]);
 
+/** Map retired / mistyped model ids to current Anthropic API ids. */
+export function normalizeAnthropicModel(model) {
+  const raw = String(model || '').trim();
+  const map = {
+    'claude-3-5-haiku-latest': 'claude-haiku-4-5',
+    'claude-3-5-haiku-20241022': 'claude-haiku-4-5',
+    'claude-3-haiku-20240307': 'claude-haiku-4-5',
+    'claude-3-5-sonnet-latest': 'claude-sonnet-4-6',
+    'claude-3-5-sonnet-20241022': 'claude-sonnet-4-6',
+    'claude-3-5-sonnet-20240620': 'claude-sonnet-4-6',
+    'claude-sonnet-4-20250514': 'claude-sonnet-4-6',
+    'claude-3-opus-20240229': 'claude-opus-4-6',
+  };
+  return map[raw] || raw || 'claude-haiku-4-5';
+}
 export function getAiProvider(id) {
   return AI_PROVIDERS.find((p) => p.id === id) || AI_PROVIDERS[0];
 }

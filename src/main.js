@@ -2048,6 +2048,11 @@ function aiSettingsSnapshot() {
   ) {
     model = provider.defaultModel;
   }
+  // Migrate retired Anthropic model ids (e.g. claude-3-5-haiku-latest).
+  if (provider.id === 'anthropic') {
+    const normalized = normalizeAnthropicModel(model || provider.defaultModel);
+    if (normalized !== model) model = normalized;
+  }
   if (!model) model = provider.defaultModel;
   const language = ['en', 'hi', 'mr'].includes(settings.aiLanguage)
     ? settings.aiLanguage

@@ -1,4 +1,4 @@
-import { getAiProvider } from './catalog.js';
+import { getAiProvider, normalizeAnthropicModel } from './catalog.js';
 import { getAiProviderKey } from './keys.js';
 import { buildCatchMeUpPrompt, buildSummarizePrompt } from './skills.js';
 
@@ -61,6 +61,7 @@ async function callGemini({ apiKey, model, prompt }) {
 }
 
 async function callAnthropic({ apiKey, model, prompt }) {
+  const resolved = normalizeAnthropicModel(model);
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -69,15 +70,27 @@ async function callAnthropic({ apiKey, model, prompt }) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model,
+      model: resolved,
       max_tokens: 1200,
       temperature: 0.3,
+      system: 'You are Aspera AI, a concise workplace assistant for employees.',
       messages: [{ role: 'user', content: prompt }],
     }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data?.error?.message || `Anthropic HTTP ${res.status}`);
+    const err = data?.error || {};
+    const detail =
+      err.message ||
+      (typeof err === 'string' ? err : '') ||
+      data?.message ||
+      '';
+    const type = err.type ? ` (${err.type})` : '';
+    throw new Error(
+      detail
+        ? `Anthropic${type}: ${detail}`
+        : `Anthropic HTTP ${res.status} for model ${resolved}`,
+    );
   }
   const text = (data?.content || [])
     .filter((b) => b.type === 'text')

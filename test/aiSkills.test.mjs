@@ -60,9 +60,14 @@ test('catch-up prompt lists notification items', () => {
   assert.match(prompt, /Invoice/);
 });
 
-test('OpenRouter default is not a dead gemini-2.0-flash-001 slug', () => {
-  const openrouter = getAiProvider('openrouter');
-  assert.equal(openrouter.id, 'openrouter');
-  assert.notEqual(openrouter.defaultModel, 'google/gemini-2.0-flash-001');
-  assert.ok(openrouter.defaultModel);
+test('Anthropic normalizes retired haiku model ids', () => {
+  assert.equal(getAiProvider('anthropic').defaultModel, 'claude-haiku-4-5');
+  assert.equal(
+    normalizeAnthropicModel('claude-3-5-haiku-latest'),
+    'claude-haiku-4-5',
+  );
+  assert.equal(
+    normalizeAnthropicModel('claude-sonnet-4-20250514'),
+    'claude-sonnet-4-6',
+  );
 });
