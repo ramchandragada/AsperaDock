@@ -8,4 +8,5 @@ contextBridge.exposeInMainWorld('aiResultApi', {
   },
   copy: (text) => ipcRenderer.invoke('ai-result:copy', text),
   close: () => ipcRenderer.invoke('ai-result:close'),
+  suggestReply: () => ipcRenderer.invoke('ai-result:suggest-reply'),
 });

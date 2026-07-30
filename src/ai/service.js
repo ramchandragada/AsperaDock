@@ -4,7 +4,7 @@ import {
   normalizeAnthropicModel,
 } from './catalog.js';
 import { getAiProviderKey, listConfiguredAiProviders } from './keys.js';
-import { buildCatchMeUpPrompt, buildSummarizePrompt } from './skills.js';
+import { buildCatchMeUpPrompt, buildSuggestReplyPrompt, buildSummarizePrompt } from './skills.js';
 
 async function callOpenAiCompatible({
   baseUrl,
@@ -23,7 +23,7 @@ async function callOpenAiCompatible({
     body: JSON.stringify({
       model,
       temperature: 0.3,
-      max_tokens: 1200,
+      max_tokens: 2000,
       messages: [
         {
           role: 'system',
@@ -51,7 +51,7 @@ async function callGemini({ apiKey, model, prompt }) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: 1200 },
+      generationConfig: { temperature: 0.3, maxOutputTokens: 2000 },
     }),
   });
   const data = await res.json().catch(() => ({}));
@@ -75,7 +75,7 @@ async function callAnthropic({ apiKey, model, prompt }) {
     },
     body: JSON.stringify({
       model: resolved,
-      max_tokens: 1200,
+      max_tokens: 2000,
       temperature: 0.3,
       system: 'You are Aspera AI, a concise workplace assistant for employees.',
       messages: [{ role: 'user', content: prompt }],
@@ -195,6 +195,9 @@ export async function runAiCompletionWithFailover(prompt) {
 export function promptForSkill(skill, payload) {
   if (skill === 'summarize') {
     return buildSummarizePrompt(payload);
+  }
+  if (skill === 'suggest-reply') {
+    return buildSuggestReplyPrompt(payload);
   }
   if (skill === 'catch-up') {
     return buildCatchMeUpPrompt(payload);

@@ -1,20 +1,53 @@
 import { languageInstruction } from './catalog.js';
 
-export function buildSummarizePrompt({ text, appName, language }) {
+export function buildSummarizePrompt({ text, appName }) {
   const body = String(text || '').trim().slice(0, 12_000);
   return [
     'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
     'Skill: Summarize selection.',
-    languageInstruction(language),
     `App context: ${appName || 'Messaging / Mail'}.`,
     'Summarize the selected text for a busy employee.',
-    'Rules:',
-    '- 4–8 short bullets max, plus one-line TL;DR at the top.',
-    '- Keep people names, amounts, dates, and action items.',
+    'You MUST produce summaries in THREE languages, in this exact order and with these headings:',
+    '',
+    '## English',
+    '## Hindi (हिन्दी)',
+    '## Marathi (मराठी)',
+    '',
+    'Under each heading:',
+    '- Start with one-line TL;DR.',
+    '- Then 3–6 short bullets (action items, people, amounts, dates).',
+    '- Hindi and Marathi must use Devanagari script.',
+    '- Keep names and URLs as-is.',
     '- Do not invent facts that are not in the text.',
     '- No preamble like "Here is a summary".',
     '',
     'Selected text:',
+    body,
+  ].join('\n');
+}
+
+export function buildSuggestReplyPrompt({ text, appName }) {
+  const body = String(text || '').trim().slice(0, 12_000);
+  return [
+    'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
+    'Skill: Suggest reply drafts for this specific message/selection.',
+    `App context: ${appName || 'Messaging / Mail'}.`,
+    'Give the employee rough reply ideas they can adapt — not final send-ready copy unless it is already perfect.',
+    'You MUST produce reply drafts in THREE languages, in this exact order and with these headings:',
+    '',
+    '## English replies',
+    '## Hindi replies (हिन्दी)',
+    '## Marathi replies (मराठी)',
+    '',
+    'Under each heading:',
+    '- Provide exactly 2 short reply options labeled 1) and 2).',
+    '- Each option: 1–3 sentences, polite and professional workplace tone.',
+    '- Hindi and Marathi must use Devanagari script.',
+    '- Option 1: more formal / careful. Option 2: warmer / concise.',
+    '- Do not invent commitments, amounts, or dates that are not in the message.',
+    '- No preamble.',
+    '',
+    'Message / selection to reply to:',
     body,
   ].join('\n');
 }

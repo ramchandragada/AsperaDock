@@ -9,7 +9,7 @@ import {
   aiProviderRouteOrder,
   configuredProvidersInRouteOrder,
 } from '../src/ai/catalog.js';
-import { buildCatchMeUpPrompt, buildSummarizePrompt } from '../src/ai/skills.js';
+import { buildCatchMeUpPrompt, buildSuggestReplyPrompt, buildSummarizePrompt } from '../src/ai/skills.js';
 
 test('AI skills allow only WhatsApp, Arattai, Gmail, Zoho Mail', () => {
   assert.deepEqual(AI_ALLOWED_APP_IDS, [

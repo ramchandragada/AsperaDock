@@ -304,6 +304,8 @@ let chromeMenuWindow = null;
 let notifCenterWindow = null;
 /** Floating Aspera AI result panel. */
 let aiResultWindow = null;
+/** Context for follow-up actions on the open AI result (e.g. suggest replies). */
+let aiResultContext = null;
 let settings = loadSettings();
 
 function trackServicePopup(serviceId, popupWindow) {
@@ -1705,6 +1707,7 @@ function closeNotifCenterWindow() {
 }
 
 function closeAiResultWindow() {
+  aiResultContext = null;
   if (!aiResultWindow || aiResultWindow.isDestroyed()) {
     aiResultWindow = null;
     return;
@@ -1996,12 +1999,12 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
   closeNotifCenterWindow();
   closeAiResultWindow();
 
-  const menuW = 436;
-  const menuH = 580;
+  const menuW = 456;
+  const menuH = 660;
   const content = mainWindow.getContentBounds();
   const pos = clampFloatPosition(
     content.x + content.width - menuW - 16,
-    content.y + Math.max(64, content.height * 0.12),
+    content.y + Math.max(48, content.height * 0.08),
     menuW,
     menuH,
   );
@@ -2034,7 +2037,10 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
   });
   // Keep the panel open while reading — do not auto-close on blur.
   win.on('closed', () => {
-    if (aiResultWindow === win) aiResultWindow = null;
+    if (aiResultWindow === win) {
+      aiResultWindow = null;
+      aiResultContext = null;
+    }
   });
   return { ok: true };
 }
@@ -2150,15 +2156,18 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
   const skillTitle =
     skill === 'catch-up' ? 'Catch me up' : 'Summarize selection';
   const routeHint = routeOrder.map((p) => p.name).join(' → ');
+  const metaLang = skill === 'summarize' ? 'EN · HI · MR' : langLabel;
 
   openAiResultWindow({
     title: `Aspera AI · ${skillTitle}`,
-    meta: `Auto · ${routeHint} · ${langLabel}`,
+    meta: `Auto · ${routeHint} · ${metaLang}`,
     dark,
   });
 
   try {
     let prompt;
+    let summarizeSelection = '';
+    let summarizeAppName = '';
     if (skill === 'catch-up') {
       const items = collectCatchUpItems();
       prompt = promptForSkill('catch-up', { items, language });
@@ -2173,21 +2182,39 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
       if (!text) {
         throw new Error('Select text in the app first, then run Summarize.');
       }
+      summarizeSelection = text;
+      summarizeAppName = service.name || service.defaultName || service.appId;
       prompt = promptForSkill('summarize', {
         text,
-        appName: service.name || service.defaultName || service.appId,
-        language,
+        appName: summarizeAppName,
       });
     } else {
       throw new Error('Unknown skill');
     }
 
     const result = await runAiCompletionWithFailover(prompt);
+    if (skill === 'summarize') {
+      aiResultContext = {
+        skill: 'summarize',
+        selectionText: summarizeSelection,
+        appName: summarizeAppName,
+        dark: !!dark,
+        summaryText: result.text,
+        providerName: result.providerName,
+        model: result.model,
+      };
+    } else {
+      aiResultContext = null;
+    }
     pushAiResult({
       title: `Aspera AI · ${skillTitle}`,
-      meta: `${result.providerName} · ${result.model} · ${langLabel}`,
+      meta: `${result.providerName} · ${result.model} · ${metaLang}`,
       text: result.text,
       loading: false,
+      showTrilingual: skill === 'summarize',
+      canSuggestReply: skill === 'summarize',
+      repliesText: '',
+      repliesLoading: false,
     });
     return {
       ok: true,
@@ -2197,12 +2224,80 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
     };
   } catch (error) {
     const message = String(error?.message || error);
+    aiResultContext = null;
     pushAiResult({
       title: `Aspera AI · ${skillTitle}`,
-      meta: `Auto · ${routeHint} · ${langLabel}`,
+      meta: `Auto · ${routeHint} · ${metaLang}`,
       error: message,
       text: message,
       loading: false,
+      canSuggestReply: false,
+    });
+    return { ok: false, error: message };
+  }
+}
+
+async function runSuggestRepliesFromAiResult() {
+  if (settings.aiEnabled === false) {
+    return { ok: false, error: 'Aspera AI is turned off in Settings.' };
+  }
+  const ctx = aiResultContext;
+  if (!ctx?.selectionText) {
+    return { ok: false, error: 'No message context for reply suggestions.' };
+  }
+  const { routeOrder } = aiSettingsSnapshot();
+  if (!routeOrder.length) {
+    return {
+      ok: false,
+      error: 'Add at least one AI API key in Settings → Aspera AI.',
+    };
+  }
+
+  pushAiResult({
+    title: 'Aspera AI · Summarize selection',
+    meta: [ctx.providerName, ctx.model, 'EN · HI · MR'].filter(Boolean).join(' · '),
+    text: ctx.summaryText || '',
+    loading: false,
+    showTrilingual: true,
+    canSuggestReply: true,
+    repliesLoading: true,
+    repliesText: '',
+  });
+
+  try {
+    const prompt = promptForSkill('suggest-reply', {
+      text: ctx.selectionText,
+      appName: ctx.appName,
+    });
+    const result = await runAiCompletionWithFailover(prompt);
+    aiResultContext = {
+      ...ctx,
+      repliesText: result.text,
+      providerName: result.providerName,
+      model: result.model,
+    };
+    pushAiResult({
+      title: 'Aspera AI · Summarize selection',
+      meta: `${result.providerName} · ${result.model} · EN · HI · MR`,
+      text: ctx.summaryText || '',
+      loading: false,
+      showTrilingual: true,
+      canSuggestReply: true,
+      repliesLoading: false,
+      repliesText: result.text,
+    });
+    return { ok: true, text: result.text };
+  } catch (error) {
+    const message = String(error?.message || error);
+    pushAiResult({
+      title: 'Aspera AI · Summarize selection',
+      meta: 'EN · HI · MR',
+      text: ctx.summaryText || '',
+      loading: false,
+      showTrilingual: true,
+      canSuggestReply: true,
+      repliesLoading: false,
+      repliesError: message,
     });
     return { ok: false, error: message };
   }
@@ -4691,6 +4786,7 @@ aiResultHandle('ai-result:close', () => {
   closeAiResultWindow();
   return { ok: true };
 });
+aiResultHandle('ai-result:suggest-reply', () => runSuggestRepliesFromAiResult());
 dockHandle('dock:ai-status', () => ({
   enabled: settings.aiEnabled !== false,
   provider: settings.aiProvider || 'gemini',
