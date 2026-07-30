@@ -268,6 +268,10 @@ let memoryTimer = null;
 let activeServiceId = null;
 let locked = false;
 let overlayOpen = false;
+/** @type {null | 'full' | 'drawer' | 'menu'} */
+let overlayMode = null;
+/** Extra right inset (px) so side drawers / chrome menus stay above HTML. */
+let overlayRightInset = 0;
 let settings = loadSettings();
 
 function trackServicePopup(serviceId, popupWindow) {
@@ -371,7 +375,10 @@ function syncAllGuestPerfModes() {
     const service = getService(id) || entry.service;
     const keepWarm = isKeepWarmService(id);
     applyGuestPerfMode(wc, {
-      active: !overlayOpen && !locked && id === activeServiceId,
+      active:
+        !locked &&
+        id === activeServiceId &&
+        !(overlayOpen && overlayMode === 'full'),
       loadedOnce: entry.loadedOnce === true,
       keepWarm,
       allowThrottle:
@@ -1454,14 +1461,16 @@ async function runPortalHealthCheck(id, { salesRecovery = false } = {}) {
 }
 
 function layoutActiveView() {
-  if (!mainWindow || !activeServiceId || locked || overlayOpen) return;
+  if (!mainWindow || !activeServiceId || locked) return;
+  // Full-screen overlays hide the guest; drawer/menu keep it visible with inset.
+  if (overlayOpen && overlayMode === 'full') return;
   if (mainWindow.isDestroyed()) return;
   const entry = views.get(activeServiceId);
   if (!entry?.view) return;
 
   const [width, height] = mainWindow.getContentSize();
   const m = effectiveMetrics();
-  const right = m.right || 0;
+  const right = (m.right || 0) + (overlayRightInset || 0);
   // Always keep a floor under the measured bar so the guest never covers chrome.
   const top = Math.max(64, m.top || 0);
   const next = {
@@ -1500,16 +1509,38 @@ function detachAllViews() {
   }
 }
 
-/** Guest views paint above the dock HTML — hide them while modals are open. */
-function setOverlayOpen(open) {
+/**
+ * Guest views paint above dock HTML.
+ * - full: hide guest (lock / centered dialogs)
+ * - drawer: keep guest visible, shrink from the right (Settings / Edit / Profiles)
+ * - menu: keep guest visible, optional right inset for chrome dropdowns
+ */
+function setOverlayOpen(open, options = {}) {
   const next = !!open;
-  // No-op when unchanged. Re-adding/focusing the view on every state sync
-  // strobes the navy window background over the guest page on Linux.
-  if (next === overlayOpen) return;
+  const mode = next
+    ? options.mode === 'drawer' || options.mode === 'menu'
+      ? options.mode
+      : 'full'
+    : null;
+  const rightInset =
+    next && (mode === 'drawer' || mode === 'menu')
+      ? Math.max(0, Number(options.rightInset) || (mode === 'drawer' ? 440 : 0))
+      : 0;
+
+  if (
+    next === overlayOpen &&
+    mode === overlayMode &&
+    rightInset === overlayRightInset
+  ) {
+    return;
+  }
+
   overlayOpen = next;
+  overlayMode = mode;
+  overlayRightInset = rightInset;
   if (!mainWindow) return;
 
-  if (overlayOpen) {
+  if (overlayOpen && overlayMode === 'full') {
     detachAllViews();
     syncAllGuestPerfModes();
     return;
@@ -1519,13 +1550,18 @@ function setOverlayOpen(open) {
     syncAllGuestPerfModes();
     return;
   }
+
   const entry = views.get(activeServiceId);
-  if (!entry) return;
+  if (!entry) {
+    syncAllGuestPerfModes();
+    return;
+  }
+
   parkBackgroundViews(activeServiceId);
   attachGuestView(entry.view);
   entry.__lastBounds = null;
   layoutActiveView();
-  focusActiveContents();
+  if (!overlayOpen) focusActiveContents();
   syncAllGuestPerfModes();
 }
 
@@ -3667,8 +3703,12 @@ function startHibernateTimer() {
 }
 
 // —— IPC ——
-dockHandle('dock:set-overlay', (_e, open) => {
-  setOverlayOpen(open);
+dockHandle('dock:set-overlay', (_e, openOrOptions) => {
+  if (openOrOptions && typeof openOrOptions === 'object') {
+    setOverlayOpen(!!openOrOptions.open, openOrOptions);
+  } else {
+    setOverlayOpen(!!openOrOptions);
+  }
   return { ok: true };
 });
 
@@ -3760,6 +3800,104 @@ dockHandle('dock:set-instance-profile', (_e, serviceId, profileId) =>
   setInstanceProfile(serviceId, profileId),
 );
 dockHandle('dock:toggle-keep-warm', (_e, id) => toggleKeepWarm(id));
+
+/** Native app context menu — paints above WebContentsView (HTML menus cannot). */
+function popupAppContextMenu(serviceId, x = 0, y = 0) {
+  const service = getService(serviceId);
+  if (!service || !mainWindow || mainWindow.isDestroyed()) {
+    return { ok: false, error: 'App not found' };
+  }
+  const cfg = getAppConfig(serviceId);
+
+  const menu = Menu.buildFromTemplate([
+    {
+      label: service.name || service.title || 'App',
+      enabled: false,
+    },
+    { type: 'separator' },
+    {
+      label: 'Go to app home',
+      click: () => {
+        const entry = views.get(serviceId);
+        const wc = entry?.view?.webContents;
+        if (wc && !wc.isDestroyed()) {
+          wc.loadURL(startUrlForService(service) || service.url).catch(() => {});
+        }
+      },
+    },
+    {
+      label: 'Edit settings…',
+      click: () => {
+        mainWindow?.webContents.send('dock:open-edit-app', serviceId);
+      },
+    },
+    {
+      label: 'Reload',
+      click: () => {
+        const entry = views.get(serviceId);
+        const wc = entry?.view?.webContents;
+        if (wc && !wc.isDestroyed()) wc.reload();
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Enabled',
+      type: 'checkbox',
+      checked: cfg.enabled !== false,
+      click: (item) => {
+        saveAppConfig(serviceId, { enabled: item.checked });
+        broadcastState();
+      },
+    },
+    {
+      label: 'Sound',
+      type: 'checkbox',
+      checked: cfg.allowSounds !== false,
+      click: (item) => {
+        saveAppConfig(serviceId, { allowSounds: item.checked });
+        applyMuteState();
+        broadcastState();
+      },
+    },
+    {
+      label: 'Notifications',
+      type: 'checkbox',
+      checked: cfg.allowNotifications !== false,
+      click: (item) => {
+        saveAppConfig(serviceId, { allowNotifications: item.checked });
+        broadcastState();
+      },
+    },
+    {
+      label: 'Keep warm in memory',
+      type: 'checkbox',
+      checked: cfg.keepWarm === true,
+      click: () => {
+        const result = toggleKeepWarm(serviceId);
+        if (result && !result.ok && mainWindow && !mainWindow.isDestroyed()) {
+          dialog.showMessageBox(mainWindow, {
+            type: 'info',
+            title: 'Warm apps',
+            message: result.error || 'Could not change warm-app selection.',
+            buttons: ['OK'],
+          });
+        }
+      },
+    },
+  ]);
+
+  menu.popup({
+    window: mainWindow,
+    x: Math.round(Number(x) || 0),
+    y: Math.round(Number(y) || 0),
+  });
+  return { ok: true };
+}
+
+dockHandle('dock:app-context-menu', (_e, id, coords = {}) =>
+  popupAppContextMenu(id, coords.x, coords.y),
+);
+
 dockHandle('dock:save-app-config', (_e, id, incoming) => {
   if (!getService(id)) return { ok: false, error: 'Not found' };
   const patch = { ...(incoming || {}) };

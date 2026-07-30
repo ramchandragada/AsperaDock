@@ -975,7 +975,13 @@ body.theme-dark .chip:hover {
 
 .modal.drawer {
   display: block;
-  background: rgba(15, 23, 42, 0.2);
+  /* Light dim only — guest stays visible on the left (Rambox-style). */
+  background: transparent;
+  pointer-events: none;
+}
+
+.modal.drawer .modal-card {
+  pointer-events: auto;
 }
 
 .modal.hidden,

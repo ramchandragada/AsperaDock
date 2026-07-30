@@ -763,8 +763,50 @@ function anyOverlayOpen() {
   );
 }
 
+/** Rambox-style overlays: keep guest app visible whenever possible. */
 function syncOverlayFromModals() {
-  window.asperadock.setOverlay(anyOverlayOpen());
+  const lockedOpen = !!state.locked;
+  const fullOpen =
+    lockedOpen ||
+    !els.searchModal.classList.contains('hidden') ||
+    !els.shortcutsModal.classList.contains('hidden') ||
+    !els.profileNameModal?.classList.contains('hidden') ||
+    !els.customAppModal?.classList.contains('hidden');
+  const drawerOpen =
+    !els.settingsModal.classList.contains('hidden') ||
+    !els.editAppModal.classList.contains('hidden') ||
+    !els.profilesModal?.classList.contains('hidden');
+  const notifOpen = !els.notifCenter.classList.contains('hidden');
+  const chromeOpen = !els.chromeMenu.classList.contains('hidden');
+  // HTML app-menu is legacy; native menu does not need overlay.
+  const appMenuOpen = !els.appMenu.classList.contains('hidden');
+
+  if (fullOpen) {
+    window.asperadock.setOverlay({ open: true, mode: 'full' });
+    return;
+  }
+  if (drawerOpen) {
+    window.asperadock.setOverlay({
+      open: true,
+      mode: 'drawer',
+      rightInset: Math.min(440, Math.round(window.innerWidth * 0.94)),
+    });
+    return;
+  }
+  if (notifOpen || chromeOpen) {
+    window.asperadock.setOverlay({
+      open: true,
+      mode: 'menu',
+      rightInset: notifOpen ? 360 : 230,
+    });
+    return;
+  }
+  if (appMenuOpen) {
+    // Fallback HTML menu: avoid blanking the whole guest.
+    window.asperadock.setOverlay({ open: true, mode: 'menu', rightInset: 0 });
+    return;
+  }
+  window.asperadock.setOverlay({ open: false });
 }
 
 function closeAppMenu() {
@@ -774,36 +816,9 @@ function closeAppMenu() {
 }
 
 function openAppMenu(service, x, y) {
+  // Native menu paints above WebContentsView — background app stays visible.
   menuServiceId = service.id;
-  const cfg = service.config || {};
-  els.appMenuTitle.textContent = service.name;
-  els.appMenuEnabled.checked = cfg.enabled !== false;
-  els.appMenuSound.checked = cfg.allowSounds !== false;
-  els.appMenuNotifications.checked = cfg.allowNotifications !== false;
-  if (els.appMenuWarm) {
-    els.appMenuWarm.checked = cfg.keepWarm === true;
-    els.appMenuWarm.disabled = false;
-  }
-
-  els.appMenu.classList.remove('hidden');
-  els.appMenu.style.left = '0px';
-  els.appMenu.style.top = '0px';
-  window.asperadock.setOverlay(true);
-
-  requestAnimationFrame(() => {
-    const pad = 8;
-    const rect = els.appMenu.getBoundingClientRect();
-    let left = x;
-    let top = y;
-    if (left + rect.width > window.innerWidth - pad) {
-      left = window.innerWidth - rect.width - pad;
-    }
-    if (top + rect.height > window.innerHeight - pad) {
-      top = window.innerHeight - rect.height - pad;
-    }
-    els.appMenu.style.left = `${Math.max(pad, left)}px`;
-    els.appMenu.style.top = `${Math.max(pad, top)}px`;
-  });
+  window.asperadock.openAppContextMenu?.(service.id, { x, y });
 }
 
 function getServiceById(id) {
@@ -868,7 +883,7 @@ function openEditApp(id) {
 
   fillProfileSelect(service.profileId);
   els.editAppModal.classList.remove('hidden');
-  window.asperadock.setOverlay(true);
+  syncOverlayFromModals();
 }
 
 function fillProfileSelect(selectedId) {
@@ -999,7 +1014,7 @@ function openProfiles() {
   closeEditApp();
   renderProfiles();
   els.profilesModal.classList.remove('hidden');
-  window.asperadock.setOverlay(true);
+  syncOverlayFromModals();
 }
 
 function closeProfiles() {
@@ -1028,7 +1043,7 @@ function askProfileName({ title = 'New profile', initial = '' } = {}) {
     els.profileNameInput.value = initial || '';
     els.profileNameInput.placeholder = "Profile's name";
     els.profileNameModal.classList.remove('hidden');
-    window.asperadock.setOverlay(true);
+    syncOverlayFromModals();
     requestAnimationFrame(() => {
       els.profileNameInput.focus();
       els.profileNameInput.select();
@@ -1055,7 +1070,7 @@ function openSettings() {
   closeChromeMenu();
   fillSettingsForm();
   els.settingsModal.classList.remove('hidden');
-  window.asperadock.setOverlay(true);
+  syncOverlayFromModals();
 }
 
 function openAppsSettings() {
@@ -1073,7 +1088,7 @@ function openShortcuts() {
   closeChromeMenu();
   fillShortcutsForm();
   els.shortcutsModal.classList.remove('hidden');
-  window.asperadock.setOverlay(true);
+  syncOverlayFromModals();
 }
 
 function closeShortcuts() {
@@ -1091,7 +1106,7 @@ function openNotificationCenter() {
   closeChromeMenu();
   renderNotificationCenter();
   els.notifCenter.classList.remove('hidden');
-  window.asperadock.setOverlay(true);
+  syncOverlayFromModals();
 }
 
 function toggleNotificationCenter() {
@@ -1108,8 +1123,8 @@ function openChromeMenu() {
   closeAppMenu();
   closeNotificationCenter();
   els.chromeMenu.classList.remove('hidden');
-  // BrowserView paints above HTML — hide it while the ⋮ menu is open.
-  window.asperadock.setOverlay(true);
+  // Keep guest visible; shrink from the right so this dropdown is clickable.
+  syncOverlayFromModals();
 }
 
 function toggleChromeMenu() {
@@ -1129,7 +1144,7 @@ function openSearch() {
   els.searchInput.value = '';
   renderSearch('');
   els.searchInput.focus();
-  window.asperadock.setOverlay(true);
+  syncOverlayFromModals();
 }
 
 function closeSearch() {
@@ -1171,7 +1186,7 @@ function renderLock() {
     els.lockPassword.value = '';
     els.lockError.textContent = '';
     els.lockPassword.focus();
-    window.asperadock.setOverlay(true);
+    syncOverlayFromModals();
   } else {
     els.lockScreen.classList.add('hidden');
     syncOverlayFromModals();
@@ -1305,6 +1320,9 @@ els.notifReadAll.addEventListener('click', async () => {
 window.addEventListener('resize', () => requestAnimationFrame(reportChromeSize));
 
 window.asperadock.onOpenSettings(openSettings);
+window.asperadock.onOpenEditApp?.((id) => {
+  if (id) openEditApp(id);
+});
 window.asperadock.onOpenAppsSettings?.(openAppsSettings);
 window.asperadock.onOpenProfiles?.(openProfiles);
 window.asperadock.onOpenSearch?.(openSearch);
