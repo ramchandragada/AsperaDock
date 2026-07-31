@@ -126,6 +126,12 @@ export const DEFAULTS = {
   aiEnabled: true,
   aiProvider: 'gemini', // gemini | openrouter | grok | sambanova | anthropic
   aiModel: '',
+  /**
+   * Per-provider model preference.
+   * Use "auto" (or omit) to pick the best model from the provider's live list.
+   * @type {Record<string, string>}
+   */
+  aiProviderModels: {},
   aiLanguage: 'en', // en | hi | mr
 
   /**

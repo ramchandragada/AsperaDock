@@ -27,7 +27,8 @@ export const AI_PROVIDER_TRY_ORDER = Object.freeze([
 
 /**
  * BYOK providers for employees.
- * Anthropic is supported but not free-tier friendly — keep as optional paid key.
+ * `models` / `defaultModel` are seed fallbacks only — runtime prefers the live
+ * model list returned by each provider for the user's API key.
  */
 export const AI_PROVIDERS = Object.freeze([
   {

@@ -248,12 +248,14 @@
           <div class="section-rule" id="ai-settings-section"><span>Aspera AI</span></div>
           <p class="hint-text">
             Employee skills for <strong>WhatsApp, Arattai, Gmail, Zoho Mail</strong> only.
-            Save an API key for each provider you use. With a <strong>Gemini</strong> key saved,
-            Aspera AI calls Gemini immediately and keeps using it (like manual selection) until
-            Gemini fails or is exhausted — only then:
+            Save an API key for each provider you use. Aspera Hub loads
+            <strong>all models available to your key</strong> from each provider
+            (Gemini, Grok, SambaNova, OpenRouter, Anthropic). Leave model on
+            <strong>Auto</strong> to pick a fast workplace model and automatically
+            try others if one is retired or blocked — or choose any listed model.
+            With a <strong>Gemini</strong> key saved, Aspera AI calls Gemini first
+            until it fails, then:
             <strong>Grok → SambaNova → OpenRouter → Anthropic</strong>.
-            Free-tier Gemini uses <code>gemini-3.1-flash-lite</code> (2.5-flash-lite is blocked for many new keys).
-            Grok uses <code>grok-4.5</code>.
             <strong>Summarize</strong> returns English + Hindi + Marathi, with optional reply drafts.
           </p>
           <label class="switch-row">

@@ -734,7 +734,79 @@ function renderAiProviderKeys() {
       }
     }
 
-    row.append(head, status, hint, actions);
+    if (provider.configured) {
+      const modelWrap = document.createElement('div');
+      modelWrap.className = 'ai-provider-model';
+      const modelLabel = document.createElement('label');
+      modelLabel.className = 'ai-provider-model-label';
+      modelLabel.textContent = 'Model';
+      const modelRow = document.createElement('div');
+      modelRow.className = 'ai-provider-model-row';
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', `${provider.name} model`);
+      const autoOpt = document.createElement('option');
+      autoOpt.value = 'auto';
+      autoOpt.textContent = 'Auto (best available for this key)';
+      select.appendChild(autoOpt);
+      const selected = provider.selectedModel || 'auto';
+      const models = Array.isArray(provider.availableModels)
+        ? provider.availableModels
+        : [];
+      let hasSelected = selected === 'auto';
+      for (const m of models) {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.name && m.name !== m.id ? `${m.name} (${m.id})` : m.id;
+        select.appendChild(opt);
+        if (m.id === selected) hasSelected = true;
+      }
+      if (selected !== 'auto' && !hasSelected) {
+        const opt = document.createElement('option');
+        opt.value = selected;
+        opt.textContent = selected;
+        select.appendChild(opt);
+      }
+      select.value = selected || 'auto';
+      select.addEventListener('change', async () => {
+        const result = await window.asperadock.aiSetModel?.(
+          provider.id,
+          select.value,
+        );
+        if (!result?.ok) {
+          alert(result?.error || 'Could not save model');
+          return;
+        }
+        state = (await window.asperadock.getState?.()) || state;
+        renderAiProviderKeys();
+      });
+      const refreshBtn = document.createElement('button');
+      refreshBtn.type = 'button';
+      refreshBtn.className = 'ghost-btn';
+      refreshBtn.textContent = provider.modelsLive ? 'Refresh models' : 'Load models';
+      refreshBtn.addEventListener('click', async () => {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = 'Loading…';
+        try {
+          const result = await window.asperadock.aiListModels?.(provider.id);
+          if (result && result.ok === false && result.error) {
+            alert(
+              `Could not load live models for ${provider.name}.\n${result.error}\n\nShowing catalog fallback.`,
+            );
+          }
+          state = (await window.asperadock.getState?.()) || state;
+          renderAiProviderKeys();
+        } catch (error) {
+          alert(String(error?.message || error));
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = 'Load models';
+        }
+      });
+      modelRow.append(select, refreshBtn);
+      modelWrap.append(modelLabel, modelRow);
+      row.append(head, status, hint, actions, modelWrap);
+    } else {
+      row.append(head, status, hint, actions);
+    }
     root.appendChild(row);
   }
 

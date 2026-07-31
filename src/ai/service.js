@@ -1,6 +1,5 @@
 import {
   getAiProvider,
-  geminiModelFallbackChain,
   normalizeAnthropicModel,
   normalizeGeminiModel,
   normalizeGrokModel,
@@ -12,6 +11,14 @@ import {
   listConfiguredAiProviderIds,
 } from './keys.js';
 import {
+  buildModelAttemptChain,
+  getCachedAiModels,
+  getProviderModelPreference,
+  isRetryableModelError,
+  listAiProviderModels,
+  pickBestModelId,
+} from './models.js';
+import {
   buildCatchMeUpPrompt,
   buildSuggestReplyPrompt,
   buildSummarizePrompt,
@@ -21,6 +28,13 @@ import {
 let stickyProviderId = null;
 /** Providers that failed this session — skip until app restart or key change. */
 const exhaustedProviderIds = new Set();
+
+/** Optional settings reader injected from main (for per-provider model prefs). */
+let readAiSettings = () => ({});
+
+export function setAiSettingsReader(fn) {
+  readAiSettings = typeof fn === 'function' ? fn : () => ({});
+}
 
 export function getStickyAiProviderId() {
   return stickyProviderId;
@@ -115,55 +129,6 @@ async function callGemini({ apiKey, model, prompt }) {
   return text;
 }
 
-function isGeminiQuotaError(message) {
-  const m = String(message || '').toLowerCase();
-  return (
-    m.includes('quota') ||
-    m.includes('rate limit') ||
-    m.includes('resource_exhausted') ||
-    m.includes('limit: 0') ||
-    m.includes('exceeded your current quota')
-  );
-}
-
-/** Retry next Gemini model when this one is retired, blocked for new keys, or missing. */
-function isGeminiModelUnavailableError(message) {
-  const m = String(message || '').toLowerCase();
-  return (
-    m.includes('no longer available') ||
-    m.includes('not available to new users') ||
-    m.includes('not found') ||
-    m.includes('is not found') ||
-    m.includes('not supported') ||
-    /\b404\b/.test(m) ||
-    (m.includes('invalid') && m.includes('model'))
-  );
-}
-
-/** Try Gemini models in chain until one works (handles free-tier limit: 0 / retired ids). */
-async function callGeminiWithModelFallback({ apiKey, model, prompt }) {
-  const chain = geminiModelFallbackChain(model);
-  const errors = [];
-  for (const candidate of chain) {
-    try {
-      const text = await callGemini({ apiKey, model: candidate, prompt });
-      return { text, model: candidate };
-    } catch (error) {
-      const message = String(error?.message || error);
-      errors.push(`${candidate}: ${message}`);
-      // Only continue the chain for quota / unavailable-model style failures.
-      if (!isGeminiQuotaError(message) && !isGeminiModelUnavailableError(message)) {
-        throw error;
-      }
-    }
-  }
-  throw new Error(
-    errors.length
-      ? `Gemini quota/model failed for all candidates:\n${errors.join('\n')}`
-      : 'Gemini unavailable',
-  );
-}
-
 async function callAnthropic({ apiKey, model, prompt }) {
   const resolved = normalizeAnthropicModel(model);
   const res = await fetch('https://api.anthropic.com/v1/messages', {
@@ -205,11 +170,43 @@ async function callAnthropic({ apiKey, model, prompt }) {
   return text;
 }
 
-export async function runAiCompletion({
-  providerId,
-  model,
-  prompt,
-}) {
+function normalizeChosenModel(providerId, model) {
+  if (providerId === 'gemini') return normalizeGeminiModel(model);
+  if (providerId === 'grok') return normalizeGrokModel(model);
+  if (providerId === 'anthropic') return normalizeAnthropicModel(model);
+  if (providerId === 'openrouter' && model === 'openrouter/free') {
+    return 'google/gemini-flash-latest';
+  }
+  return String(model || '').trim();
+}
+
+async function resolveModelChain(providerId, preferredOverride) {
+  const provider = getAiProvider(providerId);
+  const apiKey = getAiProviderKey(provider.id);
+  const settings = readAiSettings() || {};
+  const preferredRaw =
+    preferredOverride !== undefined && preferredOverride !== null
+      ? String(preferredOverride || '').trim() || 'auto'
+      : getProviderModelPreference(settings, provider.id);
+  const preferred =
+    preferredRaw === 'auto' ? '' : normalizeChosenModel(provider.id, preferredRaw);
+
+  let live = getCachedAiModels(provider.id) || [];
+  if (!live.length && apiKey) {
+    const listed = await listAiProviderModels(provider.id, apiKey, { force: false });
+    live = listed.models || [];
+  }
+
+  const liveIds = live.map((m) => m.id);
+  return buildModelAttemptChain({
+    providerId: provider.id,
+    preferred,
+    liveIds,
+    catalogIds: provider.models || [],
+  });
+}
+
+async function callProviderWithModelChain(providerId, prompt, preferredOverride) {
   const provider = getAiProvider(providerId);
   const apiKey = getAiProviderKey(provider.id);
   if (!apiKey) {
@@ -217,46 +214,74 @@ export async function runAiCompletion({
       `Add your ${provider.name} API key in Settings → Aspera AI.`,
     );
   }
-  const chosen = String(model || provider.defaultModel || '').trim();
 
-  if (provider.id === 'gemini') {
-    const result = await callGeminiWithModelFallback({
-      apiKey,
-      model: normalizeGeminiModel(chosen),
-      prompt,
-    });
-    return result.text;
+  const chain = await resolveModelChain(provider.id, preferredOverride);
+  const errors = [];
+
+  for (const rawModel of chain) {
+    const model = normalizeChosenModel(provider.id, rawModel);
+    if (!model) continue;
+    try {
+      let text = '';
+      if (provider.id === 'gemini') {
+        text = await callGemini({ apiKey, model, prompt });
+      } else if (provider.id === 'anthropic') {
+        text = await callAnthropic({ apiKey, model, prompt });
+      } else if (provider.id === 'grok') {
+        text = await callOpenAiCompatible({
+          baseUrl: 'https://api.x.ai/v1',
+          apiKey,
+          model,
+          prompt,
+        });
+      } else if (provider.id === 'sambanova') {
+        text = await callOpenAiCompatible({
+          baseUrl: 'https://api.sambanova.ai/v1',
+          apiKey,
+          model,
+          prompt,
+        });
+      } else {
+        text = await callOpenAiCompatible({
+          baseUrl: 'https://openrouter.ai/api/v1',
+          apiKey,
+          model,
+          prompt,
+          extraHeaders: {
+            'HTTP-Referer': 'https://asperahub.com',
+            'X-Title': 'Aspera Hub',
+          },
+        });
+      }
+      return { text, model, providerId: provider.id, providerName: provider.name };
+    } catch (error) {
+      const message = String(error?.message || error);
+      errors.push(`${model}: ${message}`);
+      if (!isRetryableModelError(message)) {
+        throw error;
+      }
+      // Try next live/catalog model for this provider.
+    }
   }
-  if (provider.id === 'anthropic') {
-    return callAnthropic({ apiKey, model: chosen, prompt });
-  }
-  if (provider.id === 'grok') {
-    return callOpenAiCompatible({
-      baseUrl: 'https://api.x.ai/v1',
-      apiKey,
-      model: normalizeGrokModel(chosen),
-      prompt,
-    });
-  }
-  if (provider.id === 'sambanova') {
-    return callOpenAiCompatible({
-      baseUrl: 'https://api.sambanova.ai/v1',
-      apiKey,
-      model: chosen,
-      prompt,
-    });
-  }
-  // openrouter (default fallback)
-  return callOpenAiCompatible({
-    baseUrl: 'https://openrouter.ai/api/v1',
-    apiKey,
-    model: chosen,
+
+  throw new Error(
+    errors.length
+      ? `${provider.name} failed for available models:\n${errors.join('\n')}`
+      : `${provider.name} unavailable`,
+  );
+}
+
+export async function runAiCompletion({
+  providerId,
+  model,
+  prompt,
+}) {
+  const result = await callProviderWithModelChain(
+    providerId,
     prompt,
-    extraHeaders: {
-      'HTTP-Referer': 'https://asperahub.com',
-      'X-Title': 'Aspera Hub',
-    },
-  });
+    model ? String(model) : undefined,
+  );
+  return result.text;
 }
 
 /**
@@ -265,11 +290,10 @@ export async function runAiCompletion({
  * Behavior (manual-like):
  * 1. If Gemini has a key and is not exhausted this session → call Gemini only.
  * 2. On success, stick to that provider for all later requests.
- * 3. On failure/exhaustion, mark it exhausted and try the next in order
- *    (Grok → SambaNova → OpenRouter → Anthropic).
+ * 3. On failure/exhaustion, try next provider; within a provider, walk all
+ *    live/catalog models until one works.
  */
 export async function runAiCompletionWithFailover(prompt) {
-  // Lock onto Gemini as soon as a key exists (unless already exhausted this session).
   if (
     hasAiProviderKey('gemini') &&
     !exhaustedProviderIds.has('gemini') &&
@@ -293,44 +317,27 @@ export async function runAiCompletionWithFailover(prompt) {
   const errors = [];
   for (const providerId of attemptIds) {
     const provider = getAiProvider(providerId);
-    // Skip if key disappeared mid-session.
     if (!hasAiProviderKey(provider.id)) {
       exhaustedProviderIds.add(provider.id);
       if (stickyProviderId === provider.id) stickyProviderId = null;
       continue;
     }
 
-    let model = provider.defaultModel;
-    if (provider.id === 'gemini') {
-      model = normalizeGeminiModel(model);
-    } else if (provider.id === 'grok') {
-      model = normalizeGrokModel(model);
-    } else if (provider.id === 'openrouter' && model === 'openrouter/free') {
-      model = 'google/gemini-2.0-flash-001';
-    }
-
     try {
-      // Single API call — do not touch other providers on success.
-      const text = await runAiCompletion({
-        providerId: provider.id,
-        model,
-        prompt,
-      });
+      const result = await callProviderWithModelChain(provider.id, prompt);
       stickyProviderId = provider.id;
       exhaustedProviderIds.delete(provider.id);
       return {
-        text,
+        text: result.text,
         providerId: provider.id,
-        model,
+        model: result.model,
         providerName: provider.name,
       };
     } catch (error) {
       const message = String(error?.message || error);
       errors.push(`${provider.name}: ${message}`);
-      // Exhausted / failed → stop using this provider until restart or key change.
       exhaustedProviderIds.add(provider.id);
       if (stickyProviderId === provider.id) stickyProviderId = null;
-      // Continue to the next provider only after this one failed.
     }
   }
 
@@ -357,3 +364,5 @@ export function promptForSkill(skill, payload) {
   }
   throw new Error('Unknown AI skill');
 }
+
+export { pickBestModelId };

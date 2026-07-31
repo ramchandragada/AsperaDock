@@ -36,6 +36,7 @@ import {
 import {
   AI_ALLOWED_APP_IDS,
   AI_LANGUAGES,
+  AI_PROVIDERS,
   configuredProvidersInRouteOrder,
   getAiProvider,
   isAiAllowedAppId,
@@ -45,6 +46,7 @@ import {
 } from './ai/catalog.js';
 import {
   clearAiProviderKey,
+  getAiProviderKey,
   listConfiguredAiProviders,
   setAiProviderKey,
 } from './ai/keys.js';
@@ -54,7 +56,16 @@ import {
   onAiProviderKeyChanged,
   getStickyAiProviderId,
   resetAiProviderSession,
+  setAiSettingsReader,
 } from './ai/service.js';
+import {
+  catalogModelsForProvider,
+  getCachedAiModels,
+  getProviderModelPreference,
+  invalidateAiModelCache,
+  listAiProviderModels,
+  normalizeProviderModelChoice,
+} from './ai/models.js';
 import {
   APP_CATALOG,
   MAX_INSTANCES_PER_APP,
@@ -337,6 +348,7 @@ settings = {
   ...settings,
   extensions: normalizeExtensionList(settings.extensions),
 };
+setAiSettingsReader(() => settings);
 
 function trackServicePopup(serviceId, popupWindow) {
   if (!serviceId || !popupWindow) return;
@@ -2146,6 +2158,62 @@ function attachAiResultContextMenu(webContents) {
   });
 }
 
+function aiProvidersForUi() {
+  return listConfiguredAiProviders().map((p) => {
+    const selectedModel = getProviderModelPreference(settings, p.id);
+    const availableModels =
+      getCachedAiModels(p.id) || catalogModelsForProvider(p.id);
+    return {
+      ...p,
+      selectedModel,
+      availableModels,
+      modelsLive: Boolean(getCachedAiModels(p.id)?.length),
+    };
+  });
+}
+
+async function refreshAiProviderModels(providerId, { force = true } = {}) {
+  const id = String(providerId || '').trim();
+  if (!id) return { ok: false, error: 'Unknown provider' };
+  const apiKey = getAiProviderKey(id);
+  if (!apiKey) {
+    return {
+      ok: false,
+      providerId: id,
+      models: catalogModelsForProvider(id),
+      source: 'catalog',
+      error: 'No API key saved',
+    };
+  }
+  if (force) invalidateAiModelCache(id);
+  return listAiProviderModels(id, apiKey, { force });
+}
+
+function setAiProviderModelPreference(providerId, modelId) {
+  const id = String(providerId || '').trim();
+  if (!AI_PROVIDERS.some((p) => p.id === id)) {
+    return { ok: false, error: 'Unknown AI provider' };
+  }
+  const choice = normalizeProviderModelChoice(modelId);
+  const nextMap = {
+    ...(settings.aiProviderModels && typeof settings.aiProviderModels === 'object'
+      ? settings.aiProviderModels
+      : {}),
+    [id]: choice,
+  };
+  settings = saveSettings({
+    aiProviderModels: nextMap,
+    // Keep legacy field in sync for the preferred/sticky provider.
+    aiModel:
+      id === (settings.aiProvider || 'gemini')
+        ? choice === 'auto'
+          ? ''
+          : choice
+        : settings.aiModel,
+  });
+  return { ok: true, providerId: id, model: choice };
+}
+
 function aiSettingsSnapshot() {
   const language = ['en', 'hi', 'mr'].includes(settings.aiLanguage)
     ? settings.aiLanguage
@@ -2159,7 +2227,11 @@ function aiSettingsSnapshot() {
     (sticky && order.find((p) => p.id === sticky)) ||
     order[0] ||
     getAiProvider(settings.aiProvider || 'gemini');
-  let model = String(settings.aiModel || '').trim();
+  let model = String(
+    getProviderModelPreference(settings, provider.id) === 'auto'
+      ? ''
+      : getProviderModelPreference(settings, provider.id),
+  ).trim();
   if (provider.id === 'openrouter' && (!model || model === 'openrouter/free')) {
     model = provider.defaultModel;
   }
@@ -4248,10 +4320,14 @@ function currentState() {
       enabled: settings.aiEnabled !== false,
       provider: settings.aiProvider || 'gemini',
       model: settings.aiModel || '',
+      providerModels:
+        settings.aiProviderModels && typeof settings.aiProviderModels === 'object'
+          ? settings.aiProviderModels
+          : {},
       language: settings.aiLanguage || 'en',
       allowedAppIds: AI_ALLOWED_APP_IDS,
       languages: AI_LANGUAGES,
-      providers: listConfiguredAiProviders(),
+      providers: aiProvidersForUi(),
       routeOrder: configuredProvidersInRouteOrder(
         listConfiguredAiProviders()
           .filter((p) => p.configured)
@@ -5383,10 +5459,14 @@ dockHandle('dock:ai-status', () => ({
   enabled: settings.aiEnabled !== false,
   provider: settings.aiProvider || 'gemini',
   model: settings.aiModel || '',
+  providerModels:
+    settings.aiProviderModels && typeof settings.aiProviderModels === 'object'
+      ? settings.aiProviderModels
+      : {},
   language: settings.aiLanguage || 'en',
   allowedAppIds: AI_ALLOWED_APP_IDS,
   languages: AI_LANGUAGES,
-  providers: listConfiguredAiProviders(),
+  providers: aiProvidersForUi(),
   routeOrder: configuredProvidersInRouteOrder(
     listConfiguredAiProviders()
       .filter((p) => p.configured)
@@ -5399,6 +5479,11 @@ dockHandle('dock:ai-set-key', (_e, providerId, apiKey) => {
   if (result.ok) {
     onAiProviderKeyChanged(id, result.configured !== false);
     syncPreferredAiProvider();
+    invalidateAiModelCache(id);
+    if (result.configured) {
+      // Warm live model list in the background for Auto + Settings picker.
+      refreshAiProviderModels(id, { force: true }).finally(() => broadcastState());
+    }
   }
   broadcastState();
   return result;
@@ -5407,8 +5492,19 @@ dockHandle('dock:ai-clear-key', (_e, providerId) => {
   const id = String(providerId || '').trim();
   const result = clearAiProviderKey(id);
   onAiProviderKeyChanged(id, false);
+  invalidateAiModelCache(id);
   syncPreferredAiProvider();
   broadcastState();
+  return result;
+});
+dockHandle('dock:ai-list-models', async (_e, providerId) => {
+  const result = await refreshAiProviderModels(providerId, { force: true });
+  broadcastState();
+  return result;
+});
+dockHandle('dock:ai-set-model', (_e, providerId, modelId) => {
+  const result = setAiProviderModelPreference(providerId, modelId);
+  if (result.ok) broadcastState();
   return result;
 });
 dockHandle('dock:ai-set-provider', (_e, providerId) => {
@@ -5761,6 +5857,7 @@ function watchSystemIdle() {
 }
 
 app.whenReady().then(async () => {
+  setAiSettingsReader(() => settings);
   resetAiProviderSession({ preferGemini: true });
   if (
     app.isPackaged &&
@@ -5802,6 +5899,12 @@ app.whenReady().then(async () => {
   hydrateLastUrls();
   createWindow();
   syncExtensionsToAllGuestSessions().catch(() => {});
+  // Prefetch live model catalogs for saved keys (Auto + Settings picker).
+  for (const p of listConfiguredAiProviders().filter((x) => x.configured)) {
+    refreshAiProviderModels(p.id, { force: false })
+      .then(() => broadcastState())
+      .catch(() => {});
+  }
   startHibernateTimer();
   startMemoryTimer();
   watchSystemIdle();
