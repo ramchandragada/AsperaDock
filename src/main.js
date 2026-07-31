@@ -5354,8 +5354,13 @@ function createWindow() {
   mainWindow.on('unmaximize', () => setTimeout(() => layoutActiveView(), 50));
   mainWindow.on('show', () => {
     setTimeout(() => layoutActiveView(), 50);
-    setTimeout(() => repaintActiveGuestView({ reason: 'window-show' }), 60);
-    onUserReturnedFromIdle('window-show');
+    const awayMs = awayStartedAt ? Date.now() - awayStartedAt : 0;
+    if (awayMs >= 3 * 60_000 || peakIdleSec >= 3 * 60) {
+      setTimeout(() => onUserReturnedFromIdle('window-show'), 60);
+    } else {
+      setTimeout(() => repaintActiveGuestView({ reason: 'window-show' }), 60);
+      markUserActive();
+    }
   });
   mainWindow.on('restore', () => {
     setTimeout(() => repaintActiveGuestView({ reason: 'window-restore' }), 40);
