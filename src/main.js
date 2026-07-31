@@ -284,6 +284,12 @@ const unreadCounts = new Map();
 /** @type {{ id: string, serviceId: string, title: string, body: string, at: number }[]} */
 let notificationLog = [];
 const NOTIFICATION_LOG_MAX = 40;
+/** Dedupe identical toasts per service (fingerprint → last shown at). */
+/** @type {Map<string, { fingerprint: string, at: number }>} */
+const recentNotificationFingerprints = new Map();
+const NOTIFICATION_DEDUPE_MS = 45_000;
+/** Magic prefix for guest → main Notification bridge (console-message). */
+const ASPERA_NOTIFY_PREFIX = '__ASPERA_DOCK_NOTIFY__';
 /** Renderer-measured chrome size — keeps guest view aligned with wrapped rows. */
 let chromeSize = null;
 /** @type {Record<string, number>} */
@@ -2505,10 +2511,7 @@ function handleNotifCenterAction(type, value) {
     return { ok: true };
   }
   if (type === 'read-all') {
-    unreadCounts.clear();
-    notificationLog = [];
-    refreshBadge();
-    broadcastState();
+    markAllReadWithoutNotifySpam();
     return { ok: true };
   }
   if (type === 'activate') {
@@ -2521,8 +2524,8 @@ function handleNotifCenterAction(type, value) {
 
 function applyFocusMode(webContents, serviceId) {
   const cfg = serviceId ? getAppConfig(serviceId) : mergeAppConfig();
-  // Always suppress in-page Notification — guest notifications raise the
-  // Electron window on Linux. Unread is handled in main via page title.
+  // Suppress native guest Notification (avoids Linux focus steal) but forward
+  // title/body to main via a console bridge for rich OS + in-app toasts.
   const hideBody =
     settings.hideNotificationContent || cfg.hideNotificationContent
       ? 'true'
@@ -2531,7 +2534,6 @@ function applyFocusMode(webContents, serviceId) {
     .executeJavaScript(
       `(() => {
         window.__asperaDockHideBody = ${hideBody};
-        // Pages calling window.focus() will otherwise steal the desktop focus.
         try { window.focus = function () {}; } catch (e) {}
         if (window.__asperaDockPatched) {
           window.__asperaDockSilenced = true;
@@ -2542,12 +2544,21 @@ function applyFocusMode(webContents, serviceId) {
         const Original = window.Notification;
         if (!Original) return;
         function Patched(title, options) {
-          // No-op: never create a real OS notification from the guest page.
+          try {
+            const opts = options && typeof options === 'object' ? options : {};
+            const payload = {
+              title: String(title || ''),
+              body: String(opts.body || ''),
+              tag: String(opts.tag || ''),
+            };
+            console.log('${ASPERA_NOTIFY_PREFIX}' + JSON.stringify(payload));
+          } catch (e) {}
           return {
             close() {},
             addEventListener() {},
             removeEventListener() {},
             dispatchEvent() { return false; },
+            onclick: null,
           };
         }
         Patched.prototype = Original.prototype;
@@ -2562,25 +2573,170 @@ function applyFocusMode(webContents, serviceId) {
     .catch(() => {});
 }
 
-function applyMuteState() {
-  for (const [id, entry] of views.entries()) {
-    const cfg = getAppConfig(id);
-    entry.view.webContents.setAudioMuted(settings.muted || !cfg.allowSounds);
+function firstTwoMessageLines(text) {
+  const raw = String(text || '').replace(/\r\n/g, '\n').trim();
+  if (!raw) return '';
+  const lines = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length >= 2) {
+    return `${lines[0].slice(0, 160)}\n${lines[1].slice(0, 160)}`;
   }
+  const single = lines[0] || raw;
+  if (single.length <= 160) return single;
+  return `${single.slice(0, 160)}\n${single.slice(160, 320)}`;
 }
 
-function logNotification(service, body) {
+function notificationFingerprint(serviceId, title, body) {
+  return `${serviceId}|${String(title || '').trim()}|${String(body || '').trim()}`;
+}
+
+function shouldShowNotification(serviceId, fingerprint) {
+  const now = Date.now();
+  const prev = recentNotificationFingerprints.get(serviceId);
+  if (
+    prev &&
+    prev.fingerprint === fingerprint &&
+    now - prev.at < NOTIFICATION_DEDUPE_MS
+  ) {
+    return false;
+  }
+  recentNotificationFingerprints.set(serviceId, { fingerprint, at: now });
+  return true;
+}
+
+function logNotification(service, body, titleOverride) {
+  const title = String(
+    titleOverride || service.title || service.name || 'App',
+  ).trim();
   notificationLog = [
     {
       id: `${service.id}-${Date.now().toString(36)}`,
       serviceId: service.id,
-      title: service.title || service.name,
-      body,
+      title,
+      body: String(body || '').trim(),
       at: Date.now(),
     },
     ...notificationLog,
   ].slice(0, NOTIFICATION_LOG_MAX);
   broadcastState();
+  pushNotifCenterData();
+}
+
+/**
+ * Show a rich desktop + in-app notification for a guest app.
+ * Prefer intercepted page Notification payloads (sender + message).
+ */
+function emitServiceNotification(service, { title, body, fromTitleCount = false } = {}) {
+  if (!service || settings.focusMode) return false;
+  const liveCfg = getAppConfig(service.id);
+  if (!liveCfg.allowNotifications) return false;
+  if (service.id === activeServiceId) return false;
+
+  const hide =
+    settings.hideNotificationContent || liveCfg.hideNotificationContent;
+  const sender = String(title || '').trim();
+  const message = firstTwoMessageLines(body);
+  const displayTitle = hide
+    ? service.title || service.name || 'App'
+    : sender || service.title || service.name || 'App';
+  const displayBody = hide
+    ? 'New notification'
+    : message || (fromTitleCount ? `${body || ''}`.trim() : 'New message');
+
+  if (!displayBody) return false;
+
+  const fingerprint = notificationFingerprint(
+    service.id,
+    displayTitle,
+    displayBody,
+  );
+  if (!shouldShowNotification(service.id, fingerprint)) return false;
+
+  logNotification(service, displayBody, displayTitle);
+
+  if (!Notification.isSupported()) return true;
+  const n = new Notification({
+    title: displayTitle,
+    body: displayBody,
+    silent: settings.muted || !liveCfg.allowSounds,
+  });
+  n.on('click', () => {
+    raiseDockWindow();
+    activateService(service.id);
+  });
+  n.show();
+  return true;
+}
+
+function handleGuestNotificationBridge(service, rawMessage) {
+  const text = String(rawMessage || '');
+  if (!text.startsWith(ASPERA_NOTIFY_PREFIX)) return false;
+  let payload = {};
+  try {
+    payload = JSON.parse(text.slice(ASPERA_NOTIFY_PREFIX.length));
+  } catch {
+    return true;
+  }
+  const title = String(payload?.title || '').trim();
+  const body = String(payload?.body || '').trim();
+  // Mark that this service delivered a rich notification recently — skip
+  // the next generic title-count toast for a short window.
+  const entry = views.get(service.id);
+  if (entry) entry.__lastRichNotifyAt = Date.now();
+  emitServiceNotification(service, { title, body, fromTitleCount: false });
+  return true;
+}
+
+/** Seed unread from the live page title without firing a notification. */
+function seedUnreadFromTitle(serviceId, webContents) {
+  let count = 0;
+  try {
+    if (webContents && !webContents.isDestroyed()) {
+      count = parseUnread(webContents.getTitle() || '');
+    }
+  } catch {
+    count = 0;
+  }
+  unreadCounts.set(serviceId, count);
+  const entry = views.get(serviceId);
+  if (entry) {
+    entry.__suppressTitleNotifyUntil = Date.now() + 2_500;
+    entry.__titleCountBaseline = count;
+  }
+  return count;
+}
+
+function markAllReadWithoutNotifySpam() {
+  for (const [id, entry] of views.entries()) {
+    let titleCount = 0;
+    try {
+      titleCount = parseUnread(entry.view?.webContents?.getTitle?.() || '');
+    } catch {
+      titleCount = 0;
+    }
+    unreadCounts.set(id, 0);
+    if (entry) {
+      entry.__titleCountBaseline = Math.max(titleCount, 0);
+      entry.__suppressTitleNotifyUntil = Date.now() + 5_000;
+    }
+  }
+  for (const id of [...unreadCounts.keys()]) {
+    if (!views.has(id)) unreadCounts.set(id, 0);
+  }
+  notificationLog = [];
+  recentNotificationFingerprints.clear();
+  refreshBadge();
+  broadcastState();
+  pushNotifCenterData();
+}
+
+function applyMuteState() {
+  for (const [id, entry] of views.entries()) {
+    const cfg = getAppConfig(id);
+    entry.view.webContents.setAudioMuted(settings.muted || !cfg.allowSounds);
+  }
 }
 
 /** Map each app's renderer process to its memory footprint (MB). */
@@ -3193,6 +3349,17 @@ function createViewForService(service) {
     watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
   });
 
+  webContents.on('console-message', (event, level, message) => {
+    const text =
+      (typeof event === 'object' && event && 'message' in event
+        ? String(event.message || '')
+        : '') ||
+      (typeof message === 'string' ? message : '') ||
+      '';
+    if (!text) return;
+    handleGuestNotificationBridge(service, text);
+  });
+
   webContents.on('page-title-updated', (_event, title) => {
     const previous = unreadCounts.get(service.id) || 0;
     const next = parseUnread(title);
@@ -3201,45 +3368,35 @@ function createViewForService(service) {
     refreshBadge();
     broadcastState();
 
-    const liveCfg = getAppConfig(service.id);
-    if (
-      next > previous &&
-      !settings.focusMode &&
-      liveCfg.allowNotifications &&
-      service.id !== activeServiceId
-    ) {
-      const body =
-        settings.hideNotificationContent || liveCfg.hideNotificationContent
-          ? 'New notification'
-          : `${next} unread`;
-      logNotification(service, body);
-    }
-    if (
-      next > previous &&
-      !settings.focusMode &&
-      liveCfg.allowNotifications &&
-      service.id !== activeServiceId &&
-      Notification.isSupported()
-    ) {
-      const n = new Notification({
+    const entry = views.get(service.id);
+    const suppressUntil = entry?.__suppressTitleNotifyUntil || 0;
+    if (Date.now() < suppressUntil) return;
+
+    // Prefer rich Notification payloads (sender + message). Skip generic
+    // "N unread" toasts when a rich toast was just shown, or when the count
+    // has not risen above the last seeded/read baseline.
+    const richRecently =
+      entry?.__lastRichNotifyAt &&
+      Date.now() - entry.__lastRichNotifyAt < 15_000;
+    if (richRecently) return;
+
+    const baseline = Number(entry?.__titleCountBaseline) || 0;
+    if (next > previous && next > baseline) {
+      if (entry) entry.__titleCountBaseline = next;
+      emitServiceNotification(service, {
         title: service.title || service.name,
-        body:
-          settings.hideNotificationContent || liveCfg.hideNotificationContent
-            ? 'New notification'
-            : `${next} unread`,
-        silent: settings.muted || !liveCfg.allowSounds,
+        body: `${next} unread`,
+        fromTitleCount: true,
       });
-      n.on('click', () => {
-        // Explicit user action — OK to raise.
-        raiseDockWindow();
-        activateService(service.id);
-      });
-      n.show();
     }
   });
 
   webContents.on('dom-ready', async () => {
     applyFocusMode(webContents, service.id);
+    // Seed badge from current title without treating it as a new message.
+    seedUnreadFromTitle(service.id, webContents);
+    refreshBadge();
+    broadcastState();
     const live = getAppConfig(service.id);
     if (settings.allowPageInjection && live.injectCss && live.injectCss.trim()) {
       try {
@@ -3754,7 +3911,8 @@ function activateService(id) {
 
   syncAllGuestPerfModes();
 
-  unreadCounts.set(id, 0);
+  // Seed from live title (do not zero — that made "(2)" look like a new alert).
+  seedUnreadFromTitle(id, entry?.view?.webContents);
   enforceWarmLimit();
   softWakeKeepWarmApps(id);
   refreshBadge();
@@ -4711,10 +4869,7 @@ dockHandle('dock:clear-notifications', () => {
 });
 
 dockHandle('dock:mark-all-read', () => {
-  unreadCounts.clear();
-  notificationLog = [];
-  refreshBadge();
-  broadcastState();
+  markAllReadWithoutNotifySpam();
   return { ok: true };
 });
 
