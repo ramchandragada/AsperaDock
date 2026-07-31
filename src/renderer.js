@@ -608,8 +608,8 @@ function refreshAiRouteHint() {
   });
   el.textContent =
     names.length === 1
-      ? `Will use: ${names[0]}.`
-      : `Try order (stop at first success): ${names.join(' → ')}.`;
+      ? `Active: ${names[0]} (used until it fails).`
+      : `Gemini first when saved — then backup only if exhausted: ${names.join(' → ')}.`;
 }
 
 /** Providers currently showing the key input (new key or edit). */

@@ -36,6 +36,9 @@ import {
 import {
   promptForSkill,
   runAiCompletionWithFailover,
+  onAiProviderKeyChanged,
+  getStickyAiProviderId,
+  resetAiProviderSession,
 } from './ai/service.js';
 import {
   APP_CATALOG,
@@ -2096,7 +2099,11 @@ function aiSettingsSnapshot() {
     .filter((p) => p.configured)
     .map((p) => p.id);
   const order = configuredProvidersInRouteOrder(configured);
-  const provider = order[0] || getAiProvider(settings.aiProvider || 'gemini');
+  const sticky = getStickyAiProviderId();
+  const provider =
+    (sticky && order.find((p) => p.id === sticky)) ||
+    order[0] ||
+    getAiProvider(settings.aiProvider || 'gemini');
   let model = String(settings.aiModel || '').trim();
   if (provider.id === 'openrouter' && (!model || model === 'openrouter/free')) {
     model = provider.defaultModel;
@@ -2105,19 +2112,22 @@ function aiSettingsSnapshot() {
     model = normalizeAnthropicModel(model || provider.defaultModel);
   }
   if (!model) model = provider.defaultModel;
-  return { provider, model, language, routeOrder: order };
+  return { provider, model, language, routeOrder: order, stickyId: sticky };
 }
 
 /**
- * Keep settings.aiProvider pointing at the first configured provider in the
- * fixed try order (Gemini → … → Anthropic).
+ * Keep settings.aiProvider aligned with sticky / first available (Gemini first).
  */
 function syncPreferredAiProvider() {
   const configured = listConfiguredAiProviders()
     .filter((p) => p.configured)
     .map((p) => p.id);
   const order = configuredProvidersInRouteOrder(configured);
-  const nextId = order[0]?.id || 'gemini';
+  const sticky = getStickyAiProviderId();
+  const nextId =
+    (sticky && configured.includes(sticky) && sticky) ||
+    order[0]?.id ||
+    'gemini';
   if (nextId !== settings.aiProvider) {
     settings = saveSettings({ aiProvider: nextId });
   }
@@ -4855,12 +4865,17 @@ dockHandle('dock:ai-status', () => ({
 dockHandle('dock:ai-set-key', (_e, providerId, apiKey) => {
   const id = String(providerId || '').trim();
   const result = setAiProviderKey(id, apiKey);
-  if (result.ok) syncPreferredAiProvider();
+  if (result.ok) {
+    onAiProviderKeyChanged(id, result.configured !== false);
+    syncPreferredAiProvider();
+  }
   broadcastState();
   return result;
 });
 dockHandle('dock:ai-clear-key', (_e, providerId) => {
-  const result = clearAiProviderKey(providerId);
+  const id = String(providerId || '').trim();
+  const result = clearAiProviderKey(id);
+  onAiProviderKeyChanged(id, false);
   syncPreferredAiProvider();
   broadcastState();
   return result;
@@ -5212,6 +5227,7 @@ function watchSystemIdle() {
 }
 
 app.whenReady().then(async () => {
+  resetAiProviderSession({ preferGemini: true });
   if (
     app.isPackaged &&
     typeof process.getuid === 'function' &&

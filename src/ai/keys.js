@@ -61,6 +61,23 @@ export function listConfiguredAiProviders() {
   }));
 }
 
+/** Fast local check — does not decrypt; true if an encrypted key blob exists. */
+export function hasAiProviderKey(providerId) {
+  const id = String(providerId || '');
+  if (!id) return false;
+  const entry = readBlob()[id];
+  return Boolean(entry && typeof entry === 'object' && entry.enc);
+}
+
+/** Configured provider ids in catalog order (presence only, no decrypt). */
+export function listConfiguredAiProviderIds() {
+  const blob = readBlob();
+  return AI_PROVIDERS.map((p) => p.id).filter((id) => {
+    const entry = blob[id];
+    return Boolean(entry && typeof entry === 'object' && entry.enc);
+  });
+}
+
 export function setAiProviderKey(providerId, apiKey) {
   const id = String(providerId || '');
   if (!AI_PROVIDERS.some((p) => p.id === id)) {

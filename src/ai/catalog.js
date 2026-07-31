@@ -111,13 +111,44 @@ export function aiProviderRouteOrder() {
 /**
  * Filter route order to providers that have a saved key.
  * Always Gemini → Grok → SambaNova → OpenRouter → Anthropic among configured keys.
- * Does not reorder for a “preferred” provider (that was making OpenRouter sticky/slow).
  */
 export function configuredProvidersInRouteOrder(configuredIds) {
   const have = new Set(
     (configuredIds || []).map((id) => String(id || '').trim()).filter(Boolean),
   );
   return aiProviderRouteOrder().filter((p) => have.has(p.id));
+}
+
+/**
+ * Decide which providers to attempt this request (ids only — no API calls).
+ * Sticky provider is tried first when still configured and not exhausted;
+ * otherwise start at Gemini (or first available in fixed order).
+ * Later providers are only used after the active one fails.
+ */
+export function resolveAiAttemptOrder({
+  configuredIds,
+  stickyId = null,
+  exhaustedIds = [],
+} = {}) {
+  const order = configuredProvidersInRouteOrder(configuredIds).map((p) => p.id);
+  const exhausted = new Set(
+    (exhaustedIds || []).map((id) => String(id || '').trim()).filter(Boolean),
+  );
+  const available = order.filter((id) => !exhausted.has(id));
+  if (!available.length) return [];
+
+  const sticky = String(stickyId || '').trim();
+  if (sticky && available.includes(sticky)) {
+    const stickyIndex = order.indexOf(sticky);
+    return [
+      sticky,
+      ...available.filter(
+        (id) => id !== sticky && order.indexOf(id) > stickyIndex,
+      ),
+    ];
+  }
+
+  return available;
 }
 
 export function getAiProvider(id) {

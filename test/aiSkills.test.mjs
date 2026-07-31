@@ -8,6 +8,7 @@ import {
   normalizeAnthropicModel,
   aiProviderRouteOrder,
   configuredProvidersInRouteOrder,
+  resolveAiAttemptOrder,
 } from '../src/ai/catalog.js';
 import { buildCatchMeUpPrompt, buildSuggestReplyPrompt, buildSummarizePrompt } from '../src/ai/skills.js';
 
@@ -112,13 +113,37 @@ test('AI provider try order is Gemini → Grok → SambaNova → OpenRouter → 
     configuredProvidersInRouteOrder(['anthropic']).map((p) => p.id),
     ['anthropic'],
   );
-  // Preferred-id arg must not reorder (speed: always Gemini first when keyed).
-  assert.deepEqual(
-    configuredProvidersInRouteOrder(
-      ['anthropic', 'gemini', 'openrouter'],
-      'openrouter',
-    ).map((p) => p.id),
-    ['gemini', 'openrouter', 'anthropic'],
-  );
   assert.equal(getAiProvider('openrouter').defaultModel, 'google/gemini-2.0-flash-001');
+});
+
+test('resolveAiAttemptOrder sticks to Gemini and only advances after exhaustion', () => {
+  const configured = ['gemini', 'grok', 'openrouter', 'anthropic'];
+  assert.deepEqual(
+    resolveAiAttemptOrder({ configuredIds: configured }),
+    ['gemini', 'grok', 'openrouter', 'anthropic'],
+  );
+  assert.deepEqual(
+    resolveAiAttemptOrder({
+      configuredIds: configured,
+      stickyId: 'gemini',
+    }),
+    ['gemini', 'grok', 'openrouter', 'anthropic'],
+  );
+  // After Gemini exhausted, sticky Grok — do not re-check Gemini.
+  assert.deepEqual(
+    resolveAiAttemptOrder({
+      configuredIds: configured,
+      stickyId: 'grok',
+      exhaustedIds: ['gemini'],
+    }),
+    ['grok', 'openrouter', 'anthropic'],
+  );
+  assert.deepEqual(
+    resolveAiAttemptOrder({
+      configuredIds: configured,
+      stickyId: 'openrouter',
+      exhaustedIds: ['gemini', 'grok'],
+    }),
+    ['openrouter', 'anthropic'],
+  );
 });

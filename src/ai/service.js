@@ -1,10 +1,50 @@
 import {
-  configuredProvidersInRouteOrder,
   getAiProvider,
   normalizeAnthropicModel,
+  resolveAiAttemptOrder,
 } from './catalog.js';
-import { getAiProviderKey, listConfiguredAiProviders } from './keys.js';
-import { buildCatchMeUpPrompt, buildSuggestReplyPrompt, buildSummarizePrompt } from './skills.js';
+import {
+  getAiProviderKey,
+  hasAiProviderKey,
+  listConfiguredAiProviderIds,
+} from './keys.js';
+import {
+  buildCatchMeUpPrompt,
+  buildSuggestReplyPrompt,
+  buildSummarizePrompt,
+} from './skills.js';
+
+/** Last provider that answered successfully — reuse until it fails/exhausts. */
+let stickyProviderId = null;
+/** Providers that failed this session — skip until app restart or key change. */
+const exhaustedProviderIds = new Set();
+
+export function getStickyAiProviderId() {
+  return stickyProviderId;
+}
+
+export function resetAiProviderSession({ preferGemini = true } = {}) {
+  exhaustedProviderIds.clear();
+  if (preferGemini && hasAiProviderKey('gemini')) {
+    stickyProviderId = 'gemini';
+  } else {
+    stickyProviderId = null;
+  }
+}
+
+export function onAiProviderKeyChanged(providerId, configured) {
+  const id = String(providerId || '');
+  if (!id) return;
+  if (configured) {
+    exhaustedProviderIds.delete(id);
+    // Fresh Gemini key → lock onto Gemini immediately (manual-like).
+    if (id === 'gemini') stickyProviderId = 'gemini';
+    else if (!stickyProviderId) stickyProviderId = id;
+    return;
+  }
+  exhaustedProviderIds.delete(id);
+  if (stickyProviderId === id) stickyProviderId = null;
+}
 
 async function callOpenAiCompatible({
   baseUrl,
@@ -155,38 +195,73 @@ export async function runAiCompletion({
 }
 
 /**
- * Try configured providers in fixed order:
- * Gemini → Grok → SambaNova → OpenRouter → Anthropic.
- * Stops at the first success (no needless provider switching).
+ * Call providers one at a time — never probe/scan other APIs first.
+ *
+ * Behavior (manual-like):
+ * 1. If Gemini has a key and is not exhausted this session → call Gemini only.
+ * 2. On success, stick to that provider for all later requests.
+ * 3. On failure/exhaustion, mark it exhausted and try the next in order
+ *    (Grok → SambaNova → OpenRouter → Anthropic).
  */
 export async function runAiCompletionWithFailover(prompt) {
-  const configured = listConfiguredAiProviders()
-    .filter((p) => p.configured)
-    .map((p) => p.id);
-  const order = configuredProvidersInRouteOrder(configured);
-  if (!order.length) {
+  // Lock onto Gemini as soon as a key exists (unless already exhausted this session).
+  if (
+    hasAiProviderKey('gemini') &&
+    !exhaustedProviderIds.has('gemini') &&
+    stickyProviderId !== 'gemini'
+  ) {
+    stickyProviderId = 'gemini';
+  }
+
+  const configured = listConfiguredAiProviderIds();
+  const attemptIds = resolveAiAttemptOrder({
+    configuredIds: configured,
+    stickyId: stickyProviderId,
+    exhaustedIds: [...exhaustedProviderIds],
+  });
+  if (!attemptIds.length) {
     throw new Error(
       'Add at least one AI API key in Settings → Aspera AI (Gemini recommended for speed).',
     );
   }
 
   const errors = [];
-  for (const provider of order) {
+  for (const providerId of attemptIds) {
+    const provider = getAiProvider(providerId);
+    // Skip if key disappeared mid-session.
+    if (!hasAiProviderKey(provider.id)) {
+      exhaustedProviderIds.add(provider.id);
+      if (stickyProviderId === provider.id) stickyProviderId = null;
+      continue;
+    }
+
     let model = provider.defaultModel;
-    // Migrate users stuck on the slow openrouter/free router.
     if (provider.id === 'openrouter' && model === 'openrouter/free') {
       model = 'google/gemini-2.0-flash-001';
     }
+
     try {
+      // Single API call — do not touch other providers on success.
       const text = await runAiCompletion({
         providerId: provider.id,
         model,
         prompt,
       });
-      return { text, providerId: provider.id, model, providerName: provider.name };
+      stickyProviderId = provider.id;
+      exhaustedProviderIds.delete(provider.id);
+      return {
+        text,
+        providerId: provider.id,
+        model,
+        providerName: provider.name,
+      };
     } catch (error) {
       const message = String(error?.message || error);
       errors.push(`${provider.name}: ${message}`);
+      // Exhausted / failed → stop using this provider until restart or key change.
+      exhaustedProviderIds.add(provider.id);
+      if (stickyProviderId === provider.id) stickyProviderId = null;
+      // Continue to the next provider only after this one failed.
     }
   }
 
