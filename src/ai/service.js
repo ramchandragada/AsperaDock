@@ -126,7 +126,21 @@ function isGeminiQuotaError(message) {
   );
 }
 
-/** Try Gemini models in chain until one works (handles free-tier limit: 0 on 2.0-flash). */
+/** Retry next Gemini model when this one is retired, blocked for new keys, or missing. */
+function isGeminiModelUnavailableError(message) {
+  const m = String(message || '').toLowerCase();
+  return (
+    m.includes('no longer available') ||
+    m.includes('not available to new users') ||
+    m.includes('not found') ||
+    m.includes('is not found') ||
+    m.includes('not supported') ||
+    /\b404\b/.test(m) ||
+    (m.includes('invalid') && m.includes('model'))
+  );
+}
+
+/** Try Gemini models in chain until one works (handles free-tier limit: 0 / retired ids). */
 async function callGeminiWithModelFallback({ apiKey, model, prompt }) {
   const chain = geminiModelFallbackChain(model);
   const errors = [];
@@ -138,7 +152,7 @@ async function callGeminiWithModelFallback({ apiKey, model, prompt }) {
       const message = String(error?.message || error);
       errors.push(`${candidate}: ${message}`);
       // Only continue the chain for quota / unavailable-model style failures.
-      if (!isGeminiQuotaError(message) && !/not found|invalid|404/i.test(message)) {
+      if (!isGeminiQuotaError(message) && !isGeminiModelUnavailableError(message)) {
         throw error;
       }
     }

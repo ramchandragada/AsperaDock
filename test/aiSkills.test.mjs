@@ -117,14 +117,16 @@ test('AI provider try order is Gemini → Grok → SambaNova → OpenRouter → 
     ['anthropic'],
   );
   assert.equal(getAiProvider('openrouter').defaultModel, 'google/gemini-2.0-flash-001');
-  assert.equal(getAiProvider('gemini').defaultModel, 'gemini-2.5-flash-lite');
+  assert.equal(getAiProvider('gemini').defaultModel, 'gemini-3.1-flash-lite');
   assert.equal(getAiProvider('grok').defaultModel, 'grok-4.5');
 });
 
 test('Gemini and Grok normalize retired model ids', () => {
-  assert.equal(normalizeGeminiModel('gemini-2.0-flash'), 'gemini-2.5-flash-lite');
+  assert.equal(normalizeGeminiModel('gemini-2.0-flash'), 'gemini-3.1-flash-lite');
+  assert.equal(normalizeGeminiModel('gemini-2.5-flash-lite'), 'gemini-3.1-flash-lite');
   assert.equal(normalizeGrokModel('grok-2-latest'), 'grok-4.5');
-  assert.ok(geminiModelFallbackChain('gemini-2.0-flash').includes('gemini-2.5-flash'));
+  assert.ok(geminiModelFallbackChain('gemini-2.5-flash-lite').includes('gemini-flash-lite-latest'));
+  assert.equal(geminiModelFallbackChain('gemini-2.5-flash-lite')[0], 'gemini-3.1-flash-lite');
 });
 
 test('resolveAiAttemptOrder sticks to Gemini and only advances after exhaustion', () => {

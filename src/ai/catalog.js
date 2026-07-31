@@ -34,14 +34,16 @@ export const AI_PROVIDERS = Object.freeze([
     id: 'gemini',
     name: 'Google Gemini',
     freeTierFriendly: true,
-    // gemini-2.0-flash often has free-tier limit: 0 — prefer 2.5 Flash-Lite.
-    defaultModel: 'gemini-2.5-flash-lite',
+    // 2.5-flash-lite is blocked for many new AI Studio keys — use 3.1 Flash-Lite.
+    defaultModel: 'gemini-3.1-flash-lite',
     models: [
-      'gemini-2.5-flash-lite',
+      'gemini-3.1-flash-lite',
+      'gemini-flash-lite-latest',
+      'gemini-3.5-flash-lite',
+      'gemini-flash-latest',
+      'gemini-3.5-flash',
       'gemini-2.5-flash',
-      'gemini-2.0-flash-lite',
-      'gemini-2.0-flash',
-      'gemini-1.5-flash',
+      'gemini-2.5-flash-lite',
     ],
     keyHint: 'AI Studio API key (aistudio.google.com)',
   },
@@ -107,13 +109,23 @@ export function normalizeGrokModel(model) {
   return map[raw] || raw || 'grok-4.5';
 }
 
-/** Map retired Gemini model ids; prefer free-tier-friendly 2.5 Flash-Lite. */
+/** Map retired Gemini model ids; prefer free-tier-friendly 3.1 Flash-Lite. */
 export function normalizeGeminiModel(model) {
   const raw = String(model || '').trim();
-  if (!raw || raw === 'gemini-2.0-flash' || raw === 'gemini-pro') {
-    return 'gemini-2.5-flash-lite';
-  }
-  return raw;
+  const map = {
+    'gemini-pro': 'gemini-3.1-flash-lite',
+    'gemini-1.5-flash': 'gemini-3.1-flash-lite',
+    'gemini-1.5-pro': 'gemini-3.1-flash-lite',
+    'gemini-2.0-flash': 'gemini-3.1-flash-lite',
+    'gemini-2.0-flash-lite': 'gemini-3.1-flash-lite',
+    'gemini-2.0-flash-001': 'gemini-3.1-flash-lite',
+    // Blocked for many new AI Studio keys ("no longer available to new users").
+    'gemini-2.5-flash-lite': 'gemini-3.1-flash-lite',
+    'gemini-2.5-flash-lite-preview-06-17': 'gemini-3.1-flash-lite',
+    'gemini-2.5-flash-lite-preview-09-2025': 'gemini-3.1-flash-lite',
+  };
+  if (!raw) return 'gemini-3.1-flash-lite';
+  return map[raw] || raw;
 }
 
 /** Candidate Gemini models to try when one hits quota limit: 0 / 429. */

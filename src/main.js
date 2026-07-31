@@ -40,6 +40,8 @@ import {
   getAiProvider,
   isAiAllowedAppId,
   normalizeAnthropicModel,
+  normalizeGeminiModel,
+  normalizeGrokModel,
 } from './ai/catalog.js';
 import {
   clearAiProviderKey,
@@ -2163,6 +2165,12 @@ function aiSettingsSnapshot() {
   }
   if (provider.id === 'anthropic') {
     model = normalizeAnthropicModel(model || provider.defaultModel);
+  }
+  if (provider.id === 'gemini') {
+    model = normalizeGeminiModel(model || provider.defaultModel);
+  }
+  if (provider.id === 'grok') {
+    model = normalizeGrokModel(model || provider.defaultModel);
   }
   if (!model) model = provider.defaultModel;
   return { provider, model, language, routeOrder: order, stickyId: sticky };
