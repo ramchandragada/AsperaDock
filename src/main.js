@@ -163,6 +163,21 @@ if (process.platform === 'win32') {
   }
 }
 
+// Linux Mint (XFCE/Cinnamon): Chromium GPU + chrome-sandbox often FATAL-exit
+// before any window ("refuses to start"). Apply the safest flags FIRST.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('no-sandbox');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-software-rasterizer');
+  app.commandLine.appendSwitch('class', 'asperadock');
+  try {
+    app.disableHardwareAcceleration();
+  } catch {
+    // ignore if Electron rejects a duplicate call later
+  }
+}
+
 // Root is unsupported for packaged builds (also breaks chrome-sandbox).
 if (
   app.isPackaged &&
@@ -179,10 +194,25 @@ if (
 // (including the single-instance lock).
 app.setPath('userData', path.join(app.getPath('appData'), 'Aspera Dock'));
 
+// Clear stale singleton files left by GPU FATAL crashes so the next launch
+// is not a silent no-op (second-instance lock held by a dead session).
+try {
+  const ud = app.getPath('userData');
+  for (const name of ['SingletonLock', 'SingletonCookie']) {
+    const p = path.join(ud, name);
+    try {
+      if (fs.existsSync(p)) fs.unlinkSync(p);
+    } catch {
+      // ignore
+    }
+  }
+} catch {
+  // ignore
+}
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   // Another live instance owns the dock — quit quietly so the first raises.
-  // (Stale locks from dead PIDs are ignored by Electron automatically.)
   app.quit();
 }
 
@@ -190,7 +220,6 @@ if (!gotLock) {
 // It matches windows to a .desktop file via app id / StartupWMClass.
 // Must be set before ready — use a stable id without spaces.
 if (process.platform === 'linux') {
-  app.commandLine.appendSwitch('class', 'asperadock');
   app.setName('asperadock');
   try {
     app.setDesktopName('asperadock.desktop');
