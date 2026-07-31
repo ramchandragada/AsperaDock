@@ -4275,6 +4275,46 @@ function createViewForService(service) {
     }, 500);
   });
 
+  // Network blips used to leave a permanent blank until the user manually reloaded.
+  webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return;
+    // -3 ERR_ABORTED is normal (navigation superseded). Never clear storage here.
+    if (errorCode === -3 || errorCode === 0) return;
+    const entry = views.get(service.id);
+    if (!entry || entry.view !== view) return;
+    const fails = (entry.__failLoadCount || 0) + 1;
+    entry.__failLoadCount = fails;
+    try {
+      logBreadcrumb('guest-fail-load', {
+        serviceId: service.id,
+        appId: service.appId,
+        errorCode,
+        errorDescription: String(errorDescription || ''),
+        url: String(validatedURL || '').slice(0, 180),
+        attempt: fails,
+      });
+    } catch {
+      // ignore
+    }
+    if (fails > 3) return;
+    const delay = Math.min(8_000, 700 * fails * fails);
+    setTimeout(() => {
+      const live = views.get(service.id);
+      if (!live || live.view !== view) return;
+      const wc = live.view.webContents;
+      if (!wc || wc.isDestroyed() || wc.isLoading()) return;
+      try {
+        if (validatedURL && String(validatedURL).startsWith('http')) {
+          wc.loadURL(String(validatedURL));
+        } else {
+          wc.reload();
+        }
+      } catch {
+        // ignore
+      }
+    }, delay);
+  });
+
   webContents.on('unresponsive', () => {
     try {
       logBreadcrumb('guest-unresponsive', {
@@ -4336,6 +4376,7 @@ function createViewForService(service) {
       if (entry) {
         entry.loadedOnce = true;
         entry.__portalBootPending = false;
+        entry.__failLoadCount = 0;
         const keepWarm = isKeepWarmService(service.id);
         applyGuestPerfMode(webContents, {
           active: service.id === activeServiceId,
@@ -4395,6 +4436,20 @@ function createViewForService(service) {
   return views.get(service.id);
 }
 
+function persistGuestSession(partition) {
+  if (!partition) return;
+  const appSession = session.fromPartition(partition);
+  // IndexedDB / localStorage for WhatsApp must hit disk BEFORE the renderer dies.
+  try {
+    if (typeof appSession.flushStorageData === 'function') {
+      appSession.flushStorageData();
+    }
+  } catch {
+    // ignore
+  }
+  appSession.cookies.flushStore().catch(() => {});
+}
+
 function hibernateService(id, { force = false } = {}) {
   const entry = views.get(id);
   if (!entry) return;
@@ -4404,12 +4459,18 @@ function hibernateService(id, { force = false } = {}) {
   closeServicePopups(id);
   clearPortalTimer(entry, '__portalHealthTimer');
   clearPortalTimer(entry, '__portalHealthTimer2');
+  clearActiveSurfaceTimers(entry);
   const service = getService(id);
   try {
     const url = entry.view.webContents.getURL();
     rememberGoodUrl(id, url);
   } catch {
     // ignore
+  }
+  // CRITICAL: flush session to disk before destroying the guest process.
+  // Closing first caused WhatsApp/Arattai "random" sign-outs.
+  if (service?.partition) {
+    persistGuestSession(service.partition);
   }
   if (mainWindow) {
     detachGuestView(entry.view);
@@ -4425,23 +4486,14 @@ function hibernateService(id, { force = false } = {}) {
   if (force && activeServiceId === id) {
     activeServiceId = null;
   }
-  // Persist session before the renderer is gone — WhatsApp auth lives in
-  // IndexedDB; cookies.flushStore alone is not enough.
-  if (service?.partition) {
-    const appSession = session.fromPartition(service.partition);
-    try {
-      if (typeof appSession.flushStorageData === 'function') {
-        appSession.flushStorageData();
-      }
-    } catch {
-      // ignore
-    }
-    appSession.cookies.flushStore().catch(() => {});
-    // Heavy portals break (blank CRM) if we wipe cache between wakes.
-    // Also skip HTTP cache trim for messaging — safer for session stickiness.
-    if (!isHeavyPortalApp(service) && !isMessagingApp(service)) {
-      trimGuestHttpCache(service.partition).catch(() => {});
-    }
+  // Heavy portals break (blank CRM) if we wipe cache between wakes.
+  // Also skip HTTP cache trim for messaging — safer for session stickiness.
+  if (
+    service?.partition &&
+    !isHeavyPortalApp(service) &&
+    !isMessagingApp(service)
+  ) {
+    trimGuestHttpCache(service.partition).catch(() => {});
   }
 }
 
@@ -4795,9 +4847,14 @@ function toggleMute() {
   broadcastState();
 }
 
-function hibernateBackground() {
+/**
+ * Free RAM from background tabs. Never destroys Keep Warm / messaging apps —
+ * those sessions are sacred for daily work (WhatsApp, Arattai).
+ */
+function hibernateBackground({ forceWarm = false } = {}) {
   for (const id of [...views.keys()]) {
     if (id === activeServiceId) continue;
+    if (!forceWarm && isKeepWarmService(id)) continue;
     hibernateService(id);
   }
   broadcastState();
@@ -4805,7 +4862,13 @@ function hibernateBackground() {
 
 function reloadActive() {
   if (!activeServiceId) return;
-  views.get(activeServiceId)?.view.webContents.reload();
+  const entry = views.get(activeServiceId);
+  if (!entry) {
+    // Hibernated / crashed — recreate instead of a dead no-op.
+    activateService(activeServiceId);
+    return;
+  }
+  entry.view.webContents.reload();
 }
 
 function applyWindowPrefs() {
@@ -5487,10 +5550,13 @@ function beforeDialogSafe() {
 function afterDialogSafe() {
   try {
     resumeFreezeWatch();
-    // Close dialog overlay first, then let the renderer re-open Settings/menu if still visible.
-    setOverlayOpen(false);
+    // Renderer is authoritative for open drawers/menus — do NOT force overlay
+    // off here (that briefly puts the guest on top of Settings).
     mainWindow?.webContents.send('dock:sync-overlay');
-    setTimeout(() => layoutActiveView(), 50);
+    setTimeout(() => {
+      layoutActiveView();
+      repaintActiveGuestView({ reason: 'after-dialog' });
+    }, 50);
   } catch {
     // ignore
   }
@@ -5547,8 +5613,12 @@ function createWindow() {
         await showPendingCrashDialog(mainWindow);
       } finally {
         resumeFreezeWatch();
+        // Let renderer re-assert Settings/menus; only clear if nothing is open.
         mainWindow?.webContents.send('dock:sync-overlay');
-        setOverlayOpen(false);
+        setTimeout(() => {
+          layoutActiveView();
+          repaintActiveGuestView({ reason: 'after-crash-dialog' });
+        }, 50);
       }
     }, 1200);
   });
@@ -6208,8 +6278,16 @@ dockHandle('dock:save-app-config', (_e, id, incoming) => {
   return { ok: true, config: cfg };
 });
 dockHandle('dock:app-navigate', (_e, id, action) => {
-  const entry = views.get(id);
-  if (!entry) return { ok: false };
+  let entry = views.get(id);
+  if (!entry) {
+    const service = getService(id);
+    if (!service) return { ok: false, error: 'App not found' };
+    // Hibernated apps made Home/Reload look dead — wake first.
+    activateService(id);
+    entry = views.get(id);
+    if (!entry) return { ok: false, error: 'Could not open app' };
+    if (action === 'home' || action === 'reload') return { ok: true };
+  }
   const wc = entry.view.webContents;
   if (action === 'back' && wc.canGoBack()) wc.goBack();
   else if (action === 'forward' && wc.canGoForward()) wc.goForward();

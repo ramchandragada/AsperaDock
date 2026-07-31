@@ -1827,6 +1827,8 @@ document.addEventListener('keydown', (event) => {
     else if (!els.profilesModal?.classList.contains('hidden')) closeProfiles();
     else if (!els.editAppModal.classList.contains('hidden')) closeEditApp();
     else if (!els.shortcutsModal.classList.contains('hidden')) closeShortcuts();
+    else if (!els.settingsModal.classList.contains('hidden')) closeSettings();
+    else if (!els.searchModal.classList.contains('hidden')) closeSearch();
     else {
       closeChromeMenu();
       closeNotificationCenter();

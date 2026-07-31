@@ -372,9 +372,14 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
       } else {
         await promptAvailable();
       }
-    } else if (promptOnAvailable) {
+    } else if (downloadedPath && fs.existsSync(downloadedPath)) {
+      // Already on disk — prompt to install (first start + while using).
+      await promptReady({ force: !!promptOnAvailable });
+    } else if (promptOnAvailable || settings().autoUpdateDownload === false) {
+      // Always tell the user an update exists on first start / while using.
+      // If auto-download is off, silent checks must still prompt (not stay quiet).
       await promptAvailable();
-    } else if (settings().autoUpdateDownload !== false && file) {
+    } else if (file) {
       downloadUpdate().catch((err) => reportError('update-download', { message: String(err) }));
     }
     return {
@@ -512,15 +517,9 @@ export async function downloadUpdate() {
     busy = false;
     broadcast('downloaded', { version: pendingUpdate.version, path: dest });
 
-    if (settings().autoUpdateInstall === true) {
-      // Performance/productivity default: apply as soon as download finishes.
-      // deb/rpm will trigger a native password prompt through pkexec.
-      installUpdate({ silentOnFail: false }).catch((err) =>
-        reportError('update-install', { message: String(err) }),
-      );
-    } else {
-      await promptReady();
-    }
+    // Always prompt — users must see the update while using the app.
+    // autoUpdateInstall still applies on quit if they choose Later.
+    await promptReady();
     return { ok: true, path: dest };
   } catch (error) {
     busy = false;
@@ -986,10 +985,13 @@ export function startAutoUpdate() {
   stopAutoUpdate();
   if (settings().autoUpdateEnabled === false) return;
   // Kick off shortly after launch, then on an interval.
-  // On app open, prompt the user when an update is found.
-  setTimeout(() => checkForUpdates({ silent: true, promptOnAvailable: true }), 8000);
+  // Prompt on first start AND while using (periodic checks also prompt).
+  setTimeout(() => checkForUpdates({ silent: true, promptOnAvailable: true }), 5_000);
   const mins = Math.max(30, Number(settings().updateCheckMinutes) || CHECK_INTERVAL_MIN);
-  checkTimer = setInterval(() => checkForUpdates({ silent: true }), mins * 60_000);
+  checkTimer = setInterval(
+    () => checkForUpdates({ silent: true, promptOnAvailable: true }),
+    mins * 60_000,
+  );
   if (typeof checkTimer.unref === 'function') checkTimer.unref();
 }
 

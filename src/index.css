@@ -625,9 +625,9 @@ body.theme-dark .app-tab:hover {
   content: attr(data-tooltip);
   position: absolute;
   left: 50%;
-  bottom: calc(100% + 7px);
-  top: auto;
-  transform: translateX(-50%) translateY(2px);
+  top: calc(100% + 7px);
+  bottom: auto;
+  transform: translateX(-50%) translateY(-2px);
   padding: 5px 9px;
   border-radius: 6px;
   background: #2b3038;
@@ -801,7 +801,7 @@ body.hide-labels .app-tab {
   line-height: 1;
   margin-left: 0;
   box-shadow: 0 0 0 2px var(--chrome), 0 3px 8px rgba(239, 68, 68, 0.4);
-  z-index: 1;
+  z-index: 3;
 }
 
 .add-app-btn {
@@ -913,7 +913,8 @@ body.theme-dark .chip:hover {
 /* Read-only warm indicator — toggled from the right-click menu. */
 .app-mark.warm-mark {
   top: -3px;
-  right: -4px;
+  left: -4px;
+  right: auto;
   width: 15px;
   height: 15px;
   border-radius: 999px;
@@ -922,6 +923,7 @@ body.theme-dark .chip:hover {
   display: grid;
   place-items: center;
   box-shadow: 0 0 0 1.5px var(--chrome);
+  z-index: 2;
 }
 
 .app-mark.warm-mark svg {
@@ -2516,7 +2518,7 @@ body.theme-dark .ghost-btn {
 
 .find-bar {
   position: fixed;
-  top: 12px;
+  top: calc(var(--top-bar) + 8px);
   right: 16px;
   z-index: 80;
   display: flex;
@@ -2527,6 +2529,7 @@ body.theme-dark .ghost-btn {
   border: 1px solid var(--border);
   background: var(--chrome-1, #fff);
   color: var(--text);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
 }
 .find-bar.hidden {
   display: none;
