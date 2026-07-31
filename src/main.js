@@ -425,9 +425,6 @@ function applyMemorySwitches() {
   app.commandLine.appendSwitch('disable-renderer-backgrounding');
   app.commandLine.appendSwitch('disable-background-timer-throttling');
   app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
-  if (process.platform === 'linux') {
-    app.commandLine.appendSwitch('disable-gpuing-occluded-windows'.replace('gpuing', 'gpuing'));
-  }
 }
 
 /**
@@ -505,6 +502,183 @@ function touchPortalPresence(entry) {
   if (entry) entry.lastPresenceAt = Date.now();
 }
 
+/** When the user last interacted / the system stopped being idle. */
+let lastUserActiveAt = Date.now();
+/** When the current away spell began (idle / blur / lock). */
+let awayStartedAt = 0;
+/** Peak system idle seconds observed in the current away spell. */
+let peakIdleSec = 0;
+
+function markUserAway(reason = 'idle') {
+  if (!awayStartedAt) {
+    awayStartedAt = Date.now();
+    try {
+      logBreadcrumb('user-away', { reason });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function markUserActive() {
+  lastUserActiveAt = Date.now();
+  awayStartedAt = 0;
+  peakIdleSec = 0;
+}
+
+/**
+ * Sample the guest compositor surface. After long idle on Linux the DOM can be
+ * fine while the on-screen surface is a flat blank — capturePage catches that.
+ */
+async function isGuestVisuallyBlank(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  if (typeof webContents.capturePage !== 'function') return false;
+  try {
+    const img = await webContents.capturePage();
+    const size = img?.getSize?.() || {};
+    const w = size.width || 0;
+    const h = size.height || 0;
+    if (w < 120 || h < 120) return true;
+    const crop = {
+      x: Math.floor(w * 0.12),
+      y: Math.floor(h * 0.12),
+      width: Math.max(40, Math.floor(w * 0.76)),
+      height: Math.max(40, Math.floor(h * 0.76)),
+    };
+    const region = img.crop(crop);
+    if (typeof region.toBitmap !== 'function') {
+      const png = region.toPNG();
+      return png.length < 14_000;
+    }
+    const buf = region.toBitmap();
+    let flat = 0;
+    let samples = 0;
+    let first = null;
+    for (let i = 0; i + 3 < buf.length; i += 48 * 4) {
+      const b = buf[i];
+      const g = buf[i + 1];
+      const r = buf[i + 2];
+      samples += 1;
+      const key = (r << 16) | (g << 8) | b;
+      if (first === null) first = key;
+      // Near-white / near-gray flat panels count as blank.
+      const nearWhite = r > 232 && g > 232 && b > 232;
+      const nearGray =
+        Math.abs(r - g) < 8 && Math.abs(g - b) < 8 && r > 200 && r < 250;
+      if (nearWhite || nearGray || key === first) flat += 1;
+    }
+    if (!samples) return false;
+    return flat / samples > 0.9;
+  } catch {
+    return false;
+  }
+}
+
+function softReloadActiveGuest(reason = 'idle-blank') {
+  if (!activeServiceId || locked) return false;
+  const entry = views.get(activeServiceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed() || wc.isLoading()) return false;
+  const now = Date.now();
+  if (
+    entry.__lastStaleReloadAt &&
+    now - entry.__lastStaleReloadAt < PORTAL_RELOAD_COOLDOWN_MS
+  ) {
+    return false;
+  }
+  entry.__lastStaleReloadAt = now;
+  try {
+    rememberGoodUrl(activeServiceId, wc.getURL());
+  } catch {
+    // ignore
+  }
+  try {
+    logBreadcrumb('guest-idle-reload', {
+      reason,
+      serviceId: activeServiceId,
+      awayMs: awayStartedAt ? now - awayStartedAt : 0,
+    });
+    wc.reload();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * After the user returns from lock / sleep / long idle: reattach + two-step
+ * repaint, then reload only if the surface is still visually blank.
+ */
+function recoverActiveGuestAfterAway(reason = 'idle', idleMs = 0) {
+  const awayMs =
+    idleMs || (awayStartedAt ? Date.now() - awayStartedAt : 0);
+  if (!activeServiceId || locked) {
+    markUserActive();
+    return;
+  }
+  const entry = views.get(activeServiceId);
+  if (!entry?.view) {
+    markUserActive();
+    return;
+  }
+
+  guestNeedsRepaint = true;
+  try {
+    // Re-seat the native view — long occlusion can leave a dead compositor surface.
+    detachGuestView(entry.view);
+    attachGuestView(entry.view);
+  } catch {
+    // ignore
+  }
+  entry.__lastBounds = null;
+  entry.__parked = false;
+  repaintActiveGuestView({ reason });
+
+  const serviceId = activeServiceId;
+  const checkAt = (delay, allowReload) => {
+    setTimeout(async () => {
+      if (!mainWindow || mainWindow.isDestroyed() || locked) return;
+      if (activeServiceId !== serviceId) return;
+      const live = views.get(serviceId);
+      const wc = live?.view?.webContents;
+      if (!wc || wc.isDestroyed() || wc.isLoading()) return;
+
+      // Always nudge again — XFCE often needs a second pass after unlock.
+      live.__lastBounds = null;
+      repaintActiveGuestView({ reason: `${reason}-verify` });
+
+      if (!allowReload) return;
+      // Short away: repaint is enough. Long away / resume: verify pixels.
+      if (awayMs < 5 * 60_000 && reason !== 'power-resume') return;
+
+      // Give the nudge a moment to paint before sampling.
+      setTimeout(async () => {
+        if (activeServiceId !== serviceId || locked) return;
+        const still = views.get(serviceId)?.view?.webContents;
+        if (!still || still.isDestroyed() || still.isLoading()) return;
+        const blank = await isGuestVisuallyBlank(still);
+        if (blank) {
+          softReloadActiveGuest(reason);
+        }
+      }, 350);
+    }, delay);
+  };
+
+  checkAt(450, false);
+  checkAt(1200, true);
+  // Very long idle (screensaver / lunch): if still blank, reload once more.
+  if (awayMs >= 15 * 60_000 || reason === 'power-resume') {
+    checkAt(2800, true);
+  }
+
+  markUserActive();
+  try {
+    logBreadcrumb('guest-idle-recover', { reason, awayMs, serviceId });
+  } catch {
+    // ignore
+  }
+}
+
 function maybeRefreshStaleHeavyPortal(id, { reason = 'idle' } = {}) {
   const entry = views.get(id);
   if (!entry) return false;
@@ -557,6 +731,10 @@ function maybeRefreshStaleHeavyPortal(id, { reason = 'idle' } = {}) {
 }
 
 function onUserReturnedFromIdle(reason = 'presence') {
+  const awayMs = awayStartedAt ? Date.now() - awayStartedAt : peakIdleSec * 1000;
+  // Always recover the visible guest after away — Zoho blank checks alone miss
+  // Arattai/WhatsApp compositor blanks on Mint after ~30 minutes idle.
+  recoverActiveGuestAfterAway(reason, awayMs);
   if (activeServiceId) {
     maybeRefreshStaleHeavyPortal(activeServiceId, { reason });
     touchPortalPresence(views.get(activeServiceId));
@@ -1001,6 +1179,8 @@ function raiseDockWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+  // Focus event usually fires; still kick a repaint for WMs that skip it.
+  setTimeout(() => repaintActiveGuestView({ reason: 'raise' }), 30);
 }
 
 function assertShellSender(event) {
@@ -5182,20 +5362,25 @@ function createWindow() {
   });
   mainWindow.on('hide', () => {
     guestNeedsRepaint = true;
+    markUserAway('window-hide');
   });
   mainWindow.on('blur', () => {
     // Guest compositor may need a kick when we come back (esp. Mint XFCE).
     guestNeedsRepaint = true;
+    markUserAway('window-blur');
   });
   mainWindow.on('focus', () => {
-    // Always repaint on Linux focus — Mint XFCE/Cinnamon leave WebContentsView blank
-    // after alt-tab until a synthetic resize (clicking into the pane used to "fix" it).
-    if (process.platform === 'linux' || guestNeedsRepaint) {
+    const awayMs = awayStartedAt ? Date.now() - awayStartedAt : 0;
+    // Long away: full recover (repaint + blank reload). Short: two-step repaint.
+    if (awayMs >= 3 * 60_000 || peakIdleSec >= 3 * 60) {
+      onUserReturnedFromIdle('window-focus-after-away');
+    } else if (process.platform === 'linux' || guestNeedsRepaint) {
       repaintActiveGuestView({ reason: 'window-focus' });
+      markUserActive();
     } else {
       focusActiveContents();
+      markUserActive();
     }
-    onUserReturnedFromIdle('window-focus');
   });
   attachShortcuts(mainWindow.webContents);
 
@@ -6014,13 +6199,13 @@ dockHandle('dock:open-downloads', async () => {
 
 function watchSystemIdle() {
   const lockIfEnabled = () => {
+    markUserAway('lock-or-suspend');
     if (settings.lockOnSystemIdle && settings.lockEnabled) lockApp();
   };
   powerMonitor.on('lock-screen', lockIfEnabled);
   powerMonitor.on('suspend', lockIfEnabled);
 
-  // User walked away with Zoho One open — screen lock / sleep / long idle.
-  // When they return, refresh the portal so CRM is not a blank white pane.
+  // User walked away — when they return, recover the guest surface (not just Zoho).
   const onResume = () => {
     setTimeout(() => onUserReturnedFromIdle('power-resume'), 400);
   };
@@ -6036,21 +6221,31 @@ function watchSystemIdle() {
     } catch {
       return;
     }
+
+    if (idleSec >= 60) {
+      markUserAway('system-idle');
+      peakIdleSec = Math.max(peakIdleSec, idleSec);
+    }
+
     if (idleSec >= 8 * 60) systemWasIdle = true;
     if (systemWasIdle && idleSec < 8) {
       systemWasIdle = false;
       onUserReturnedFromIdle('system-idle-end');
     }
-    // Long away: when user returns, blank-check the active portal (no blind reload for warm).
+    // Medium away (3+ min): recover when the user comes back.
     if (idleSec >= 3 * 60) portalWasIdle = true;
     if (portalWasIdle && idleSec < 8) {
       portalWasIdle = false;
       onUserReturnedFromIdle('short-idle-end');
     }
-    // Warm portals stay "present" forever while loaded — never mark them stale.
-    for (const [id, entry] of views.entries()) {
-      if (isKeepWarmService(id) || id === activeServiceId) {
-        touchPortalPresence(entry);
+
+    // Only refresh "presence" while the user is actually active.
+    // Touching presence during idle hid 30-minute blanks from recovery logic.
+    if (idleSec < 60) {
+      for (const [id, entry] of views.entries()) {
+        if (isKeepWarmService(id) || id === activeServiceId) {
+          touchPortalPresence(entry);
+        }
       }
     }
   }, 15_000);
