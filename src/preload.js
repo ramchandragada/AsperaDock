@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('asperadock', {
   reorder: (order) => ipcRenderer.invoke('dock:reorder', order),
   pickDownloadDir: () => ipcRenderer.invoke('dock:pick-download-dir'),
   openDownloads: () => ipcRenderer.invoke('dock:open-downloads'),
+  openExtensions: (payload) => ipcRenderer.invoke('dock:open-extensions', payload),
   openAppMenu: (payload) => ipcRenderer.invoke('dock:open-app-menu', payload),
   closeAppMenu: () => ipcRenderer.invoke('dock:close-app-menu'),
   openChromeMenu: (payload) => ipcRenderer.invoke('dock:open-chrome-menu', payload),

@@ -27,6 +27,7 @@ const els = {
   menuBtn: document.getElementById('menu-btn'),
   chromeMenu: document.getElementById('app-chrome-menu'),
   downloadsBtn: document.getElementById('downloads-btn'),
+  extensionsBtn: document.getElementById('extensions-btn'),
   checkUpdatesBtn: document.getElementById('check-updates-btn'),
   searchBtn: document.getElementById('search-btn'),
   globalBadge: document.getElementById('global-badge'),
@@ -204,6 +205,7 @@ function bindAppTabDrag(btn, service) {
 
 function paintToolbarIcons() {
   if (els.downloadsBtn) els.downloadsBtn.innerHTML = icon('download');
+  if (els.extensionsBtn) els.extensionsBtn.innerHTML = icon('puzzle');
   if (els.checkUpdatesBtn) els.checkUpdatesBtn.innerHTML = icon('sync');
   if (els.menuBtn) els.menuBtn.innerHTML = asperaAppIconSvg(24);
   if (els.addAppBtn) els.addAppBtn.innerHTML = icon('plus');
@@ -1410,6 +1412,11 @@ els.downloadsBtn?.addEventListener('click', async () => {
   if (result && !result.ok) {
     alert(`Could not open Downloads folder.\n${result.error || result.path || ''}`);
   }
+});
+els.extensionsBtn?.addEventListener('click', () => {
+  window.asperadock.openExtensions?.({
+    dark: document.body.classList.contains('theme-dark'),
+  });
 });
 els.checkUpdatesBtn?.addEventListener('click', () => {
   runUpdateCheck();

@@ -5603,6 +5603,9 @@ dockHandle('dock:pick-download-dir', async () => {
   if (result.canceled || !result.filePaths[0]) return { path: null };
   return { path: result.filePaths[0] };
 });
+dockHandle('dock:open-extensions', (_e, payload = {}) =>
+  openExtensionsWindow({ dark: !!payload?.dark }),
+);
 dockHandle('dock:open-downloads', async () => {
   const downloadDir = String(settings.downloadPath || '').trim() || app.getPath('downloads');
   try {
