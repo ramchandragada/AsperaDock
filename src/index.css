@@ -1761,7 +1761,8 @@ body.theme-dark .ai-provider-key-actions input[type='password'] {
 }
 
 .ai-provider-model-row select {
-  flex: 1 1 180px;
+  flex: 0 1 280px;
+  max-width: 280px;
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -1774,11 +1775,6 @@ body.theme-dark .ai-provider-key-actions input[type='password'] {
 
 body.theme-dark .ai-provider-model-row select {
   background: var(--chrome);
-}
-
-.ai-provider-model-row select {
-  flex: 0 1 280px;
-  max-width: 280px;
 }
 
 .field input,
