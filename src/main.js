@@ -20,6 +20,13 @@ import { buildAppMenuHtml } from './appMenuHtml.js';
 import { buildChromeMenuHtml } from './chromeMenuHtml.js';
 import { buildNotifCenterHtml } from './notifCenterHtml.js';
 import { buildAiResultHtml } from './aiResultHtml.js';
+import { buildExtensionsHtml } from './extensionsHtml.js';
+import {
+  installUnpackedExtension,
+  listInstalledExtensions,
+  normalizeExtensionList,
+  uninstallExtensionFiles,
+} from './extensionsStore.js';
 import {
   AI_ALLOWED_APP_IDS,
   AI_LANGUAGES,
@@ -315,7 +322,13 @@ let notifCenterWindow = null;
 let aiResultWindow = null;
 /** Context for follow-up actions on the open AI result (e.g. suggest replies). */
 let aiResultContext = null;
+/** Floating Chrome-like Extensions manager. */
+let extensionsWindow = null;
 let settings = loadSettings();
+settings = {
+  ...settings,
+  extensions: normalizeExtensionList(settings.extensions),
+};
 
 function trackServicePopup(serviceId, popupWindow) {
   if (!serviceId || !popupWindow) return;
@@ -1032,6 +1045,19 @@ function aiResultHandle(channel, handler) {
   });
 }
 
+function extensionsHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !extensionsWindow ||
+      extensionsWindow.isDestroyed() ||
+      event.sender !== extensionsWindow.webContents
+    ) {
+      throw new Error('Unauthorized extensions IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
 /**
  * Chrome offsets for the active view. The renderer reports its measured bar
  * size so wrapped tab rows and density changes stay in sync with the CSS.
@@ -1730,11 +1756,26 @@ function closeAiResultWindow() {
   }
 }
 
+function closeExtensionsWindow() {
+  if (!extensionsWindow || extensionsWindow.isDestroyed()) {
+    extensionsWindow = null;
+    return;
+  }
+  const win = extensionsWindow;
+  extensionsWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
 function closeAllFloatMenus() {
   closeAppContextMenu();
   closeChromeMenuWindow();
   closeNotifCenterWindow();
   closeAiResultWindow();
+  closeExtensionsWindow();
 }
 
 function clampFloatPosition(screenX, screenY, menuW, menuH) {
@@ -1858,7 +1899,7 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
   closeChromeMenuWindow();
 
   const menuW = 234;
-  const menuH = 640;
+  const menuH = 680;
   const content = mainWindow.getContentBounds();
   const anchorX = content.x + (Number(x) || 0);
   const anchorY = content.y + (Number(y) || 0);
@@ -2455,6 +2496,10 @@ function handleChromeMenuAction(type) {
     mainWindow?.webContents.send('dock:open-ai-settings');
     return { ok: true };
   }
+  if (type === 'extensions') {
+    openExtensionsWindow({ dark: false });
+    return { ok: true };
+  }
   if (type === 'search') {
     mainWindow?.webContents.send('dock:chrome-action', 'search');
     return { ok: true };
@@ -2866,7 +2911,11 @@ const configuredPartitions = new Set();
 
 function configureSession(partitionSession, partitionKey) {
   applyProxy(partitionSession);
-  if (configuredPartitions.has(partitionKey)) return;
+  if (configuredPartitions.has(partitionKey)) {
+    // Partition already wired — still (re)load extensions on later calls.
+    syncExtensionsIntoSession(partitionSession).catch(() => {});
+    return;
+  }
   configuredPartitions.add(partitionKey);
 
   partitionSession.setUserAgent(CHROME_USER_AGENT);
@@ -2930,6 +2979,180 @@ function configureSession(partitionSession, partitionKey) {
       if (settings.openFileOnDownload) shell.openPath(item.getSavePath());
     });
   });
+
+  syncExtensionsIntoSession(partitionSession).catch(() => {});
+}
+
+function getSessionExtensionsApi(partitionSession) {
+  if (!partitionSession) return null;
+  if (partitionSession.extensions) return partitionSession.extensions;
+  // Older Electron surface on session itself.
+  if (typeof partitionSession.loadExtension === 'function') {
+    return partitionSession;
+  }
+  return null;
+}
+
+function listLoadedSessionExtensions(partitionSession) {
+  const api = getSessionExtensionsApi(partitionSession);
+  if (!api) return [];
+  try {
+    if (typeof api.getAllExtensions === 'function') {
+      return api.getAllExtensions() || [];
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+async function syncExtensionsIntoSession(partitionSession) {
+  const api = getSessionExtensionsApi(partitionSession);
+  if (!api || typeof api.loadExtension !== 'function') return;
+
+  const catalog = listInstalledExtensions(settings.extensions);
+  const enabledPaths = new Set(
+    catalog.filter((e) => e.enabled && e.exists).map((e) => path.resolve(e.path)),
+  );
+  const root = path.join(app.getPath('userData'), 'extensions');
+
+  for (const loaded of listLoadedSessionExtensions(partitionSession)) {
+    const loadedPath = path.resolve(String(loaded.path || ''));
+    const ours = loadedPath.startsWith(root + path.sep);
+    if (!ours) continue;
+    if (!enabledPaths.has(loadedPath)) {
+      try {
+        if (typeof api.removeExtension === 'function') {
+          api.removeExtension(loaded.id);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  const loadedPaths = new Set(
+    listLoadedSessionExtensions(partitionSession).map((e) =>
+      path.resolve(String(e.path || '')),
+    ),
+  );
+
+  let chromeIdChanged = false;
+  const nextCatalog = catalog.map((ext) => ({ ...ext }));
+  for (const ext of nextCatalog) {
+    if (!ext.enabled || !ext.exists) continue;
+    const abs = path.resolve(ext.path);
+    if (loadedPaths.has(abs)) continue;
+    try {
+      const info = await api.loadExtension(abs, { allowFileAccess: true });
+      if (info?.id && info.id !== ext.chromeId) {
+        ext.chromeId = info.id;
+        chromeIdChanged = true;
+      }
+    } catch (error) {
+      console.warn('[extensions] load failed', ext.name, error?.message || error);
+    }
+  }
+  if (chromeIdChanged) {
+    settings = saveSettings({ extensions: nextCatalog });
+  }
+}
+
+async function syncExtensionsToAllGuestSessions() {
+  const partitions = new Set();
+  for (const profile of settings.profiles || []) {
+    if (String(profile?.partition || '').startsWith('persist:')) {
+      partitions.add(String(profile.partition));
+    }
+  }
+  for (const inst of settings.serviceInstances || []) {
+    const part = partitionForInstance(inst);
+    if (part) partitions.add(part);
+  }
+  for (const part of partitions) {
+    try {
+      await syncExtensionsIntoSession(session.fromPartition(part));
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function reloadAllGuestViews() {
+  for (const [, entry] of views.entries()) {
+    const wc = entry?.view?.webContents;
+    if (wc && !wc.isDestroyed()) {
+      try {
+        wc.reload();
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+function buildExtensionsManagerData(error = '') {
+  return {
+    extensions: listInstalledExtensions(settings.extensions),
+    error: String(error || ''),
+  };
+}
+
+function pushExtensionsManagerData(error = '') {
+  if (!extensionsWindow || extensionsWindow.isDestroyed()) return;
+  try {
+    extensionsWindow.webContents.send(
+      'extensions:init',
+      buildExtensionsManagerData(error),
+    );
+  } catch {
+    // ignore
+  }
+}
+
+function openExtensionsWindow({ dark = false } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeExtensionsWindow();
+
+  const menuW = 420;
+  const menuH = 520;
+  const content = mainWindow.getContentBounds();
+  const pos = clampFloatPosition(
+    content.x + content.width - menuW - 16,
+    content.y + Math.max(56, content.height * 0.1),
+    menuW,
+    menuH,
+  );
+
+  extensionsWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'extensionsPreload.js',
+  });
+
+  const win = extensionsWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildExtensionsHtml(!!dark))}`,
+  );
+  win.webContents.once('did-finish-load', () => {
+    pushExtensionsManagerData();
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  win.on('closed', () => {
+    if (extensionsWindow === win) extensionsWindow = null;
+  });
+  return { ok: true };
 }
 
 function guestWebPreferences(service) {
@@ -5003,6 +5226,60 @@ aiResultHandle('ai-result:close', () => {
   return { ok: true };
 });
 aiResultHandle('ai-result:suggest-reply', () => runSuggestRepliesFromAiResult());
+extensionsHandle('extensions:close', () => {
+  closeExtensionsWindow();
+  return { ok: true };
+});
+extensionsHandle('extensions:load-unpacked', async () => {
+  const picked = dialog.showOpenDialogSync(mainWindow || undefined, {
+    title: 'Load unpacked Chrome extension',
+    properties: ['openDirectory'],
+  });
+  if (!picked?.length) return { ok: false, cancelled: true };
+  try {
+    const installed = installUnpackedExtension(picked[0]);
+    const next = [...listInstalledExtensions(settings.extensions), installed];
+    settings = saveSettings({ extensions: next });
+    await syncExtensionsToAllGuestSessions();
+    reloadAllGuestViews();
+    pushExtensionsManagerData();
+    return { ok: true, extension: installed };
+  } catch (error) {
+    const message = String(error?.message || error);
+    pushExtensionsManagerData(message);
+    return { ok: false, error: message };
+  }
+});
+extensionsHandle('extensions:set-enabled', async (_e, id, enabled) => {
+  const list = listInstalledExtensions(settings.extensions);
+  const next = list.map((ext) =>
+    ext.id === String(id || '')
+      ? { ...ext, enabled: enabled !== false }
+      : ext,
+  );
+  settings = saveSettings({ extensions: next });
+  await syncExtensionsToAllGuestSessions();
+  reloadAllGuestViews();
+  pushExtensionsManagerData();
+  return { ok: true };
+});
+extensionsHandle('extensions:remove', async (_e, id) => {
+  const list = listInstalledExtensions(settings.extensions);
+  const target = list.find((ext) => ext.id === String(id || ''));
+  const next = list.filter((ext) => ext.id !== String(id || ''));
+  settings = saveSettings({ extensions: next });
+  if (target) uninstallExtensionFiles(target);
+  await syncExtensionsToAllGuestSessions();
+  reloadAllGuestViews();
+  pushExtensionsManagerData();
+  return { ok: true };
+});
+extensionsHandle('extensions:reload-guests', async () => {
+  await syncExtensionsToAllGuestSessions();
+  reloadAllGuestViews();
+  pushExtensionsManagerData();
+  return { ok: true };
+});
 dockHandle('dock:ai-status', () => ({
   enabled: settings.aiEnabled !== false,
   provider: settings.aiProvider || 'gemini',
@@ -5422,6 +5699,7 @@ app.whenReady().then(async () => {
   logBreadcrumb('app-ready');
   hydrateLastUrls();
   createWindow();
+  syncExtensionsToAllGuestSessions().catch(() => {});
   startHibernateTimer();
   startMemoryTimer();
   watchSystemIdle();

@@ -13,6 +13,7 @@ import {
 } from '../src/guestNav.js';
 
 test('isForbiddenGuestNavigation blocks file and javascript', () => {
+  assert.equal(isForbiddenGuestNavigation('chrome-extension://abcd/popup.html'), false);
   assert.equal(isForbiddenGuestNavigation('file:///etc/passwd'), true);
   assert.equal(isForbiddenGuestNavigation('javascript:alert(1)'), true);
   assert.equal(isForbiddenGuestNavigation('https://mail.zoho.in/'), false);

@@ -32,7 +32,14 @@ export function isInternalUrl(url, service, hosts = INTERNAL_HOSTS) {
 export function isForbiddenGuestNavigation(url) {
   try {
     const protocol = new URL(String(url || '')).protocol.toLowerCase();
-    return !['http:', 'https:', 'about:', 'blob:', 'data:'].includes(protocol);
+    return ![
+      'http:',
+      'https:',
+      'about:',
+      'blob:',
+      'data:',
+      'chrome-extension:',
+    ].includes(protocol);
   } catch {
     return true;
   }

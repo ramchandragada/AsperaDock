@@ -129,6 +129,13 @@ export const DEFAULTS = {
   aiLanguage: 'en', // en | hi | mr
 
   /**
+   * Unpacked Chrome extensions for guest apps (WhatsApp, Arattai, …).
+   * Loaded into each profile persist: partition via session.loadExtension.
+   * @type {{ id: string, name: string, version: string, description: string, enabled: boolean, path: string, chromeId?: string }[]}
+   */
+  extensions: [],
+
+  /**
    * Lean mode for refurbished / low-RAM PCs:
    * disables GPU accel, keeps fewer warm apps, hibernates faster.
    * Needs relaunch for hardwareAcceleration.

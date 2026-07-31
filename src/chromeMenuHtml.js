@@ -40,6 +40,9 @@ const ICO = {
   list: svg(
     '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
   ),
+  puzzle: svg(
+    '<path d="M12 2a2.5 2.5 0 0 1 2.5 2.5V6h2a2 2 0 0 1 2 2v2.1a2.4 2.4 0 1 0 0 3.8V16a2 2 0 0 1-2 2h-2.1a2.4 2.4 0 1 0-3.8 0H8a2 2 0 0 1-2-2v-2.1a2.4 2.4 0 1 0 0-3.8V8a2 2 0 0 1 2-2h2V4.5A2.5 2.5 0 0 1 12 2Z"/>',
+  ),
 };
 
 function item(action, icon, label, id = '') {
@@ -87,6 +90,7 @@ export function buildChromeMenuHtml(dark = false) {
     ${item('mute', ICO.unmute, 'Mute', 'mute-item')}
     <hr />
     ${item('settings', ICO.settings, 'Settings')}
+    ${item('extensions', ICO.puzzle, 'Extensions')}
     ${item('profiles', ICO.users, 'Profiles')}
     ${item('shortcuts', ICO.keyboard, 'Shortcuts')}
     <hr />
