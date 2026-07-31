@@ -996,13 +996,21 @@ setErrorReporterContext(() => ({
   serviceCount: (settings.serviceInstances || []).length,
 }));
 
+function getRawInstance(id) {
+  return (settings.serviceInstances || []).find((i) => i.id === id) || null;
+}
+
 function getAppConfig(id) {
-  const service = getService(id);
+  // IMPORTANT: do NOT call getService()/orderedServices() here.
+  // orderedServices() decorates with getAppConfig() — that recursion
+  // crashed startup with "Maximum call stack size exceeded" (blank launch).
+  const raw = getRawInstance(id);
+  const appId = raw?.appId || id;
   const stored = (settings.serviceConfigs || {})[id] || {};
   // Messaging sessions die if hibernated mid-pairing — keep them warm by default
   // unless the user explicitly turned keepWarm off.
   const messagingDefault =
-    (service?.appId === 'whatsapp' || service?.appId === 'arattai') &&
+    (appId === 'whatsapp' || appId === 'arattai') &&
     stored.keepWarm === undefined
       ? { keepWarm: true }
       : {};
