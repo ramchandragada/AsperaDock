@@ -28,6 +28,12 @@ import {
   uninstallExtensionFiles,
 } from './extensionsStore.js';
 import {
+  chromeWebStoreUrl,
+  downloadAndUnpackChromeExtension,
+  parseChromeExtensionId,
+  unpackExtensionPackage,
+} from './chromeWebStore.js';
+import {
   AI_ALLOWED_APP_IDS,
   AI_LANGUAGES,
   configuredProvidersInRouteOrder,
@@ -3118,8 +3124,8 @@ function openExtensionsWindow({ dark = false } = {}) {
   closeNotifCenterWindow();
   closeExtensionsWindow();
 
-  const menuW = 420;
-  const menuH = 520;
+  const menuW = 440;
+  const menuH = 580;
   const content = mainWindow.getContentBounds();
   const pos = clampFloatPosition(
     content.x + content.width - menuW - 16,
@@ -5226,9 +5232,98 @@ aiResultHandle('ai-result:close', () => {
   return { ok: true };
 });
 aiResultHandle('ai-result:suggest-reply', () => runSuggestRepliesFromAiResult());
+async function commitInstalledExtension(installed) {
+  const chromeId = String(installed.chromeId || '').trim().toLowerCase();
+  let list = listInstalledExtensions(settings.extensions);
+  if (chromeId) {
+    const prev = list.find((ext) => String(ext.chromeId || '').toLowerCase() === chromeId);
+    if (prev && prev.id !== installed.id) {
+      uninstallExtensionFiles(prev);
+      list = list.filter((ext) => ext.id !== prev.id);
+    }
+  }
+  const withoutSame = list.filter((ext) => ext.id !== installed.id);
+  const next = [...withoutSame, installed];
+  settings = saveSettings({ extensions: next });
+  await syncExtensionsToAllGuestSessions();
+  reloadAllGuestViews();
+  pushExtensionsManagerData();
+  return installed;
+}
+
 extensionsHandle('extensions:close', () => {
   closeExtensionsWindow();
   return { ok: true };
+});
+extensionsHandle('extensions:install-webstore', async (_e, input) => {
+  let workRoot = '';
+  try {
+    const chromeId = parseChromeExtensionId(input);
+    if (!chromeId) {
+      throw new Error(
+        'Paste a Chrome Web Store link or 32-character extension ID.',
+      );
+    }
+    const existing = listInstalledExtensions(settings.extensions).find(
+      (ext) => String(ext.chromeId || '').toLowerCase() === chromeId,
+    );
+    const unpacked = await downloadAndUnpackChromeExtension(chromeId);
+    workRoot = unpacked.workRoot;
+    const installed = installUnpackedExtension(unpacked.path, {
+      chromeId,
+      replaceId: existing?.id || `ext-${chromeId}`,
+    });
+    await commitInstalledExtension(installed);
+    return { ok: true, extension: installed };
+  } catch (error) {
+    const message = String(error?.message || error);
+    pushExtensionsManagerData(message);
+    return { ok: false, error: message };
+  } finally {
+    if (workRoot && fs.existsSync(workRoot)) {
+      try {
+        fs.rmSync(workRoot, { recursive: true, force: true });
+      } catch {
+        // ignore temp cleanup
+      }
+    }
+  }
+});
+extensionsHandle('extensions:install-package', async () => {
+  const picked = dialog.showOpenDialogSync(mainWindow || undefined, {
+    title: 'Install extension package',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Chrome extension', extensions: ['crx', 'zip'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+  if (!picked?.length) return { ok: false, cancelled: true };
+  let workRoot = '';
+  try {
+    const unpacked = unpackExtensionPackage(picked[0]);
+    workRoot = unpacked.workRoot;
+    const installed = installUnpackedExtension(unpacked.path);
+    await commitInstalledExtension(installed);
+    return { ok: true, extension: installed };
+  } catch (error) {
+    const message = String(error?.message || error);
+    pushExtensionsManagerData(message);
+    return { ok: false, error: message };
+  } finally {
+    if (workRoot && fs.existsSync(workRoot)) {
+      try {
+        fs.rmSync(workRoot, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
+  }
+});
+extensionsHandle('extensions:open-webstore', async (_e, input) => {
+  const url = chromeWebStoreUrl(input);
+  await shell.openExternal(url);
+  return { ok: true, url };
 });
 extensionsHandle('extensions:load-unpacked', async () => {
   const picked = dialog.showOpenDialogSync(mainWindow || undefined, {
@@ -5238,11 +5333,7 @@ extensionsHandle('extensions:load-unpacked', async () => {
   if (!picked?.length) return { ok: false, cancelled: true };
   try {
     const installed = installUnpackedExtension(picked[0]);
-    const next = [...listInstalledExtensions(settings.extensions), installed];
-    settings = saveSettings({ extensions: next });
-    await syncExtensionsToAllGuestSessions();
-    reloadAllGuestViews();
-    pushExtensionsManagerData();
+    await commitInstalledExtension(installed);
     return { ok: true, extension: installed };
   } catch (error) {
     const message = String(error?.message || error);
