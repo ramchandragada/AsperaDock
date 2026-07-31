@@ -19,6 +19,7 @@ module.exports = {
       './assets/icon-128.png',
       './assets/icon-256.png',
       './assets/icon-512.png',
+      './packaging/asperadock-wrapper.sh',
     ],
   },
   rebuildConfig: {},

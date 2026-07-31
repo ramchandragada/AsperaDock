@@ -5,12 +5,27 @@
 set -e
 BIN="/usr/lib/asperadock/asperadock"
 WRAPPER="/usr/bin/asperadock"
-if [ -x "$BIN" ]; then
-  rm -f "$WRAPPER"
+SRC="/usr/lib/asperadock/resources/asperadock-wrapper.sh"
+
+if [ ! -x "$BIN" ]; then
+  exit 0
+fi
+
+rm -f "$WRAPPER"
+
+if [ -f "$SRC" ]; then
+  cp "$SRC" "$WRAPPER"
+else
+  # Fallback if extraResource missing
   cat > "$WRAPPER" << 'INNER'
 #!/bin/sh
-exec /usr/lib/asperadock/asperadock --disable-gpu-sandbox --disable-gpu "$@"
+set -eu
+BIN="/usr/lib/asperadock/asperadock"
+UD="${XDG_CONFIG_HOME:-$HOME/.config}/Aspera Dock"
+mkdir -p "$UD" 2>/dev/null || true
+rm -f "$UD/SingletonLock" "$UD/SingletonCookie" 2>/dev/null || true
+exec "$BIN" --no-sandbox --disable-gpu-sandbox --disable-gpu --disable-software-rasterizer --class=asperadock "$@"
 INNER
-  chmod 755 "$WRAPPER"
 fi
+chmod 755 "$WRAPPER"
 exit 0
