@@ -125,13 +125,29 @@
             <button id="settings-close" type="button" class="icon-btn">✕</button>
           </div>
         </header>
-        <div class="settings-body">
+        <div class="settings-layout">
+          <nav class="settings-nav" aria-label="Settings categories">
+            <p class="settings-nav-label">Categories</p>
+            <button type="button" class="settings-nav-btn active" data-settings-panel="general">General</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="downloads">Downloads</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="startup">Startup &amp; window</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="security">Security</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="ai">Aspera AI</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="proxy">Proxy</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="performance">Performance</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="errors">Error reporting</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="updates">Updates</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="compatibility">Compatibility</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="apps">Add apps</button>
+          </nav>
+          <div class="settings-body">
           <p class="settings-banner">
             These are <strong>global</strong> dock settings. To change one app (sound, name, hibernate…),
             <strong>right-click</strong> that app’s icon.
           </p>
 
-          <div class="section-rule"><span>General</span></div>
+          <section class="settings-panel active" data-panel="general" aria-label="General">
+          <h3 class="settings-panel-title">General</h3>
 
           <label class="field">
             <span>Theme</span>
@@ -187,8 +203,10 @@
             <input id="set-focus-clear-badges" type="checkbox" />
             <span>Remove all badges when Focus mode is active</span>
           </label>
+          </section>
 
-          <div class="section-rule"><span>Downloads</span></div>
+          <section class="settings-panel" data-panel="downloads" aria-label="Downloads" hidden>
+          <h3 class="settings-panel-title">Downloads</h3>
           <label class="field">
             <span>Download directory</span>
             <div class="row">
@@ -199,8 +217,10 @@
           </label>
           <label class="check"><input id="set-open-folder" type="checkbox" /> Open folder on finish</label>
           <label class="check"><input id="set-open-file" type="checkbox" /> Open file on finish</label>
+          </section>
 
-          <div class="section-rule"><span>Startup and window</span></div>
+          <section class="settings-panel" data-panel="startup" aria-label="Startup and window" hidden>
+          <h3 class="settings-panel-title">Startup and window</h3>
           <label class="field">
             <span>Open Aspera Hub automatically on system startup</span>
             <select id="set-autostart">
@@ -227,8 +247,10 @@
           <label class="switch-row"><input id="set-tray-unread" type="checkbox" /><span>Show System Tray indicator on unread messages</span></label>
           <label class="switch-row"><input id="set-flash" type="checkbox" /><span>Flash Taskbar on new message</span></label>
           <label class="switch-row"><input id="set-confirm-quit" type="checkbox" /><span>Confirm dialog on quitting with Ctrl+Q</span></label>
+          </section>
 
-          <div class="section-rule"><span>Security</span></div>
+          <section class="settings-panel" data-panel="security" aria-label="Security" hidden>
+          <h3 class="settings-panel-title">Security</h3>
           <label class="field">
             <span>Lock app</span>
             <select id="set-lock-enabled">
@@ -244,8 +266,10 @@
             <input id="set-lock-idle" type="checkbox" />
             <span>Lock when the system locks or sleeps</span>
           </label>
+          </section>
 
-          <div class="section-rule" id="ai-settings-section"><span>Aspera AI</span></div>
+          <section class="settings-panel" data-panel="ai" id="ai-settings-section" aria-label="Aspera AI" hidden>
+          <h3 class="settings-panel-title">Aspera AI</h3>
           <p class="hint-text">
             Employee skills for <strong>WhatsApp, Arattai, Gmail, Zoho Mail</strong> only.
             Save an API key for each provider you use. Aspera Hub loads
@@ -275,8 +299,10 @@
           <div class="row-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px;">
             <button id="ai-catch-up-btn" type="button" class="ghost-btn">Catch me up</button>
           </div>
+          </section>
 
-          <div class="section-rule"><span>Proxy</span></div>
+          <section class="settings-panel" data-panel="proxy" aria-label="Proxy" hidden>
+          <h3 class="settings-panel-title">Proxy</h3>
           <label class="field">
             <span>Proxy mode</span>
             <select id="set-proxy-mode">
@@ -294,8 +320,10 @@
             <span>Bypass list</span>
             <input id="set-proxy-bypass" type="text" placeholder="&lt;local&gt;" />
           </label>
+          </section>
 
-          <div class="section-rule"><span>Performance</span></div>
+          <section class="settings-panel" data-panel="performance" aria-label="Performance" hidden>
+          <h3 class="settings-panel-title">Performance</h3>
           <label class="switch-row">
             <input id="set-low-memory" type="checkbox" />
             <span>
@@ -320,8 +348,10 @@
               <small>Shows memory per app in the notifications panel</small>
             </span>
           </label>
+          </section>
 
-          <div class="section-rule"><span>Error reporting</span></div>
+          <section class="settings-panel" data-panel="errors" aria-label="Error reporting" hidden>
+          <h3 class="settings-panel-title">Error reporting</h3>
           <label class="switch-row">
             <input id="set-error-reporting" type="checkbox" />
             <span>
@@ -370,8 +400,10 @@
             <input id="set-error-url" type="url" placeholder="https://…" />
           </label>
           <button id="open-error-reports" type="button" class="ghost-btn">Open error reports folder</button>
+          </section>
 
-          <div class="section-rule"><span>Updates</span></div>
+          <section class="settings-panel" data-panel="updates" aria-label="Updates" hidden>
+          <h3 class="settings-panel-title">Updates</h3>
           <p class="settings-banner" id="settings-version-banner">
             You are running <strong id="settings-running-version">Aspera Hub</strong>.
           </p>
@@ -415,8 +447,10 @@
             <span id="update-status-text" class="hint-text">Checking…</span>
             <button id="check-updates" type="button" class="ghost-btn">Check for updates</button>
           </div>
+          </section>
 
-          <div class="section-rule"><span>Compatibility</span></div>
+          <section class="settings-panel" data-panel="compatibility" aria-label="Compatibility" hidden>
+          <h3 class="settings-panel-title">Compatibility</h3>
           <p class="hint-text">
             Tuned for <strong>Linux Mint</strong> (<strong>XFCE</strong> and <strong>Cinnamon</strong>).
             Default show-in-taskbar works on both. For tray icons on XFCE, add a
@@ -458,11 +492,15 @@
             </label>
             <label class="check"><input id="set-hide-notif-body" type="checkbox" /> Hide notification content</label>
           </details>
+          </section>
 
-          <div class="section-rule"><span>Add apps</span></div>
+          <section class="settings-panel" data-panel="apps" aria-label="Add apps" hidden>
+          <h3 class="settings-panel-title">Add apps</h3>
           <p class="hint-text">Aspera catalog only. Naming, sound, and advanced options are per app (right-click).</p>
           <div id="catalog-list" class="catalog-list"></div>
           <div id="instance-list" class="instance-list"></div>
+          </section>
+        </div>
         </div>
       </div>
     </div>

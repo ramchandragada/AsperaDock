@@ -813,14 +813,26 @@ function renderAiProviderKeys() {
   refreshAiRouteHint();
 }
 
-function openAiSettings() {
-  openSettings();
-  requestAnimationFrame(() => {
-    document.getElementById('ai-settings-section')?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start',
-    });
+const SETTINGS_DRAWER_WIDTH = 720;
+const EDIT_DRAWER_WIDTH = 440;
+
+function showSettingsPanel(panelId = 'general') {
+  const id = panelId || 'general';
+  document.querySelectorAll('.settings-nav-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.settingsPanel === id);
   });
+  document.querySelectorAll('.settings-panel').forEach((panel) => {
+    const on = panel.dataset.panel === id;
+    panel.classList.toggle('active', on);
+    if (on) panel.removeAttribute('hidden');
+    else panel.setAttribute('hidden', '');
+  });
+  const body = document.querySelector('#settings-modal .settings-body');
+  if (body) body.scrollTop = 0;
+}
+
+function openAiSettings() {
+  openSettings('ai');
 }
 
 function fillSettingsForm() {
@@ -1011,10 +1023,12 @@ function syncOverlayFromModals() {
     return;
   }
   if (drawerOpen) {
+    const settingsOpen = !els.settingsModal.classList.contains('hidden');
+    const drawerWidth = settingsOpen ? SETTINGS_DRAWER_WIDTH : EDIT_DRAWER_WIDTH;
     window.asperadock.setOverlay({
       open: true,
       mode: 'drawer',
-      rightInset: Math.min(440, Math.round(window.innerWidth * 0.94)),
+      rightInset: Math.min(drawerWidth, Math.round(window.innerWidth * 0.94)),
     });
     return;
   }
@@ -1285,22 +1299,17 @@ async function createProfilePrompt(defaultName = '') {
   return result.profile;
 }
 
-function openSettings() {
+function openSettings(panelId = 'general') {
   closeAppMenu();
   closeChromeMenu();
   fillSettingsForm();
+  showSettingsPanel(panelId);
   els.settingsModal.classList.remove('hidden');
   syncOverlayFromModals();
 }
 
 function openAppsSettings() {
-  openSettings();
-  requestAnimationFrame(() => {
-    document.getElementById('catalog-list')?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start',
-    });
-  });
+  openSettings('apps');
 }
 
 function openShortcuts() {
@@ -1498,6 +1507,11 @@ els.menuBtn.addEventListener('click', (event) => {
   toggleChromeMenu();
 });
 els.settingsClose.addEventListener('click', closeSettings);
+els.settingsModal?.querySelector('.settings-nav')?.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-settings-panel]');
+  if (!btn) return;
+  showSettingsPanel(btn.dataset.settingsPanel);
+});
 els.addAppBtn.addEventListener('click', openAppsSettings);
 els.emptyAddBtn.addEventListener('click', openAppsSettings);
 
