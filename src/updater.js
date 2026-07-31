@@ -597,7 +597,7 @@ function relaunchAndExit(execPathOverride) {
     try {
       const child = spawn(
         '/bin/sh',
-        ['-c', `sleep 1.5; exec ${shellQuote(launcher)}`],
+        ['-c', `sleep 3; exec ${shellQuote(launcher)} --disable-gpu-sandbox`],
         {
           detached: true,
           stdio: 'ignore',

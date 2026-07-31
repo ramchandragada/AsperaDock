@@ -66,8 +66,12 @@ export const DEFAULTS = {
   zohoReclaimEnabled: true,
 
   // Compatibility (needs relaunch)
-  /** Off by default — GPU process often costs 100–200 MB on Linux. */
-  hardwareAcceleration: true,
+  /**
+   * GPU compositor. Default OFF on purpose — on many Linux Mint XFCE/Cinnamon
+   * PCs (esp. NVIDIA / VM / older Intel) Electron dies at launch with
+   * "GPU process isn't usable. Goodbye." Software rendering is stable.
+   */
+  hardwareAcceleration: false,
   hiDpiSupport: true,
   mediaKeys: true,
 
@@ -323,12 +327,13 @@ function migrateWarmKeepAlive(settings) {
     };
   }
   if (!next.highPerfDefaultV1) {
-    // Second pass: GPU on + low-memory strictly opt-in for earlier installs.
+    // Second pass: low-memory strictly opt-in for earlier installs.
+    // Do NOT force hardwareAcceleration on — that made Aspera Hub refuse to
+    // start on Linux Mint GPUs ("GPU process isn't usable. Goodbye.").
     next = {
       ...next,
       highPerfDefaultV1: true,
       lowMemoryMode: false,
-      hardwareAcceleration: true,
       maxWarmViews: Math.max(5, Number(next.maxWarmViews) || 5),
     };
   }
@@ -397,12 +402,12 @@ function migrateWarmKeepAlive(settings) {
   }
   // Performance-first rollout defaults:
   // keep 4 background warm apps (+1 active = 5 loaded), avoid low-memory compromises.
+  // Do not force GPU on — that crashes many Linux Mint desktops at launch.
   if (!next.performanceDefaultsV1) {
     next = {
       ...next,
       performanceDefaultsV1: true,
       lowMemoryMode: false,
-      hardwareAcceleration: true,
       autoUpdateEnabled: true,
       autoUpdateDownload: true,
       autoUpdateInstall: true,
@@ -421,6 +426,17 @@ function migrateWarmKeepAlive(settings) {
       maxWarmViews: 5,
       maxResidentViews: 5,
       hibernateMinutes: Math.max(45, Number(next.hibernateMinutes) || 45),
+    };
+  }
+  // CRITICAL: many Linux Mint XFCE/Cinnamon PCs die at launch with Electron's
+  // "GPU process isn't usable. Goodbye." after migrations forced GPU on.
+  // One-shot disable HW accel so the dock starts again; users can re-enable
+  // in Settings → Compatibility after confirming their GPU works.
+  if (!next.linuxGpuSafeV1) {
+    next = {
+      ...next,
+      linuxGpuSafeV1: true,
+      ...(process.platform === 'linux' ? { hardwareAcceleration: false } : {}),
     };
   }
   // Keep legacy keys so older migrations stay idempotent.

@@ -181,6 +181,8 @@ app.setPath('userData', path.join(app.getPath('appData'), 'Aspera Dock'));
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
+  // Another live instance owns the dock — quit quietly so the first raises.
+  // (Stale locks from dead PIDs are ignored by Electron automatically.)
   app.quit();
 }
 
@@ -394,6 +396,20 @@ function applyMemorySwitches() {
       Number(settings.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT || 5,
     ),
   );
+
+  // Linux Mint (NVIDIA / VM / older Intel): Chromium often dies at launch with
+  // FATAL "GPU process isn't usable. Goodbye." Prefer starting over GPU speed.
+  if (process.platform === 'linux') {
+    app.commandLine.appendSwitch('disable-gpu-sandbox');
+    try {
+      const crashFlag = path.join(app.getPath('userData'), 'gpu-crash-v1');
+      if (fs.existsSync(crashFlag)) {
+        app.disableHardwareAcceleration();
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   if (lean || settings.hardwareAcceleration === false) {
     app.disableHardwareAcceleration();
@@ -5593,6 +5609,12 @@ function createWindow() {
     // Company desktops: always open full-screen workspace.
     mainWindow.maximize();
     mainWindow.show();
+    try {
+      const crashFlag = path.join(app.getPath('userData'), 'gpu-crash-v1');
+      if (fs.existsSync(crashFlag)) fs.unlinkSync(crashFlag);
+    } catch {
+      // ignore
+    }
     // Some Linux panels only refresh the icon after the window is mapped.
     setTimeout(() => applyWindowIcon(mainWindow), 250);
     setTimeout(() => applyWindowIcon(mainWindow), 1000);
@@ -6667,6 +6689,18 @@ app.on('window-all-closed', () => {
 });
 
 app.on('child-process-gone', (_event, details) => {
+  const kind = String(details?.type || '');
+  if (/gpu/i.test(kind) || /gpu/i.test(String(details?.reason || ''))) {
+    try {
+      fs.writeFileSync(
+        path.join(app.getPath('userData'), 'gpu-crash-v1'),
+        new Date().toISOString(),
+        'utf8',
+      );
+    } catch {
+      // ignore
+    }
+  }
   reportError('child-process-gone', {
     message: `Child process gone: ${details?.type || 'unknown'} / ${details?.reason || ''}`,
     details,
