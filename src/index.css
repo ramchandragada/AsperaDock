@@ -1801,6 +1801,13 @@ body.theme-dark .lock-card input {
 .row {
   display: flex;
   gap: 8px;
+  min-width: 0;
+}
+
+.row > input,
+.row > .field {
+  min-width: 0;
+  flex: 1;
 }
 
 .check {
