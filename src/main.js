@@ -1810,12 +1810,34 @@ function clampFloatPosition(screenX, screenY, menuW, menuH) {
   return { x: Math.round(x), y: Math.round(y) };
 }
 
-function createFloatBrowserWindow({ width, height, x, y, preload }) {
+/** Linux Mint XFCE (and similar) without a compositor paint transparent windows badly. */
+function linuxUsesOpaqueOverlays() {
+  if (process.platform !== 'linux') return false;
+  const de = `${process.env.XDG_CURRENT_DESKTOP || ''} ${process.env.DESKTOP_SESSION || ''} ${process.env.GDMSESSION || ''}`.toLowerCase();
+  return (
+    de.includes('xfce') ||
+    de.includes('xubuntu') ||
+    de.includes('lxde') ||
+    de.includes('lxqt') ||
+    de.includes('openbox')
+  );
+}
+
+function createFloatBrowserWindow({
+  width,
+  height,
+  x,
+  y,
+  preload,
+  dark = false,
+}) {
+  const opaque = linuxUsesOpaqueOverlays();
   const win = new BrowserWindow({
     parent: mainWindow,
     modal: false,
     frame: false,
-    transparent: true,
+    // Cinnamon: transparent overlays are fine. XFCE: prefer opaque to avoid black/blank menus.
+    transparent: !opaque,
     resizable: false,
     movable: false,
     minimizable: false,
@@ -1827,8 +1849,8 @@ function createFloatBrowserWindow({ width, height, x, y, preload }) {
     height,
     x,
     y,
-    backgroundColor: '#00000000',
-    hasShadow: true,
+    backgroundColor: opaque ? (dark ? '#111827' : '#ffffff') : '#00000000',
+    hasShadow: !opaque,
     webPreferences: {
       preload: path.join(__dirname, preload),
       contextIsolation: true,
@@ -4492,25 +4514,50 @@ function unlockApp(password) {
   return { ok: true };
 }
 
-function createTrayIcon(badge) {
-  const showBadge = !!(badge && settings.trayUnreadIndicator);
-  // Crisp SVG of the Aspera open-A mark (matches app icon).
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-      <rect width="64" height="64" rx="14" fill="#081230"/>
-      <defs>
-        <linearGradient id="g" x1="14" y1="48" x2="50" y2="16" gradientUnits="userSpaceOnUse">
-          <stop stop-color="#5A6EE6"/>
-          <stop offset="1" stop-color="#A0AFFF"/>
-        </linearGradient>
-      </defs>
-      <path fill="url(#g)" d="M15.2 47.5 L29.4 18.2 H33.2 L21.5 47.5 Z"/>
-      <path fill="url(#g)" d="M48.8 47.5 L34.6 18.2 H30.8 L42.5 47.5 Z"/>
-      ${showBadge ? '<circle cx="52" cy="12" r="10" fill="#e5484d"/>' : ''}
-    </svg>`;
-  return nativeImage.createFromDataURL(
-    `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`,
-  );
+function getTrayIconPath(size = 32) {
+  const names = [
+    `icon-${size}.png`,
+    'icon-32.png',
+    'icon-24.png',
+    'icon-48.png',
+    'icon.png',
+  ];
+  const bases = [
+    process.resourcesPath || '',
+    path.join(app.getAppPath(), 'assets'),
+    path.join(__dirname, '../../assets'),
+    path.join(__dirname, '../assets'),
+  ];
+  for (const base of bases) {
+    if (!base) continue;
+    for (const name of names) {
+      const p = path.join(base, name);
+      try {
+        if (fs.existsSync(p) && fs.statSync(p).size > 100) return p;
+      } catch {
+        // try next
+      }
+    }
+  }
+  return getAppIconPath();
+}
+
+function createTrayIcon(_badge) {
+  // Prefer PNG for Linux Mint XFCE / Cinnamon StatusNotifier hosts (SVG data-URLs are flaky).
+  // Unread count stays in the tray tooltip + in-app bell (panel badge overlays vary by DE).
+  const iconPath = getTrayIconPath(32);
+  let image = iconPath
+    ? nativeImage.createFromPath(iconPath)
+    : getAppIcon();
+  if (!image || image.isEmpty()) {
+    image = getAppIcon();
+  }
+  if (!image.isEmpty()) {
+    // XFCE panel icons are typically ~22–24px; Cinnamon is similar.
+    const size = process.platform === 'linux' ? 24 : 32;
+    image = image.resize({ width: size, height: size, quality: 'best' });
+  }
+  return image;
 }
 
 function updateTray() {

@@ -36,9 +36,15 @@ module.exports = {
           section: 'utils',
           maintainer: 'Aspera <support@aspera.local>',
           icon: './assets/icon.png',
-          // Matches app.setName('asperadock') / --class=asperadock for GNOME dock icons.
+          // Matches app.setName('asperadock') / --class=asperadock for Mint Cinnamon + XFCE panels.
+          desktopTemplate: './packaging/asperadock.desktop.ejs',
+          // XFCE often needs an AppIndicator / StatusNotifier host for the tray icon.
+          recommends: [
+            'libayatana-appindicator3-1',
+            'libnotify4',
+          ],
           productDescription:
-            'Aspera Hub — free Linux company workspace for WhatsApp, Arattai, Google Workspace, and Zoho',
+            'Aspera Hub — free Linux company workspace for WhatsApp, Arattai, Google Workspace, and Zoho. Tuned for Linux Mint (Cinnamon & XFCE).',
         },
       },
     },
