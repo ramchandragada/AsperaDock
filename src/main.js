@@ -404,6 +404,11 @@ function applyMemorySwitches() {
   if (settings.mediaKeys === false) {
     disabled.add('HardwareMediaKeyHandling');
   }
+  // Linux WMs (Mint XFCE/Cinnamon) often mis-report occlusion → blank WebContentsView
+  // until the next resize/click. Keep guest surfaces painting while alt-tabbed away.
+  if (process.platform === 'linux') {
+    disabled.add('CalculateNativeWinOcclusion');
+  }
 
   app.commandLine.appendSwitch('disable-features', [...disabled].join(','));
   app.commandLine.appendSwitch(
@@ -420,6 +425,9 @@ function applyMemorySwitches() {
   app.commandLine.appendSwitch('disable-renderer-backgrounding');
   app.commandLine.appendSwitch('disable-background-timer-throttling');
   app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+  if (process.platform === 'linux') {
+    app.commandLine.appendSwitch('disable-gpuing-occluded-windows'.replace('gpuing', 'gpuing'));
+  }
 }
 
 /**
@@ -1645,6 +1653,129 @@ function layoutActiveView() {
   }
 }
 
+/** @type {ReturnType<typeof setTimeout> | null} */
+let guestRepaintTimer = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let guestRepaintTimer2 = null;
+let guestNeedsRepaint = false;
+
+function activeGuestTargetBounds() {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  const [width, height] = mainWindow.getContentSize();
+  if (width < 2 || height < 2) return null;
+  const m = effectiveMetrics();
+  const left = (m.left || 0) + (overlayLeftInset || 0);
+  const right = (m.right || 0) + (overlayRightInset || 0);
+  const top = Math.max(64, m.top || 0);
+  return {
+    x: Math.max(0, left),
+    y: top,
+    width: Math.max(1, width - left - right),
+    height: Math.max(1, height - top),
+  };
+}
+
+/**
+ * Linux Mint XFCE/Cinnamon: WebContentsView often stays blank after alt-tab
+ * until a real resize. Force a two-step setBounds across event-loop turns so
+ * Chromium submits a fresh compositor frame (clicking into the app "fixed" it).
+ */
+function repaintActiveGuestView({ reason = 'focus' } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed() || locked) return;
+  if (overlayOpen && overlayMode === 'full') return;
+  if (!activeServiceId) return;
+  const entry = views.get(activeServiceId);
+  if (!entry?.view) return;
+
+  const target = activeGuestTargetBounds();
+  if (!target) return;
+
+  try {
+    attachGuestView(entry.view);
+  } catch {
+    // ignore
+  }
+
+  if (guestRepaintTimer) {
+    clearTimeout(guestRepaintTimer);
+    guestRepaintTimer = null;
+  }
+  if (guestRepaintTimer2) {
+    clearTimeout(guestRepaintTimer2);
+    guestRepaintTimer2 = null;
+  }
+
+  const serviceId = activeServiceId;
+  try {
+    if (typeof entry.view.setVisible === 'function') {
+      entry.view.setVisible(true);
+    }
+    // Step 1 — nudge by 1px (must differ from final bounds).
+    const nudge = {
+      ...target,
+      height: Math.max(1, target.height - 1),
+    };
+    entry.view.setBounds(nudge);
+    entry.__lastBounds = nudge;
+    entry.__parked = false;
+  } catch {
+    // ignore
+  }
+
+  guestRepaintTimer = setTimeout(() => {
+    guestRepaintTimer = null;
+    if (!mainWindow || mainWindow.isDestroyed() || locked) return;
+    if (activeServiceId !== serviceId) return;
+    if (overlayOpen && overlayMode === 'full') return;
+    const live = views.get(serviceId);
+    if (!live?.view) return;
+    const finalBounds = activeGuestTargetBounds() || target;
+    try {
+      if (typeof live.view.setVisible === 'function') {
+        live.view.setVisible(true);
+      }
+      live.view.setBounds(finalBounds);
+      live.__lastBounds = finalBounds;
+      live.__parked = false;
+      const wc = live.view.webContents;
+      if (wc && !wc.isDestroyed()) {
+        try {
+          wc.invalidate?.();
+        } catch {
+          // ignore
+        }
+        applyGuestPerfMode(wc, {
+          active: true,
+          loadedOnce: live.loadedOnce === true,
+          keepWarm: isKeepWarmService(serviceId),
+          allowThrottle: true,
+        });
+      }
+    } catch {
+      // ignore
+    }
+    guestNeedsRepaint = false;
+  }, 48);
+
+  // XFCE sometimes settles focus a beat later — one more real layout pass.
+  guestRepaintTimer2 = setTimeout(() => {
+    guestRepaintTimer2 = null;
+    if (!mainWindow || mainWindow.isDestroyed() || locked) return;
+    if (activeServiceId !== serviceId) return;
+    const live = views.get(serviceId);
+    if (!live?.view) return;
+    live.__lastBounds = null;
+    layoutActiveView();
+    focusActiveContents();
+  }, 160);
+
+  try {
+    logBreadcrumb('guest-repaint', { reason, serviceId });
+  } catch {
+    // ignore
+  }
+}
+
 function detachAllViews() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   for (const entry of views.values()) {
@@ -1891,6 +2022,7 @@ function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
     x: pos.x,
     y: pos.y,
     preload: 'appMenuPreload.js',
+    dark: !!dark,
   });
 
   const win = appMenuWindow;
@@ -1954,6 +2086,7 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
     x: pos.x,
     y: pos.y,
     preload: 'chromeMenuPreload.js',
+    dark: !!dark,
   });
 
   const win = chromeMenuWindow;
@@ -2044,6 +2177,7 @@ function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } =
     x: pos.x,
     y: pos.y,
     preload: 'notifCenterPreload.js',
+    dark: !!dark,
   });
 
   const win = notifCenterWindow;
@@ -2112,6 +2246,7 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
     x: pos.x,
     y: pos.y,
     preload: 'aiResultPreload.js',
+    dark: !!dark,
   });
 
   const win = aiResultWindow;
@@ -3242,6 +3377,7 @@ function openExtensionsWindow({ dark = false } = {}) {
     x: pos.x,
     y: pos.y,
     preload: 'extensionsPreload.js',
+    dark: !!dark,
   });
 
   const win = extensionsWindow;
@@ -5038,10 +5174,27 @@ function createWindow() {
   mainWindow.on('unmaximize', () => setTimeout(() => layoutActiveView(), 50));
   mainWindow.on('show', () => {
     setTimeout(() => layoutActiveView(), 50);
+    setTimeout(() => repaintActiveGuestView({ reason: 'window-show' }), 60);
     onUserReturnedFromIdle('window-show');
   });
+  mainWindow.on('restore', () => {
+    setTimeout(() => repaintActiveGuestView({ reason: 'window-restore' }), 40);
+  });
+  mainWindow.on('hide', () => {
+    guestNeedsRepaint = true;
+  });
+  mainWindow.on('blur', () => {
+    // Guest compositor may need a kick when we come back (esp. Mint XFCE).
+    guestNeedsRepaint = true;
+  });
   mainWindow.on('focus', () => {
-    focusActiveContents();
+    // Always repaint on Linux focus — Mint XFCE/Cinnamon leave WebContentsView blank
+    // after alt-tab until a synthetic resize (clicking into the pane used to "fix" it).
+    if (process.platform === 'linux' || guestNeedsRepaint) {
+      repaintActiveGuestView({ reason: 'window-focus' });
+    } else {
+      focusActiveContents();
+    }
     onUserReturnedFromIdle('window-focus');
   });
   attachShortcuts(mainWindow.webContents);
