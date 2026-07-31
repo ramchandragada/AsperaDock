@@ -1775,9 +1775,10 @@ body.theme-dark .ai-provider-key-actions input[type='password'] {
 body.theme-dark .ai-provider-model-row select {
   background: var(--chrome);
 }
-  margin: 0;
-  font-size: 11px;
-  color: var(--muted);
+
+.ai-provider-model-row select {
+  flex: 0 1 280px;
+  max-width: 280px;
 }
 
 .field input,
@@ -1791,6 +1792,32 @@ body.theme-dark .ai-provider-model-row select {
   border-radius: 8px;
   padding: 8px 10px;
   font: inherit;
+}
+
+/* Settings: compact controls — full-bleed selects look unprofessional. */
+.settings-body .field select {
+  width: auto;
+  min-width: 160px;
+  max-width: 260px;
+}
+
+.settings-body .field input[type="text"],
+.settings-body .field input[type="password"],
+.settings-body .field input[type="url"],
+.settings-body .field input[type="number"] {
+  width: 100%;
+  max-width: 320px;
+}
+
+.settings-body .row {
+  max-width: 420px;
+}
+
+.settings-body .row > input {
+  width: auto;
+  max-width: none;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 body.theme-dark .field input,
