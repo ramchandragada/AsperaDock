@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+BIN="/usr/lib/asperadock/asperadock"
+WRAPPER="/usr/bin/asperadock"
+if [ -x "$BIN" ]; then
+  cat > "$WRAPPER" << 'INNER'
+#!/bin/sh
+exec /usr/lib/asperadock/asperadock --disable-gpu-sandbox --disable-gpu "$@"
+INNER
+  chmod 755 "$WRAPPER"
+fi
+exit 0

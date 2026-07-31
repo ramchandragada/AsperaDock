@@ -405,6 +405,7 @@ function applyMemorySwitches() {
       const crashFlag = path.join(app.getPath('userData'), 'gpu-crash-v1');
       if (fs.existsSync(crashFlag)) {
         app.disableHardwareAcceleration();
+        app.commandLine.appendSwitch('disable-gpu');
       }
     } catch {
       // ignore
@@ -413,6 +414,11 @@ function applyMemorySwitches() {
 
   if (lean || settings.hardwareAcceleration === false) {
     app.disableHardwareAcceleration();
+    // disableHardwareAcceleration() alone is not enough on some Mint GPUs —
+    // Chromium still tries a GPU process and FATAL-exits.
+    if (process.platform === 'linux') {
+      app.commandLine.appendSwitch('disable-gpu');
+    }
   }
   if (settings.hiDpiSupport === false) {
     app.commandLine.appendSwitch('force-device-scale-factor', '1');

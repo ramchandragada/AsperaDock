@@ -38,6 +38,10 @@ module.exports = {
           icon: './assets/icon.png',
           // Matches app.setName('asperadock') / --class=asperadock for Mint Cinnamon + XFCE panels.
           desktopTemplate: './packaging/asperadock.desktop.ejs',
+          // Install safe /usr/bin wrapper (always passes --disable-gpu*).
+          scripts: {
+            postinst: './packaging/debian-scripts/postinst',
+          },
           // XFCE often needs an AppIndicator / StatusNotifier host for the tray icon.
           recommends: [
             'libayatana-appindicator3-1',
