@@ -91,7 +91,7 @@ import {
   PRIMARY_PROFILE_ID,
   DEFAULTS,
 } from './store.js';
-import { mergeAppConfig, MOBILE_USER_AGENT } from './appConfig.js';
+import { mergeAppConfig, MOBILE_USER_AGENT, DEFAULT_APP_CONFIG } from './appConfig.js';
 import { APP_ICON_PNG_DATA_URL } from './appIconData.js';
 import {
   installErrorReporting,
@@ -529,6 +529,9 @@ function markUserActive() {
 /**
  * Sample the guest compositor surface. After long idle on Linux the DOM can be
  * fine while the on-screen surface is a flat blank — capturePage catches that.
+ *
+ * Must NOT treat WhatsApp QR / cream login pages as blank (that caused mid-login
+ * reloads and spontaneous logouts in v0.2.75).
  */
 async function isGuestVisuallyBlank(webContents) {
   if (!webContents || webContents.isDestroyed()) return false;
@@ -547,28 +550,78 @@ async function isGuestVisuallyBlank(webContents) {
     };
     const region = img.crop(crop);
     if (typeof region.toBitmap !== 'function') {
+      // Real UIs (QR codes, chat lists) compress larger than a flat panel.
       const png = region.toPNG();
-      return png.length < 14_000;
+      return png.length < 6_000;
     }
     const buf = region.toBitmap();
-    let flat = 0;
+    const unique = new Set();
     let samples = 0;
-    let first = null;
-    for (let i = 0; i + 3 < buf.length; i += 48 * 4) {
+    let sumR = 0;
+    let sumG = 0;
+    let sumB = 0;
+    for (let i = 0; i + 3 < buf.length; i += 40 * 4) {
       const b = buf[i];
       const g = buf[i + 1];
       const r = buf[i + 2];
       samples += 1;
-      const key = (r << 16) | (g << 8) | b;
-      if (first === null) first = key;
-      // Near-white / near-gray flat panels count as blank.
-      const nearWhite = r > 232 && g > 232 && b > 232;
-      const nearGray =
-        Math.abs(r - g) < 8 && Math.abs(g - b) < 8 && r > 200 && r < 250;
-      if (nearWhite || nearGray || key === first) flat += 1;
+      sumR += r;
+      sumG += g;
+      sumB += b;
+      // 4-bit quantization — enough to separate UI chrome from flat fills.
+      unique.add(`${r >> 4},${g >> 4},${b >> 4}`);
     }
     if (!samples) return false;
-    return flat / samples > 0.9;
+    // Chat / QR / dashboards have many distinct colors.
+    if (unique.size >= 6) return false;
+
+    const meanR = sumR / samples;
+    const meanG = sumG / samples;
+    const meanB = sumB / samples;
+    let varSum = 0;
+    for (let i = 0; i + 3 < buf.length; i += 40 * 4) {
+      const b = buf[i];
+      const g = buf[i + 1];
+      const r = buf[i + 2];
+      const dr = r - meanR;
+      const dg = g - meanG;
+      const db = b - meanB;
+      varSum += dr * dr + dg * dg + db * db;
+    }
+    const stdev = Math.sqrt(varSum / samples);
+    // True compositor blanks are nearly uniform (stdev very low, few colors).
+    return unique.size <= 3 && stdev < 12;
+  } catch {
+    return false;
+  }
+}
+
+function isMessagingApp(service) {
+  const id = service?.appId || service?.id;
+  return id === 'whatsapp' || id === 'arattai';
+}
+
+/** WhatsApp/Arattai QR or phone-link screens — never reload these. */
+async function guestLooksLikeLoginOrPairing(webContents, service) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    const url = String(webContents.getURL() || '');
+    const title = String(webContents.getTitle() || '');
+    if (isAuthOrLoginUrl(url)) return true;
+    if (/scan|log\s*in|qr code|link with phone|stay logged in/i.test(title)) {
+      return true;
+    }
+    if (!isMessagingApp(service)) return false;
+    const pairing = await webContents.executeJavaScript(
+      `(() => {
+        try {
+          const t = ((document.body && document.body.innerText) || '').slice(0, 4000);
+          return /Scan to log in|Stay logged in on this browser|Link with phone number|QR code|Use WhatsApp on your phone|Enter phone number/i.test(t);
+        } catch (_) { return false; }
+      })()`,
+      true,
+    );
+    return !!pairing;
   } catch {
     return false;
   }
@@ -579,6 +632,11 @@ function softReloadActiveGuest(reason = 'idle-blank') {
   const entry = views.get(activeServiceId);
   const wc = entry?.view?.webContents;
   if (!wc || wc.isDestroyed() || wc.isLoading()) return false;
+  const service = getService(activeServiceId) || entry.service;
+  // Never interrupt WhatsApp/Arattai login — reload mid-QR logs the user out.
+  if (isMessagingApp(service) && /surface|active-surface/i.test(String(reason || ''))) {
+    return false;
+  }
   const now = Date.now();
   if (
     entry.__lastStaleReloadAt &&
@@ -607,6 +665,8 @@ function softReloadActiveGuest(reason = 'idle-blank') {
 
 const ACTIVE_SURFACE_CHECK_DELAYS_MS = [2500, 5500, 10000];
 const ACTIVE_SURFACE_POLL_MS = 40_000;
+/** Give messaging apps time to finish QR pairing before any surface checks. */
+const MESSAGING_SURFACE_GRACE_MS = 90_000;
 
 function clearActiveSurfaceTimers(entry) {
   if (!entry?.__surfaceHealthTimers?.length) return;
@@ -615,21 +675,36 @@ function clearActiveSurfaceTimers(entry) {
 }
 
 /**
- * Pixel-based blank recovery for the ACTIVE guest (WhatsApp, Arattai, Gmail, …).
- * Zoho keeps its own DOM/iframe health path; this covers compositor-dead surfaces
- * that stay blank while the Hub window is still focused.
+ * Pixel-based blank recovery for the ACTIVE guest.
+ * Messaging apps (WhatsApp/Arattai): repaint only — never soft-reload (QR false positives).
  */
 async function runActiveGuestSurfaceHealthCheck(id, { fromPoll = false } = {}) {
   if (!id || id !== activeServiceId || locked) return;
   if (overlayOpen && overlayMode === 'full') return;
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (!mainWindow.isVisible() || mainWindow.isMinimized()) return;
-  // Poll path: only while the user is present and Hub is focused.
   if (fromPoll && !dockIsUserFocused()) return;
 
   const entry = views.get(id);
   const wc = entry?.view?.webContents;
   if (!wc || wc.isDestroyed() || wc.isLoading()) return;
+  const service = getService(id) || entry.service;
+
+  // Grace period after create/activate — WhatsApp QR is cream/white and used to
+  // trip blank recovery, which reloaded and logged users out mid-pairing.
+  const createdAt = entry.createdAt || entry.lastUsed || 0;
+  if (
+    isMessagingApp(service) &&
+    createdAt &&
+    Date.now() - createdAt < MESSAGING_SURFACE_GRACE_MS
+  ) {
+    return;
+  }
+
+  if (await guestLooksLikeLoginOrPairing(wc, service)) {
+    entry.__surfaceBlankStrikes = 0;
+    return;
+  }
 
   const blank = await isGuestVisuallyBlank(wc);
   if (!blank) {
@@ -641,6 +716,7 @@ async function runActiveGuestSurfaceHealthCheck(id, { fromPoll = false } = {}) {
   try {
     logBreadcrumb('guest-surface-blank', {
       serviceId: id,
+      appId: service?.appId,
       strikes: entry.__surfaceBlankStrikes,
       fromPoll: !!fromPoll,
     });
@@ -648,16 +724,19 @@ async function runActiveGuestSurfaceHealthCheck(id, { fromPoll = false } = {}) {
     // ignore
   }
 
-  if (entry.__surfaceBlankStrikes === 1) {
-    // First strike: re-seat + two-step repaint (no reload yet).
+  // Always try a gentle compositor kick first (bounds only — no detach for messaging).
+  entry.__lastBounds = null;
+  if (!isMessagingApp(service) && entry.__surfaceBlankStrikes === 1) {
     try {
       detachGuestView(entry.view);
       attachGuestView(entry.view);
     } catch {
       // ignore
     }
-    entry.__lastBounds = null;
-    repaintActiveGuestView({ reason: 'active-surface-blank' });
+  }
+  repaintActiveGuestView({ reason: 'active-surface-blank' });
+
+  if (entry.__surfaceBlankStrikes === 1) {
     setTimeout(() => {
       if (id === activeServiceId) {
         runActiveGuestSurfaceHealthCheck(id, { fromPoll });
@@ -666,8 +745,12 @@ async function runActiveGuestSurfaceHealthCheck(id, { fromPoll = false } = {}) {
     return;
   }
 
-  // Second+ strike: soft reload once (cooldown inside softReloadActiveGuest).
+  // Second strike: reload only for non-messaging apps.
   entry.__surfaceBlankStrikes = 0;
+  if (isMessagingApp(service)) {
+    // Keep trying gentle repaints; never reload WhatsApp while focused.
+    return;
+  }
   softReloadActiveGuest('active-surface-blank');
 }
 
@@ -676,7 +759,11 @@ function scheduleActiveGuestSurfaceChecks(id) {
   if (!entry) return;
   clearActiveSurfaceTimers(entry);
   entry.__surfaceBlankStrikes = 0;
-  entry.__surfaceHealthTimers = ACTIVE_SURFACE_CHECK_DELAYS_MS.map((delay) =>
+  const service = getService(id) || entry.service;
+  const delays = isMessagingApp(service)
+    ? ACTIVE_SURFACE_CHECK_DELAYS_MS.map((d) => d + MESSAGING_SURFACE_GRACE_MS)
+    : ACTIVE_SURFACE_CHECK_DELAYS_MS;
+  entry.__surfaceHealthTimers = delays.map((delay) =>
     setTimeout(() => {
       runActiveGuestSurfaceHealthCheck(id);
     }, delay),
@@ -734,6 +821,8 @@ function recoverActiveGuestAfterAway(reason = 'idle', idleMs = 0) {
         if (activeServiceId !== serviceId || locked) return;
         const still = views.get(serviceId)?.view?.webContents;
         if (!still || still.isDestroyed() || still.isLoading()) return;
+        const svc = getService(serviceId) || views.get(serviceId)?.service;
+        if (await guestLooksLikeLoginOrPairing(still, svc)) return;
         const blank = await isGuestVisuallyBlank(still);
         if (blank) {
           softReloadActiveGuest(reason);
@@ -857,7 +946,16 @@ setErrorReporterContext(() => ({
 }));
 
 function getAppConfig(id) {
-  return mergeAppConfig((settings.serviceConfigs || {})[id] || {});
+  const service = getService(id);
+  const stored = (settings.serviceConfigs || {})[id] || {};
+  // Messaging sessions die if hibernated mid-pairing — keep them warm by default
+  // unless the user explicitly turned keepWarm off.
+  const messagingDefault =
+    (service?.appId === 'whatsapp' || service?.appId === 'arattai') &&
+    stored.keepWarm === undefined
+      ? { keepWarm: true }
+      : {};
+  return mergeAppConfig({ ...messagingDefault, ...stored });
 }
 
 function saveAppConfig(id, patch) {
@@ -4274,6 +4372,7 @@ function createViewForService(service) {
   views.set(service.id, {
     view,
     lastUsed: Date.now(),
+    createdAt: Date.now(),
     loadedOnce: false,
     service,
     lastPresenceAt: Date.now(),
@@ -4326,15 +4425,21 @@ function hibernateService(id, { force = false } = {}) {
   if (force && activeServiceId === id) {
     activeServiceId = null;
   }
-  // Persist cookies before the renderer is gone — otherwise Zoho/Gmail may
-  // treat the next wake as a fresh device and demand MFA / sign-in again.
+  // Persist session before the renderer is gone — WhatsApp auth lives in
+  // IndexedDB; cookies.flushStore alone is not enough.
   if (service?.partition) {
-    session
-      .fromPartition(service.partition)
-      .cookies.flushStore()
-      .catch(() => {});
+    const appSession = session.fromPartition(service.partition);
+    try {
+      if (typeof appSession.flushStorageData === 'function') {
+        appSession.flushStorageData();
+      }
+    } catch {
+      // ignore
+    }
+    appSession.cookies.flushStore().catch(() => {});
     // Heavy portals break (blank CRM) if we wipe cache between wakes.
-    if (!isHeavyPortalApp(service)) {
+    // Also skip HTTP cache trim for messaging — safer for session stickiness.
+    if (!isHeavyPortalApp(service) && !isMessagingApp(service)) {
       trimGuestHttpCache(service.partition).catch(() => {});
     }
   }
