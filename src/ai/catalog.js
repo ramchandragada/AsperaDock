@@ -34,16 +34,24 @@ export const AI_PROVIDERS = Object.freeze([
     id: 'gemini',
     name: 'Google Gemini',
     freeTierFriendly: true,
-    defaultModel: 'gemini-2.0-flash',
-    models: ['gemini-2.0-flash', 'gemini-2.0-flash-lite', 'gemini-1.5-flash'],
+    // gemini-2.0-flash often has free-tier limit: 0 — prefer 2.5 Flash-Lite.
+    defaultModel: 'gemini-2.5-flash-lite',
+    models: [
+      'gemini-2.5-flash-lite',
+      'gemini-2.5-flash',
+      'gemini-2.0-flash-lite',
+      'gemini-2.0-flash',
+      'gemini-1.5-flash',
+    ],
     keyHint: 'AI Studio API key (aistudio.google.com)',
   },
   {
     id: 'grok',
     name: 'xAI Grok',
     freeTierFriendly: true,
-    defaultModel: 'grok-2-latest',
-    models: ['grok-2-latest', 'grok-3-mini'],
+    // grok-2-latest is retired and returns HTTP 400 on many keys.
+    defaultModel: 'grok-4.5',
+    models: ['grok-4.5', 'grok-4.3', 'grok-3-mini'],
     keyHint: 'console.x.ai API key',
   },
   {
@@ -84,6 +92,38 @@ export const AI_PROVIDERS = Object.freeze([
     keyHint: 'Paid console.anthropic.com key (not free-tier)',
   },
 ]);
+
+/** Map retired / mistyped Grok model ids to current xAI API ids. */
+export function normalizeGrokModel(model) {
+  const raw = String(model || '').trim();
+  const map = {
+    'grok-2-latest': 'grok-4.5',
+    'grok-2': 'grok-4.5',
+    'grok-beta': 'grok-4.5',
+    'grok-3': 'grok-4.3',
+    'grok-3-mini': 'grok-4.3',
+    'grok-3-mini-fast': 'grok-4.3',
+  };
+  return map[raw] || raw || 'grok-4.5';
+}
+
+/** Map retired Gemini model ids; prefer free-tier-friendly 2.5 Flash-Lite. */
+export function normalizeGeminiModel(model) {
+  const raw = String(model || '').trim();
+  if (!raw || raw === 'gemini-2.0-flash' || raw === 'gemini-pro') {
+    return 'gemini-2.5-flash-lite';
+  }
+  return raw;
+}
+
+/** Candidate Gemini models to try when one hits quota limit: 0 / 429. */
+export function geminiModelFallbackChain(preferred) {
+  const start = normalizeGeminiModel(preferred);
+  const gemini = AI_PROVIDERS.find((p) => p.id === 'gemini');
+  const catalog = gemini?.models || [];
+  const ordered = [start, ...catalog.filter((m) => m !== start)];
+  return [...new Set(ordered)];
+}
 
 /** Map retired / mistyped model ids to current Anthropic API ids. */
 export function normalizeAnthropicModel(model) {

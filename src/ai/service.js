@@ -1,6 +1,9 @@
 import {
   getAiProvider,
+  geminiModelFallbackChain,
   normalizeAnthropicModel,
+  normalizeGeminiModel,
+  normalizeGrokModel,
   resolveAiAttemptOrder,
 } from './catalog.js';
 import {
@@ -76,8 +79,12 @@ async function callOpenAiCompatible({
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const msg =
-      data?.error?.message || data?.message || `Provider HTTP ${res.status}`;
-    throw new Error(msg);
+      data?.error?.message ||
+      data?.error?.code ||
+      (typeof data?.error === 'string' ? data.error : '') ||
+      data?.message ||
+      `Provider HTTP ${res.status}`;
+    throw new Error(String(msg));
   }
   const text = data?.choices?.[0]?.message?.content;
   if (!text) throw new Error('Empty response from provider');
@@ -96,12 +103,51 @@ async function callGemini({ apiKey, model, prompt }) {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    throw new Error(data?.error?.message || `Gemini HTTP ${res.status}`);
+    const msg = data?.error?.message || `Gemini HTTP ${res.status}`;
+    const err = new Error(msg);
+    err.status = res.status;
+    err.model = model;
+    throw err;
   }
   const parts = data?.candidates?.[0]?.content?.parts || [];
   const text = parts.map((p) => p.text || '').join('').trim();
   if (!text) throw new Error('Empty response from Gemini');
   return text;
+}
+
+function isGeminiQuotaError(message) {
+  const m = String(message || '').toLowerCase();
+  return (
+    m.includes('quota') ||
+    m.includes('rate limit') ||
+    m.includes('resource_exhausted') ||
+    m.includes('limit: 0') ||
+    m.includes('exceeded your current quota')
+  );
+}
+
+/** Try Gemini models in chain until one works (handles free-tier limit: 0 on 2.0-flash). */
+async function callGeminiWithModelFallback({ apiKey, model, prompt }) {
+  const chain = geminiModelFallbackChain(model);
+  const errors = [];
+  for (const candidate of chain) {
+    try {
+      const text = await callGemini({ apiKey, model: candidate, prompt });
+      return { text, model: candidate };
+    } catch (error) {
+      const message = String(error?.message || error);
+      errors.push(`${candidate}: ${message}`);
+      // Only continue the chain for quota / unavailable-model style failures.
+      if (!isGeminiQuotaError(message) && !/not found|invalid|404/i.test(message)) {
+        throw error;
+      }
+    }
+  }
+  throw new Error(
+    errors.length
+      ? `Gemini quota/model failed for all candidates:\n${errors.join('\n')}`
+      : 'Gemini unavailable',
+  );
 }
 
 async function callAnthropic({ apiKey, model, prompt }) {
@@ -160,7 +206,12 @@ export async function runAiCompletion({
   const chosen = String(model || provider.defaultModel || '').trim();
 
   if (provider.id === 'gemini') {
-    return callGemini({ apiKey, model: chosen, prompt });
+    const result = await callGeminiWithModelFallback({
+      apiKey,
+      model: normalizeGeminiModel(chosen),
+      prompt,
+    });
+    return result.text;
   }
   if (provider.id === 'anthropic') {
     return callAnthropic({ apiKey, model: chosen, prompt });
@@ -169,7 +220,7 @@ export async function runAiCompletion({
     return callOpenAiCompatible({
       baseUrl: 'https://api.x.ai/v1',
       apiKey,
-      model: chosen,
+      model: normalizeGrokModel(chosen),
       prompt,
     });
   }
@@ -236,7 +287,11 @@ export async function runAiCompletionWithFailover(prompt) {
     }
 
     let model = provider.defaultModel;
-    if (provider.id === 'openrouter' && model === 'openrouter/free') {
+    if (provider.id === 'gemini') {
+      model = normalizeGeminiModel(model);
+    } else if (provider.id === 'grok') {
+      model = normalizeGrokModel(model);
+    } else if (provider.id === 'openrouter' && model === 'openrouter/free') {
       model = 'google/gemini-2.0-flash-001';
     }
 
@@ -265,9 +320,13 @@ export async function runAiCompletionWithFailover(prompt) {
     }
   }
 
+  const hint =
+    !configured.includes('anthropic')
+      ? '\n\nTip: This PC has no Anthropic key saved. Add one in Settings → Aspera AI (works on your other PC), or fix Gemini/Grok keys.'
+      : '';
   throw new Error(
     errors.length
-      ? `All configured AI providers failed:\n${errors.join('\n')}`
+      ? `All configured AI providers failed:\n${errors.join('\n')}${hint}`
       : 'No AI provider available',
   );
 }
