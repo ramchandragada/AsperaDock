@@ -6,7 +6,6 @@
 Icon=<%= name %>
 <% } %>Type=Application
 StartupNotify=true
-<%# Match --class=asperadock / app.setName so Mint Cinnamon + XFCE panels pin the right icon. -%>
 StartupWMClass=asperadock
 <% if (categories && categories.length) { %>Categories=<%= categories.join(';') %>;
 <% } %><% if (mimeType && mimeType.length) { %>MimeType=<%= mimeType.join(';') %>;
