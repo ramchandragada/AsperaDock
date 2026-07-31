@@ -605,6 +605,84 @@ function softReloadActiveGuest(reason = 'idle-blank') {
   }
 }
 
+const ACTIVE_SURFACE_CHECK_DELAYS_MS = [2500, 5500, 10000];
+const ACTIVE_SURFACE_POLL_MS = 40_000;
+
+function clearActiveSurfaceTimers(entry) {
+  if (!entry?.__surfaceHealthTimers?.length) return;
+  for (const t of entry.__surfaceHealthTimers) clearTimeout(t);
+  entry.__surfaceHealthTimers = [];
+}
+
+/**
+ * Pixel-based blank recovery for the ACTIVE guest (WhatsApp, Arattai, Gmail, …).
+ * Zoho keeps its own DOM/iframe health path; this covers compositor-dead surfaces
+ * that stay blank while the Hub window is still focused.
+ */
+async function runActiveGuestSurfaceHealthCheck(id, { fromPoll = false } = {}) {
+  if (!id || id !== activeServiceId || locked) return;
+  if (overlayOpen && overlayMode === 'full') return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindow.isVisible() || mainWindow.isMinimized()) return;
+  // Poll path: only while the user is present and Hub is focused.
+  if (fromPoll && !dockIsUserFocused()) return;
+
+  const entry = views.get(id);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed() || wc.isLoading()) return;
+
+  const blank = await isGuestVisuallyBlank(wc);
+  if (!blank) {
+    entry.__surfaceBlankStrikes = 0;
+    return;
+  }
+
+  entry.__surfaceBlankStrikes = (entry.__surfaceBlankStrikes || 0) + 1;
+  try {
+    logBreadcrumb('guest-surface-blank', {
+      serviceId: id,
+      strikes: entry.__surfaceBlankStrikes,
+      fromPoll: !!fromPoll,
+    });
+  } catch {
+    // ignore
+  }
+
+  if (entry.__surfaceBlankStrikes === 1) {
+    // First strike: re-seat + two-step repaint (no reload yet).
+    try {
+      detachGuestView(entry.view);
+      attachGuestView(entry.view);
+    } catch {
+      // ignore
+    }
+    entry.__lastBounds = null;
+    repaintActiveGuestView({ reason: 'active-surface-blank' });
+    setTimeout(() => {
+      if (id === activeServiceId) {
+        runActiveGuestSurfaceHealthCheck(id, { fromPoll });
+      }
+    }, 2200);
+    return;
+  }
+
+  // Second+ strike: soft reload once (cooldown inside softReloadActiveGuest).
+  entry.__surfaceBlankStrikes = 0;
+  softReloadActiveGuest('active-surface-blank');
+}
+
+function scheduleActiveGuestSurfaceChecks(id) {
+  const entry = views.get(id);
+  if (!entry) return;
+  clearActiveSurfaceTimers(entry);
+  entry.__surfaceBlankStrikes = 0;
+  entry.__surfaceHealthTimers = ACTIVE_SURFACE_CHECK_DELAYS_MS.map((delay) =>
+    setTimeout(() => {
+      runActiveGuestSurfaceHealthCheck(id);
+    }, delay),
+  );
+}
+
 /**
  * After the user returns from lock / sleep / long idle: reattach + two-step
  * repaint, then reload only if the surface is still visually blank.
@@ -4099,6 +4177,27 @@ function createViewForService(service) {
     }, 500);
   });
 
+  webContents.on('unresponsive', () => {
+    try {
+      logBreadcrumb('guest-unresponsive', {
+        serviceId: service.id,
+        appId: service.appId,
+      });
+    } catch {
+      // ignore
+    }
+    if (service.id !== activeServiceId || locked) return;
+    // Kick the surface first; reload on next blank health strike if still dead.
+    const entry = views.get(service.id);
+    if (!entry) return;
+    entry.__surfaceBlankStrikes = Math.max(1, entry.__surfaceBlankStrikes || 0);
+    setTimeout(() => {
+      if (service.id === activeServiceId) {
+        runActiveGuestSurfaceHealthCheck(service.id);
+      }
+    }, 800);
+  });
+
   if (cfg.preventBasicAuth) {
     webContents.on('login', (event) => {
       event.preventDefault();
@@ -4539,6 +4638,8 @@ function activateService(id) {
       }
     }
   }
+  // All apps (WhatsApp included): pixel surface checks while this tab is active.
+  scheduleActiveGuestSurfaceChecks(id);
   entry.__parked = false;
 
   // Only user-selected apps remain loaded after switching away.
@@ -6254,6 +6355,22 @@ function watchSystemIdle() {
       }
     }
   }, 15_000);
+
+  // While Hub stays focused, periodically sample the active guest surface.
+  // Catches WhatsApp/Arattai going blank without alt-tab or idle.
+  setInterval(() => {
+    if (!activeServiceId || locked) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (!dockIsUserFocused()) return;
+    let idleSec = 0;
+    try {
+      idleSec = powerMonitor.getSystemIdleTime();
+    } catch {
+      idleSec = 0;
+    }
+    if (idleSec >= 90) return;
+    runActiveGuestSurfaceHealthCheck(activeServiceId, { fromPoll: true });
+  }, ACTIVE_SURFACE_POLL_MS);
 }
 
 app.whenReady().then(async () => {
