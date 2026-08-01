@@ -20,7 +20,14 @@ import { buildAppMenuHtml } from './appMenuHtml.js';
 import { buildChromeMenuHtml } from './chromeMenuHtml.js';
 import { buildNotifCenterHtml } from './notifCenterHtml.js';
 import { buildAiResultHtml } from './aiResultHtml.js';
+import { buildForwardPickerHtml } from './forwardPickerHtml.js';
 import { buildExtensionsHtml } from './extensionsHtml.js';
+import {
+  buildForwardClipboardText,
+  canOfferForward,
+  describeForwardPayload,
+  isForwardAppId,
+} from './forwardHub.js';
 import {
   installUnpackedExtension,
   listInstalledExtensions,
@@ -373,6 +380,19 @@ let notifCenterWindow = null;
 let aiResultWindow = null;
 /** Context for follow-up actions on the open AI result (e.g. suggest replies). */
 let aiResultContext = null;
+/** Floating Forward-with-Hub account picker. */
+let forwardPickerWindow = null;
+/** @type {null | {
+ *   text: string,
+ *   linkURL: string,
+ *   imagePath: string,
+ *   filePath: string,
+ *   hasImage: boolean,
+ *   sourceServiceId: string,
+ *   sourceAppId: string,
+ *   sourceName: string,
+ * }} */
+let forwardPayload = null;
 /** Floating Chrome-like Extensions manager. */
 let extensionsWindow = null;
 let settings = loadSettings();
@@ -1489,6 +1509,19 @@ function aiResultHandle(channel, handler) {
   });
 }
 
+function forwardPickerHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !forwardPickerWindow ||
+      forwardPickerWindow.isDestroyed() ||
+      event.sender !== forwardPickerWindow.webContents
+    ) {
+      throw new Error('Unauthorized forward-picker IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
 function extensionsHandle(channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
     if (
@@ -2337,11 +2370,26 @@ function closeExtensionsWindow() {
   }
 }
 
+function closeForwardPickerWindow() {
+  if (!forwardPickerWindow || forwardPickerWindow.isDestroyed()) {
+    forwardPickerWindow = null;
+    return;
+  }
+  const win = forwardPickerWindow;
+  forwardPickerWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
 function closeAllFloatMenus() {
   closeAppContextMenu();
   closeChromeMenuWindow();
   closeNotifCenterWindow();
   closeAiResultWindow();
+  closeForwardPickerWindow();
   closeExtensionsWindow();
 }
 
@@ -4095,6 +4143,303 @@ function guestWebPreferences(service) {
   };
 }
 
+function serviceIdForWebContents(webContents) {
+  if (!webContents) return activeServiceId;
+  for (const [id, entry] of views.entries()) {
+    if (entry?.view?.webContents === webContents) return id;
+  }
+  return activeServiceId;
+}
+
+function listForwardTargets(excludeServiceId) {
+  return orderedServices().filter((service) => {
+    if (!isForwardAppId(service.appId)) return false;
+    if (service.id === excludeServiceId) return false;
+    const cfg = getAppConfig(service.id);
+    return cfg?.enabled !== false;
+  });
+}
+
+function forwardTempDir() {
+  const dir = path.join(app.getPath('temp'), 'asperadock-forward');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function saveForwardImage(image) {
+  if (!image || image.isEmpty()) return '';
+  try {
+    const file = path.join(forwardTempDir(), `forward-${Date.now()}.png`);
+    fs.writeFileSync(file, image.toPNG());
+    return file;
+  } catch {
+    return '';
+  }
+}
+
+async function captureForwardImage(webContents, params) {
+  try {
+    if (params?.hasImageContents) {
+      webContents.copyImageAt(params.x, params.y);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      const fromClipboard = clipboard.readImage();
+      if (fromClipboard && !fromClipboard.isEmpty()) return fromClipboard;
+    }
+  } catch {
+    // ignore
+  }
+  const src = String(params?.srcURL || '');
+  if (src.startsWith('data:image')) {
+    try {
+      const img = nativeImage.createFromDataURL(src);
+      if (!img.isEmpty()) return img;
+    } catch {
+      // ignore
+    }
+  }
+  return nativeImage.createEmpty();
+}
+
+async function beginForwardFromGuest(webContents, params = {}) {
+  const sourceId = serviceIdForWebContents(webContents);
+  const source = getService(sourceId);
+  if (!source || !isForwardAppId(source.appId)) {
+    return { ok: false, error: 'Forward works from WhatsApp or Arattai.' };
+  }
+  const targets = listForwardTargets(source.id);
+  if (!targets.length) {
+    const box = {
+      type: 'info',
+      title: 'Forward with Aspera Hub',
+      message: 'Add another WhatsApp or Arattai account first.',
+      detail:
+        'Forward sends content to a different Hub tab. Add a second messaging account, then try again.',
+      buttons: ['OK'],
+    };
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await dialog.showMessageBox(mainWindow, box);
+    } else {
+      await dialog.showMessageBox(box);
+    }
+    return { ok: false, error: 'No target accounts.' };
+  }
+
+  const text = String(params.selectionText || '').trim();
+  const linkURL = String(params.linkURL || '').trim();
+  const image = await captureForwardImage(webContents, params);
+  const imagePath = saveForwardImage(image);
+  const hasImage = !!(imagePath || (image && !image.isEmpty()));
+
+  if (!text && !hasImage && !linkURL) {
+    return { ok: false, error: 'Select text, an image, or a link to forward.' };
+  }
+
+  forwardPayload = {
+    text,
+    linkURL: linkURL.startsWith('javascript:') ? '' : linkURL,
+    imagePath,
+    filePath: '',
+    hasImage,
+    sourceServiceId: source.id,
+    sourceAppId: source.appId,
+    sourceName: source.name || source.defaultName || source.appId,
+  };
+
+  return openForwardPickerWindow({
+    dark: false,
+    anchorX: params.x,
+    anchorY: params.y,
+    webContents,
+  });
+}
+
+function openForwardPickerWindow({
+  dark = false,
+  anchorX = 0,
+  anchorY = 0,
+  webContents = null,
+} = {}) {
+  if (!mainWindow || mainWindow.isDestroyed() || !forwardPayload) {
+    return { ok: false };
+  }
+
+  closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAiResultWindow();
+  closeForwardPickerWindow();
+  closeExtensionsWindow();
+
+  const menuW = 360;
+  const menuH = 420;
+  const content = mainWindow.getContentBounds();
+  let rawX = content.x + content.width - menuW - 16;
+  let rawY = content.y + 72;
+  try {
+    if (webContents) {
+      for (const entry of views.values()) {
+        if (entry?.view?.webContents === webContents) {
+          const bounds = entry.view.getBounds?.() || entry.__lastBounds;
+          if (bounds) {
+            rawX = content.x + (bounds.x || 0) + (Number(anchorX) || 0);
+            rawY = content.y + (bounds.y || 0) + (Number(anchorY) || 0);
+          }
+          break;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  const pos = clampFloatPosition(rawX, rawY, menuW, menuH);
+
+  forwardPickerWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'forwardPickerPreload.js',
+    dark: !!dark,
+  });
+
+  const win = forwardPickerWindow;
+  const source = getService(forwardPayload.sourceServiceId);
+  const targets = listForwardTargets(forwardPayload.sourceServiceId).map((service) => {
+    const profile = (settings.profiles || []).find((p) => p.id === service.profileId);
+    const catalog = getAppCatalogEntry(service.appId);
+    return {
+      id: service.id,
+      name: service.name || service.defaultName || catalog?.name || service.appId,
+      appName: catalog?.name || service.appId,
+      color: service.color || catalog?.color || '#64748b',
+      profileName: profile?.name || '',
+      logoDataUrl: '',
+    };
+  });
+
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildForwardPickerHtml(!!dark))}`,
+  );
+  win.webContents.once('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    win.webContents.send('forward-picker:init', {
+      sourceLabel: source?.name || forwardPayload.sourceName || 'this chat',
+      preview: describeForwardPayload({
+        text: forwardPayload.text,
+        hasImage: forwardPayload.hasImage,
+        linkURL: forwardPayload.linkURL,
+        fileName: forwardPayload.filePath
+          ? path.basename(forwardPayload.filePath)
+          : '',
+      }),
+      targets,
+    });
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  win.on('blur', () => {
+    setTimeout(() => {
+      if (forwardPickerWindow === win) closeForwardPickerWindow();
+    }, 160);
+  });
+  win.on('closed', () => {
+    if (forwardPickerWindow === win) forwardPickerWindow = null;
+  });
+  return { ok: true };
+}
+
+async function stageForwardPaste(serviceId) {
+  const entry = views.get(serviceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return false;
+  try {
+    return !!(await wc.executeJavaScript(
+      `(() => {
+        const focusAndPaste = (node) => {
+          if (!node) return false;
+          try { node.focus(); } catch (e) {}
+          try {
+            return document.execCommand('paste');
+          } catch (e) {
+            return false;
+          }
+        };
+        const marked = document.querySelector('[data-aspera-ai-compose="1"]');
+        if (focusAndPaste(marked)) return true;
+        const selectors = [
+          'footer [contenteditable="true"]',
+          '[contenteditable="true"][role="textbox"]',
+          '[contenteditable="true"][data-tab]',
+          'div[contenteditable="true"]',
+          'textarea',
+        ];
+        for (const sel of selectors) {
+          const node = document.querySelector(sel);
+          if (node && focusAndPaste(node)) return true;
+        }
+        return false;
+      })()`,
+      true,
+    ));
+  } catch {
+    return false;
+  }
+}
+
+async function deliverForwardToTarget(targetId) {
+  const payload = forwardPayload;
+  if (!payload) return { ok: false, error: 'Nothing to forward.' };
+  const target = getService(targetId);
+  if (!target || !isForwardAppId(target.appId)) {
+    return { ok: false, error: 'Choose a WhatsApp or Arattai account.' };
+  }
+
+  const clipText = buildForwardClipboardText(payload);
+  /** @type {Electron.Data} */
+  const write = {};
+  if (clipText) write.text = clipText;
+  if (payload.imagePath && fs.existsSync(payload.imagePath)) {
+    const image = nativeImage.createFromPath(payload.imagePath);
+    if (!image.isEmpty()) write.image = image;
+  }
+  if (Object.keys(write).length) {
+    try {
+      clipboard.write(write);
+    } catch {
+      if (clipText) clipboard.writeText(clipText);
+    }
+  }
+
+  closeForwardPickerWindow();
+  activateService(targetId);
+  await new Promise((resolve) => setTimeout(resolve, 480));
+  await markActiveComposeTarget(targetId);
+  const pasted = await stageForwardPaste(targetId);
+
+  const targetName = target.name || target.defaultName || 'account';
+  const detail = pasted
+    ? `Staged in ${targetName}. Open the right chat if needed, then send.`
+    : `Switched to ${targetName}. Open a chat and press Ctrl+V to paste.`;
+
+  try {
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Forward with Aspera Hub',
+        body: detail,
+        silent: true,
+      }).show();
+    }
+  } catch {
+    // ignore
+  }
+
+  return { ok: true, pasted };
+}
+
 /**
  * Native right-click menu for guest pages (Cut / Copy / Paste / Select All…).
  * Electron does not show Chromium's built-in menu unless we handle this event.
@@ -4153,8 +4498,28 @@ function attachGuestContextMenu(webContents) {
 
     const editable = params.isEditable;
     const hasSelection = Boolean(params.selectionText);
+    const sourceServiceId = serviceIdForWebContents(webContents);
+    const service = getService(sourceServiceId) || getService(activeServiceId);
+    const forwardTargets = service ? listForwardTargets(service.id) : [];
+    if (
+      service &&
+      canOfferForward({
+        appId: service.appId,
+        hasSelection,
+        hasImage: !!params.hasImageContents,
+        linkURL: params.linkURL,
+        targetCount: forwardTargets.length,
+      })
+    ) {
+      template.push({
+        label: 'Forward with Aspera Hub',
+        click: () => {
+          beginForwardFromGuest(webContents, params).catch(() => {});
+        },
+      });
+      template.push({ type: 'separator' });
+    }
 
-    const service = getService(activeServiceId);
     if (
       hasSelection &&
       service &&
@@ -6354,6 +6719,13 @@ aiResultHandle('ai-result:sync-refine', (_e, text) => {
     ...aiResultContext,
     refinedText: String(text || ''),
   };
+  return { ok: true };
+});
+forwardPickerHandle('forward-picker:pick', (_e, serviceId) =>
+  deliverForwardToTarget(String(serviceId || '')),
+);
+forwardPickerHandle('forward-picker:close', () => {
+  closeForwardPickerWindow();
   return { ok: true };
 });
 async function commitInstalledExtension(installed) {
