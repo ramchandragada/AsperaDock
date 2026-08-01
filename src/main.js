@@ -23,6 +23,7 @@ import { buildAiResultHtml } from './aiResultHtml.js';
 import { buildForwardPickerHtml } from './forwardPickerHtml.js';
 import { buildExtensionsHtml } from './extensionsHtml.js';
 import {
+  arattaiFullFileUrlFromAny,
   buildForwardClipboardText,
   canOfferForward,
   describeForwardPayload,
@@ -34,6 +35,7 @@ import {
   forwardReadyMessage,
   forwardTimeoutMessage,
   forwardWaitMessage,
+  hasStrongDocumentEvidence,
   isDocumentExtension,
   isForwardAppId,
   classifyForwardFileBytes,
@@ -4274,6 +4276,8 @@ async function inspectForwardContext(webContents, x, y) {
     hasDownload: false,
     hasDocIcon: false,
     docLikely: false,
+    arattaiDownloadUrl: '',
+    downloadPoints: [],
   };
   if (!webContents || webContents.isDestroyed()) return empty;
   try {
@@ -4286,17 +4290,30 @@ async function inspectForwardContext(webContents, x, y) {
           return {
             url: '', name: '', nearbyText: '', hasDownload: false,
             hasDocIcon: false, docLikely: false,
+            arattaiDownloadUrl: '', downloadPoints: [],
           };
         }
         const isDoc = (href, name) => {
           const s = String(href || '') + ' ' + String(name || '');
           return /\\.(pdf|docx?|xlsx?|pptx?|txt|csv|zip|rar|7z)(\\?|#|$)/i.test(s)
             || /application\\/pdf|\\/pdf\\b/i.test(s)
+            || /webdownload|\\/v1\\/attachments\\//i.test(s)
             || /\\bpdf\\b/i.test(String(name || ''));
         };
         const abs = (href) => {
           try { return new URL(href, location.href).href; }
           catch (e) { return String(href || ''); }
+        };
+        const chatIdGuess = () => {
+          const href = String(location.href || '');
+          const hash = String(location.hash || '');
+          const hay = href + ' ' + hash;
+          return (
+            (hay.match(/chats?\\/([A-Za-z0-9_.-]+)/i) || [])[1] ||
+            (hay.match(/[?&#](?:chat[_-]?id|chid|chidid)=([A-Za-z0-9_.-]+)/i) || [])[1] ||
+            (hay.match(/\\b([0-9]{10,})\\b/) || [])[1] ||
+            ''
+          );
         };
         const pickLink = (node) => {
           if (!node) return null;
@@ -4323,6 +4340,68 @@ async function inspectForwardContext(webContents, x, y) {
             return { url: abs(attrUrl), name: String(attrName || '').trim() };
           }
           return null;
+        };
+        const collectAttrUrls = (root) => {
+          const out = [];
+          const push = (v) => {
+            const s = String(v || '').trim();
+            if (!s) return;
+            if (/^https?:|^blob:|^data:/i.test(s) || s.startsWith('/')) out.push(abs(s));
+          };
+          if (!root?.querySelectorAll) return out;
+          for (const el of root.querySelectorAll('img, a, source, [src], [href], [data-url], [data-src], [data-file-url], [data-file-id], [data-id]')) {
+            push(el.currentSrc || el.src);
+            push(el.href);
+            for (const attr of [
+              'data-url', 'data-src', 'data-file-url', 'data-original',
+              'data-file-id', 'data-id', 'data-event-id', 'data-msgid',
+            ]) {
+              push(el.getAttribute?.(attr));
+            }
+          }
+          try {
+            for (const entry of performance.getEntriesByType('resource') || []) {
+              push(entry.name);
+            }
+          } catch (e) {}
+          return out;
+        };
+        const downloadishScore = (el) => {
+          if (!el || el === document.body) return 0;
+          const hay = [
+            el.getAttribute?.('aria-label'),
+            el.getAttribute?.('title'),
+            el.getAttribute?.('data-icon'),
+            el.getAttribute?.('data-testid'),
+            el.getAttribute?.('data-mat-icon-name'),
+            el.className,
+            el.id,
+            el.tagName === 'MAT-ICON' || el.classList?.contains?.('material-icons')
+              ? el.textContent
+              : '',
+          ].join(' ').toLowerCase();
+          let score = 0;
+          if (/download|file_download|get_app|save as|save_alt|arrow_downward/.test(hay)) score += 8;
+          if (/\\bpdf\\b|document|attachment/.test(hay)) score += 2;
+          if (el.tagName === 'A' && el.hasAttribute?.('download')) score += 10;
+          // Small icon-like controls inside a document card (Arattai arrow).
+          try {
+            const r = el.getBoundingClientRect?.();
+            if (r && r.width > 8 && r.width < 56 && r.height > 8 && r.height < 56) score += 1;
+          } catch (e) {}
+          return score;
+        };
+        const centerOf = (el) => {
+          try {
+            const r = el.getBoundingClientRect();
+            if (!r || r.width < 2 || r.height < 2) return null;
+            return {
+              x: Math.round(r.left + r.width / 2),
+              y: Math.round(r.top + r.height / 2),
+            };
+          } catch (e) {
+            return null;
+          }
         };
 
         // Prefer a message/bubble container so "Invoice.pdf" labels are visible.
@@ -4360,20 +4439,27 @@ async function inspectForwardContext(webContents, x, y) {
           .trim()
           .slice(0, 500);
         const fileFromText = (nearbyText.match(/([\\w.\\- ()[\\]]+\\.(?:pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv))\\b/i) || [])[1] || '';
+        const truncatedPdf = (nearbyText.match(
+          /([A-Za-z0-9][\\w.\\- ()[\\]]{2,80})\\.\\.\\.(?:(?!\\n).{0,80})?\\bPDF\\b/i,
+        ) || [])[1] || '';
         if (!name && fileFromText) name = fileFromText;
+        if (!name && truncatedPdf) name = truncatedPdf + '.pdf';
 
-        const hasDownload = !!(root?.querySelector?.(
-          [
-            '[aria-label*="download" i]',
-            '[title*="download" i]',
-            '[aria-label*="Download" i]',
-            '[data-testid*="download" i]',
-            '[data-icon="download"]',
-            'a[download]',
-            'button[aria-label*="save" i]',
-            '[aria-label*="Save as" i]',
-          ].join(', '),
-        ));
+        const downloadSelectors = [
+          '[aria-label*="download" i]',
+          '[title*="download" i]',
+          '[aria-label*="Download" i]',
+          '[data-testid*="download" i]',
+          '[data-icon="download"]',
+          '[class*="download" i]',
+          '[id*="download" i]',
+          'a[download]',
+          'button[aria-label*="save" i]',
+          '[aria-label*="Save as" i]',
+          '[title*="Save as" i]',
+          '[data-mat-icon-name*="download" i]',
+        ];
+        const hasDownload = !!(root?.querySelector?.(downloadSelectors.join(', ')));
         // Avoid broad class*=document matches — many UIs use "document" in
         // unrelated class names and that false-flags ordinary photo bubbles.
         const hasDocIcon = !!(root?.querySelector?.(
@@ -4386,25 +4472,107 @@ async function inspectForwardContext(webContents, x, y) {
             'span[data-icon="audio-document"]',
           ].join(', '),
         ));
+        const pagesMeta = /\\b\\d+\\s*pages?\\s*[·•|\\-]\\s*[\\d.,]+\\s*(KB|MB|GB)\\b/i.test(nearbyText);
         const docLikely =
           !!url ||
           !!fileFromText ||
+          !!truncatedPdf ||
           hasDocIcon ||
+          pagesMeta ||
           /\\bPDF\\b/.test(nearbyText) ||
           /\\b(Document|Attachment)\\b/i.test(nearbyText) ||
           /\\.(pdf|docx?|xlsx?|pptx?)\\b/i.test(nearbyText);
+
+        const chatId = chatIdGuess();
+        let arattaiDownloadUrl = '';
+        const mediaUrls = collectAttrUrls(root || start);
+        for (const mediaUrl of mediaUrls) {
+          if (/files\\.arattai\\.in\\/webdownload|\\/v1\\/attachments\\//i.test(mediaUrl)) {
+            url = url || mediaUrl;
+            // Prefer rebuilding full-file URL in main via parse helpers.
+            arattaiDownloadUrl = arattaiDownloadUrl || mediaUrl;
+          }
+          const fileIdAttr = (mediaUrl.match(/event-id=([^&]+)/i) || [])[1];
+          if (fileIdAttr && chatId && !arattaiDownloadUrl.includes('thumbnail')) {
+            // keep first candidate; main will strip thumbnail
+          }
+        }
+        // data-file-id on card + chat from location
+        if (!arattaiDownloadUrl && root?.querySelectorAll && chatId) {
+          for (const el of root.querySelectorAll('[data-file-id], [data-event-id], [data-id]')) {
+            const fid = el.getAttribute('data-file-id')
+              || el.getAttribute('data-event-id')
+              || el.getAttribute('data-id')
+              || '';
+            if (fid && fid.length >= 8) {
+              arattaiDownloadUrl =
+                'https://files.arattai.in/webdownload?x-service=CLIQ&event-id=' +
+                encodeURIComponent(fid) +
+                '&x-cli-msg=' +
+                encodeURIComponent(JSON.stringify({ chat_id: chatId }));
+              break;
+            }
+          }
+        }
+
+        const downloadPoints = [];
+        const seen = new Set();
+        const pushPoint = (el, why) => {
+          const pt = centerOf(el);
+          if (!pt) return;
+          const key = pt.x + ',' + pt.y;
+          if (seen.has(key)) return;
+          seen.add(key);
+          downloadPoints.push({ x: pt.x, y: pt.y, why: String(why || '') });
+        };
+        const scope = root || document;
+        for (const sel of downloadSelectors) {
+          for (const btn of scope.querySelectorAll(sel)) pushPoint(btn, sel);
+        }
+        // Score icon-like controls in the bubble (Arattai often uses unlabeled arrows).
+        const candidates = Array.from(
+          scope.querySelectorAll('button, a, [role="button"], svg, i, mat-icon, span, div'),
+        );
+        candidates
+          .map((el) => ({ el, score: downloadishScore(el) }))
+          .filter((row) => row.score >= 3)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 8)
+          .forEach((row) => pushPoint(row.el.closest('button, a, [role="button"]') || row.el, 'score'));
+
+        // Filename / PDF meta label click (opens or downloads depending on app).
+        for (const n of scope.querySelectorAll('span, div, a, button, p')) {
+          const t = String(n.textContent || '').replace(/\\s+/g, ' ').trim();
+          if (!t || t.length > 120) continue;
+          if (
+            /\\.(pdf|docx?|xlsx?|pptx?)\\b/i.test(t) ||
+            (/\\bPDF\\b/.test(t) && t.length < 80) ||
+            /\\b\\d+\\s*pages?\\b/i.test(t)
+          ) {
+            pushPoint(n, 'label');
+          }
+        }
 
         return {
           url,
           name: String(name || '').trim(),
           nearbyText,
-          hasDownload,
+          hasDownload: hasDownload || downloadPoints.length > 0,
           hasDocIcon,
           docLikely,
+          arattaiDownloadUrl,
+          chatId,
+          downloadPoints: downloadPoints.slice(0, 12),
         };
       })()`,
       true,
     );
+    const chatId = String(result?.chatId || '').trim();
+    const rawArattai = String(result?.arattaiDownloadUrl || '').trim();
+    const arattaiDownloadUrl =
+      arattaiFullFileUrlFromAny(rawArattai, chatId) ||
+      arattaiFullFileUrlFromAny(String(result?.url || ''), chatId) ||
+      rawArattai;
     return {
       url: String(result?.url || '').trim(),
       name: String(result?.name || '').trim(),
@@ -4412,28 +4580,43 @@ async function inspectForwardContext(webContents, x, y) {
       hasDownload: !!result?.hasDownload,
       hasDocIcon: !!result?.hasDocIcon,
       docLikely: !!result?.docLikely,
+      arattaiDownloadUrl,
+      chatId,
+      downloadPoints: Array.isArray(result?.downloadPoints) ? result.downloadPoints : [],
     };
   } catch {
     return empty;
   }
 }
 
-/**
- * Trigger the chat app's own download control and capture the file via
- * pendingForwardDownload (will-download hijack).
- */
-async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '') {
-  if (!webContents || webContents.isDestroyed()) {
-    return { ok: false, error: 'Chat view is gone.' };
+function clickWebContentsAt(webContents, x, y) {
+  if (!webContents || webContents.isDestroyed()) return;
+  const cx = Math.max(0, Math.round(Number(x) || 0));
+  const cy = Math.max(0, Math.round(Number(y) || 0));
+  try {
+    webContents.focus();
+  } catch {
+    // ignore
   }
-  const downloadPromise = new Promise((resolve, reject) => {
+  const base = { x: cx, y: cy, button: 'left', clickCount: 1 };
+  try {
+    webContents.sendInputEvent({ type: 'mouseMove', x: cx, y: cy });
+    webContents.sendInputEvent({ type: 'mouseDown', ...base });
+    webContents.sendInputEvent({ type: 'mouseUp', ...base });
+  } catch {
+    // ignore
+  }
+}
+
+function armForwardDownload(fileName = '', timeoutMs = 12_000) {
+  return new Promise((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
       if (pendingForwardDownload?.reject === reject) pendingForwardDownload = null;
       reject(new Error('Document download timed out.'));
-    }, 20_000);
+    }, timeoutMs);
     pendingForwardDownload = {
       fileName,
       resolve: (filePath) => {
@@ -4450,77 +4633,146 @@ async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '') 
       },
     };
   });
+}
 
-  let clicked = false;
+function disarmForwardDownload(downloadPromise) {
+  if (pendingForwardDownload) {
+    const pending = pendingForwardDownload;
+    pendingForwardDownload = null;
+    try {
+      pending.reject(new Error('cancelled'));
+    } catch {
+      // ignore
+    }
+  }
+  return downloadPromise.catch(() => '');
+}
+
+/**
+ * Trigger the chat app's own download control and capture the file via
+ * pendingForwardDownload (will-download hijack).
+ * Uses real mouse events — Arattai/React often ignore element.click().
+ */
+async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', points = []) {
+  if (!webContents || webContents.isDestroyed()) {
+    return { ok: false, error: 'Chat view is gone.' };
+  }
+
+  let clickPoints = Array.isArray(points) ? points.filter((p) => p && p.x >= 0 && p.y >= 0) : [];
+  if (!clickPoints.length) {
+    try {
+      const found = await inspectForwardContext(webContents, x, y);
+      clickPoints = found.downloadPoints || [];
+    } catch {
+      clickPoints = [];
+    }
+  }
+  if (!clickPoints.length) {
+    clickPoints = [{ x, y, why: 'origin' }];
+  }
+
+  // Hover the bubble first so download arrows become interactive.
+  clickWebContentsAt(webContents, x, y);
+  await new Promise((r) => setTimeout(r, 120));
+
+  for (const point of clickPoints.slice(0, 6)) {
+    const downloadPromise = armForwardDownload(fileName, 4_500);
+    clickWebContentsAt(webContents, point.x, point.y);
+    // Also nudge DOM click on the element under the point (covers non-input handlers).
+    try {
+      await webContents.executeJavaScript(
+        `(() => {
+          const el = document.elementFromPoint(${Number(point.x) || 0}, ${Number(point.y) || 0});
+          if (!el) return false;
+          const target = el.closest('a,button,[role="button"],[tabindex]') || el;
+          for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+            target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+          }
+          try { target.click(); } catch (e) {}
+          return true;
+        })()`,
+        true,
+      );
+    } catch {
+      // ignore
+    }
+    try {
+      const filePath = await downloadPromise;
+      if (filePath) return { ok: true, filePath };
+    } catch {
+      await disarmForwardDownload(downloadPromise);
+    }
+  }
+
+  // Open the document card, then look for a download control in the viewer/overlay.
   try {
-    clicked = !!(await webContents.executeJavaScript(
+    clickWebContentsAt(webContents, x, y);
+    await new Promise((r) => setTimeout(r, 700));
+    const overlayPoints = await webContents.executeJavaScript(
       `(() => {
-        const x = ${Number(x) || 0};
-        const y = ${Number(y) || 0};
-        const start = document.elementFromPoint(x, y);
-        if (!start) return false;
-        let root = start;
-        for (let i = 0; i < 14 && root && root !== document.body; i += 1) {
-          const role = String(root.getAttribute?.('role') || '');
-          const cls = String(root.className || '');
-          const testid = String(root.getAttribute?.('data-testid') || '');
-          if (
-            role === 'row' ||
-            /message|bubble|msg|document|attachment|media/i.test(cls + ' ' + testid)
-          ) break;
-          root = root.parentElement;
-        }
-        const selectors = [
+        const sels = [
           '[aria-label*="download" i]',
           '[title*="download" i]',
-          '[data-testid*="download" i]',
           '[data-icon="download"]',
+          '[class*="download" i]',
           'a[download]',
           'button[aria-label*="save" i]',
           '[aria-label*="Save as" i]',
-          '[aria-label*="Download" i]',
         ];
-        const scope = root || document;
-        for (const sel of selectors) {
-          const btn = scope.querySelector(sel);
-          if (!btn) continue;
-          try { btn.click(); return true; } catch (e) {}
+        const pts = [];
+        const seen = new Set();
+        const scopes = [document.querySelector('[role="dialog"]'), document.body];
+        for (const scope of scopes) {
+          if (!scope?.querySelectorAll) continue;
+          for (const sel of sels) {
+            for (const el of scope.querySelectorAll(sel)) {
+              const r = el.getBoundingClientRect();
+              if (!r || r.width < 2 || r.height < 2) continue;
+              const x = Math.round(r.left + r.width / 2);
+              const y = Math.round(r.top + r.height / 2);
+              const key = x + ',' + y;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              pts.push({ x, y });
+            }
+          }
         }
-        // Some apps download when the document card / filename itself is clicked.
-        const label = Array.from(scope.querySelectorAll('span, div, a, button')).find((n) =>
-          /\\.(pdf|docx?|xlsx?|pptx?)\\b/i.test(String(n.textContent || ''))
-        );
-        if (label) {
-          try { label.click(); return true; } catch (e) {}
+        // Unlabeled icon buttons in dialogs (common on Arattai viewers).
+        const dialog = document.querySelector('[role="dialog"]') || document.body;
+        for (const el of dialog.querySelectorAll('button, [role="button"], a')) {
+          const hay = [
+            el.getAttribute('aria-label'),
+            el.getAttribute('title'),
+            el.className,
+            el.textContent,
+          ].join(' ').toLowerCase();
+          if (!/download|save|file_download|get_app/.test(hay)) continue;
+          const r = el.getBoundingClientRect();
+          if (!r || r.width < 2) continue;
+          pts.push({
+            x: Math.round(r.left + r.width / 2),
+            y: Math.round(r.top + r.height / 2),
+          });
         }
-        return false;
+        return pts.slice(0, 8);
       })()`,
       true,
-    ));
-  } catch {
-    clicked = false;
-  }
-
-  if (!clicked) {
-    if (pendingForwardDownload) {
-      const pending = pendingForwardDownload;
-      pendingForwardDownload = null;
-      pending.reject(new Error('No download control in this message.'));
+    );
+    for (const point of (overlayPoints || []).slice(0, 5)) {
+      const downloadPromise = armForwardDownload(fileName, 4_500);
+      clickWebContentsAt(webContents, point.x, point.y);
+      try {
+        const filePath = await downloadPromise;
+        if (filePath) return { ok: true, filePath };
+      } catch {
+        await disarmForwardDownload(downloadPromise);
+      }
     }
-    try {
-      await downloadPromise;
-    } catch {
-      // expected
-    }
-    return { ok: false, error: 'No download control in this message.' };
-  }
-
-  try {
-    const filePath = await downloadPromise;
-    return { ok: true, filePath };
   } catch (error) {
-    return { ok: false, error: String(error?.message || error) };
+    console.warn('[forward] overlay download attempt failed', error);
   }
+
+  return { ok: false, error: 'No download control in this message.' };
 }
 
 function downloadForwardFile(webContents, url, fileName = '') {
@@ -4641,6 +4893,20 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
     (candidateUrl ? path.basename(candidateUrl.split('?')[0]) : '');
 
   const hasImageContents = !!params.hasImageContents;
+  const strongDocument = hasStrongDocumentEvidence({
+    forceDocument,
+    hasImage: hasImageContents || srcLooksLikeImage,
+    linkURL: candidateUrl || linkURL || ctx.url,
+    srcURL: srcLooksLikeImage ? '' : srcURL,
+    fileName: candidateName,
+    text,
+    titleText,
+    nearbyText: ctx.nearbyText,
+    mediaType: params.mediaType,
+    hasDownload: ctx.hasDownload,
+    hasDocIcon: ctx.hasDocIcon,
+    docLikely: ctx.docLikely,
+  });
   const documentHint = shouldForwardAsDocument({
     forceDocument,
     hasImage: hasImageContents || srcLooksLikeImage,
@@ -4668,8 +4934,23 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
       extensionOf(candidateName) || extensionOf(candidateUrl) || 'pdf',
     );
 
-    // 1) Direct URL download when we have a real document link.
-    if (candidateUrl && !srcLooksLikeImage) {
+    const arattaiUrl =
+      String(ctx.arattaiDownloadUrl || '').trim() ||
+      arattaiFullFileUrlFromAny(candidateUrl, ctx.chatId) ||
+      arattaiFullFileUrlFromAny(linkURL, ctx.chatId) ||
+      arattaiFullFileUrlFromAny(srcURL, ctx.chatId);
+
+    // 1) Arattai UDS full-file URL (thumbnail URLs rebuilt without thumbnail flag).
+    if (!filePath && arattaiUrl) {
+      try {
+        filePath = await downloadForwardFile(webContents, arattaiUrl, hintedName);
+      } catch (error) {
+        console.warn('[forward] Arattai document URL download failed', error);
+      }
+    }
+
+    // 2) Direct URL download when we have a real document link.
+    if (!filePath && candidateUrl && !srcLooksLikeImage) {
       try {
         filePath = await downloadForwardFile(webContents, candidateUrl, hintedName);
       } catch (error) {
@@ -4677,13 +4958,14 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
       }
     }
 
-    // 2) Click the chat app's download control and intercept will-download.
+    // 3) Click the chat app's download control and intercept will-download.
     if (!filePath) {
       const ui = await tryCaptureDocumentByUiDownload(
         webContents,
         params.x,
         params.y,
         hintedName,
+        ctx.downloadPoints,
       );
       if (ui.ok && ui.filePath) filePath = ui.filePath;
       else console.warn('[forward] UI document download failed', ui.error);
@@ -4721,10 +5003,11 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
       }
     }
 
-    // Explicit document forward must not fall through to preview-image paste.
-    // Plain "Forward" on a photo that was mis-hinted as a doc should use image path.
+    // Never paste a PDF preview tile as a photo when the bubble is clearly a document
+    // (or the user chose Forward document). Plain Forward on a real photo may still
+    // use the image path if document capture was only a soft/false hint.
     if (!filePath) {
-      if (!forceDocument && hasImageContents) {
+      if (!forceDocument && hasImageContents && !strongDocument) {
         console.warn('[forward] document capture missed; falling back to image forward');
       } else {
         const box = {
@@ -4733,8 +5016,8 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
           message: 'Could not get the PDF/document file.',
           detail:
             'Aspera Hub will not paste the preview thumbnail as a photo.\n\n' +
-            'Try: open/download the document once in this chat, then Forward again.\n' +
-            'Or use right-click → “Forward document with Aspera Hub”.',
+            'Try: tap the download arrow on the document in this chat once, then Forward again.\n' +
+            'Or right-click the PDF card → “Forward document with Aspera Hub”.',
           buttons: ['OK'],
         };
         if (mainWindow && !mainWindow.isDestroyed()) {

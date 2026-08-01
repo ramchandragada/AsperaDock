@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  arattaiFullFileUrlFromAny,
+  buildArattaiDownloadUrl,
   canOfferForward,
   classifyForwardFileBytes,
   describeForwardPayload,
@@ -17,6 +19,7 @@ import {
   isImageOnlyAccept,
   looksLikeDocument,
   mimeForFilename,
+  parseArattaiMediaUrl,
   sanitizeForwardFilename,
   shouldForwardAsDocument,
   shouldOfferDocumentForwardMenu,
@@ -72,6 +75,44 @@ test('looksLikeDocument detects PDF names and URLs', () => {
     false,
   );
   assert.equal(extractDocumentFileName('Shared Policy.pdf · 820 KB'), 'Shared Policy.pdf');
+  assert.equal(
+    extractDocumentFileName('Police_verification_report_52... PDF 2 pages · 148 KB'),
+    'Police_verification_report_52.pdf',
+  );
+  assert.equal(
+    hasStrongDocumentEvidence({
+      hasImage: true,
+      nearbyText: 'Police_verification_report_52... PDF 2 pages · 148 KB',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldForwardAsDocument({
+      hasImage: true,
+      nearbyText: 'Police_verification_report_52... PDF 2 pages · 148 KB',
+    }),
+    true,
+  );
+});
+
+test('Arattai media URLs rebuild full-file downloads without thumbnail', () => {
+  const thumb =
+    'https://files.arattai.in/webdownload?x-service=CLIQ&event-id=fileABC' +
+    `&x-cli-msg=${encodeURIComponent(JSON.stringify({ chat_id: 'chat123', thumbnail: true }))}`;
+  const parsed = parseArattaiMediaUrl(thumb);
+  assert.equal(parsed?.fileId, 'fileABC');
+  assert.equal(parsed?.chatId, 'chat123');
+  assert.equal(parsed?.thumbnail, true);
+  const full = arattaiFullFileUrlFromAny(thumb);
+  assert.match(full, /files\.arattai\.in\/webdownload/);
+  assert.match(full, /event-id=fileABC/);
+  assert.match(full, /chat123/);
+  assert.equal(full.includes('thumbnail'), false);
+  assert.equal(
+    buildArattaiDownloadUrl('id1', 'c1'),
+    'https://files.arattai.in/webdownload?x-service=CLIQ&event-id=id1&x-cli-msg=' +
+      encodeURIComponent(JSON.stringify({ chat_id: 'c1' })),
+  );
 });
 
 test('photo bubbles with Download are not treated as documents', () => {

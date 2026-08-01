@@ -80,10 +80,12 @@ export function hasStrongDocumentEvidence(opts = {}) {
     return true;
   }
   // Chat bubbles often show "Something.pdf" / "PDF · 1.2 MB" next to a preview tile.
+  // Arattai also uses "2 pages · 148 KB" under a truncated name (no .pdf visible).
   if (
     /\b[\w.\- ()[\]]+\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv)\b/i.test(nearby) ||
     /\bPDF\b/.test(nearby) ||
-    /\b(Document|Attachment)\b/i.test(nearby)
+    /\b(Document|Attachment)\b/i.test(nearby) ||
+    /\b\d+\s*pages?\s*[·•|\-]\s*[\d.,]+\s*(KB|MB|GB)\b/i.test(nearby)
   ) {
     return true;
   }
@@ -209,10 +211,76 @@ export function forwardTimeoutMessage(kind, targetName, fileName = '') {
 
 /** Extract a document-looking filename from free text (chat bubble labels). */
 export function extractDocumentFileName(text) {
-  const m = String(text || '').match(
+  const raw = String(text || '');
+  const m = raw.match(
     /([\w.\- ()[\]]+\.(?:pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv))\b/i,
   );
-  return m ? m[1].trim() : '';
+  if (m) return m[1].trim();
+  // Arattai truncates long names: "Police_verification_report_52... PDF"
+  const truncated = raw.match(
+    /([A-Za-z0-9][\w.\- ()[\]]{2,80})\.\.\.(?:(?!\n).{0,80})?\bPDF\b/i,
+  );
+  if (truncated) return `${truncated[1].trim()}.pdf`;
+  return '';
+}
+
+/** Build Arattai/Cliq UDS download URL (full file, not thumbnail). */
+export function buildArattaiDownloadUrl(fileId, chatId, { thumbnail = false } = {}) {
+  const id = String(fileId || '').trim();
+  const chat = String(chatId || '').trim();
+  if (!id || !chat) return '';
+  const cliMsg = { chat_id: chat };
+  if (thumbnail) cliMsg.thumbnail = true;
+  return (
+    `https://files.arattai.in/webdownload` +
+    `?x-service=CLIQ` +
+    `&event-id=${encodeURIComponent(id)}` +
+    `&x-cli-msg=${encodeURIComponent(JSON.stringify(cliMsg))}`
+  );
+}
+
+/**
+ * Parse Arattai media URLs (webdownload / attachments) for file + chat ids.
+ * Thumbnail URLs still expose event-id — callers should rebuild without thumbnail.
+ */
+export function parseArattaiMediaUrl(url) {
+  try {
+    const u = new URL(String(url || '').trim());
+    if (!/(^|\.)arattai\.in$/i.test(u.hostname)) return null;
+    let fileId = String(u.searchParams.get('event-id') || '').trim();
+    let chatId = String(u.searchParams.get('chat_id') || '').trim();
+    let thumbnail = false;
+    const cliRaw = u.searchParams.get('x-cli-msg');
+    if (cliRaw) {
+      try {
+        const cli = JSON.parse(cliRaw);
+        chatId = String(cli.chat_id || cli.chatId || chatId || '').trim();
+        thumbnail = !!cli.thumbnail;
+      } catch {
+        // ignore malformed cli msg
+      }
+    }
+    if (!fileId) {
+      const m = u.pathname.match(/\/v1\/attachments\/([^/?#]+)/i);
+      if (m) fileId = decodeURIComponent(m[1]);
+    }
+    if (!fileId) return null;
+    return { fileId, chatId, thumbnail, href: u.href };
+  } catch {
+    return null;
+  }
+}
+
+/** Prefer a full-file Arattai download URL when any media URL/id is known. */
+export function arattaiFullFileUrlFromAny(url, chatIdFallback = '') {
+  const parsed = parseArattaiMediaUrl(url);
+  if (!parsed?.fileId) return '';
+  const chat = parsed.chatId || String(chatIdFallback || '').trim();
+  if (!chat) {
+    if (/\/v1\/attachments\//i.test(parsed.href) && !parsed.thumbnail) return parsed.href;
+    return '';
+  }
+  return buildArattaiDownloadUrl(parsed.fileId, chat, { thumbnail: false });
 }
 
 /**
