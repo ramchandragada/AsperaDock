@@ -2894,11 +2894,140 @@ async function getActiveSelectionText() {
   }
 }
 
+/** Mark the focused/selected compose field so refined text can be put back later. */
+async function markActiveComposeTarget(serviceId = activeServiceId) {
+  if (!serviceId) return false;
+  const entry = views.get(serviceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return false;
+  try {
+    return !!(await wc.executeJavaScript(
+      `(() => {
+        try {
+          const mark = (target) => {
+            document.querySelectorAll('[data-aspera-ai-compose]').forEach((n) => {
+              if (n !== target) n.removeAttribute('data-aspera-ai-compose');
+            });
+            target.setAttribute('data-aspera-ai-compose', '1');
+            return true;
+          };
+          const isCompose = (node) => {
+            if (!node) return false;
+            const tag = String(node.tagName || '');
+            const inputOk =
+              tag === 'TEXTAREA' ||
+              (tag === 'INPUT' &&
+                /^(text|search|email|tel|url|password)?$/i.test(node.type || 'text'));
+            return !!(node.isContentEditable || inputOk);
+          };
+          const sel = window.getSelection?.();
+          let node = sel?.anchorNode || null;
+          let el = node && node.nodeType === 3 ? node.parentElement : node;
+          while (el && el !== document.documentElement) {
+            if (isCompose(el)) return mark(el);
+            el = el.parentElement;
+          }
+          const active = document.activeElement;
+          if (isCompose(active)) return mark(active);
+          // Keep a previous mark when the AI panel stole focus (Refine again).
+          if (document.querySelector('[data-aspera-ai-compose="1"]')) return true;
+        } catch (e) {}
+        return false;
+      })()`,
+      true,
+    ));
+  } catch {
+    return false;
+  }
+}
+
+async function applyTextToMarkedCompose(serviceId, text, originalText) {
+  if (!serviceId) return { ok: false, error: 'No chat app selected.' };
+  const entry = views.get(serviceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) {
+    return { ok: false, error: 'Chat view is gone.' };
+  }
+  const refined = String(text || '');
+  const original = String(originalText || '');
+  if (!refined.trim()) {
+    return { ok: false, error: 'Nothing to insert.' };
+  }
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
+    wc.focus();
+    const result = await wc.executeJavaScript(
+      `(() => {
+        const text = ${JSON.stringify(refined)};
+        const original = ${JSON.stringify(original)};
+        const el = document.querySelector('[data-aspera-ai-compose="1"]');
+        if (!el) return { ok: false, reason: 'no-target' };
+        el.focus();
+        const tag = String(el.tagName || '');
+        if (tag === 'TEXTAREA' || tag === 'INPUT') {
+          const value = String(el.value || '');
+          if (original && value.includes(original)) {
+            const i = value.indexOf(original);
+            el.value = value.slice(0, i) + text + value.slice(i + original.length);
+          } else {
+            el.value = text;
+          }
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return { ok: true };
+        }
+        if (el.isContentEditable) {
+          const current = String(el.innerText || el.textContent || '');
+          const sel = window.getSelection?.();
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          sel?.removeAllRanges?.();
+          sel?.addRange?.(range);
+          if (original && current.includes(original) && current.trim() !== original.trim()) {
+            // Replace only the original draft substring when the box has more text.
+            const next = current.replace(original, text);
+            el.focus();
+            document.execCommand('selectAll', false, null);
+            document.execCommand('insertText', false, next);
+            return { ok: true };
+          }
+          document.execCommand('selectAll', false, null);
+          document.execCommand('insertText', false, text);
+          return { ok: true };
+        }
+        return { ok: false, reason: 'not-editable' };
+      })()`,
+      true,
+    );
+    if (result?.ok) return { ok: true };
+    return {
+      ok: false,
+      error:
+        'Could not find the send box. Text was copied — paste with Ctrl+V.',
+    };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
 function activeAiService() {
   if (!activeServiceId) return null;
   const service = getService(activeServiceId);
   if (!service || !isAiAllowedAppId(service.appId)) return null;
   return service;
+}
+
+function asperaAiSkillTitle(skill) {
+  if (skill === 'catch-up') return 'Catch me up';
+  if (skill === 'refine') return 'Refine draft';
+  return 'Summarize selection';
+}
+
+function cleanAiPlainText(text) {
+  return String(text || '')
+    .trim()
+    .replace(/^["'“”]+|["'“”]+$/g, '')
+    .trim();
 }
 
 async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}) {
@@ -2918,8 +3047,7 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
 
   const langLabel =
     AI_LANGUAGES.find((l) => l.id === language)?.label || 'English';
-  const skillTitle =
-    skill === 'catch-up' ? 'Catch me up' : 'Summarize selection';
+  const skillTitle = asperaAiSkillTitle(skill);
   const routeHint = routeOrder.map((p) => p.name).join(' → ');
   const metaLang = skill === 'summarize' ? 'EN · HI · MR' : langLabel;
 
@@ -2933,6 +3061,10 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
     let prompt;
     let summarizeSelection = '';
     let summarizeAppName = '';
+    let refineSelection = '';
+    let refineAppName = '';
+    let refineServiceId = '';
+    let refineHasComposeTarget = false;
     if (skill === 'catch-up') {
       const items = collectCatchUpItems();
       prompt = promptForSkill('catch-up', { items, language });
@@ -2953,19 +3085,55 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
         text,
         appName: summarizeAppName,
       });
+    } else if (skill === 'refine') {
+      const service = activeAiService();
+      if (!service) {
+        throw new Error(
+          'Refine works only in WhatsApp, Arattai, Gmail, or Zoho Mail. Open one of those apps first.',
+        );
+      }
+      refineServiceId = service.id;
+      refineHasComposeTarget = await markActiveComposeTarget(service.id);
+      const text = String(selectionText || (await getActiveSelectionText()) || '').trim();
+      if (!text) {
+        throw new Error(
+          'Select the text in the send box first, then choose Refine with Aspera AI.',
+        );
+      }
+      refineSelection = text;
+      refineAppName = service.name || service.defaultName || service.appId;
+      prompt = promptForSkill('refine', {
+        text,
+        appName: refineAppName,
+      });
     } else {
       throw new Error('Unknown skill');
     }
 
     const result = await runAiCompletionWithFailover(prompt);
     syncPreferredAiProvider();
+    const resultText =
+      skill === 'refine' ? cleanAiPlainText(result.text) : result.text;
     if (skill === 'summarize') {
       aiResultContext = {
         skill: 'summarize',
         selectionText: summarizeSelection,
         appName: summarizeAppName,
         dark: !!dark,
-        summaryText: result.text,
+        summaryText: resultText,
+        providerName: result.providerName,
+        model: result.model,
+      };
+    } else if (skill === 'refine') {
+      aiResultContext = {
+        skill: 'refine',
+        selectionText: refineSelection,
+        originalComposeText: refineSelection,
+        appName: refineAppName,
+        serviceId: refineServiceId,
+        hasComposeTarget: refineHasComposeTarget,
+        dark: !!dark,
+        refinedText: resultText,
         providerName: result.providerName,
         model: result.model,
       };
@@ -2975,16 +3143,19 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
     pushAiResult({
       title: `Aspera AI · ${skillTitle}`,
       meta: `${result.providerName} · ${result.model} · ${metaLang}`,
-      text: result.text,
+      text: resultText,
       loading: false,
+      mode: skill === 'refine' ? 'refine' : skill === 'summarize' ? 'summarize' : 'catch-up',
       showTrilingual: skill === 'summarize',
       canSuggestReply: skill === 'summarize',
+      canUseInCompose: skill === 'refine',
+      canRefineAgain: skill === 'refine',
       repliesText: '',
       repliesLoading: false,
     });
     return {
       ok: true,
-      text: result.text,
+      text: resultText,
       provider: result.providerId,
       model: result.model,
     };
@@ -2997,10 +3168,69 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
       error: message,
       text: message,
       loading: false,
+      mode: skill === 'refine' ? 'refine' : undefined,
       canSuggestReply: false,
+      canUseInCompose: false,
+      canRefineAgain: false,
     });
     return { ok: false, error: message };
   }
+}
+
+async function runRefineAgainFromAiResult(payload = {}) {
+  const ctx = aiResultContext;
+  if (!ctx || ctx.skill !== 'refine') {
+    return { ok: false, error: 'No draft to refine.' };
+  }
+  const draft = String(payload?.text || ctx.refinedText || ctx.selectionText || '').trim();
+  if (!draft) {
+    return { ok: false, error: 'Nothing to refine.' };
+  }
+  const originalComposeText = ctx.originalComposeText || ctx.selectionText || '';
+  const serviceId = ctx.serviceId || activeServiceId;
+  const result = await runAsperaAiSkill('refine', {
+    selectionText: draft,
+    dark: !!ctx.dark,
+  });
+  // Keep the send-box original so "Use in send box" still matches the typed draft.
+  if (result?.ok && aiResultContext?.skill === 'refine') {
+    aiResultContext = {
+      ...aiResultContext,
+      originalComposeText,
+      selectionText: originalComposeText || aiResultContext.selectionText,
+      serviceId: serviceId || aiResultContext.serviceId,
+    };
+  }
+  return result;
+}
+
+async function runUseRefinedInCompose(payload = {}) {
+  const ctx = aiResultContext;
+  if (!ctx || ctx.skill !== 'refine') {
+    return { ok: false, error: 'No refined draft available.' };
+  }
+  const text = String(payload?.text || ctx.refinedText || '').trim();
+  if (!text) {
+    return { ok: false, error: 'Nothing to insert.' };
+  }
+  ctx.refinedText = text;
+  const applied = await applyTextToMarkedCompose(
+    ctx.serviceId || activeServiceId,
+    text,
+    ctx.originalComposeText || ctx.selectionText || '',
+  );
+  if (applied.ok) {
+    closeAiResultWindow();
+    return { ok: true };
+  }
+  clipboard.writeText(text);
+  return {
+    ok: false,
+    copied: true,
+    error:
+      applied.error ||
+      'Could not find the send box. Text was copied — paste with Ctrl+V.',
+  };
 }
 
 async function runSuggestRepliesFromAiResult() {
@@ -3939,6 +4169,17 @@ function attachGuestContextMenu(webContents) {
           }).catch(() => {});
         },
       });
+      // Send/compose box: polish the employee's own draft before sending.
+      if (editable) {
+        template.push({
+          label: 'Refine with Aspera AI',
+          click: () => {
+            runAsperaAiSkill('refine', {
+              selectionText: String(params.selectionText || ''),
+            }).catch(() => {});
+          },
+        });
+      }
       template.push({ type: 'separator' });
     }
 
@@ -6099,6 +6340,22 @@ aiResultHandle('ai-result:sync-replies', (_e, text) => {
 aiResultHandle('ai-result:revise-reply', (_e, payload) =>
   runReviseReplyFromAiResult(payload),
 );
+aiResultHandle('ai-result:refine-again', (_e, payload) =>
+  runRefineAgainFromAiResult(payload),
+);
+aiResultHandle('ai-result:use-in-compose', (_e, payload) =>
+  runUseRefinedInCompose(payload),
+);
+aiResultHandle('ai-result:sync-refine', (_e, text) => {
+  if (!aiResultContext || aiResultContext.skill !== 'refine') {
+    return { ok: false };
+  }
+  aiResultContext = {
+    ...aiResultContext,
+    refinedText: String(text || ''),
+  };
+  return { ok: true };
+});
 async function commitInstalledExtension(installed) {
   const chromeId = String(installed.chromeId || '').trim().toLowerCase();
   let list = listInstalledExtensions(settings.extensions);
@@ -6306,6 +6563,9 @@ dockHandle('dock:ai-catch-up', (_e, opts) =>
 );
 dockHandle('dock:ai-summarize', (_e, opts) =>
   runAsperaAiSkill('summarize', opts || {}),
+);
+dockHandle('dock:ai-refine', (_e, opts) =>
+  runAsperaAiSkill('refine', opts || {}),
 );
 dockHandle('dock:toggle-keep-warm', (_e, id) => toggleKeepWarm(id));
 dockHandle('dock:save-app-config', (_e, id, incoming) => {

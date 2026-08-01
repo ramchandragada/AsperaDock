@@ -15,6 +15,7 @@ import {
 } from '../src/ai/catalog.js';
 import {
   buildCatchMeUpPrompt,
+  buildRefineDraftPrompt,
   buildReviseReplyPrompt,
   buildSuggestReplyPrompt,
   buildSummarizePrompt,
@@ -77,6 +78,17 @@ test('revise-reply prompt is re-exported from skills', () => {
   });
   assert.match(prompt, /Sure, 3pm works/);
   assert.match(prompt, /Hindi/);
+});
+
+test('refine-draft prompt polishes send-box text', () => {
+  const prompt = buildRefineDraftPrompt({
+    text: 'if you want any new features do suggest, it if tech permits it will be implemented',
+    appName: 'Arattai',
+  });
+  assert.match(prompt, /new features do suggest/);
+  assert.match(prompt, /Refine a message/);
+  assert.match(prompt, /Arattai/);
+  assert.match(prompt, /Output ONLY the refined message/);
 });
 test('catch-up prompt lists notification items', () => {
   const prompt = buildCatchMeUpPrompt({

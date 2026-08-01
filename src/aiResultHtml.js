@@ -82,6 +82,14 @@ export function buildAiResultHtml(dark = false) {
   .reply-card textarea:focus { outline:2px solid #2563eb55; border-color:#2563eb; }
   .reply-card-actions { display:flex; gap:6px; flex-wrap:wrap; }
   .reply-status { color:${muted}; font-size:12px; font-weight:600; min-height:1.2em; }
+  .refine-wrap { display:none; flex-direction:column; gap:10px; flex:0 0 auto; }
+  .refine-wrap.show { display:flex; }
+  .refine-wrap textarea {
+    width:100%; box-sizing:border-box; min-height:160px; resize:vertical;
+    border:1px solid ${border}; border-radius:12px; padding:14px 16px;
+    font:inherit; font-size:16px; line-height:1.6; color:inherit; background:${card};
+  }
+  .refine-wrap textarea:focus { outline:2px solid #2563eb55; border-color:#2563eb; }
 </style>
 </head>
 <body>
@@ -100,9 +108,19 @@ export function buildAiResultHtml(dark = false) {
       <button type="button" class="btn primary" id="suggest-reply">Suggest replies (EN · HI · MR)</button>
       <span class="hint" id="reply-hint">Rough drafts for this message — edit before you copy</span>
     </div>
+    <div class="toolbar" id="refine-bar">
+      <button type="button" class="btn primary" id="use-compose">Use in send box</button>
+      <button type="button" class="btn" id="refine-again">Refine again</button>
+      <span class="hint" id="refine-hint">Edit if needed, then put it back in the send box</span>
+    </div>
     <div class="scroll" id="scroll">
       <div class="section-label" id="summary-label" hidden>Summary · EN · HI · MR</div>
       <div class="body loading" id="body">Working…</div>
+      <div class="refine-wrap" id="refine-wrap">
+        <div class="section-label">Refined message</div>
+        <textarea id="refine-text" placeholder="Refined draft…"></textarea>
+        <div class="reply-status" id="refine-status" hidden></div>
+      </div>
       <div class="replies-block" id="replies-wrap">
         <div class="section-label">Suggested replies · EN · HI · MR</div>
         <div id="replies-status" class="reply-status" hidden></div>
@@ -116,6 +134,13 @@ export function buildAiResultHtml(dark = false) {
     const body = document.getElementById('body');
     const copyBtn = document.getElementById('copy');
     const replyBar = document.getElementById('reply-bar');
+    const refineBar = document.getElementById('refine-bar');
+    const refineWrap = document.getElementById('refine-wrap');
+    const refineText = document.getElementById('refine-text');
+    const refineStatus = document.getElementById('refine-status');
+    const refineHint = document.getElementById('refine-hint');
+    const useComposeBtn = document.getElementById('use-compose');
+    const refineAgainBtn = document.getElementById('refine-again');
     const suggestBtn = document.getElementById('suggest-reply');
     const replyHint = document.getElementById('reply-hint');
     const repliesWrap = document.getElementById('replies-wrap');
@@ -126,8 +151,11 @@ export function buildAiResultHtml(dark = false) {
     const scroll = document.getElementById('scroll');
     let latestSummary = '';
     let latestReplies = '';
+    let latestRefine = '';
+    let mode = '';
     let sections = [];
     let syncTimer = null;
+    let refineSyncTimer = null;
     let renderSeq = 0;
 
     const LANGS = [
@@ -185,9 +213,28 @@ export function buildAiResultHtml(dark = false) {
     }
 
     function copyText() {
+      if (mode === 'refine') return String(refineText.value || latestRefine || '').trim();
       const repliesText = sections.length ? serializeReplies(sections) : latestReplies;
       const parts = [latestSummary, repliesText].filter(Boolean);
       return parts.join('\\n\\n—\\n\\n');
+    }
+
+    function setRefineStatus(msg) {
+      if (!msg) {
+        refineStatus.hidden = true;
+        refineStatus.textContent = '';
+        return;
+      }
+      refineStatus.hidden = false;
+      refineStatus.textContent = msg;
+    }
+
+    function scheduleRefineSync() {
+      latestRefine = String(refineText.value || '');
+      clearTimeout(refineSyncTimer);
+      refineSyncTimer = setTimeout(() => {
+        if (api.syncRefine) api.syncRefine(latestRefine);
+      }, 200);
     }
 
     function scheduleSync() {
@@ -334,16 +381,40 @@ export function buildAiResultHtml(dark = false) {
     api.onInit((data) => {
       document.getElementById('title').textContent = data?.title || 'Aspera AI';
       document.getElementById('meta').textContent = data?.meta || '';
+      mode = String(data?.mode || (data?.canUseInCompose ? 'refine' : ''));
       latestSummary = String(data?.text || '');
       latestReplies = String(data?.repliesText || '');
       const err = !!data?.error;
       const loading = !!data?.loading;
-      body.className = 'body' + (err ? ' error' : loading ? ' loading' : '');
-      body.textContent = latestSummary || (err ? String(data.error) : '…');
-      summaryLabel.hidden = !(data?.showTrilingual && !loading && !err && latestSummary);
+      const isRefine = mode === 'refine';
 
-      const showToolbar = !!(data?.canSuggestReply && !loading && !err);
-      replyBar.classList.toggle('show', showToolbar);
+      if (isRefine && !loading && !err) {
+        body.hidden = true;
+        refineWrap.classList.add('show');
+        latestRefine = latestSummary;
+        refineText.value = latestRefine;
+        setRefineStatus('');
+        summaryLabel.hidden = true;
+        copyBtn.textContent = 'Copy';
+      } else {
+        body.hidden = false;
+        refineWrap.classList.remove('show');
+        body.className = 'body' + (err ? ' error' : loading ? ' loading' : '');
+        body.textContent = latestSummary || (err ? String(data.error) : '…');
+        summaryLabel.hidden = !(data?.showTrilingual && !loading && !err && latestSummary);
+        copyBtn.textContent = isRefine ? 'Copy' : 'Copy all';
+        if (isRefine && (loading || err)) {
+          setRefineStatus('');
+        }
+      }
+
+      const showReplyToolbar = !!(data?.canSuggestReply && !loading && !err && !isRefine);
+      replyBar.classList.toggle('show', showReplyToolbar);
+      refineBar.classList.toggle('show', !!(isRefine && !loading && !err));
+      useComposeBtn.disabled = !latestRefine.trim();
+      refineAgainBtn.disabled = !latestRefine.trim();
+      refineHint.textContent = 'Edit if needed, then Use in send box (or Copy and paste)';
+
       suggestBtn.disabled = !!data?.repliesLoading;
       suggestBtn.textContent = latestReplies || data?.repliesError
         ? 'Regenerate replies'
@@ -354,7 +425,12 @@ export function buildAiResultHtml(dark = false) {
           ? 'Edit, add, or revise any reply, then Copy'
           : 'Rough drafts for this message — you can edit before sending';
 
-      if (data?.repliesLoading) {
+      if (isRefine) {
+        repliesWrap.classList.remove('show');
+        setStatus('');
+        showPlainReplies('');
+        repliesFallback.textContent = '';
+      } else if (data?.repliesLoading) {
         repliesWrap.classList.add('show');
         setStatus('');
         showPlainReplies('Writing reply drafts in English, Hindi, and Marathi…', 'loading');
@@ -384,8 +460,44 @@ export function buildAiResultHtml(dark = false) {
         showPlainReplies('');
         repliesFallback.textContent = '';
       }
-      copyBtn.disabled = (!latestSummary && !latestReplies && !sections.some((s) => s.items.some((i) => String(i.text || '').trim()))) || err || loading;
+      const hasReplyText = sections.some((s) => s.items.some((i) => String(i.text || '').trim()));
+      copyBtn.disabled =
+        (isRefine ? !String(refineText.value || latestRefine || '').trim() : (!latestSummary && !latestReplies && !hasReplyText))
+        || err
+        || loading;
     });
+
+    refineText.oninput = () => {
+      latestRefine = refineText.value;
+      useComposeBtn.disabled = !String(latestRefine || '').trim();
+      refineAgainBtn.disabled = !String(latestRefine || '').trim();
+      copyBtn.disabled = !String(latestRefine || '').trim();
+      scheduleRefineSync();
+    };
+
+    useComposeBtn.onclick = async () => {
+      const text = String(refineText.value || '').trim();
+      if (!text) return;
+      useComposeBtn.disabled = true;
+      setRefineStatus('Putting text into the send box…');
+      try {
+        const result = await api.useInCompose({ text });
+        if (result?.ok) return;
+        setRefineStatus(String(result?.error || 'Copied — paste into the send box with Ctrl+V.'));
+      } catch (err) {
+        setRefineStatus(String(err?.message || err || 'Could not update send box.'));
+      } finally {
+        useComposeBtn.disabled = !String(refineText.value || '').trim();
+      }
+    };
+
+    refineAgainBtn.onclick = async () => {
+      const text = String(refineText.value || '').trim();
+      if (!text) return;
+      refineAgainBtn.disabled = true;
+      setRefineStatus('Refining again…');
+      await api.refineAgain({ text });
+    };
 
     suggestBtn.onclick = async () => {
       suggestBtn.disabled = true;
@@ -397,8 +509,9 @@ export function buildAiResultHtml(dark = false) {
       const text = copyText();
       if (!text) return;
       await api.copy(text);
+      const label = mode === 'refine' ? 'Copy' : 'Copy all';
       copyBtn.textContent = 'Copied';
-      setTimeout(() => { copyBtn.textContent = 'Copy all'; }, 1200);
+      setTimeout(() => { copyBtn.textContent = label; }, 1200);
     };
     document.getElementById('close').onclick = () => api.close();
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') api.close(); });

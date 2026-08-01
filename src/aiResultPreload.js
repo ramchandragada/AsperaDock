@@ -11,4 +11,7 @@ contextBridge.exposeInMainWorld('aiResultApi', {
   suggestReply: () => ipcRenderer.invoke('ai-result:suggest-reply'),
   syncReplies: (text) => ipcRenderer.invoke('ai-result:sync-replies', text),
   reviseReply: (payload) => ipcRenderer.invoke('ai-result:revise-reply', payload),
+  refineAgain: (payload) => ipcRenderer.invoke('ai-result:refine-again', payload),
+  useInCompose: (payload) => ipcRenderer.invoke('ai-result:use-in-compose', payload),
+  syncRefine: (text) => ipcRenderer.invoke('ai-result:sync-refine', text),
 });

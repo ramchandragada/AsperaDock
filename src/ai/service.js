@@ -20,6 +20,7 @@ import {
 } from './models.js';
 import {
   buildCatchMeUpPrompt,
+  buildRefineDraftPrompt,
   buildSuggestReplyPrompt,
   buildSummarizePrompt,
 } from './skills.js';
@@ -359,6 +360,9 @@ export function promptForSkill(skill, payload) {
   }
   if (skill === 'suggest-reply') {
     return buildSuggestReplyPrompt(payload);
+  }
+  if (skill === 'refine') {
+    return buildRefineDraftPrompt(payload);
   }
   if (skill === 'revise-reply') {
     return buildReviseReplyPrompt(payload);

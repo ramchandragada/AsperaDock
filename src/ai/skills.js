@@ -36,6 +36,25 @@ export function buildSuggestReplyPrompt({ text, appName }) {
   ].join('\n');
 }
 
+/** Polish a message the employee typed in the send/compose box before sending. */
+export function buildRefineDraftPrompt({ text, appName }) {
+  const body = String(text || '').trim().slice(0, 6_000);
+  return [
+    'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
+    'Skill: Refine a message the employee is about to send.',
+    `App context: ${appName || 'Messaging / Mail'}.`,
+    'Improve clarity, grammar, spelling, and professional tone.',
+    'Keep the same language as the draft (English, Hindi, or Marathi).',
+    'Hindi/Marathi stay in Devanagari when the draft uses them.',
+    'Keep the meaning and intent. Do not invent facts or add commitments.',
+    'Do not make it longer unless needed for clarity.',
+    'Output ONLY the refined message text — no preamble, labels, or quotation wrappers.',
+    '',
+    'Draft to refine:',
+    body,
+  ].join('\n');
+}
+
 export { buildReviseReplyPrompt } from './replyEditor.js';
 
 export function buildCatchMeUpPrompt({ items, language }) {
