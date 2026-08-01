@@ -23,6 +23,7 @@ import {
   buildSuggestReplyPrompt,
   buildSummarizePrompt,
 } from './skills.js';
+import { buildReviseReplyPrompt } from './replyEditor.js';
 
 /** Last provider that answered successfully — reuse until it fails/exhausts. */
 let stickyProviderId = null;
@@ -358,6 +359,9 @@ export function promptForSkill(skill, payload) {
   }
   if (skill === 'suggest-reply') {
     return buildSuggestReplyPrompt(payload);
+  }
+  if (skill === 'revise-reply') {
+    return buildReviseReplyPrompt(payload);
   }
   if (skill === 'catch-up') {
     return buildCatchMeUpPrompt(payload);

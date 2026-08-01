@@ -13,7 +13,12 @@ import {
   configuredProvidersInRouteOrder,
   resolveAiAttemptOrder,
 } from '../src/ai/catalog.js';
-import { buildCatchMeUpPrompt, buildSuggestReplyPrompt, buildSummarizePrompt } from '../src/ai/skills.js';
+import {
+  buildCatchMeUpPrompt,
+  buildReviseReplyPrompt,
+  buildSuggestReplyPrompt,
+  buildSummarizePrompt,
+} from '../src/ai/skills.js';
 
 test('AI skills allow only WhatsApp, Arattai, Gmail, Zoho Mail', () => {
   assert.deepEqual(AI_ALLOWED_APP_IDS, [
@@ -61,6 +66,17 @@ test('suggest-reply prompt requests EN HI MR drafts', () => {
   assert.match(prompt, /## Hindi replies/);
   assert.match(prompt, /## Marathi replies/);
   assert.match(prompt, /Arattai/);
+});
+
+test('revise-reply prompt is re-exported from skills', () => {
+  const prompt = buildReviseReplyPrompt({
+    replyText: 'Sure, 3pm works.',
+    language: 'hi',
+    selectionText: 'Can we meet at 3pm?',
+    appName: 'Arattai',
+  });
+  assert.match(prompt, /Sure, 3pm works/);
+  assert.match(prompt, /Hindi/);
 });
 test('catch-up prompt lists notification items', () => {
   const prompt = buildCatchMeUpPrompt({

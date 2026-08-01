@@ -11,8 +11,8 @@ export const MAX_APPS_TOTAL = 10;
 export const MAX_APP_NAME_LENGTH = 10;
 /** Default: 5 apps stay loaded (active + up to 4 background warm). */
 export const MAX_WARM_VIEWS_DEFAULT = 5;
-/** Hard ceiling — settings UI and runtime both clamp to this. */
-export const MAX_WARM_VIEWS_CAP = 5;
+/** Hard ceiling — settings UI and runtime both clamp to this. Users may raise above the default. */
+export const MAX_WARM_VIEWS_CAP = 7;
 
 /** Synthetic catalog id for user-defined URLs (intranet, HRMS, Jira, …). */
 export const CUSTOM_APP_ID = 'custom';

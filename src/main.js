@@ -58,6 +58,7 @@ import {
   resetAiProviderSession,
   setAiSettingsReader,
 } from './ai/service.js';
+import { parseSuggestedReplies } from './ai/replyEditor.js';
 import {
   catalogModelsForProvider,
   getCachedAiModels,
@@ -3036,6 +3037,7 @@ async function runSuggestRepliesFromAiResult() {
     });
     const result = await runAiCompletionWithFailover(prompt);
     syncPreferredAiProvider();
+    const repliesSections = parseSuggestedReplies(result.text);
     aiResultContext = {
       ...ctx,
       repliesText: result.text,
@@ -3051,6 +3053,7 @@ async function runSuggestRepliesFromAiResult() {
       canSuggestReply: true,
       repliesLoading: false,
       repliesText: result.text,
+      repliesSections,
     });
     return { ok: true, text: result.text };
   } catch (error) {
@@ -3066,6 +3069,44 @@ async function runSuggestRepliesFromAiResult() {
       repliesError: message,
     });
     return { ok: false, error: message };
+  }
+}
+
+async function runReviseReplyFromAiResult(payload = {}) {
+  if (settings.aiEnabled === false) {
+    return { ok: false, error: 'Aspera AI is turned off in Settings.' };
+  }
+  const ctx = aiResultContext;
+  if (!ctx?.selectionText) {
+    return { ok: false, error: 'No message context for reply revision.' };
+  }
+  const { routeOrder } = aiSettingsSnapshot();
+  if (!routeOrder.length) {
+    return {
+      ok: false,
+      error: 'Add at least one AI API key in Settings → Aspera AI.',
+    };
+  }
+  const replyText = String(payload?.replyText || '').trim();
+  if (!replyText) {
+    return { ok: false, error: 'Type a reply first, then Revise with AI.' };
+  }
+  try {
+    const prompt = promptForSkill('revise-reply', {
+      replyText,
+      language: payload?.language || 'en',
+      selectionText: ctx.selectionText,
+      appName: ctx.appName,
+    });
+    const result = await runAiCompletionWithFailover(prompt);
+    syncPreferredAiProvider();
+    const revised = String(result.text || '')
+      .trim()
+      .replace(/^["'“”]+|["'“”]+$/g, '')
+      .trim();
+    return { ok: true, text: revised || result.text };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
   }
 }
 
@@ -6047,6 +6088,17 @@ aiResultHandle('ai-result:close', () => {
   return { ok: true };
 });
 aiResultHandle('ai-result:suggest-reply', () => runSuggestRepliesFromAiResult());
+aiResultHandle('ai-result:sync-replies', (_e, text) => {
+  if (!aiResultContext) return { ok: false };
+  aiResultContext = {
+    ...aiResultContext,
+    repliesText: String(text || ''),
+  };
+  return { ok: true };
+});
+aiResultHandle('ai-result:revise-reply', (_e, payload) =>
+  runReviseReplyFromAiResult(payload),
+);
 async function commitInstalledExtension(installed) {
   const chromeId = String(installed.chromeId || '').trim().toLowerCase();
   let list = listInstalledExtensions(settings.extensions);

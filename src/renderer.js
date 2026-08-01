@@ -874,7 +874,7 @@ function fillSettingsForm() {
   set('set-proxy-rules', s.proxyRules || '');
   set('set-proxy-bypass', s.proxyBypass ?? '<local>');
   set('set-hibernate', s.hibernateMinutes ?? 30);
-  set('set-max-warm', Math.min(5, s.maxWarmViews ?? 5));
+  set('set-max-warm', Math.min(7, s.maxWarmViews ?? 5));
   set('set-low-memory', s.lowMemoryMode === true);
   set('set-consumption', s.consumptionMonitor);
   set('set-error-reporting', s.errorReportingEnabled !== false);
@@ -933,7 +933,7 @@ function readSettingsForm() {
     proxyRules: val('set-proxy-rules').trim(),
     proxyBypass: val('set-proxy-bypass').trim() || '<local>',
     hibernateMinutes: Number(val('set-hibernate')) || 2,
-    maxWarmViews: Math.min(5, Math.max(1, Number(val('set-max-warm')) || 5)),
+    maxWarmViews: Math.min(7, Math.max(1, Number(val('set-max-warm')) || 5)),
     lowMemoryMode: checked('set-low-memory'),
     consumptionMonitor: checked('set-consumption'),
     errorReportingEnabled: checked('set-error-reporting'),

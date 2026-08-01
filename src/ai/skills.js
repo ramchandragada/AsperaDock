@@ -36,6 +36,8 @@ export function buildSuggestReplyPrompt({ text, appName }) {
   ].join('\n');
 }
 
+export { buildReviseReplyPrompt } from './replyEditor.js';
+
 export function buildCatchMeUpPrompt({ items, language }) {
   const lines = (items || [])
     .slice(0, 30)

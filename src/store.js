@@ -2,7 +2,12 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { getAppCatalogEntry, isKnownAppInstance } from './services.js';
+import {
+  getAppCatalogEntry,
+  isKnownAppInstance,
+  MAX_WARM_VIEWS_CAP,
+  MAX_WARM_VIEWS_DEFAULT,
+} from './services.js';
 
 export const PRIMARY_PROFILE_ID = 'primary';
 
@@ -160,11 +165,11 @@ export const DEFAULTS = {
   hibernateMinutes: 45,
   /**
    * How many apps stay fully loaded for instant switching (includes active).
-   * Cap is 5 — usability first; non-warm apps load on click only.
+   * Default 5; settings may raise up to MAX_WARM_VIEWS_CAP. Non-warm apps load on click.
    */
-  maxWarmViews: 5,
+  maxWarmViews: MAX_WARM_VIEWS_DEFAULT,
   /** Legacy field — no longer parks warm apps (usability over RAM). */
-  maxResidentViews: 5,
+  maxResidentViews: MAX_WARM_VIEWS_DEFAULT,
 
   /** Toggleable global shortcuts */
   shortcuts: {
@@ -377,11 +382,11 @@ function migrateWarmKeepAlive(settings) {
       displaySizingV3: true,
     };
   }
-  // Company policy: max 5 warm apps in RAM (usability-first).
+  // Historical: older caps forced lower ceilings; keep one-shot flags.
   if (!next.warmCap6V1) {
     next = {
       ...next,
-      maxWarmViews: 5,
+      maxWarmViews: MAX_WARM_VIEWS_DEFAULT,
       warmCap6V1: true,
       warmCap4V1: true,
     };
@@ -390,15 +395,23 @@ function migrateWarmKeepAlive(settings) {
     next = {
       ...next,
       warmCap5V1: true,
-      maxWarmViews: Math.min(5, Math.max(1, Number(next.maxWarmViews) || 5)),
+      maxWarmViews: Math.min(
+        5,
+        Math.max(1, Number(next.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT),
+      ),
       // Stop parking flame apps for RAM — UX wins.
-      maxResidentViews: Math.min(5, Math.max(5, Number(next.maxWarmViews) || 5)),
+      maxResidentViews: Math.min(
+        5,
+        Math.max(5, Number(next.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT),
+      ),
     };
-  } else {
-    next.maxWarmViews = Math.min(
-      5,
-      Math.max(1, Number(next.maxWarmViews) || 5),
-    );
+  }
+  // Raise hard ceiling to 7; keep each user's current value (default stays 5).
+  if (!next.warmCap7V1) {
+    next = {
+      ...next,
+      warmCap7V1: true,
+    };
   }
   // Performance-first rollout defaults:
   // keep 4 background warm apps (+1 active = 5 loaded), avoid low-memory compromises.
@@ -423,11 +436,17 @@ function migrateWarmKeepAlive(settings) {
       ...next,
       warmDefaultsV3: true,
       warmDefaultsV2: true,
-      maxWarmViews: 5,
-      maxResidentViews: 5,
+      maxWarmViews: MAX_WARM_VIEWS_DEFAULT,
+      maxResidentViews: MAX_WARM_VIEWS_DEFAULT,
       hibernateMinutes: Math.max(45, Number(next.hibernateMinutes) || 45),
     };
   }
+  // Final clamp: default remains 5; users may raise up to MAX_WARM_VIEWS_CAP (7).
+  next.maxWarmViews = Math.min(
+    MAX_WARM_VIEWS_CAP,
+    Math.max(1, Number(next.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT),
+  );
+  next.maxResidentViews = next.maxWarmViews;
   // CRITICAL: many Linux Mint XFCE/Cinnamon PCs die at launch with Electron's
   // "GPU process isn't usable. Goodbye." after migrations forced GPU on.
   // One-shot disable HW accel so the dock starts again; users can re-enable
