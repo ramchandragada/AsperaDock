@@ -424,9 +424,27 @@ let forwardPickerWindow = null;
 let forwardPayload = null;
 /** One-shot download hijack used while capturing a document to forward. */
 let pendingForwardDownload = null;
+/**
+ * While > now, every guest download is saved silently (no Save dialog).
+ * Needed because PDF preview Forward often fires 2–3 DownloadItems; only the
+ * first fills pendingForwardDownload — extras used to pop "Save download".
+ */
+let forwardCaptureSilentUntil = 0;
 /** Recent guest downloads (user tapped Download) — reused by Forward. */
 const recentGuestDownloads = [];
 const RECENT_DOWNLOAD_MAX = 40;
+
+function beginForwardCaptureWindow(ms = 20_000) {
+  forwardCaptureSilentUntil = Math.max(forwardCaptureSilentUntil, Date.now() + ms);
+}
+
+function endForwardCaptureWindow() {
+  forwardCaptureSilentUntil = 0;
+}
+
+function isForwardCaptureSilentActive() {
+  return !!pendingForwardDownload || Date.now() < forwardCaptureSilentUntil;
+}
 /** Floating Chrome-like Extensions manager. */
 let extensionsWindow = null;
 let settings = loadSettings();
@@ -3981,29 +3999,59 @@ function configureSession(partitionSession, partitionKey) {
 
   partitionSession.on('will-download', (_event, item) => {
     // Silent capture for Forward-with-Hub (must not show Save dialog).
-    if (pendingForwardDownload) {
+    // Keep hijacking for the whole capture window — preview Download often
+    // fires multiple items; only the first should fulfill the promise.
+    if (isForwardCaptureSilentActive()) {
       const pending = pendingForwardDownload;
-      pendingForwardDownload = null;
-      try {
-        const hinted = String(pending.fileName || '').trim();
-        const rawName = hinted || item.getFilename() || 'document.bin';
-        const name = sanitizeForwardFilename(
-          rawName,
-          extensionOf(rawName) || 'bin',
-        );
-        const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
-        item.setSavePath(savePath);
-        item.once('done', (_e, state) => {
-          if (state === 'completed') pending.resolve(item.getSavePath());
-          else pending.reject(new Error(`Download ${state}`));
-        });
-      } catch (error) {
+      if (pending) {
+        pendingForwardDownload = null;
         try {
-          item.cancel();
+          const hinted = String(pending.fileName || '').trim();
+          const rawName = hinted || item.getFilename() || 'document.bin';
+          const name = sanitizeForwardFilename(
+            rawName,
+            extensionOf(rawName) || 'bin',
+          );
+          const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
+          item.setSavePath(savePath);
+          item.once('done', (_e, state) => {
+            if (state === 'completed') {
+              rememberGuestDownload(savePath, name);
+              pending.resolve(item.getSavePath());
+            } else {
+              pending.reject(new Error(`Download ${state}`));
+            }
+          });
+        } catch (error) {
+          try {
+            item.cancel();
+          } catch {
+            // ignore
+          }
+          pending.reject(error);
+        }
+        return;
+      }
+      // Extra download during Forward capture — swallow silently (no Save dialog).
+      try {
+        item.cancel();
+      } catch {
+        try {
+          const dump = path.join(
+            forwardTempDir(),
+            `fwd-extra-${Date.now()}-${sanitizeForwardFilename(item.getFilename() || 'bin')}`,
+          );
+          item.setSavePath(dump);
+          item.once('done', () => {
+            try {
+              fs.unlinkSync(dump);
+            } catch {
+              // ignore
+            }
+          });
         } catch {
           // ignore
         }
-        pending.reject(error);
       }
       return;
     }
@@ -4630,6 +4678,18 @@ async function inspectForwardContext(webContents, x, y) {
   }
 }
 
+function moveWebContentsTo(webContents, x, y) {
+  if (!webContents || webContents.isDestroyed()) return;
+  const cx = Math.max(0, Math.round(Number(x) || 0));
+  const cy = Math.max(0, Math.round(Number(y) || 0));
+  try {
+    webContents.focus();
+    webContents.sendInputEvent({ type: 'mouseMove', x: cx, y: cy });
+  } catch {
+    // ignore
+  }
+}
+
 function clickWebContentsAt(webContents, x, y) {
   if (!webContents || webContents.isDestroyed()) return;
   const cx = Math.max(0, Math.round(Number(x) || 0));
@@ -4650,6 +4710,7 @@ function clickWebContentsAt(webContents, x, y) {
 }
 
 function armForwardDownload(fileName = '', timeoutMs = 12_000) {
+  beginForwardCaptureWindow(Math.max(timeoutMs + 2_000, 8_000));
   return new Promise((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(() => {
@@ -4664,6 +4725,9 @@ function armForwardDownload(fileName = '', timeoutMs = 12_000) {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        // Keep silent window briefly so duplicate DownloadItems from the same
+        // preview click cannot open the Save dialog.
+        beginForwardCaptureWindow(4_000);
         resolve(filePath);
       },
       reject: (error) => {
@@ -4690,14 +4754,90 @@ function disarmForwardDownload(downloadPromise) {
 }
 
 /**
+ * Read a PDF already open in the guest / Adobe preview (blob / embed) without
+ * clicking Download — avoids Save-dialog races entirely.
+ */
+async function tryCaptureViewerDocumentBytes(webContents, fileName = '') {
+  if (!webContents || webContents.isDestroyed()) {
+    return { ok: false, error: 'Chat view is gone.' };
+  }
+  try {
+    const result = await webContents.executeJavaScript(
+      `(() => {
+        const toB64 = async (url) => {
+          const res = await fetch(url);
+          const buf = await res.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          if (bytes.length < 5) return null;
+          // %PDF-
+          if (!(bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)) {
+            return null;
+          }
+          if (bytes.length > 12 * 1024 * 1024) return null;
+          let bin = '';
+          const chunk = 0x8000;
+          for (let i = 0; i < bytes.length; i += chunk) {
+            bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+          }
+          return { b64: btoa(bin), size: bytes.length };
+        };
+        const urls = [];
+        const push = (u) => {
+          const s = String(u || '').trim();
+          if (!s || urls.includes(s)) return;
+          urls.push(s);
+        };
+        for (const el of document.querySelectorAll('embed, object, iframe, a[href], a[download]')) {
+          push(el.src);
+          push(el.href);
+          push(el.getAttribute?.('data'));
+          push(el.getAttribute?.('data-url'));
+        }
+        try {
+          for (const e of performance.getEntriesByType('resource') || []) {
+            const n = String(e.name || '');
+            if (/blob:|\\.pdf($|\\?)|application%2Fpdf|application\\/pdf/i.test(n)) push(n);
+          }
+        } catch (e) {}
+        return (async () => {
+          for (const url of urls.slice(0, 12)) {
+            try {
+              const hit = await toB64(url);
+              if (hit) return { ok: true, ...hit, url };
+            } catch (e) {}
+          }
+          return { ok: false };
+        })();
+      })()`,
+      true,
+    );
+    if (!result?.ok || !result.b64) return { ok: false, error: 'No viewer PDF bytes.' };
+    const buf = Buffer.from(String(result.b64), 'base64');
+    const classified = classifyForwardFileBytes(buf.subarray(0, 16), fileName || 'document.pdf');
+    if (!classified.ok) return { ok: false, error: classified.error || classified.kind };
+    const name = sanitizeForwardFilename(
+      fileName || 'document.pdf',
+      extensionOf(fileName) || 'pdf',
+    );
+    const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
+    fs.writeFileSync(savePath, buf);
+    return { ok: true, filePath: savePath };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+/**
  * Trigger the chat app's own download control and capture the file via
  * pendingForwardDownload (will-download hijack).
- * Uses real mouse events — Arattai/React often ignore element.click().
+ * One click method per attempt — multi-firing caused Save dialog races.
  */
 async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', points = []) {
   if (!webContents || webContents.isDestroyed()) {
     return { ok: false, error: 'Chat view is gone.' };
   }
+
+  beginForwardCaptureWindow(25_000);
 
   let clickPoints = Array.isArray(points) ? points.filter((p) => p && p.x >= 0 && p.y >= 0) : [];
   if (!clickPoints.length) {
@@ -4712,43 +4852,27 @@ async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', 
     clickPoints = [{ x, y, why: 'origin' }];
   }
 
-  // Hover the bubble first so download arrows become interactive.
-  clickWebContentsAt(webContents, x, y);
+  // Hover only (no click) so download arrows reveal without starting a download.
+  moveWebContentsTo(webContents, x, y);
   await new Promise((r) => setTimeout(r, 120));
 
-  for (const point of clickPoints.slice(0, 6)) {
-    const downloadPromise = armForwardDownload(fileName, 4_500);
+  for (const point of clickPoints.slice(0, 4)) {
+    const downloadPromise = armForwardDownload(fileName, 5_000);
+    // Prefer one real mouse click — avoid stacking DOM + input events.
     clickWebContentsAt(webContents, point.x, point.y);
-    // Also nudge DOM click on the element under the point (covers non-input handlers).
-    try {
-      await webContents.executeJavaScript(
-        `(() => {
-          const el = document.elementFromPoint(${Number(point.x) || 0}, ${Number(point.y) || 0});
-          if (!el) return false;
-          const target = el.closest('a,button,[role="button"],[tabindex]') || el;
-          for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
-            target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
-          }
-          try { target.click(); } catch (e) {}
-          return true;
-        })()`,
-        true,
-      );
-    } catch {
-      // ignore
-    }
     try {
       const filePath = await downloadPromise;
-      if (filePath) return { ok: true, filePath };
+      if (filePath) {
+        beginForwardCaptureWindow(4_000);
+        return { ok: true, filePath };
+      }
     } catch {
       await disarmForwardDownload(downloadPromise);
     }
   }
 
-  // Open the document card, then look for a download control in the viewer/overlay.
+  // Viewer toolbar Download (Adobe / WhatsApp preview).
   try {
-    clickWebContentsAt(webContents, x, y);
-    await new Promise((r) => setTimeout(r, 700));
     const overlayPoints = await webContents.executeJavaScript(
       `(() => {
         const sels = [
@@ -4759,6 +4883,8 @@ async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', 
           'a[download]',
           'button[aria-label*="save" i]',
           '[aria-label*="Save as" i]',
+          '#download',
+          '#downloadButton',
         ];
         const pts = [];
         const seen = new Set();
@@ -4778,33 +4904,19 @@ async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', 
             }
           }
         }
-        // Unlabeled icon buttons in dialogs (common on Arattai viewers).
-        const dialog = document.querySelector('[role="dialog"]') || document.body;
-        for (const el of dialog.querySelectorAll('button, [role="button"], a')) {
-          const hay = [
-            el.getAttribute('aria-label'),
-            el.getAttribute('title'),
-            el.className,
-            el.textContent,
-          ].join(' ').toLowerCase();
-          if (!/download|save|file_download|get_app/.test(hay)) continue;
-          const r = el.getBoundingClientRect();
-          if (!r || r.width < 2) continue;
-          pts.push({
-            x: Math.round(r.left + r.width / 2),
-            y: Math.round(r.top + r.height / 2),
-          });
-        }
-        return pts.slice(0, 8);
+        return pts.slice(0, 6);
       })()`,
       true,
     );
-    for (const point of (overlayPoints || []).slice(0, 5)) {
-      const downloadPromise = armForwardDownload(fileName, 4_500);
+    for (const point of overlayPoints || []) {
+      const downloadPromise = armForwardDownload(fileName, 5_000);
       clickWebContentsAt(webContents, point.x, point.y);
       try {
         const filePath = await downloadPromise;
-        if (filePath) return { ok: true, filePath };
+        if (filePath) {
+          beginForwardCaptureWindow(4_000);
+          return { ok: true, filePath };
+        }
       } catch {
         await disarmForwardDownload(downloadPromise);
       }
@@ -4827,6 +4939,7 @@ function downloadForwardFile(webContents, url, fileName = '') {
       reject(new Error('No downloadable document URL.'));
       return;
     }
+    beginForwardCaptureWindow(50_000);
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
@@ -4840,6 +4953,7 @@ function downloadForwardFile(webContents, url, fileName = '') {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        beginForwardCaptureWindow(4_000);
         resolve(filePath);
       },
       reject: (error) => {
@@ -4944,50 +5058,62 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
   let linkURL = sanitizeForwardLinkURL(params.linkURL);
   const srcURL = String(params.srcURL || '').trim();
   const titleText = String(params.titleText || params.altText || '').trim();
+  let pageTitle = '';
+  try {
+    pageTitle = String(webContents.getTitle?.() || '').trim();
+  } catch {
+    pageTitle = '';
+  }
   const ctx = await inspectForwardContext(webContents, params.x, params.y);
+  // blob: alone is not proof of a photo — Adobe/WhatsApp PDF previews use blob: too.
   const srcLooksLikeImage =
     /^data:image\//i.test(srcURL) ||
-    /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(srcURL) ||
-    /^blob:/i.test(srcURL);
+    /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(srcURL);
+  const srcIsBlob = /^blob:/i.test(srcURL);
   // Prefer real document links — never treat a preview thumbnail URL as the PDF.
   // ctx.url may be an Arattai webdownload (used for file capture only).
-  const candidateUrl = linkURL || String(ctx.url || '').trim() || (srcLooksLikeImage ? '' : srcURL);
+  const candidateUrl =
+    linkURL ||
+    String(ctx.url || '').trim() ||
+    (srcLooksLikeImage ? '' : srcURL);
   const candidateName =
     ctx.name ||
     extractDocumentFileName(ctx.nearbyText) ||
     extractDocumentFileName(titleText) ||
+    extractDocumentFileName(pageTitle) ||
     extractDocumentFileName(text) ||
     titleText ||
     '';
 
   const hasImageContents = !!params.hasImageContents;
+  const nearbyForDoc = [ctx.nearbyText, pageTitle, titleText].filter(Boolean).join(' ');
   const strongDocument = hasStrongDocumentEvidence({
     forceDocument,
     hasImage: hasImageContents || srcLooksLikeImage,
     linkURL: candidateUrl || linkURL || ctx.url,
-    srcURL: srcLooksLikeImage ? '' : srcURL,
+    srcURL: srcLooksLikeImage ? '' : srcIsBlob ? '' : srcURL,
     fileName: candidateName,
     text,
-    titleText,
-    nearbyText: ctx.nearbyText,
+    titleText: titleText || pageTitle,
+    nearbyText: nearbyForDoc,
     mediaType: params.mediaType,
     hasDownload: ctx.hasDownload,
     hasDocIcon: ctx.hasDocIcon,
-    docLikely: ctx.docLikely,
+    docLikely: ctx.docLikely || /\.pdf\b/i.test(pageTitle),
   });
   const documentHint = shouldForwardAsDocument({
     forceDocument,
     hasImage: hasImageContents || srcLooksLikeImage,
     linkURL: candidateUrl || linkURL || ctx.url,
-    srcURL: srcLooksLikeImage ? '' : srcURL,
+    srcURL: srcLooksLikeImage ? '' : srcIsBlob ? '' : srcURL,
     fileName: candidateName,
     text,
-    titleText,
-    nearbyText: ctx.nearbyText,
+    titleText: titleText || pageTitle,
+    nearbyText: nearbyForDoc,
     mediaType: params.mediaType,
     hasDownload: ctx.hasDownload,
     hasDocIcon: ctx.hasDocIcon,
-    docLikely: ctx.docLikely,
+    docLikely: ctx.docLikely || /\.pdf\b/i.test(pageTitle),
   });
 
   let filePath = '';
@@ -4997,6 +5123,8 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
   let hasImage = false;
 
   if (documentHint) {
+    // Entire document capture must stay silent — no "Save download" dialogs.
+    beginForwardCaptureWindow(45_000);
     const hintedName = sanitizeForwardFilename(
       candidateName || 'document.pdf',
       extensionOf(candidateName) || extensionOf(candidateUrl) || 'pdf',
@@ -5008,74 +5136,91 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
       arattaiFullFileUrlFromAny(String(params.linkURL || ''), ctx.chatId) ||
       arattaiFullFileUrlFromAny(srcURL, ctx.chatId);
 
-    // 0) User already downloaded this file in chat — reuse it.
-    if (!filePath) {
-      const recentPath = matchRecentDownload(
-        recentGuestDownloads,
-        hintedName,
-        ctx.nearbyText || candidateName,
-      );
-      if (recentPath && fs.existsSync(recentPath)) {
-        try {
-          const dest = path.join(
-            forwardTempDir(),
-            `${Date.now()}-${path.basename(recentPath)}`,
-          );
-          fs.copyFileSync(recentPath, dest);
-          filePath = dest;
-        } catch (error) {
-          console.warn('[forward] reuse recent download failed', error);
+    try {
+      // 0) PDF already open in Adobe / WhatsApp preview — read bytes (no Download click).
+      if (!filePath) {
+        const viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
+        if (viewer.ok) filePath = viewer.filePath;
+      }
+
+      // 1) User already downloaded this file in chat — reuse it.
+      if (!filePath) {
+        const recentPath = matchRecentDownload(
+          recentGuestDownloads,
+          hintedName,
+          ctx.nearbyText || candidateName,
+        );
+        if (recentPath && fs.existsSync(recentPath)) {
+          try {
+            const dest = path.join(
+              forwardTempDir(),
+              `${Date.now()}-${path.basename(recentPath)}`,
+            );
+            fs.copyFileSync(recentPath, dest);
+            filePath = dest;
+          } catch (error) {
+            console.warn('[forward] reuse recent download failed', error);
+          }
         }
       }
-    }
 
-    // 1) Arattai UDS via session cookies (more reliable than downloadURL).
-    if (!filePath && arattaiUrl) {
-      const fetched = await fetchArattaiDocumentViaSession(
-        webContents,
-        arattaiUrl,
-        hintedName,
-      );
-      if (fetched.ok) filePath = fetched.filePath;
-      else {
-        try {
-          filePath = await downloadForwardFile(webContents, arattaiUrl, hintedName);
-        } catch (error) {
-          console.warn('[forward] Arattai document URL download failed', error);
+      // 2) Arattai UDS via session cookies (more reliable than downloadURL).
+      if (!filePath && arattaiUrl) {
+        const fetched = await fetchArattaiDocumentViaSession(
+          webContents,
+          arattaiUrl,
+          hintedName,
+        );
+        if (fetched.ok) filePath = fetched.filePath;
+        else {
+          try {
+            filePath = await downloadForwardFile(webContents, arattaiUrl, hintedName);
+          } catch (error) {
+            console.warn('[forward] Arattai document URL download failed', error);
+          }
         }
       }
-    }
 
-    // 2) Direct URL download when we have a real document link.
-    if (!filePath && candidateUrl && !srcLooksLikeImage && !/webdownload/i.test(candidateUrl)) {
-      try {
-        filePath = await downloadForwardFile(webContents, candidateUrl, hintedName);
-      } catch (error) {
-        console.warn('[forward] document URL download failed', error);
+      // 3) Direct URL download when we have a real document link (not image/blob thumbs).
+      if (
+        !filePath &&
+        candidateUrl &&
+        !/^data:image\//i.test(candidateUrl) &&
+        !/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(candidateUrl) &&
+        !/webdownload/i.test(candidateUrl)
+      ) {
+        try {
+          filePath = await downloadForwardFile(webContents, candidateUrl, hintedName);
+        } catch (error) {
+          console.warn('[forward] document URL download failed', error);
+        }
       }
-    }
 
-    // 3) Click the chat app's download control and intercept will-download.
-    if (!filePath) {
-      const ui = await tryCaptureDocumentByUiDownload(
-        webContents,
-        params.x,
-        params.y,
-        hintedName,
-        ctx.downloadPoints,
-      );
-      if (ui.ok && ui.filePath) filePath = ui.filePath;
-      else console.warn('[forward] UI document download failed', ui.error);
-    }
+      // 4) Click download control; extras during capture window are cancelled silently.
+      if (!filePath) {
+        const ui = await tryCaptureDocumentByUiDownload(
+          webContents,
+          params.x,
+          params.y,
+          hintedName,
+          ctx.downloadPoints,
+        );
+        if (ui.ok && ui.filePath) filePath = ui.filePath;
+        else console.warn('[forward] UI document download failed', ui.error);
+      }
 
-    // 4) Retry session fetch after UI click (Arattai may warm the file).
-    if (!filePath && arattaiUrl) {
-      const fetched = await fetchArattaiDocumentViaSession(
-        webContents,
-        arattaiUrl,
-        hintedName,
-      );
-      if (fetched.ok) filePath = fetched.filePath;
+      // 5) Retry session fetch after UI click (Arattai may warm the file).
+      if (!filePath && arattaiUrl) {
+        const fetched = await fetchArattaiDocumentViaSession(
+          webContents,
+          arattaiUrl,
+          hintedName,
+        );
+        if (fetched.ok) filePath = fetched.filePath;
+      }
+    } finally {
+      // Keep a short silence tail so late duplicate DownloadItems cannot open Save.
+      beginForwardCaptureWindow(3_500);
     }
 
     if (filePath && fs.existsSync(filePath)) {
