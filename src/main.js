@@ -37,6 +37,7 @@ import {
   mimeForFilename,
   sanitizeForwardFilename,
   shouldForwardAsDocument,
+  shouldOfferDocumentForwardMenu,
 } from './forwardHub.js';
 import { spawnSync } from 'node:child_process';
 import {
@@ -4868,10 +4869,72 @@ function openForwardPickerWindow({
   return { ok: true };
 }
 
+async function focusGuestCompose(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    return !!(await webContents.executeJavaScript(
+      `(() => {
+        const selectors = [
+          '[data-aspera-ai-compose="1"]',
+          '[data-testid="conversation-compose-box-input"]',
+          'footer [contenteditable="true"]',
+          '[contenteditable="true"][role="textbox"]',
+          '[contenteditable="true"][data-tab]',
+          'div[contenteditable="true"]',
+          'textarea',
+        ];
+        for (const sel of selectors) {
+          const node = document.querySelector(sel);
+          if (!node) continue;
+          try { node.focus({ preventScroll: true }); } catch (e) {
+            try { node.focus(); } catch (e2) {}
+          }
+          try { node.click(); } catch (e) {}
+          return true;
+        }
+        return false;
+      })()`,
+      true,
+    ));
+  } catch {
+    return false;
+  }
+}
+
+/** Native Ctrl+V — more reliable than execCommand('paste') for image clipboard in guests. */
+async function sendCtrlVToGuest(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    webContents.focus();
+  } catch {
+    /* ignore */
+  }
+  const mods = ['control'];
+  try {
+    webContents.sendInputEvent({ type: 'keyDown', keyCode: 'V', modifiers: mods });
+    webContents.sendInputEvent({ type: 'char', keyCode: 'V', modifiers: mods });
+    webContents.sendInputEvent({ type: 'keyUp', keyCode: 'V', modifiers: mods });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function stageForwardPaste(serviceId) {
   const entry = views.get(serviceId);
   const wc = entry?.view?.webContents;
   if (!wc || wc.isDestroyed()) return false;
+
+  const focused = await focusGuestCompose(wc);
+  if (!focused) return false;
+
+  // Prefer OS-level paste for images; execCommand often no-ops on WhatsApp/Arattai.
+  const viaKeys = await sendCtrlVToGuest(wc);
+  if (viaKeys) {
+    await sleepMs(180);
+    return true;
+  }
+
   try {
     return !!(await wc.executeJavaScript(
       `(() => {
@@ -4904,6 +4967,25 @@ async function stageForwardPaste(serviceId) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Wait for an open compose box, then paste the staged image/text (like doc attach).
+ */
+async function waitForChatAndPasteForward(serviceId) {
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    const entry = views.get(serviceId);
+    const wc = entry?.view?.webContents;
+    if (!wc || wc.isDestroyed()) return false;
+    if (await guestHasOpenCompose(wc)) {
+      await sleepMs(280);
+      await markActiveComposeTarget(serviceId);
+      return stageForwardPaste(serviceId);
+    }
+    await sleepMs(400);
+  }
+  return false;
 }
 
 function sleepMs(ms) {
@@ -5467,8 +5549,30 @@ async function deliverForwardToTarget(targetId) {
     }
   } else {
     pasted = await stageForwardPaste(targetId);
+    if (!pasted) {
+      const composeOpen = await guestHasOpenCompose(wc);
+      if (!composeOpen) {
+        try {
+          if (Notification.isSupported()) {
+            new Notification({
+              title: 'Forward with Aspera Hub',
+              body: `Open the chat in ${targetName} — pasting automatically…`,
+              silent: true,
+            }).show();
+          }
+        } catch {
+          // ignore
+        }
+        pasted = await waitForChatAndPasteForward(targetId);
+      } else {
+        // Compose exists but first paste missed — retry once after a short settle.
+        await sleepMs(350);
+        await markActiveComposeTarget(targetId);
+        pasted = await stageForwardPaste(targetId);
+      }
+    }
     detail = pasted
-      ? `Staged in ${targetName}. Open the right chat if needed, then send.`
+      ? `Pasted in ${targetName}. Add a caption if you want, then Send.`
       : `Switched to ${targetName}. Open a chat and press Ctrl+V to paste.`;
   }
 
@@ -5579,8 +5683,19 @@ function attachGuestContextMenu(webContents) {
           beginForwardFromGuest(webContents, params).catch(() => {});
         },
       });
-      // Explicit document path — PDF chat tiles often look like images to Electron.
-      if (params.hasImageContents || params.linkURL || params.mediaType === 'file') {
+      // Offer document path only when there is real PDF/Office evidence.
+      // Plain photos must not show this — users click it by mistake and hit
+      // "Could not get the PDF/document file."
+      if (
+        shouldOfferDocumentForwardMenu({
+          linkURL: params.linkURL,
+          srcURL: params.srcURL,
+          mediaType: params.mediaType,
+          titleText: params.titleText || params.altText,
+          text: params.selectionText,
+          hasImage: !!params.hasImageContents,
+        })
+      ) {
         template.push({
           label: 'Forward document with Aspera Hub',
           click: () => {

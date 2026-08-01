@@ -70,7 +70,7 @@ export function buildForwardPickerHtml(dark = false) {
     <div class="preview" id="preview">Preparing…</div>
     <div class="label">Send to account</div>
     <div class="list" id="list"></div>
-    <div class="hint">Images paste with Ctrl+V. Documents auto-attach in the open chat — then Send.</div>
+    <div class="hint">Images paste into the open chat. Documents auto-attach — then Send.</div>
   </div>
   <script>
     const api = window.forwardPickerApi;

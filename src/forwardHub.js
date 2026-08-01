@@ -120,6 +120,20 @@ export function shouldForwardAsDocument(opts = {}) {
   return looksLikeDocument(opts);
 }
 
+/**
+ * Whether the context menu should offer "Forward document with Aspera Hub".
+ * Hide it for ordinary photos so users don't force the PDF path by mistake.
+ */
+export function shouldOfferDocumentForwardMenu(opts = {}) {
+  const mediaType = String(opts.mediaType || '').toLowerCase();
+  if (mediaType === 'file') return true;
+  // Evaluate document signals without treating the click as an image soft-block.
+  return hasStrongDocumentEvidence({
+    ...opts,
+    hasImage: false,
+  });
+}
+
 /** Extract a document-looking filename from free text (chat bubble labels). */
 export function extractDocumentFileName(text) {
   const m = String(text || '').match(

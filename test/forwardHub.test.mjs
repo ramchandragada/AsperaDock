@@ -14,6 +14,7 @@ import {
   mimeForFilename,
   sanitizeForwardFilename,
   shouldForwardAsDocument,
+  shouldOfferDocumentForwardMenu,
 } from '../src/forwardHub.js';
 
 test('forward is only for WhatsApp and Arattai with targets', () => {
@@ -107,6 +108,31 @@ test('photo bubbles with Download are not treated as documents', () => {
   // Soft download signal still counts when not clearly an image click.
   assert.equal(looksLikeDocument({ hasDownload: true }), true);
   assert.equal(looksLikeDocument({ hasDownload: true, hasImage: true }), false);
+});
+
+test('context menu hides Forward document on plain photos', () => {
+  assert.equal(
+    shouldOfferDocumentForwardMenu({
+      hasImage: true,
+      mediaType: 'image',
+      srcURL: 'blob:https://web.arattai.in/x',
+    }),
+    false,
+  );
+  assert.equal(
+    shouldOfferDocumentForwardMenu({
+      mediaType: 'file',
+      fileName: 'scan.pdf',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOfferDocumentForwardMenu({
+      hasImage: true,
+      titleText: 'Invoice.pdf',
+    }),
+    true,
+  );
 });
 
 test('document forward description prefers Document label', () => {
