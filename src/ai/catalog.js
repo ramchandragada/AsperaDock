@@ -14,13 +14,14 @@ export const AI_LANGUAGES = Object.freeze([
 
 /**
  * Fixed try order for speed (also UI order):
- * Gemini → Grok → SambaNova → OpenRouter → Anthropic.
+ * Gemini → Grok → SambaNova → DeepSeek → OpenRouter → Anthropic.
  * Only providers with a saved key are tried; stop at the first success.
  */
 export const AI_PROVIDER_TRY_ORDER = Object.freeze([
   'gemini',
   'grok',
   'sambanova',
+  'deepseek',
   'openrouter',
   'anthropic',
 ]);
@@ -64,6 +65,15 @@ export const AI_PROVIDERS = Object.freeze([
     defaultModel: 'Meta-Llama-3.3-70B-Instruct',
     models: ['Meta-Llama-3.3-70B-Instruct', 'Meta-Llama-3.1-8B-Instruct'],
     keyHint: 'cloud.sambanova.ai API key',
+  },
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    freeTierFriendly: true,
+    // OpenAI-compatible API — deepseek-chat is the fast workplace default.
+    defaultModel: 'deepseek-chat',
+    models: ['deepseek-chat', 'deepseek-reasoner'],
+    keyHint: 'platform.deepseek.com API key',
   },
   {
     id: 'openrouter',
@@ -163,7 +173,7 @@ export function aiProviderRouteOrder() {
 
 /**
  * Filter route order to providers that have a saved key.
- * Always Gemini → Grok → SambaNova → OpenRouter → Anthropic among configured keys.
+ * Always Gemini → Grok → SambaNova → DeepSeek → OpenRouter → Anthropic among configured keys.
  */
 export function configuredProvidersInRouteOrder(configuredIds) {
   const have = new Set(

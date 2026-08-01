@@ -32,11 +32,20 @@ test('AI skills allow only WhatsApp, Arattai, Gmail, Zoho Mail', () => {
   assert.equal(isAiAllowedAppId('zoho-crm'), false);
 });
 
-test('providers include Gemini, Grok, SambaNova, OpenRouter, Anthropic', () => {
-  for (const id of ['gemini', 'grok', 'sambanova', 'openrouter', 'anthropic']) {
+test('providers include Gemini, Grok, SambaNova, DeepSeek, OpenRouter, Anthropic', () => {
+  for (const id of [
+    'gemini',
+    'grok',
+    'sambanova',
+    'deepseek',
+    'openrouter',
+    'anthropic',
+  ]) {
     assert.ok(getAiProvider(id));
   }
   assert.equal(getAiProvider('anthropic').freeTierFriendly, false);
+  assert.equal(getAiProvider('deepseek').defaultModel, 'deepseek-chat');
+  assert.equal(getAiProvider('deepseek').freeTierFriendly, true);
 });
 
 test('language instructions cover EN Hindi Marathi', () => {
@@ -121,11 +130,12 @@ test('Anthropic normalizes retired haiku model ids', () => {
   );
 });
 
-test('AI provider try order is Gemini → Grok → SambaNova → OpenRouter → Anthropic', () => {
+test('AI provider try order is Gemini → Grok → SambaNova → DeepSeek → OpenRouter → Anthropic', () => {
   assert.deepEqual(aiProviderRouteOrder().map((p) => p.id), [
     'gemini',
     'grok',
     'sambanova',
+    'deepseek',
     'openrouter',
     'anthropic',
   ]);
@@ -133,10 +143,11 @@ test('AI provider try order is Gemini → Grok → SambaNova → OpenRouter → 
     configuredProvidersInRouteOrder([
       'anthropic',
       'openrouter',
+      'deepseek',
       'gemini',
       'grok',
     ]).map((p) => p.id),
-    ['gemini', 'grok', 'openrouter', 'anthropic'],
+    ['gemini', 'grok', 'deepseek', 'openrouter', 'anthropic'],
   );
   assert.deepEqual(
     configuredProvidersInRouteOrder(['openrouter', 'anthropic']).map((p) => p.id),
@@ -149,6 +160,7 @@ test('AI provider try order is Gemini → Grok → SambaNova → OpenRouter → 
   assert.equal(getAiProvider('openrouter').defaultModel, 'google/gemini-2.0-flash-001');
   assert.equal(getAiProvider('gemini').defaultModel, 'gemini-3.1-flash-lite');
   assert.equal(getAiProvider('grok').defaultModel, 'grok-4.5');
+  assert.equal(getAiProvider('deepseek').defaultModel, 'deepseek-chat');
 });
 
 test('Gemini and Grok normalize retired model ids', () => {

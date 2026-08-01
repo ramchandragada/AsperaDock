@@ -75,6 +75,10 @@ export function scoreModelForWorkplace(modelId, providerId = '') {
   // SambaNova: prefer instruct chat models.
   if (provider === 'sambanova' && m.includes('llama')) score += 20;
 
+  // DeepSeek: prefer fast chat over reasoner for workplace skills.
+  if (provider === 'deepseek' && m === 'deepseek-chat') score += 40;
+  if (provider === 'deepseek' && m.includes('reasoner')) score -= 10;
+
   return score;
 }
 
@@ -257,6 +261,8 @@ export async function listAiProviderModels(providerId, apiKey, { force = false }
       models = await listOpenAiCompatibleModels('https://api.x.ai/v1', apiKey);
     } else if (id === 'sambanova') {
       models = await listOpenAiCompatibleModels('https://api.sambanova.ai/v1', apiKey);
+    } else if (id === 'deepseek') {
+      models = await listOpenAiCompatibleModels('https://api.deepseek.com/v1', apiKey);
     } else if (id === 'openrouter') {
       models = await listOpenAiCompatibleModels('https://openrouter.ai/api/v1', apiKey, {
         'HTTP-Referer': 'https://asperahub.com',

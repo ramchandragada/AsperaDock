@@ -243,6 +243,13 @@ async function callProviderWithModelChain(providerId, prompt, preferredOverride)
           model,
           prompt,
         });
+      } else if (provider.id === 'deepseek') {
+        text = await callOpenAiCompatible({
+          baseUrl: 'https://api.deepseek.com/v1',
+          apiKey,
+          model,
+          prompt,
+        });
       } else {
         text = await callOpenAiCompatible({
           baseUrl: 'https://openrouter.ai/api/v1',

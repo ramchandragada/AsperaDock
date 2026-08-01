@@ -633,9 +633,11 @@ function renderAiProviderKeys() {
           ? 'Tried 2nd'
           : provider.id === 'sambanova'
             ? 'Tried 3rd'
-            : provider.id === 'openrouter'
+            : provider.id === 'deepseek'
               ? 'Tried 4th'
-              : 'Tried last · paid';
+              : provider.id === 'openrouter'
+                ? 'Tried 5th'
+                : 'Tried last · paid';
     head.append(title, badge);
 
     const status = document.createElement('p');
