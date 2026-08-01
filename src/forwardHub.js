@@ -122,12 +122,17 @@ export function shouldForwardAsDocument(opts = {}) {
 
 /**
  * Whether the context menu should offer "Forward document with Aspera Hub".
- * Hide it for ordinary photos so users don't force the PDF path by mistake.
+ *
+ * PDF chat tiles are usually exposed to Electron as images (Copy image…), so
+ * when hasImage is true we still offer the explicit document path. Ordinary
+ * photo Forward uses the default "Forward with Aspera Hub" item.
  */
 export function shouldOfferDocumentForwardMenu(opts = {}) {
   const mediaType = String(opts.mediaType || '').toLowerCase();
   if (mediaType === 'file') return true;
-  // Evaluate document signals without treating the click as an image soft-block.
+  // PDF preview bubbles look like images — keep the document action available.
+  if (opts.hasImage || opts.hasImageContents) return true;
+  if (String(opts.linkURL || '').trim()) return true;
   return hasStrongDocumentEvidence({
     ...opts,
     hasImage: false,

@@ -4988,6 +4988,152 @@ async function waitForChatAndPasteForward(serviceId) {
   return false;
 }
 
+/** Snapshot of the open chat so we don't paste into a pre-selected recipient. */
+async function getGuestChatKey(webContents) {
+  if (!webContents || webContents.isDestroyed()) {
+    return { title: '', compose: false, href: '' };
+  }
+  try {
+    const result = await webContents.executeJavaScript(
+      `(() => {
+        const header =
+          document.querySelector('[data-testid="conversation-info-header"]')
+          || document.querySelector('#main header')
+          || document.querySelector('header');
+        const title = String(
+          header?.querySelector?.('[data-testid="conversation-info-header-chat-title"]')?.textContent
+          || header?.querySelector?.('span[title]')?.getAttribute?.('title')
+          || header?.querySelector?.('[dir="auto"]')?.textContent
+          || header?.querySelector?.('span')?.textContent
+          || '',
+        ).replace(/\\s+/g, ' ').trim().slice(0, 120);
+        const compose = !!(
+          document.querySelector('[data-testid="conversation-compose-box-input"]')
+          || document.querySelector('footer [contenteditable="true"]')
+          || document.querySelector('[contenteditable="true"][role="textbox"]')
+          || document.querySelector('[contenteditable="true"][data-tab]')
+        );
+        return { title, compose, href: String(location.href || '') };
+      })()`,
+      true,
+    );
+    return {
+      title: String(result?.title || ''),
+      compose: !!result?.compose,
+      href: String(result?.href || ''),
+    };
+  } catch {
+    return { title: '', compose: false, href: '' };
+  }
+}
+
+/**
+ * Wait until the user searches/opens a recipient chat.
+ * Never treat the already-open chat as the pick — they must choose (or re-click).
+ */
+async function waitForRecipientChatSelection(webContents, {
+  initialKey = null,
+  timeoutMs = 90_000,
+} = {}) {
+  const baseline = initialKey || (await getGuestChatKey(webContents));
+  const deadline = Date.now() + timeoutMs;
+  // Arm a detector for chat-list / search-result picks (not random page clicks).
+  try {
+    await webContents.executeJavaScript(
+      `(() => {
+        window.__asperaForwardRecipientArmed = true;
+        window.__asperaForwardRecipientPicked = false;
+        if (window.__asperaForwardRecipientHandler) {
+          document.removeEventListener('click', window.__asperaForwardRecipientHandler, true);
+        }
+        window.__asperaForwardRecipientHandler = (e) => {
+          const t = e?.target;
+          if (!t || !t.closest) return;
+          const hit = t.closest(
+            [
+              '[data-testid="cell-frame-container"]',
+              '[data-testid="list-item"]',
+              '[data-testid="chat"]',
+              '[data-testid="chat-list"] [role="listitem"]',
+              '[role="listitem"]',
+              'div[role="row"]',
+              'a[href*="chat"]',
+              'a[href*="send"]',
+              '[data-testid="contact"]',
+              '[class*="ChatList"] [tabindex]',
+              '[class*="chat-list"] [tabindex]',
+              '[class*="conversation"] [tabindex]',
+            ].join(','),
+          );
+          if (hit) window.__asperaForwardRecipientPicked = true;
+        };
+        document.addEventListener('click', window.__asperaForwardRecipientHandler, true);
+        return true;
+      })()`,
+      true,
+    );
+  } catch {
+    // ignore
+  }
+
+  while (Date.now() < deadline) {
+    if (!webContents || webContents.isDestroyed()) {
+      return { ok: false, error: 'Chat view is gone.' };
+    }
+    let pickedClick = false;
+    try {
+      pickedClick = !!(await webContents.executeJavaScript(
+        `!!window.__asperaForwardRecipientPicked`,
+        true,
+      ));
+    } catch {
+      pickedClick = false;
+    }
+    const cur = await getGuestChatKey(webContents);
+    if (cur.compose) {
+      const titleChanged =
+        !!(cur.title && baseline.title && cur.title !== baseline.title) ||
+        !!(cur.title && !baseline.title);
+      const hrefChanged =
+        !!(cur.href && baseline.href && cur.href !== baseline.href);
+      // No chat was open → first compose the user opens is the recipient.
+      if (!baseline.compose) {
+        return { ok: true, via: 'opened-chat', chat: cur };
+      }
+      if (titleChanged || hrefChanged) {
+        return { ok: true, via: 'chat-changed', chat: cur };
+      }
+      // Same chat still open: only after an explicit chat-list / search click.
+      if (pickedClick) {
+        await sleepMs(250);
+        const after = await getGuestChatKey(webContents);
+        if (after.compose) {
+          return { ok: true, via: 'chat-list-click', chat: after };
+        }
+      }
+    }
+    await sleepMs(350);
+  }
+
+  try {
+    await webContents.executeJavaScript(
+      `(() => {
+        if (window.__asperaForwardRecipientHandler) {
+          document.removeEventListener('click', window.__asperaForwardRecipientHandler, true);
+        }
+        window.__asperaForwardRecipientArmed = false;
+        window.__asperaForwardRecipientPicked = false;
+        window.__asperaForwardRecipientHandler = null;
+        return true;
+      })()`,
+      true,
+    );
+  } catch {
+    // ignore
+  }
+  return { ok: false, timedOut: true };
+}
+
 function sleepMs(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -5502,7 +5648,6 @@ async function deliverForwardToTarget(targetId) {
   closeForwardPickerWindow();
   activateService(targetId);
   await sleepMs(520);
-  await markActiveComposeTarget(targetId);
 
   const targetName = target.name || target.defaultName || 'account';
   const docName =
@@ -5515,29 +5660,84 @@ async function deliverForwardToTarget(targetId) {
   let attached = false;
   let detail = '';
 
+  // Never dump into whoever happens to be open — user must search/choose recipient.
+  const initialChat = await getGuestChatKey(wc);
+  try {
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Forward with Aspera Hub',
+        body: isDocument
+          ? `In ${targetName}, search or open the recipient — then “${docName}” will attach.`
+          : `In ${targetName}, search or open the recipient — then the image will paste.`,
+        silent: true,
+      }).show();
+    }
+  } catch {
+    // ignore
+  }
+
+  const picked = await waitForRecipientChatSelection(wc, {
+    initialKey: initialChat,
+    timeoutMs: 90_000,
+  });
+
+  if (!picked.ok) {
+    detail = isDocument
+      ? `Timed out waiting for a recipient in ${targetName}. Open the chat and use Attach → Document for “${docName}”.`
+      : `Timed out waiting for a recipient in ${targetName}. Open the chat and press Ctrl+V to paste.`;
+    try {
+      if (Notification.isSupported()) {
+        new Notification({
+          title: 'Forward with Aspera Hub',
+          body: detail,
+          silent: true,
+        }).show();
+      }
+    } catch {
+      // ignore
+    }
+    if (isDocument) {
+      writeLinuxFileClipboard(payload.filePath);
+      try {
+        shell.showItemInFolder(payload.filePath);
+      } catch {
+        // ignore
+      }
+    }
+    return { ok: false, needRecipient: true, isDocument, detail };
+  }
+
+  try {
+    await wc?.executeJavaScript?.(
+      `(() => {
+        if (window.__asperaForwardRecipientHandler) {
+          document.removeEventListener('click', window.__asperaForwardRecipientHandler, true);
+        }
+        window.__asperaForwardRecipientArmed = false;
+        window.__asperaForwardRecipientPicked = false;
+        window.__asperaForwardRecipientHandler = null;
+        return true;
+      })()`,
+      true,
+    );
+  } catch {
+    // ignore
+  }
+
+  await sleepMs(280);
+  await markActiveComposeTarget(targetId);
+
   if (isDocument) {
     let result = await attachDocumentToGuest(wc, payload.filePath, {
       appId: target.appId,
     });
     if (!result.ok && result.needChat) {
-      try {
-        if (Notification.isSupported()) {
-          new Notification({
-            title: 'Forward with Aspera Hub',
-            body: `Open the chat in ${targetName} — attaching “${docName}” automatically…`,
-            silent: true,
-          }).show();
-        }
-      } catch {
-        // ignore
-      }
       result = await waitForChatAndAttachDocument(wc, payload.filePath, target.appId);
     }
     attached = !!result.ok;
     if (attached) {
       detail = `“${docName}” attached in ${targetName}. Add a caption if you want, then Send.`;
     } else {
-      // Last resort only — keep product usable if CDP attach fails on a UI change.
       writeLinuxFileClipboard(payload.filePath);
       try {
         shell.showItemInFolder(payload.filePath);
@@ -5550,30 +5750,16 @@ async function deliverForwardToTarget(targetId) {
   } else {
     pasted = await stageForwardPaste(targetId);
     if (!pasted) {
-      const composeOpen = await guestHasOpenCompose(wc);
-      if (!composeOpen) {
-        try {
-          if (Notification.isSupported()) {
-            new Notification({
-              title: 'Forward with Aspera Hub',
-              body: `Open the chat in ${targetName} — pasting automatically…`,
-              silent: true,
-            }).show();
-          }
-        } catch {
-          // ignore
-        }
-        pasted = await waitForChatAndPasteForward(targetId);
-      } else {
-        // Compose exists but first paste missed — retry once after a short settle.
-        await sleepMs(350);
-        await markActiveComposeTarget(targetId);
-        pasted = await stageForwardPaste(targetId);
-      }
+      await sleepMs(350);
+      await markActiveComposeTarget(targetId);
+      pasted = await stageForwardPaste(targetId);
+    }
+    if (!pasted) {
+      pasted = await waitForChatAndPasteForward(targetId);
     }
     detail = pasted
       ? `Pasted in ${targetName}. Add a caption if you want, then Send.`
-      : `Switched to ${targetName}. Open a chat and press Ctrl+V to paste.`;
+      : `Recipient ready in ${targetName}. Press Ctrl+V to paste, then Send.`;
   }
 
   try {
@@ -5594,8 +5780,7 @@ async function deliverForwardToTarget(targetId) {
       title: 'Forward document',
       message: `Could not auto-attach ${docName}`,
       detail:
-        `Open the chat in ${targetName}, then Attach → Document and pick the highlighted file.\n` +
-        'Image forwards still use quick Ctrl+V; document auto-attach depends on the chat UI.',
+        `Open the recipient chat in ${targetName}, then Attach → Document and pick the highlighted file.`,
       buttons: ['OK'],
     });
   }

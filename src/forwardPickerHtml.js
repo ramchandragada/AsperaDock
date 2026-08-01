@@ -70,7 +70,7 @@ export function buildForwardPickerHtml(dark = false) {
     <div class="preview" id="preview">Preparing…</div>
     <div class="label">Send to account</div>
     <div class="list" id="list"></div>
-    <div class="hint">Images paste into the open chat. Documents auto-attach — then Send.</div>
+    <div class="hint">After you pick an account, search or open the recipient — then Hub pastes the image or attaches the document.</div>
   </div>
   <script>
     const api = window.forwardPickerApi;

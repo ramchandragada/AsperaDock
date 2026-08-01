@@ -110,14 +110,15 @@ test('photo bubbles with Download are not treated as documents', () => {
   assert.equal(looksLikeDocument({ hasDownload: true, hasImage: true }), false);
 });
 
-test('context menu hides Forward document on plain photos', () => {
+test('context menu offers Forward document for image tiles and files', () => {
+  // PDF chat tiles are exposed as images (Copy image…) — document action must stay.
   assert.equal(
     shouldOfferDocumentForwardMenu({
       hasImage: true,
       mediaType: 'image',
       srcURL: 'blob:https://web.arattai.in/x',
     }),
-    false,
+    true,
   );
   assert.equal(
     shouldOfferDocumentForwardMenu({
@@ -130,6 +131,12 @@ test('context menu hides Forward document on plain photos', () => {
     shouldOfferDocumentForwardMenu({
       hasImage: true,
       titleText: 'Invoice.pdf',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldOfferDocumentForwardMenu({
+      linkURL: 'https://cdn.example/a.pdf',
     }),
     true,
   );
