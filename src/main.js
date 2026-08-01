@@ -6206,69 +6206,21 @@ async function deliverForwardToTarget(targetId) {
 }
 
 /**
- * Suppress WhatsApp/Arattai in-page context menus so Hub's single menu wins.
- * Without this, users only see Message info / Reply / Forward / Delete and
- * never get "Forward with Aspera Hub".
- */
-async function injectForwardAppContextMenuGuard(webContents) {
-  if (!webContents || webContents.isDestroyed()) return;
-  try {
-    await webContents.executeJavaScript(
-      `(() => {
-        if (window.__asperaHubCtxGuard) return true;
-        window.__asperaHubCtxGuard = true;
-        document.addEventListener(
-          'contextmenu',
-          (e) => {
-            try {
-              e.preventDefault();
-              e.stopPropagation();
-              if (typeof e.stopImmediatePropagation === 'function') {
-                e.stopImmediatePropagation();
-              }
-            } catch (err) {}
-          },
-          true,
-        );
-        return true;
-      })()`,
-      true,
-    );
-  } catch {
-    // ignore
-  }
-}
-
-/**
  * Native right-click menu for guest pages (Cut / Copy / Paste / Select All…).
  * Electron does not show Chromium's built-in menu unless we handle this event.
  * WhatsApp/Arattai: one Forward entry — Hub decides text / image / document.
+ *
+ * Do NOT suppress the page's own contextmenu — blocking it (v0.3.5) disabled
+ * right-click entirely when the native Menu.popup was not visible over the guest.
  */
 function attachGuestContextMenu(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
-  webContents.on('dom-ready', () => {
-    const sid = serviceIdForWebContents(webContents);
-    const svc = getService(sid) || getService(activeServiceId);
-    if (svc && isForwardAppId(svc.appId)) {
-      injectForwardAppContextMenuGuard(webContents).catch(() => {});
-    }
-  });
-  webContents.on('did-finish-load', () => {
-    const sid = serviceIdForWebContents(webContents);
-    const svc = getService(sid) || getService(activeServiceId);
-    if (svc && isForwardAppId(svc.appId)) {
-      injectForwardAppContextMenuGuard(webContents).catch(() => {});
-    }
-  });
 
   webContents.on('context-menu', (_event, params) => {
     if (webContents.isDestroyed()) return;
 
     const sourceServiceId = serviceIdForWebContents(webContents);
     const service = getService(sourceServiceId) || getService(activeServiceId);
-    if (service && isForwardAppId(service.appId)) {
-      injectForwardAppContextMenuGuard(webContents).catch(() => {});
-    }
 
     /** @type {Electron.MenuItemConstructorOptions[]} */
     const template = [];
