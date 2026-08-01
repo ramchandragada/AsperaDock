@@ -2,6 +2,14 @@ import './index.css';
 import { logoHtml } from './logos.js';
 import { icon } from './icons.js';
 import { BRAND, asperaAppIconSvg } from './brand.js';
+import {
+  accelFromKeyEvent,
+  findShortcutConflicts,
+  formatAccel,
+  groupedShortcutCatalog,
+  migrateShortcutsMap,
+  normalizeShortcutEntry,
+} from './shortcutsConfig.js';
 // Renderer errors route through main → Sentry when DSN is configured.
 import('@sentry/electron/renderer')
   .then((SentryRenderer) => {
@@ -101,29 +109,10 @@ const els = {
   findClose: document.getElementById('find-close'),
 };
 
-const SHORTCUT_DEFS = [
-  {
-    group: 'App navigation',
-    items: [
-      { id: 'switchTab', label: 'Go to specific tab', keys: 'Ctrl + 1–9' },
-      { id: 'nextTab', label: 'Switch tabs', keys: 'Ctrl + Tab / Ctrl + Shift + Tab' },
-      { id: 'backForward', label: 'Back / Forward in apps', keys: 'Alt + Left / Right' },
-    ],
-  },
-  {
-    group: 'Sections and features',
-    items: [
-      { id: 'search', label: 'Quick search', keys: 'Ctrl + /' },
-      { id: 'find', label: 'Find in page', keys: 'Ctrl + F' },
-      { id: 'print', label: 'Print page', keys: 'Ctrl + P' },
-      { id: 'settings', label: 'Settings', keys: 'Ctrl + ,' },
-      { id: 'focusMode', label: 'Focus mode', keys: 'Ctrl + Shift + D' },
-      { id: 'mute', label: 'Mute', keys: 'Ctrl + Shift + M' },
-      { id: 'hibernate', label: 'Hibernate background', keys: 'Ctrl + Shift + H' },
-      { id: 'lock', label: 'Lock Aspera Hub', keys: 'Ctrl + Shift + L' },
-    ],
-  },
-];
+const SHORTCUT_DEFS = groupedShortcutCatalog();
+
+let shortcutCaptureId = null;
+let shortcutCaptureHandler = null;
 
 let menuServiceId = null;
 let editServiceId = null;
@@ -961,9 +950,112 @@ function readSettingsForm() {
   return patch;
 }
 
+function stopShortcutCapture({ restore = true } = {}) {
+  if (shortcutCaptureHandler) {
+    window.removeEventListener('keydown', shortcutCaptureHandler, true);
+    shortcutCaptureHandler = null;
+  }
+  const activeId = shortcutCaptureId;
+  shortcutCaptureId = null;
+  if (restore && activeId) {
+    const btn = els.shortcutsList?.querySelector(`[data-bind="${activeId}"]`);
+    if (btn) {
+      btn.classList.remove('recording');
+      const entry = normalizeShortcutEntry(
+        activeId,
+        readShortcutsForm().shortcuts[activeId],
+      );
+      btn.textContent = formatAccel(entry.accel, { kind: entry.kind });
+      btn.title = 'Click to set a new shortcut';
+    }
+  }
+}
+
+function startShortcutCapture(id, button) {
+  stopShortcutCapture({ restore: true });
+  shortcutCaptureId = id;
+  button.classList.add('recording');
+  button.textContent = 'Press keys…';
+  button.title = 'Press the new shortcut (Esc to cancel)';
+
+  shortcutCaptureHandler = (event) => {
+    if (shortcutCaptureId !== id) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      stopShortcutCapture({ restore: true });
+      return;
+    }
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      // Reset this shortcut to its default accel.
+      const defaults = migrateShortcutsMap({});
+      button.dataset.accel = defaults[id].accel;
+      button.classList.remove('recording');
+      button.textContent = formatAccel(defaults[id].accel, {
+        kind: defaults[id].kind,
+      });
+      stopShortcutCapture({ restore: false });
+      validateShortcutsForm();
+      return;
+    }
+    const accel = accelFromKeyEvent(event);
+    if (!accel) return;
+    button.dataset.accel = accel;
+    button.classList.remove('recording');
+    const kind = normalizeShortcutEntry(id, { enabled: true, accel }).kind;
+    button.textContent = formatAccel(accel, { kind });
+    button.title = 'Click to set a new shortcut';
+    stopShortcutCapture({ restore: false });
+    validateShortcutsForm();
+  };
+  window.addEventListener('keydown', shortcutCaptureHandler, true);
+}
+
+function validateShortcutsForm() {
+  const { shortcuts } = readShortcutsForm();
+  const conflicts = findShortcutConflicts(shortcuts);
+  const err = document.getElementById('shortcuts-error');
+  els.shortcutsList?.querySelectorAll('.shortcut-row').forEach((row) => {
+    row.classList.remove('conflict');
+  });
+  if (!conflicts.length) {
+    if (err) err.textContent = '';
+    if (els.shortcutsSave) els.shortcutsSave.disabled = false;
+    return true;
+  }
+  for (const c of conflicts) {
+    for (const id of [c.a, c.b]) {
+      if (!id || id === 'reserved') continue;
+      const row = els.shortcutsList?.querySelector(`[data-shortcut-row="${id}"]`);
+      row?.classList.add('conflict');
+    }
+  }
+  if (err) {
+    const first = conflicts[0];
+    err.textContent = first.reserved
+      ? `“${formatAccel(first.accel)}” is reserved by the system. Choose another.`
+      : `Conflict: two actions share the same keys. Change one of them.`;
+  }
+  if (els.shortcutsSave) els.shortcutsSave.disabled = true;
+  return false;
+}
+
 function fillShortcutsForm() {
-  const enabled = state.settings?.shortcuts || {};
+  stopShortcutCapture({ restore: false });
+  const map = migrateShortcutsMap(state.settings?.shortcuts || {});
   els.shortcutsList.innerHTML = '';
+
+  const hint = document.createElement('p');
+  hint.className = 'hint-text shortcuts-hint';
+  hint.textContent =
+    'Click a key combo to change it. Use Ctrl/Alt/Shift + a key. Esc cancels, Backspace resets to default.';
+  els.shortcutsList.appendChild(hint);
+
+  const err = document.createElement('p');
+  err.id = 'shortcuts-error';
+  err.className = 'error shortcuts-error';
+  els.shortcutsList.appendChild(err);
+
   for (const group of SHORTCUT_DEFS) {
     const rule = document.createElement('div');
     rule.className = 'section-rule';
@@ -973,24 +1065,45 @@ function fillShortcutsForm() {
     const grid = document.createElement('div');
     grid.className = 'shortcut-grid';
     for (const item of group.items) {
-      const row = document.createElement('label');
+      const entry = map[item.id] || normalizeShortcutEntry(item.id, true);
+      const row = document.createElement('div');
       row.className = 'shortcut-row';
+      row.dataset.shortcutRow = item.id;
       row.innerHTML = `
-        <input type="checkbox" data-shortcut="${item.id}" ${enabled[item.id] !== false ? 'checked' : ''} />
-        <span class="shortcut-label">${item.label}</span>
-        <kbd>${item.keys}</kbd>`;
+        <input type="checkbox" data-shortcut="${item.id}" ${entry.enabled ? 'checked' : ''} />
+        <span class="shortcut-label">
+          <span class="shortcut-label-text">${item.label}</span>
+          ${item.hint ? `<span class="shortcut-hint">${item.hint}</span>` : ''}
+        </span>
+        <button type="button" class="shortcut-bind" data-bind="${item.id}" data-accel="${entry.accel}" title="Click to set a new shortcut">${formatAccel(entry.accel, { kind: entry.kind })}</button>`;
       grid.appendChild(row);
     }
     els.shortcutsList.appendChild(grid);
   }
+
+  els.shortcutsList.querySelectorAll('[data-bind]').forEach((btn) => {
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      startShortcutCapture(btn.dataset.bind, btn);
+    });
+  });
+  els.shortcutsList.querySelectorAll('input[data-shortcut]').forEach((input) => {
+    input.addEventListener('change', () => validateShortcutsForm());
+  });
+  validateShortcutsForm();
 }
 
 function readShortcutsForm() {
-  const shortcuts = { ...(state.settings?.shortcuts || {}) };
+  const base = migrateShortcutsMap(state.settings?.shortcuts || {});
   for (const input of els.shortcutsList.querySelectorAll('input[data-shortcut]')) {
-    shortcuts[input.dataset.shortcut] = input.checked;
+    const id = input.dataset.shortcut;
+    const btn = els.shortcutsList.querySelector(`[data-bind="${id}"]`);
+    base[id] = {
+      enabled: !!input.checked,
+      accel: btn?.dataset.accel || base[id].accel,
+    };
   }
-  return { shortcuts };
+  return { shortcuts: migrateShortcutsMap(base) };
 }
 
 function anyOverlayOpen() {
@@ -1593,12 +1706,20 @@ els.settingsSave.addEventListener('click', async () => {
 });
 
 els.shortcutsSave.addEventListener('click', async () => {
+  stopShortcutCapture({ restore: true });
+  if (!validateShortcutsForm()) return;
   await window.asperadock.saveSettings(readShortcutsForm());
   closeShortcuts();
 });
-els.shortcutsClose.addEventListener('click', closeShortcuts);
+els.shortcutsClose.addEventListener('click', () => {
+  stopShortcutCapture({ restore: false });
+  closeShortcuts();
+});
 els.shortcutsModal.addEventListener('click', (event) => {
-  if (event.target === els.shortcutsModal) closeShortcuts();
+  if (event.target === els.shortcutsModal) {
+    stopShortcutCapture({ restore: false });
+    closeShortcuts();
+  }
 });
 
 els.browseDownload.addEventListener('click', async () => {

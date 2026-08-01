@@ -112,6 +112,11 @@ import {
   PRIMARY_PROFILE_ID,
   DEFAULTS,
 } from './store.js';
+import {
+  matchShortcut,
+  migrateShortcutsMap,
+  normalizeShortcutEntry,
+} from './shortcutsConfig.js';
 import { mergeAppConfig, MOBILE_USER_AGENT, DEFAULT_APP_CONFIG } from './appConfig.js';
 import { APP_ICON_PNG_DATA_URL } from './appIconData.js';
 import {
@@ -7022,6 +7027,7 @@ function currentState() {
     },
     settings: {
       ...settings,
+      shortcuts: migrateShortcutsMap(settings.shortcuts || {}),
       lockPasswordHash: undefined,
       hasLockPassword: Boolean(settings.lockPasswordHash),
       errorReportGithubToken: settings.errorReportGithubToken
@@ -7040,9 +7046,45 @@ function broadcastState() {
   pushNotifCenterData();
 }
 
+function shortcutEntry(id) {
+  return normalizeShortcutEntry(id, (settings.shortcuts || {})[id]);
+}
+
 function shortcutOn(id) {
-  const map = settings.shortcuts || {};
-  return map[id] !== false;
+  return shortcutEntry(id).enabled !== false;
+}
+
+function runMatchedShortcut(hit) {
+  if (!hit) return false;
+  if (hit.action === 'back') {
+    if (activeServiceId) {
+      const wc = views.get(activeServiceId)?.view.webContents;
+      if (wc?.canGoBack()) wc.goBack();
+    }
+    return true;
+  }
+  if (hit.action === 'forward') {
+    if (activeServiceId) {
+      const wc = views.get(activeServiceId)?.view.webContents;
+      if (wc?.canGoForward()) wc.goForward();
+    }
+    return true;
+  }
+  if (hit.action === 'switchTab') {
+    const service = orderedServices()[(hit.digit || 1) - 1];
+    if (service) activateService(service.id);
+    return true;
+  }
+  if (hit.action === 'nextTab') {
+    activateByOffset(1);
+    return true;
+  }
+  if (hit.action === 'prevTab') {
+    activateByOffset(-1);
+    return true;
+  }
+  if (hit.action === 'run') return true;
+  return false;
 }
 
 function attachShortcuts(webContents) {
@@ -7054,96 +7096,73 @@ function attachShortcuts(webContents) {
       return;
     }
 
-    const key = input.key.toLowerCase();
+    const key = String(input.key || '').toLowerCase();
 
-    if (input.alt && !input.control && shortcutOn('backForward')) {
-      if (key === 'arrowleft' || key === 'left') {
-        event.preventDefault();
-        if (activeServiceId) {
-          const wc = views.get(activeServiceId)?.view.webContents;
-          if (wc?.canGoBack()) wc.goBack();
-        }
-        return;
-      }
-      if (key === 'arrowright' || key === 'right') {
-        event.preventDefault();
-        if (activeServiceId) {
-          const wc = views.get(activeServiceId)?.view.webContents;
-          if (wc?.canGoForward()) wc.goForward();
-        }
-        return;
-      }
-    }
-
-    if (!input.control) return;
-
-    if (!input.shift && /^[1-9]$/.test(key) && shortcutOn('switchTab')) {
-      const service = orderedServices()[Number.parseInt(key, 10) - 1];
-      if (service) {
-        event.preventDefault();
-        activateService(service.id);
-      }
-      return;
-    }
-
-    if ((key === 'tab' || key === 'pagedown') && shortcutOn('nextTab')) {
-      event.preventDefault();
-      activateByOffset(key === 'tab' && input.shift ? -1 : 1);
-      return;
-    }
-    if (key === 'pageup' && shortcutOn('nextTab')) {
-      event.preventDefault();
-      activateByOffset(-1);
-      return;
-    }
-    if (key === 'r' && !input.shift) {
+    // Always-on reload (not user-remappable — reserved).
+    if (input.control && !input.alt && !input.meta && key === 'r' && !input.shift) {
       event.preventDefault();
       reloadActive();
       return;
     }
-    if (key === ',' && shortcutOn('settings')) {
+
+    const map = migrateShortcutsMap(settings.shortcuts || {});
+    const order = [
+      'backForward',
+      'switchTab',
+      'nextTab',
+      'settings',
+      'search',
+      'find',
+      'print',
+      'focusMode',
+      'mute',
+      'hibernate',
+      'lock',
+    ];
+
+    for (const id of order) {
+      const entry = map[id];
+      const hit = matchShortcut(entry, input);
+      if (!hit) continue;
       event.preventDefault();
-      mainWindow?.webContents.send('dock:open-settings');
-      return;
-    }
-    if (key === '/' && shortcutOn('search')) {
-      event.preventDefault();
-      mainWindow?.webContents.send('dock:open-search');
-      return;
-    }
-    if (key === 'f' && !input.shift) {
-      event.preventDefault();
-      mainWindow?.webContents.send('dock:open-find');
-      return;
-    }
-    if (key === 'p' && !input.shift) {
-      event.preventDefault();
-      printActivePage();
-      return;
-    }
-    if (input.shift && key === 'd' && shortcutOn('focusMode')) {
-      event.preventDefault();
-      toggleFocusMode();
-      return;
-    }
-    if (input.shift && key === 'm' && shortcutOn('mute')) {
-      event.preventDefault();
-      toggleMute();
-      return;
-    }
-    if (input.shift && key === 'h' && shortcutOn('hibernate')) {
-      event.preventDefault();
-      hibernateBackground();
-      return;
-    }
-    if (input.shift && key === 'l' && shortcutOn('lock')) {
-      event.preventDefault();
-      // Renderer handles first-time password setup when lock is not configured yet.
-      try {
-        mainWindow?.webContents?.send('dock:request-lock');
-      } catch {
-        if (settings.lockEnabled && settings.lockPasswordHash) lockApp();
+      if (id === 'settings') {
+        mainWindow?.webContents.send('dock:open-settings');
+        return;
       }
+      if (id === 'search') {
+        mainWindow?.webContents.send('dock:open-search');
+        return;
+      }
+      if (id === 'find') {
+        mainWindow?.webContents.send('dock:open-find');
+        return;
+      }
+      if (id === 'print') {
+        printActivePage();
+        return;
+      }
+      if (id === 'focusMode') {
+        toggleFocusMode();
+        return;
+      }
+      if (id === 'mute') {
+        toggleMute();
+        return;
+      }
+      if (id === 'hibernate') {
+        hibernateBackground();
+        return;
+      }
+      if (id === 'lock') {
+        try {
+          mainWindow?.webContents?.send('dock:request-lock');
+        } catch {
+          if (settings.lockEnabled && settings.lockPasswordHash) lockApp();
+        }
+        return;
+      }
+      runMatchedShortcut(hit);
+      return;
     }
   });
 }

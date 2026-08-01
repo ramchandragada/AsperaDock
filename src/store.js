@@ -8,6 +8,7 @@ import {
   MAX_WARM_VIEWS_CAP,
   MAX_WARM_VIEWS_DEFAULT,
 } from './services.js';
+import { defaultShortcutsMap, migrateShortcutsMap } from './shortcutsConfig.js';
 
 export const PRIMARY_PROFILE_ID = 'primary';
 
@@ -171,18 +172,8 @@ export const DEFAULTS = {
   /** Legacy field — no longer parks warm apps (usability over RAM). */
   maxResidentViews: MAX_WARM_VIEWS_DEFAULT,
 
-  /** Toggleable global shortcuts */
-  shortcuts: {
-    switchTab: true,
-    nextTab: true,
-    focusMode: true,
-    mute: true,
-    hibernate: true,
-    lock: true,
-    settings: true,
-    search: true,
-    backForward: true,
-  },
+  /** Customizable global shortcuts: { [id]: { enabled, accel } } */
+  shortcuts: defaultShortcutsMap(),
 
   /**
    * Named Electron session profiles (Rambox-style).
@@ -474,7 +465,7 @@ export function loadSettings() {
         dropRetiredApps({
           ...DEFAULTS,
           ...parsed,
-          shortcuts: { ...DEFAULTS.shortcuts, ...(parsed.shortcuts || {}) },
+          shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
           serviceLabels: parsed.serviceLabels || {},
           serviceConfigs: parsed.serviceConfigs || {},
           serviceInstances: parsed.serviceInstances || [],
@@ -497,6 +488,9 @@ export function loadSettings() {
 
 export function saveSettings(patch) {
   cache = { ...loadSettings(), ...patch };
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'shortcuts')) {
+    cache.shortcuts = migrateShortcutsMap(patch.shortcuts || {});
+  }
   try {
     fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
     fs.writeFileSync(settingsPath(), JSON.stringify(cache, null, 2), 'utf8');
