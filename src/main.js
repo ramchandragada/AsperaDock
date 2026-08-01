@@ -36,6 +36,7 @@ import {
   looksLikeDocument,
   mimeForFilename,
   sanitizeForwardFilename,
+  shouldForwardAsDocument,
 } from './forwardHub.js';
 import { spawnSync } from 'node:child_process';
 import {
@@ -4361,14 +4362,16 @@ async function inspectForwardContext(webContents, x, y) {
             '[aria-label*="Save as" i]',
           ].join(', '),
         ));
+        // Avoid broad class*=document matches — many UIs use "document" in
+        // unrelated class names and that false-flags ordinary photo bubbles.
         const hasDocIcon = !!(root?.querySelector?.(
           [
             '[data-icon="document"]',
             '[data-testid*="document" i]',
             '[aria-label*="document" i]',
             '[aria-label*="PDF" i]',
-            '[class*="document" i]',
-            '[class*="Document" i]',
+            'span[data-icon="document"]',
+            'span[data-icon="audio-document"]',
           ].join(', '),
         ));
         const docLikely =
@@ -4625,20 +4628,21 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
     titleText ||
     (candidateUrl ? path.basename(candidateUrl.split('?')[0]) : '');
 
-  const documentHint =
-    forceDocument ||
-    looksLikeDocument({
-      linkURL: candidateUrl || linkURL || ctx.url,
-      srcURL: srcLooksLikeImage ? '' : srcURL,
-      fileName: candidateName,
-      text,
-      titleText,
-      nearbyText: ctx.nearbyText,
-      mediaType: params.mediaType,
-      hasDownload: ctx.hasDownload,
-      hasDocIcon: ctx.hasDocIcon,
-      docLikely: ctx.docLikely,
-    });
+  const hasImageContents = !!params.hasImageContents;
+  const documentHint = shouldForwardAsDocument({
+    forceDocument,
+    hasImage: hasImageContents || srcLooksLikeImage,
+    linkURL: candidateUrl || linkURL || ctx.url,
+    srcURL: srcLooksLikeImage ? '' : srcURL,
+    fileName: candidateName,
+    text,
+    titleText,
+    nearbyText: ctx.nearbyText,
+    mediaType: params.mediaType,
+    hasDownload: ctx.hasDownload,
+    hasDocIcon: ctx.hasDocIcon,
+    docLikely: ctx.docLikely,
+  });
 
   let filePath = '';
   let fileName = '';
@@ -4705,27 +4709,34 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
       }
     }
 
-    // Documents must NEVER fall through to preview-image paste.
+    // Explicit document forward must not fall through to preview-image paste.
+    // Plain "Forward" on a photo that was mis-hinted as a doc should use image path.
     if (!filePath) {
-      const box = {
-        type: 'warning',
-        title: 'Forward with Aspera Hub',
-        message: 'Could not get the PDF/document file.',
-        detail:
-          'Aspera Hub will not paste the preview thumbnail as a photo.\n\n' +
-          'Try: open/download the document once in this chat, then Forward again.\n' +
-          'Or use right-click → “Forward document with Aspera Hub”.',
-        buttons: ['OK'],
-      };
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        await dialog.showMessageBox(mainWindow, box);
+      if (!forceDocument && hasImageContents) {
+        console.warn('[forward] document capture missed; falling back to image forward');
       } else {
-        await dialog.showMessageBox(box);
+        const box = {
+          type: 'warning',
+          title: 'Forward with Aspera Hub',
+          message: 'Could not get the PDF/document file.',
+          detail:
+            'Aspera Hub will not paste the preview thumbnail as a photo.\n\n' +
+            'Try: open/download the document once in this chat, then Forward again.\n' +
+            'Or use right-click → “Forward document with Aspera Hub”.',
+          buttons: ['OK'],
+        };
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          await dialog.showMessageBox(mainWindow, box);
+        } else {
+          await dialog.showMessageBox(box);
+        }
+        return { ok: false, error: 'Document download failed.' };
       }
-      return { ok: false, error: 'Document download failed.' };
     }
-  } else {
-    // True photos only — never call copyImageAt while investigating documents
+  }
+
+  if (!isDocument) {
+    // True photos — never call copyImageAt while a real document was staged
     // (that pollutes the clipboard with the PDF thumbnail).
     const image = await captureForwardImage(webContents, params);
     imagePath = saveForwardImage(image);

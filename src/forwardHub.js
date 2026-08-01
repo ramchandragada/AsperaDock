@@ -43,21 +43,33 @@ export function isDocumentExtension(ext) {
 }
 
 /**
- * True when a URL/name/mime/nearby chat bubble looks like a document rather
- * than a photo. PDF chat previews often expose only an image thumbnail —
- * callers must prefer the real file and never paste that preview as a photo.
+ * Strong evidence the target is a real document (PDF/Office), not a photo.
+ * Soft UI chrome like a "Download" button is NOT enough — photos have that too.
  */
-export function looksLikeDocument(opts = {}) {
+export function hasStrongDocumentEvidence(opts = {}) {
   const url = String(opts.url || opts.linkURL || opts.srcURL || '').trim();
   const name = String(opts.fileName || opts.titleText || opts.altText || opts.text || '').trim();
   const nearby = String(opts.nearbyText || '').trim();
   const mime = String(opts.mimeType || opts.mediaType || '').trim().toLowerCase();
-  if (mime === 'file' || mime.includes('pdf') || mime.includes('document') || mime.includes('msword')) {
+
+  if (mime.includes('pdf') || mime.includes('msword') || mime.includes('officedocument')) {
     return true;
   }
-  if (opts.hasDocIcon || opts.hasDownload || opts.docLikely) {
-    return true;
+  // Electron mediaType "file" is only strong with a document-ish name/url/nearby.
+  if (mime === 'file' || mime.includes('document')) {
+    if (
+      isDocumentExtension(extensionOf(url)) ||
+      isDocumentExtension(extensionOf(name)) ||
+      /\b(pdf|document|attachment|\.docx?|\.xlsx?|\.pptx?)\b/i.test(name) ||
+      /\b[\w.\- ()[\]]+\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv)\b/i.test(nearby) ||
+      /\bPDF\b/.test(nearby) ||
+      opts.hasDocIcon ||
+      opts.docLikely
+    ) {
+      return true;
+    }
   }
+  if (opts.hasDocIcon) return true;
   if (isDocumentExtension(extensionOf(url)) || isDocumentExtension(extensionOf(name))) {
     return true;
   }
@@ -75,7 +87,37 @@ export function looksLikeDocument(opts = {}) {
   ) {
     return true;
   }
+  // docLikely from DOM inspect — only when not clearly an image click.
+  if (opts.docLikely && !opts.hasImage) return true;
   return false;
+}
+
+/**
+ * True when a URL/name/mime/nearby chat bubble looks like a document rather
+ * than a photo. PDF chat previews often expose only an image thumbnail —
+ * callers must prefer the real file and never paste that preview as a photo.
+ *
+ * Important: a Download button alone is NOT document evidence (photos have it).
+ */
+export function looksLikeDocument(opts = {}) {
+  if (hasStrongDocumentEvidence(opts)) return true;
+  // Legacy soft signal kept for non-image contexts (e.g. menu offer heuristics).
+  // Callers forwarding an image must pass hasImage / use hasStrongDocumentEvidence.
+  if (!opts.hasImage && (opts.hasDownload || opts.docLikely)) return true;
+  const mime = String(opts.mimeType || opts.mediaType || '').trim().toLowerCase();
+  if (!opts.hasImage && (mime === 'file' || mime.includes('document'))) return true;
+  return false;
+}
+
+/**
+ * Decide whether Forward should take the document capture path.
+ * Right-click on a clear photo must stay on the image path unless the user
+ * explicitly chose "Forward document" or strong PDF/Office evidence exists.
+ */
+export function shouldForwardAsDocument(opts = {}) {
+  if (opts.forceDocument) return true;
+  if (opts.hasImage && !hasStrongDocumentEvidence(opts)) return false;
+  return looksLikeDocument(opts);
 }
 
 /** Extract a document-looking filename from free text (chat bubble labels). */

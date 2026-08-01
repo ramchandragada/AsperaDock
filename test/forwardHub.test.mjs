@@ -6,12 +6,14 @@ import {
   describeForwardPayload,
   buildForwardClipboardText,
   extractDocumentFileName,
+  hasStrongDocumentEvidence,
   isDocumentAccept,
   isForwardAppId,
   isImageOnlyAccept,
   looksLikeDocument,
   mimeForFilename,
   sanitizeForwardFilename,
+  shouldForwardAsDocument,
 } from '../src/forwardHub.js';
 
 test('forward is only for WhatsApp and Arattai with targets', () => {
@@ -56,7 +58,7 @@ test('looksLikeDocument detects PDF names and URLs', () => {
   assert.equal(looksLikeDocument({ linkURL: 'https://cdn.example/a.pdf' }), true);
   assert.equal(looksLikeDocument({ fileName: 'Invoice Q1.pdf' }), true);
   assert.equal(looksLikeDocument({ titleText: 'report.PDF' }), true);
-  assert.equal(looksLikeDocument({ mediaType: 'file' }), true);
+  assert.equal(looksLikeDocument({ mediaType: 'file', fileName: 'scan.pdf' }), true);
   assert.equal(looksLikeDocument({ nearbyText: 'Policy.pdf 1.2 MB PDF' }), true);
   assert.equal(looksLikeDocument({ docLikely: true }), true);
   assert.equal(
@@ -64,6 +66,47 @@ test('looksLikeDocument detects PDF names and URLs', () => {
     false,
   );
   assert.equal(extractDocumentFileName('Shared Policy.pdf · 820 KB'), 'Shared Policy.pdf');
+});
+
+test('photo bubbles with Download are not treated as documents', () => {
+  // Arattai/WhatsApp photos often expose a Download control — that alone must
+  // not force the PDF capture path (user saw "Could not get the PDF/document").
+  assert.equal(
+    shouldForwardAsDocument({
+      hasImage: true,
+      hasDownload: true,
+      mediaType: 'image',
+      srcURL: 'blob:https://web.arattai.in/abc',
+    }),
+    false,
+  );
+  assert.equal(
+    hasStrongDocumentEvidence({
+      hasImage: true,
+      hasDownload: true,
+      mediaType: 'image',
+    }),
+    false,
+  );
+  assert.equal(
+    shouldForwardAsDocument({
+      hasImage: true,
+      forceDocument: true,
+      hasDownload: true,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldForwardAsDocument({
+      hasImage: true,
+      nearbyText: 'Policy.pdf · 820 KB PDF',
+      hasDownload: true,
+    }),
+    true,
+  );
+  // Soft download signal still counts when not clearly an image click.
+  assert.equal(looksLikeDocument({ hasDownload: true }), true);
+  assert.equal(looksLikeDocument({ hasDownload: true, hasImage: true }), false);
 });
 
 test('document forward description prefers Document label', () => {
