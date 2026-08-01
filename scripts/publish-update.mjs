@@ -140,8 +140,10 @@ if (!hasGhAuth()) {
 }
 
 const title = `Aspera Hub ${version}`;
+const notesBlock = String(notes || '').trim() || `Aspera Hub ${version}`;
 const body = [
-  notes,
+  "## What's new",
+  notesBlock,
   '',
   '## Install',
   '- **Debian / Ubuntu / Mint:** download the `.deb` and install (or let Aspera Hub auto-update).',

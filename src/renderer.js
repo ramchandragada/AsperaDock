@@ -2081,11 +2081,15 @@ async function refreshUpdateStatus() {
     const status = await window.asperadock.updateStatus?.();
     if (!status) return;
     if (status.pending) {
-      setUpdateStatus(
-        status.pending.downloaded
-          ? `Update ${status.pending.version} ready — restart to apply`
-          : `Update ${status.pending.version} available`,
-      );
+      const notes = String(status.pending.notes || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const shortNotes =
+        notes.length > 110 ? `${notes.slice(0, 107).trim()}…` : notes;
+      const head = status.pending.downloaded
+        ? `Update ${status.pending.version} ready — restart to apply`
+        : `Update ${status.pending.version} available`;
+      setUpdateStatus(shortNotes ? `${head} · ${shortNotes}` : head);
     } else {
       setUpdateStatus(`Up to date · v${status.currentVersion} (${status.channel})`);
     }
@@ -2107,9 +2111,19 @@ window.asperadock.onUpdateEvent?.((data) => {
     case 'up-to-date':
       setUpdateStatus(`Up to date · v${data.version || ''}`);
       break;
-    case 'available':
-      setUpdateStatus(`Update ${data.version} available — downloading…`);
+    case 'available': {
+      const notes = String(data.notes || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const shortNotes =
+        notes.length > 90 ? `${notes.slice(0, 87).trim()}…` : notes;
+      setUpdateStatus(
+        shortNotes
+          ? `Update ${data.version} available · ${shortNotes}`
+          : `Update ${data.version} available — downloading…`,
+      );
       break;
+    }
     case 'download-progress':
       setUpdateStatus(`Downloading update… ${data.percent || 0}%`);
       break;

@@ -35,6 +35,7 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { GITHUB_UPDATE_FEED, GITHUB_SLUG } from './github.js';
 import { assertHttpsUrl } from './netTrust.js';
+import { extractWhatsNewNotes, formatUpdatePromptDetail } from './updateNotes.js';
 
 /** Default feed: GitHub Releases (no custom server). */
 const DEFAULT_FEED = GITHUB_UPDATE_FEED;
@@ -249,15 +250,45 @@ async function fetchManifestFromGithubReleaseApi(bust) {
   if (!tag) throw new Error('GitHub Releases API missing tag');
 
   const assets = Array.isArray(data.assets) ? data.assets : [];
+  const releaseNotes = extractWhatsNewNotes(data.body || '');
   const manifestAsset = assets.find((a) => String(a?.name || '') === 'latest.json');
+  let manifest;
   if (manifestAsset?.browser_download_url) {
     const url = String(manifestAsset.browser_download_url);
-    return fetchJson(`${url}${url.includes('?') ? '&' : '?'}${bust}`);
+    manifest = await fetchJson(`${url}${url.includes('?') ? '&' : '?'}${bust}`);
+  } else {
+    manifest = await fetchJson(
+      `https://github.com/${GITHUB_SLUG}/releases/download/v${encodeURIComponent(tag)}/latest.json?${bust}`,
+    );
   }
+  // Prefer explicit manifest notes; fall back to GitHub release body.
+  if (manifest && !String(manifest.notes || '').trim() && releaseNotes) {
+    manifest = { ...manifest, notes: releaseNotes };
+  } else if (manifest && releaseNotes && String(manifest.notes || '').trim().length < 24) {
+    manifest = { ...manifest, notes: releaseNotes };
+  }
+  return manifest;
+}
 
-  return fetchJson(
-    `https://github.com/${GITHUB_SLUG}/releases/download/v${encodeURIComponent(tag)}/latest.json?${bust}`,
-  );
+async function enrichNotesFromGithub(manifest) {
+  if (!manifest || !usingDefaultGithubFeed()) return manifest;
+  const existing = extractWhatsNewNotes(manifest.notes || '');
+  if (existing && existing.length >= 40) return { ...manifest, notes: existing };
+  try {
+    const data = await fetchLatestGithubRelease();
+    const tag = String(data?.tag_name || '')
+      .replace(/^v/, '')
+      .trim();
+    if (tag && tag !== String(manifest.version || '').trim()) return manifest;
+    const fromBody = extractWhatsNewNotes(data?.body || '');
+    if (!fromBody) return { ...manifest, notes: existing || manifest.notes || '' };
+    if (!existing || fromBody.length > existing.length) {
+      return { ...manifest, notes: fromBody };
+    }
+  } catch {
+    // ignore
+  }
+  return { ...manifest, notes: existing || manifest.notes || '' };
 }
 
 async function fetchManifest() {
@@ -396,22 +427,23 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
       return { available: true, snoozed: true, version: manifest.version };
     }
 
-    const file = pickFileForPackaging(manifest);
+    const enriched = await enrichNotesFromGithub(manifest);
+    const file = pickFileForPackaging(enriched);
     pendingUpdate = {
-      version: manifest.version,
-      notes: manifest.notes || '',
-      mandatory: !!manifest.mandatory,
+      version: enriched.version,
+      notes: extractWhatsNewNotes(enriched.notes || '') || String(enriched.notes || ''),
+      mandatory: !!enriched.mandatory,
       file,
     };
 
     // Reuse a previously finished download only after SHA-256 re-verify.
-    const existing = await findDownloadedArtifact(manifest.version, file);
+    const existing = await findDownloadedArtifact(enriched.version, file);
     if (existing) downloadedPath = existing;
 
     broadcast('available', {
-      version: manifest.version,
-      notes: manifest.notes || '',
-      mandatory: !!manifest.mandatory,
+      version: enriched.version,
+      notes: pendingUpdate.notes,
+      mandatory: !!enriched.mandatory,
       canAutoInstall: !!file && ['appimage', 'deb', 'rpm'].includes(file.kind),
     });
 
@@ -424,8 +456,12 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
         await showUpdateBox({
           type: 'info',
           title: 'Downloading update',
-          message: `Aspera Hub ${manifest.version} is already downloading.`,
-          detail: 'You will be prompted to install when the download finishes.',
+          message: `Aspera Hub ${enriched.version} is already downloading.`,
+          detail: formatUpdatePromptDetail({
+            version: enriched.version,
+            notes: pendingUpdate.notes,
+            phase: 'available',
+          }),
           buttons: ['OK'],
         });
       } else {
@@ -443,9 +479,9 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
     }
     return {
       available: true,
-      version: manifest.version,
-      notes: manifest.notes || '',
-      mandatory: !!manifest.mandatory,
+      version: enriched.version,
+      notes: pendingUpdate.notes,
+      mandatory: !!enriched.mandatory,
     };
   } catch (error) {
     const message = String(error?.message || error);
@@ -953,8 +989,12 @@ async function promptAvailable() {
     const r = await showUpdateBox({
       type: 'info',
       title: 'Update available',
-      message: `Aspera Hub ${pendingUpdate.version} is available.`,
-      detail: pendingUpdate.notes || 'Download now?',
+      message: `Aspera Hub ${pendingUpdate.version} is available`,
+      detail: formatUpdatePromptDetail({
+        version: pendingUpdate.version,
+        notes: pendingUpdate.notes,
+        phase: 'available',
+      }),
       buttons: ['Download', 'Later'],
       defaultId: 0,
       cancelId: 1,
@@ -985,10 +1025,12 @@ async function promptReady({ force = false } = {}) {
     const r = await showUpdateBox({
       type: 'info',
       title: 'Update ready',
-      message: `Aspera Hub ${pendingUpdate.version} is ready to install.`,
-      detail: pendingUpdate.mandatory
-        ? 'This is a required update and will install now.'
-        : 'Restart to apply the update.',
+      message: `Aspera Hub ${pendingUpdate.version} is ready to install`,
+      detail: formatUpdatePromptDetail({
+        version: pendingUpdate.version,
+        notes: pendingUpdate.notes,
+        phase: pendingUpdate.mandatory ? 'mandatory' : 'ready',
+      }),
       buttons: pendingUpdate.mandatory
         ? ['Install & restart']
         : ['Install & restart', 'Later'],
