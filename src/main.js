@@ -7023,6 +7023,7 @@ function currentState() {
     settings: {
       ...settings,
       lockPasswordHash: undefined,
+      hasLockPassword: Boolean(settings.lockPasswordHash),
       errorReportGithubToken: settings.errorReportGithubToken
         ? '[configured]'
         : '',
@@ -7135,15 +7136,26 @@ function attachShortcuts(webContents) {
       hibernateBackground();
       return;
     }
-    if (input.shift && key === 'l' && settings.lockEnabled && shortcutOn('lock')) {
+    if (input.shift && key === 'l' && shortcutOn('lock')) {
       event.preventDefault();
-      lockApp();
+      // Renderer handles first-time password setup when lock is not configured yet.
+      try {
+        mainWindow?.webContents?.send('dock:request-lock');
+      } catch {
+        if (settings.lockEnabled && settings.lockPasswordHash) lockApp();
+      }
     }
   });
 }
 
 function lockApp() {
-  if (!settings.lockEnabled || !settings.lockPasswordHash) return;
+  if (!settings.lockEnabled || !settings.lockPasswordHash) {
+    return {
+      ok: false,
+      needSetup: true,
+      error: 'Set a lock password first.',
+    };
+  }
   closeAllFloatMenus();
   locked = true;
   const resumeId = activeServiceId || settings.lastActiveServiceId || null;
@@ -7157,6 +7169,7 @@ function lockApp() {
   activeServiceId = null;
   hideViewsForLock();
   broadcastState();
+  return { ok: true };
 }
 
 function unlockApp(password) {
@@ -8579,10 +8592,7 @@ dockHandle('dock:save-settings', (_e, patch) => {
   broadcastState();
   return currentState();
 });
-dockHandle('dock:lock', () => {
-  lockApp();
-  return { ok: true };
-});
+dockHandle('dock:lock', () => lockApp());
 dockHandle('dock:unlock', (_e, password) => unlockApp(password));
 dockHandle('dock:clear-session', async (_e, id) => {
   const service = getService(id);

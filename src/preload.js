@@ -126,4 +126,9 @@ contextBridge.exposeInMainWorld('asperadock', {
     ipcRenderer.on('dock:sync-overlay', listener);
     return () => ipcRenderer.removeListener('dock:sync-overlay', listener);
   },
+  onRequestLock: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('dock:request-lock', listener);
+    return () => ipcRenderer.removeListener('dock:request-lock', listener);
+  },
 });

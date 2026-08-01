@@ -30,6 +30,9 @@ const ICO = {
     '<rect x="4" y="4" width="16" height="16" rx="2.5"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M15 2v2M9 2v2M15 20v2M9 20v2M2 15h2M2 9h2M20 15h2M20 9h2"/>',
   ),
   plus: svg('<path d="M12 5v14"/><path d="M5 12h14"/>'),
+  lock: svg(
+    '<rect x="4" y="10.5" width="16" height="10.5" rx="2.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/>',
+  ),
   sync: svg(
     '<path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.7-3"/><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.7 3"/><path d="M21 3.5V9h-5.5"/><path d="M3 20.5V15h5.5"/>',
   ),
@@ -98,6 +101,7 @@ export function buildChromeMenuHtml(dark = false) {
     ${item('home', ICO.home, 'Go to app home')}
     ${item('free-ram', ICO.ram, 'Free RAM')}
     <hr />
+    ${item('lock', ICO.lock, 'Lock Aspera Hub')}
     ${item('add-app', ICO.plus, 'Add app')}
     <hr />
     ${item('check-updates', ICO.sync, 'Check for updates')}

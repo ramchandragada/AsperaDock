@@ -17,6 +17,7 @@ import('@sentry/electron/renderer')
 
 const els = {
   appsTop: document.getElementById('apps-top'),
+  lockBtn: document.getElementById('lock-btn'),
   addAppBtn: document.getElementById('add-app-btn'),
   emptyState: document.getElementById('empty-state'),
   emptyAddBtn: document.getElementById('empty-add-btn'),
@@ -208,6 +209,7 @@ function paintToolbarIcons() {
   if (els.extensionsBtn) els.extensionsBtn.innerHTML = icon('puzzle');
   if (els.checkUpdatesBtn) els.checkUpdatesBtn.innerHTML = icon('sync');
   if (els.menuBtn) els.menuBtn.innerHTML = asperaAppIconSvg(24);
+  if (els.lockBtn) els.lockBtn.innerHTML = icon('lock');
   if (els.addAppBtn) els.addAppBtn.innerHTML = icon('plus');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
   if (els.appMenuEdit) els.appMenuEdit.innerHTML = icon('settings');
@@ -1383,12 +1385,54 @@ function toggleChromeMenu() {
   });
 }
 
+async function ensureLockPasswordConfigured() {
+  if (state.settings?.lockEnabled && state.settings?.hasLockPassword) {
+    return true;
+  }
+
+  const password = window.prompt(
+    'Set a password to lock Aspera Hub when you step away.\n\nEnter a new password:',
+  );
+  if (password == null) return false;
+  if (!String(password).trim()) {
+    alert('Password cannot be empty.');
+    return false;
+  }
+  const confirm = window.prompt('Confirm password:');
+  if (confirm == null) return false;
+  if (password !== confirm) {
+    alert('Passwords do not match.');
+    return false;
+  }
+  await window.asperadock.saveSettings({
+    lockEnabled: true,
+    lockPassword: password,
+  });
+  return true;
+}
+
+async function lockHubFromUi() {
+  if (state.locked) return;
+  const ready = await ensureLockPasswordConfigured();
+  if (!ready) return;
+  const result = await window.asperadock.lock();
+  if (!result?.ok) {
+    if (result?.needSetup) {
+      alert('Set a lock password in Settings → Security, then try again.');
+      openSettings('security');
+      return;
+    }
+    alert(result?.error || 'Could not lock Aspera Hub.');
+  }
+}
+
 function handleChromeAction(action) {
   if (action === 'search') openSearch();
   if (action === 'settings') openSettings();
   if (action === 'ai-settings') openAiSettings();
   if (action === 'profiles') openProfiles();
   if (action === 'shortcuts') openShortcuts();
+  if (action === 'lock') lockHubFromUi();
   if (action === 'add-app') openAppsSettings();
   if (action === 'catch-up') {
     window.asperadock.aiCatchUp?.({
@@ -1512,6 +1556,9 @@ els.settingsModal?.querySelector('.settings-nav')?.addEventListener('click', (ev
   if (!btn) return;
   showSettingsPanel(btn.dataset.settingsPanel);
 });
+els.lockBtn?.addEventListener('click', () => {
+  lockHubFromUi();
+});
 els.addAppBtn.addEventListener('click', openAppsSettings);
 els.emptyAddBtn.addEventListener('click', openAppsSettings);
 
@@ -1619,6 +1666,7 @@ window.asperadock.onOpenEditApp?.((id) => {
 });
 window.asperadock.onChromeAction?.(handleChromeAction);
 window.asperadock.onOpenAiSettings?.(openAiSettings);
+window.asperadock.onRequestLock?.(lockHubFromUi);
 
 document.getElementById('ai-catch-up-btn')?.addEventListener('click', () => {
   window.asperadock.aiCatchUp?.({
