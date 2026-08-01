@@ -82,14 +82,23 @@ export function buildAiResultHtml(dark = false) {
   .reply-card textarea:focus { outline:2px solid #2563eb55; border-color:#2563eb; }
   .reply-card-actions { display:flex; gap:6px; flex-wrap:wrap; }
   .reply-status { color:${muted}; font-size:12px; font-weight:600; min-height:1.2em; }
-  .refine-wrap { display:none; flex-direction:column; gap:10px; flex:0 0 auto; }
+  .refine-wrap { display:none; flex-direction:column; gap:12px; flex:0 0 auto; }
   .refine-wrap.show { display:flex; }
-  .refine-wrap textarea {
-    width:100%; box-sizing:border-box; min-height:160px; resize:vertical;
-    border:1px solid ${border}; border-radius:12px; padding:14px 16px;
-    font:inherit; font-size:16px; line-height:1.6; color:inherit; background:${card};
+  .refine-lang {
+    background:${card}; border-radius:12px; padding:12px 14px;
+    display:flex; flex-direction:column; gap:8px;
   }
-  .refine-wrap textarea:focus { outline:2px solid #2563eb55; border-color:#2563eb; }
+  .refine-lang-head {
+    display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;
+  }
+  .refine-lang-head strong { font-size:14px; font-weight:700; }
+  .refine-lang textarea {
+    width:100%; box-sizing:border-box; min-height:88px; resize:vertical;
+    border:1px solid ${border}; border-radius:10px; padding:10px 12px;
+    font:inherit; font-size:15px; line-height:1.55; color:inherit; background:${inputBg};
+  }
+  .refine-lang textarea:focus { outline:2px solid #2563eb55; border-color:#2563eb; }
+  .refine-lang-actions { display:flex; gap:6px; flex-wrap:wrap; }
 </style>
 </head>
 <body>
@@ -109,16 +118,15 @@ export function buildAiResultHtml(dark = false) {
       <span class="hint" id="reply-hint">Rough drafts for this message — edit before you copy</span>
     </div>
     <div class="toolbar" id="refine-bar">
-      <button type="button" class="btn primary" id="use-compose">Use in send box</button>
-      <button type="button" class="btn" id="refine-again">Refine again</button>
-      <span class="hint" id="refine-hint">Edit if needed, then put it back in the send box</span>
+      <button type="button" class="btn" id="refine-again">Refine again (EN · HI · MR)</button>
+      <span class="hint" id="refine-hint">Pick English, Hindi, or Marathi for the send box</span>
     </div>
     <div class="scroll" id="scroll">
       <div class="section-label" id="summary-label" hidden>Summary · EN · HI · MR</div>
       <div class="body loading" id="body">Working…</div>
       <div class="refine-wrap" id="refine-wrap">
-        <div class="section-label">Refined message</div>
-        <textarea id="refine-text" placeholder="Refined draft…"></textarea>
+        <div class="section-label">Refined message · EN · HI · MR</div>
+        <div id="refine-editor"></div>
         <div class="reply-status" id="refine-status" hidden></div>
       </div>
       <div class="replies-block" id="replies-wrap">
@@ -136,10 +144,9 @@ export function buildAiResultHtml(dark = false) {
     const replyBar = document.getElementById('reply-bar');
     const refineBar = document.getElementById('refine-bar');
     const refineWrap = document.getElementById('refine-wrap');
-    const refineText = document.getElementById('refine-text');
+    const refineEditor = document.getElementById('refine-editor');
     const refineStatus = document.getElementById('refine-status');
     const refineHint = document.getElementById('refine-hint');
-    const useComposeBtn = document.getElementById('use-compose');
     const refineAgainBtn = document.getElementById('refine-again');
     const suggestBtn = document.getElementById('suggest-reply');
     const replyHint = document.getElementById('reply-hint');
@@ -154,9 +161,16 @@ export function buildAiResultHtml(dark = false) {
     let latestRefine = '';
     let mode = '';
     let sections = [];
+    let refineSections = [];
     let syncTimer = null;
     let refineSyncTimer = null;
     let renderSeq = 0;
+
+    const REFINE_LANGS = [
+      { id: 'en', heading: '## English', label: 'English' },
+      { id: 'hi', heading: '## Hindi (हिन्दी)', label: 'Hindi (हिन्दी)' },
+      { id: 'mr', heading: '## Marathi (मराठी)', label: 'Marathi (मराठी)' },
+    ];
 
     const LANGS = [
       { id: 'en', heading: '## English replies', label: 'English' },
@@ -212,8 +226,57 @@ export function buildAiResultHtml(dark = false) {
       }).filter(Boolean).join('\\n\\n');
     }
 
+    function matchRefineHeading(line) {
+      const t = String(line || '').trim();
+      if (!t) return null;
+      const lower = t.toLowerCase();
+      for (const section of REFINE_LANGS) {
+        if (t === section.heading || lower.startsWith(section.heading.toLowerCase())) return section.id;
+      }
+      if (/^##\\s*english\\b/i.test(t)) return 'en';
+      if (/^##\\s*hindi\\b/i.test(t)) return 'hi';
+      if (/^##\\s*marathi\\b/i.test(t)) return 'mr';
+      return null;
+    }
+
+    function parseRefineSections(text) {
+      const base = REFINE_LANGS.map((s) => ({ id: s.id, heading: s.heading, label: s.label, text: '' }));
+      const byId = Object.fromEntries(base.map((s) => [s.id, s]));
+      const raw = String(text || '').replace(/\\r\\n/g, '\\n').trim();
+      if (!raw) return base;
+      if (!/^##\\s+/m.test(raw)) {
+        byId.en.text = raw;
+        return base;
+      }
+      let current = null;
+      const buckets = { en: [], hi: [], mr: [] };
+      for (const line of raw.split('\\n')) {
+        const headingId = matchRefineHeading(line);
+        if (headingId) { current = headingId; continue; }
+        if (!current) current = 'en';
+        buckets[current].push(line);
+      }
+      for (const id of Object.keys(buckets)) {
+        byId[id].text = buckets[id].join('\\n').trim();
+      }
+      return base;
+    }
+
+    function serializeRefineSections(list) {
+      return (list || []).map((section) => {
+        const meta = REFINE_LANGS.find((s) => s.id === section.id) || section;
+        const body = String(section?.text || '').trim();
+        if (!body) return '';
+        return meta.heading + '\\n' + body;
+      }).filter(Boolean).join('\\n\\n');
+    }
+
     function copyText() {
-      if (mode === 'refine') return String(refineText.value || latestRefine || '').trim();
+      if (mode === 'refine') {
+        return refineSections.length
+          ? serializeRefineSections(refineSections)
+          : String(latestRefine || '').trim();
+      }
       const repliesText = sections.length ? serializeReplies(sections) : latestReplies;
       const parts = [latestSummary, repliesText].filter(Boolean);
       return parts.join('\\n\\n—\\n\\n');
@@ -230,11 +293,84 @@ export function buildAiResultHtml(dark = false) {
     }
 
     function scheduleRefineSync() {
-      latestRefine = String(refineText.value || '');
+      latestRefine = serializeRefineSections(refineSections);
       clearTimeout(refineSyncTimer);
       refineSyncTimer = setTimeout(() => {
-        if (api.syncRefine) api.syncRefine(latestRefine);
+        if (api.syncRefine) api.syncRefine({ sections: refineSections, text: latestRefine });
       }, 200);
+    }
+
+    function anyRefineText() {
+      return refineSections.some((s) => String(s.text || '').trim());
+    }
+
+    function renderRefineEditor() {
+      refineEditor.innerHTML = '';
+      refineSections.forEach((section) => {
+        const wrap = document.createElement('div');
+        wrap.className = 'refine-lang';
+        const head = document.createElement('div');
+        head.className = 'refine-lang-head';
+        const title = document.createElement('strong');
+        title.textContent = section.label;
+        head.appendChild(title);
+        wrap.appendChild(head);
+
+        const ta = document.createElement('textarea');
+        ta.value = section.text || '';
+        ta.rows = 3;
+        ta.placeholder = 'Refined draft in ' + section.label + '…';
+        ta.oninput = () => {
+          section.text = ta.value;
+          scheduleRefineSync();
+          copyBtn.disabled = !anyRefineText();
+          refineAgainBtn.disabled = !anyRefineText();
+        };
+
+        const actions = document.createElement('div');
+        actions.className = 'refine-lang-actions';
+
+        const copyOne = document.createElement('button');
+        copyOne.type = 'button';
+        copyOne.className = 'btn small';
+        copyOne.textContent = 'Copy';
+        copyOne.onclick = async () => {
+          const t = String(ta.value || '').trim();
+          if (!t) return;
+          await api.copy(t);
+          copyOne.textContent = 'Copied';
+          setTimeout(() => { copyOne.textContent = 'Copy'; }, 1000);
+        };
+
+        const useBtn = document.createElement('button');
+        useBtn.type = 'button';
+        useBtn.className = 'btn small primary';
+        useBtn.textContent = 'Use in send box';
+        useBtn.onclick = async () => {
+          const t = String(ta.value || '').trim();
+          if (!t) {
+            setRefineStatus('Type or refine text in ' + section.label + ' first.');
+            return;
+          }
+          useBtn.disabled = true;
+          setRefineStatus('Putting ' + section.label + ' into the send box…');
+          try {
+            const result = await api.useInCompose({ text: t, language: section.id });
+            if (result?.ok) return;
+            setRefineStatus(String(result?.error || 'Copied — paste into the send box with Ctrl+V.'));
+          } catch (err) {
+            setRefineStatus(String(err?.message || err || 'Could not update send box.'));
+          } finally {
+            useBtn.disabled = !String(ta.value || '').trim();
+          }
+        };
+
+        actions.appendChild(useBtn);
+        actions.appendChild(copyOne);
+        wrap.appendChild(ta);
+        wrap.appendChild(actions);
+        refineEditor.appendChild(wrap);
+      });
     }
 
     function scheduleSync() {
@@ -392,17 +528,30 @@ export function buildAiResultHtml(dark = false) {
         body.hidden = true;
         refineWrap.classList.add('show');
         latestRefine = latestSummary;
-        refineText.value = latestRefine;
+        if (Array.isArray(data?.refineSections) && data.refineSections.length) {
+          refineSections = data.refineSections.map((s) => ({
+            id: s.id,
+            heading: s.heading,
+            label: s.label,
+            text: String(s?.text || ''),
+          }));
+        } else {
+          refineSections = parseRefineSections(latestRefine);
+        }
+        latestRefine = serializeRefineSections(refineSections);
+        renderRefineEditor();
         setRefineStatus('');
         summaryLabel.hidden = true;
-        copyBtn.textContent = 'Copy';
+        copyBtn.textContent = 'Copy all';
       } else {
         body.hidden = false;
         refineWrap.classList.remove('show');
+        refineEditor.innerHTML = '';
+        refineSections = [];
         body.className = 'body' + (err ? ' error' : loading ? ' loading' : '');
         body.textContent = latestSummary || (err ? String(data.error) : '…');
         summaryLabel.hidden = !(data?.showTrilingual && !loading && !err && latestSummary);
-        copyBtn.textContent = isRefine ? 'Copy' : 'Copy all';
+        copyBtn.textContent = 'Copy all';
         if (isRefine && (loading || err)) {
           setRefineStatus('');
         }
@@ -411,9 +560,8 @@ export function buildAiResultHtml(dark = false) {
       const showReplyToolbar = !!(data?.canSuggestReply && !loading && !err && !isRefine);
       replyBar.classList.toggle('show', showReplyToolbar);
       refineBar.classList.toggle('show', !!(isRefine && !loading && !err));
-      useComposeBtn.disabled = !latestRefine.trim();
-      refineAgainBtn.disabled = !latestRefine.trim();
-      refineHint.textContent = 'Edit if needed, then Use in send box (or Copy and paste)';
+      refineAgainBtn.disabled = isRefine ? !anyRefineText() : true;
+      refineHint.textContent = 'Edit any language, then Use in send box for that version';
 
       suggestBtn.disabled = !!data?.repliesLoading;
       suggestBtn.textContent = latestReplies || data?.repliesError
@@ -462,41 +610,15 @@ export function buildAiResultHtml(dark = false) {
       }
       const hasReplyText = sections.some((s) => s.items.some((i) => String(i.text || '').trim()));
       copyBtn.disabled =
-        (isRefine ? !String(refineText.value || latestRefine || '').trim() : (!latestSummary && !latestReplies && !hasReplyText))
+        (isRefine ? !anyRefineText() : (!latestSummary && !latestReplies && !hasReplyText))
         || err
         || loading;
     });
 
-    refineText.oninput = () => {
-      latestRefine = refineText.value;
-      useComposeBtn.disabled = !String(latestRefine || '').trim();
-      refineAgainBtn.disabled = !String(latestRefine || '').trim();
-      copyBtn.disabled = !String(latestRefine || '').trim();
-      scheduleRefineSync();
-    };
-
-    useComposeBtn.onclick = async () => {
-      const text = String(refineText.value || '').trim();
-      if (!text) return;
-      useComposeBtn.disabled = true;
-      setRefineStatus('Putting text into the send box…');
-      try {
-        const result = await api.useInCompose({ text });
-        if (result?.ok) return;
-        setRefineStatus(String(result?.error || 'Copied — paste into the send box with Ctrl+V.'));
-      } catch (err) {
-        setRefineStatus(String(err?.message || err || 'Could not update send box.'));
-      } finally {
-        useComposeBtn.disabled = !String(refineText.value || '').trim();
-      }
-    };
-
     refineAgainBtn.onclick = async () => {
-      const text = String(refineText.value || '').trim();
-      if (!text) return;
       refineAgainBtn.disabled = true;
-      setRefineStatus('Refining again…');
-      await api.refineAgain({ text });
+      setRefineStatus('Refining again in English, Hindi, and Marathi…');
+      await api.refineAgain({});
     };
 
     suggestBtn.onclick = async () => {
@@ -509,9 +631,8 @@ export function buildAiResultHtml(dark = false) {
       const text = copyText();
       if (!text) return;
       await api.copy(text);
-      const label = mode === 'refine' ? 'Copy' : 'Copy all';
       copyBtn.textContent = 'Copied';
-      setTimeout(() => { copyBtn.textContent = label; }, 1200);
+      setTimeout(() => { copyBtn.textContent = 'Copy all'; }, 1200);
     };
     document.getElementById('close').onclick = () => api.close();
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') api.close(); });

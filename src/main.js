@@ -66,6 +66,7 @@ import {
   setAiSettingsReader,
 } from './ai/service.js';
 import { parseSuggestedReplies } from './ai/replyEditor.js';
+import { parseRefinedDrafts, serializeRefinedDrafts } from './ai/refineDraft.js';
 import {
   catalogModelsForProvider,
   getCachedAiModels,
@@ -3097,7 +3098,8 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
     AI_LANGUAGES.find((l) => l.id === language)?.label || 'English';
   const skillTitle = asperaAiSkillTitle(skill);
   const routeHint = routeOrder.map((p) => p.name).join(' → ');
-  const metaLang = skill === 'summarize' ? 'EN · HI · MR' : langLabel;
+  const metaLang =
+    skill === 'summarize' || skill === 'refine' ? 'EN · HI · MR' : langLabel;
 
   openAiResultWindow({
     title: `Aspera AI · ${skillTitle}`,
@@ -3160,8 +3162,12 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
 
     const result = await runAiCompletionWithFailover(prompt);
     syncPreferredAiProvider();
-    const resultText =
-      skill === 'refine' ? cleanAiPlainText(result.text) : result.text;
+    let resultText = result.text;
+    let refineSections = null;
+    if (skill === 'refine') {
+      refineSections = parseRefinedDrafts(result.text);
+      resultText = serializeRefinedDrafts(refineSections);
+    }
     if (skill === 'summarize') {
       aiResultContext = {
         skill: 'summarize',
@@ -3182,6 +3188,7 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
         hasComposeTarget: refineHasComposeTarget,
         dark: !!dark,
         refinedText: resultText,
+        refineSections,
         providerName: result.providerName,
         model: result.model,
       };
@@ -3198,6 +3205,7 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
       canSuggestReply: skill === 'summarize',
       canUseInCompose: skill === 'refine',
       canRefineAgain: skill === 'refine',
+      refineSections: refineSections || undefined,
       repliesText: '',
       repliesLoading: false,
     });
@@ -3230,7 +3238,10 @@ async function runRefineAgainFromAiResult(payload = {}) {
   if (!ctx || ctx.skill !== 'refine') {
     return { ok: false, error: 'No draft to refine.' };
   }
-  const draft = String(payload?.text || ctx.refinedText || ctx.selectionText || '').trim();
+  // Always re-refine from the original send-box draft (not one language variant).
+  const draft = String(
+    ctx.originalComposeText || ctx.selectionText || payload?.text || '',
+  ).trim();
   if (!draft) {
     return { ok: false, error: 'Nothing to refine.' };
   }
@@ -3257,7 +3268,7 @@ async function runUseRefinedInCompose(payload = {}) {
   if (!ctx || ctx.skill !== 'refine') {
     return { ok: false, error: 'No refined draft available.' };
   }
-  const text = String(payload?.text || ctx.refinedText || '').trim();
+  const text = cleanAiPlainText(payload?.text || ctx.refinedText || '');
   if (!text) {
     return { ok: false, error: 'Nothing to insert.' };
   }
@@ -6711,13 +6722,27 @@ aiResultHandle('ai-result:refine-again', (_e, payload) =>
 aiResultHandle('ai-result:use-in-compose', (_e, payload) =>
   runUseRefinedInCompose(payload),
 );
-aiResultHandle('ai-result:sync-refine', (_e, text) => {
+aiResultHandle('ai-result:sync-refine', (_e, payload) => {
   if (!aiResultContext || aiResultContext.skill !== 'refine') {
     return { ok: false };
   }
+  if (Array.isArray(payload?.sections)) {
+    const refineSections = payload.sections.map((s) => ({
+      id: s.id,
+      heading: s.heading,
+      label: s.label,
+      text: String(s?.text || ''),
+    }));
+    aiResultContext = {
+      ...aiResultContext,
+      refineSections,
+      refinedText: serializeRefinedDrafts(refineSections),
+    };
+    return { ok: true };
+  }
   aiResultContext = {
     ...aiResultContext,
-    refinedText: String(text || ''),
+    refinedText: String(payload?.text ?? payload || ''),
   };
   return { ok: true };
 });

@@ -80,7 +80,7 @@ test('revise-reply prompt is re-exported from skills', () => {
   assert.match(prompt, /Hindi/);
 });
 
-test('refine-draft prompt polishes send-box text', () => {
+test('refine-draft prompt polishes send-box text in EN HI MR', () => {
   const prompt = buildRefineDraftPrompt({
     text: 'if you want any new features do suggest, it if tech permits it will be implemented',
     appName: 'Arattai',
@@ -88,7 +88,9 @@ test('refine-draft prompt polishes send-box text', () => {
   assert.match(prompt, /new features do suggest/);
   assert.match(prompt, /Refine a message/);
   assert.match(prompt, /Arattai/);
-  assert.match(prompt, /Output ONLY the refined message/);
+  assert.match(prompt, /## English/);
+  assert.match(prompt, /## Hindi/);
+  assert.match(prompt, /## Marathi/);
 });
 test('catch-up prompt lists notification items', () => {
   const prompt = buildCatchMeUpPrompt({

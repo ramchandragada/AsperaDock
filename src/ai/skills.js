@@ -44,16 +44,20 @@ export function buildRefineDraftPrompt({ text, appName }) {
     'Skill: Refine a message the employee is about to send.',
     `App context: ${appName || 'Messaging / Mail'}.`,
     'Improve clarity, grammar, spelling, and professional tone.',
-    'Keep the same language as the draft (English, Hindi, or Marathi).',
-    'Hindi/Marathi stay in Devanagari when the draft uses them.',
-    'Keep the meaning and intent. Do not invent facts or add commitments.',
-    'Do not make it longer unless needed for clarity.',
-    'Output ONLY the refined message text — no preamble, labels, or quotation wrappers.',
+    'Produce refined drafts in THREE languages with these exact headings, in order:',
+    '## English',
+    '## Hindi (हिन्दी)',
+    '## Marathi (मराठी)',
+    'Under each heading: ONLY the refined message text (same meaning/intent).',
+    'Hindi and Marathi must use Devanagari. Do not invent facts or add commitments.',
+    'Do not make it longer unless needed for clarity. No preamble outside the headings.',
     '',
     'Draft to refine:',
     body,
   ].join('\n');
 }
+
+export { parseRefinedDrafts, serializeRefinedDrafts } from './refineDraft.js';
 
 export { buildReviseReplyPrompt } from './replyEditor.js';
 
