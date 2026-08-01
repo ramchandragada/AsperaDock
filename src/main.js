@@ -34,8 +34,12 @@ import {
   forwardPickerHint,
   forwardPickerSteps,
   forwardReadyMessage,
+  forwardRecipientClickSelector,
+  forwardRecipientConfirmSelector,
   forwardTimeoutMessage,
   forwardWaitMessage,
+  guestComposeDetectJs,
+  guestComposeSelector,
   hasStrongDocumentEvidence,
   isDocumentAccept,
   isDocumentExtension,
@@ -5438,18 +5442,12 @@ async function focusGuestCompose(webContents) {
   try {
     return !!(await webContents.executeJavaScript(
       `(() => {
-        const selectors = [
-          '[data-aspera-ai-compose="1"]',
-          '[data-testid="conversation-compose-box-input"]',
-          'footer [contenteditable="true"]',
-          '[contenteditable="true"][role="textbox"]',
-          '[contenteditable="true"][data-tab]',
-          'div[contenteditable="true"]',
-          'textarea',
-        ];
-        for (const sel of selectors) {
-          const node = document.querySelector(sel);
-          if (!node) continue;
+        const marked = document.querySelector('[data-aspera-ai-compose="1"]');
+        const nodes = [
+          marked,
+          ...document.querySelectorAll(${JSON.stringify(guestComposeSelector())}),
+        ].filter(Boolean);
+        for (const node of nodes) {
           try { node.focus({ preventScroll: true }); } catch (e) {
             try { node.focus(); } catch (e2) {}
           }
@@ -5513,16 +5511,10 @@ async function stageForwardPaste(serviceId) {
         };
         const marked = document.querySelector('[data-aspera-ai-compose="1"]');
         if (focusAndPaste(marked)) return true;
-        const selectors = [
-          'footer [contenteditable="true"]',
-          '[contenteditable="true"][role="textbox"]',
-          '[contenteditable="true"][data-tab]',
-          'div[contenteditable="true"]',
-          'textarea',
-        ];
-        for (const sel of selectors) {
-          const node = document.querySelector(sel);
-          if (node && focusAndPaste(node)) return true;
+        const marked2 = document.querySelector('[data-aspera-ai-compose="1"]');
+        if (focusAndPaste(marked2)) return true;
+        for (const node of document.querySelectorAll(${JSON.stringify(guestComposeSelector())})) {
+          if (focusAndPaste(node)) return true;
         }
         return false;
       })()`,
@@ -5563,21 +5555,20 @@ async function getGuestChatKey(webContents) {
         const header =
           document.querySelector('[data-testid="conversation-info-header"]')
           || document.querySelector('#main header')
+          || document.querySelector('[class*="chat-header" i]')
+          || document.querySelector('[class*="ChatHeader" i]')
+          || document.querySelector('[class*="conversation-header" i]')
           || document.querySelector('header');
         const title = String(
           header?.querySelector?.('[data-testid="conversation-info-header-chat-title"]')?.textContent
           || header?.querySelector?.('span[title]')?.getAttribute?.('title')
           || header?.querySelector?.('[dir="auto"]')?.textContent
+          || header?.querySelector?.('h1,h2,h3,[role="heading"]')?.textContent
           || header?.querySelector?.('span')?.textContent
           || '',
         ).replace(/\\s+/g, ' ').trim().slice(0, 120);
-        const compose = !!(
-          document.querySelector('[data-testid="conversation-compose-box-input"]')
-          || document.querySelector('footer [contenteditable="true"]')
-          || document.querySelector('[contenteditable="true"][role="textbox"]')
-          || document.querySelector('[contenteditable="true"][data-tab]')
-        );
-        return { title, compose, href: String(location.href || '') };
+        const compose = ${guestComposeDetectJs()};
+        return { title, compose: !!compose, href: String(location.href || '') };
       })()`,
       true,
     );
@@ -5601,35 +5592,26 @@ async function waitForRecipientChatSelection(webContents, {
 } = {}) {
   const baseline = initialKey || (await getGuestChatKey(webContents));
   const deadline = Date.now() + timeoutMs;
-  // Arm a detector for chat-list / search-result picks (not random page clicks).
+  // Ignore accidental focus clicks during tab activate (Arattai often already has a chat open).
+  const confirmAfter = Date.now() + 700;
+  // Arm a detector for chat-list / search-result picks and "confirm open chat" clicks.
   try {
     await webContents.executeJavaScript(
       `(() => {
         window.__asperaForwardRecipientArmed = true;
         window.__asperaForwardRecipientPicked = false;
+        window.__asperaForwardRecipientConfirmed = false;
         if (window.__asperaForwardRecipientHandler) {
           document.removeEventListener('click', window.__asperaForwardRecipientHandler, true);
         }
+        const listSel = ${JSON.stringify(forwardRecipientClickSelector())};
+        const confirmSel = ${JSON.stringify(forwardRecipientConfirmSelector())};
         window.__asperaForwardRecipientHandler = (e) => {
           const t = e?.target;
           if (!t || !t.closest) return;
-          const hit = t.closest(
-            [
-              '[data-testid="cell-frame-container"]',
-              '[data-testid="list-item"]',
-              '[data-testid="chat"]',
-              '[data-testid="chat-list"] [role="listitem"]',
-              '[role="listitem"]',
-              'div[role="row"]',
-              'a[href*="chat"]',
-              'a[href*="send"]',
-              '[data-testid="contact"]',
-              '[class*="ChatList"] [tabindex]',
-              '[class*="chat-list"] [tabindex]',
-              '[class*="conversation"] [tabindex]',
-            ].join(','),
-          );
-          if (hit) window.__asperaForwardRecipientPicked = true;
+          if (t.closest(listSel)) window.__asperaForwardRecipientPicked = true;
+          // Click compose / conversation panel = "use this already-open chat".
+          if (t.closest(confirmSel)) window.__asperaForwardRecipientConfirmed = true;
         };
         document.addEventListener('click', window.__asperaForwardRecipientHandler, true);
         return true;
@@ -5645,13 +5627,20 @@ async function waitForRecipientChatSelection(webContents, {
       return { ok: false, error: 'Chat view is gone.' };
     }
     let pickedClick = false;
+    let confirmedClick = false;
     try {
-      pickedClick = !!(await webContents.executeJavaScript(
-        `!!window.__asperaForwardRecipientPicked`,
+      const flags = await webContents.executeJavaScript(
+        `({
+          picked: !!window.__asperaForwardRecipientPicked,
+          confirmed: !!window.__asperaForwardRecipientConfirmed,
+        })`,
         true,
-      ));
+      );
+      pickedClick = !!flags?.picked;
+      confirmedClick = !!flags?.confirmed;
     } catch {
       pickedClick = false;
+      confirmedClick = false;
     }
     const cur = await getGuestChatKey(webContents);
     if (cur.compose) {
@@ -5667,12 +5656,16 @@ async function waitForRecipientChatSelection(webContents, {
       if (titleChanged || hrefChanged) {
         return { ok: true, via: 'chat-changed', chat: cur };
       }
-      // Same chat still open: only after an explicit chat-list / search click.
-      if (pickedClick) {
+      // Same chat still open: chat-list click OR compose/panel click (Arattai Pocket case).
+      if (pickedClick || (confirmedClick && Date.now() >= confirmAfter)) {
         await sleepMs(250);
         const after = await getGuestChatKey(webContents);
         if (after.compose) {
-          return { ok: true, via: 'chat-list-click', chat: after };
+          return {
+            ok: true,
+            via: pickedClick ? 'chat-list-click' : 'compose-confirm',
+            chat: after,
+          };
         }
       }
     }
@@ -5687,6 +5680,7 @@ async function waitForRecipientChatSelection(webContents, {
         }
         window.__asperaForwardRecipientArmed = false;
         window.__asperaForwardRecipientPicked = false;
+        window.__asperaForwardRecipientConfirmed = false;
         window.__asperaForwardRecipientHandler = null;
         return true;
       })()`,
@@ -5705,15 +5699,7 @@ function sleepMs(ms) {
 async function guestHasOpenCompose(webContents) {
   if (!webContents || webContents.isDestroyed()) return false;
   try {
-    return !!(await webContents.executeJavaScript(
-      `!!(
-        document.querySelector('[data-testid="conversation-compose-box-input"]')
-        || document.querySelector('footer [contenteditable="true"]')
-        || document.querySelector('[contenteditable="true"][role="textbox"]')
-        || document.querySelector('[contenteditable="true"][data-tab]')
-      )`,
-      true,
-    ));
+    return !!(await webContents.executeJavaScript(guestComposeDetectJs(), true));
   } catch {
     return false;
   }
@@ -5735,10 +5721,13 @@ async function ensureGuestDebugger(webContents) {
 async function clickAttachDocumentUi(webContents, appId = '') {
   if (!webContents || webContents.isDestroyed()) return { ok: false };
   const requireDocument = String(appId || '') === 'whatsapp';
+  const isArattai = String(appId || '') === 'arattai';
   try {
     return await webContents.executeJavaScript(
       `(async () => {
         const requireDocument = ${JSON.stringify(requireDocument)};
+        const isArattai = ${JSON.stringify(isArattai)};
+        const composeSel = ${JSON.stringify(guestComposeSelector())};
         const wait = (ms) => new Promise((r) => setTimeout(r, ms));
         const visible = (el) => {
           if (!el) return false;
@@ -5755,10 +5744,11 @@ async function clickAttachDocumentUi(webContents, appId = '') {
           el.getAttribute('aria-label') || '',
           el.getAttribute('title') || '',
           el.getAttribute('data-testid') || '',
+          el.getAttribute('data-tooltip') || '',
           el.textContent || '',
         ].join(' ').replace(/\\s+/g, ' ').trim();
         const all = () => Array.from(document.querySelectorAll(
-          'button,[role="button"],li,[role="menuitem"],div,span,a',
+          'button,[role="button"],li,[role="menuitem"],label,div,span,a',
         ));
         const byText = (re) => all().find((el) => {
           if (!visible(el)) return false;
@@ -5766,7 +5756,7 @@ async function clickAttachDocumentUi(webContents, appId = '') {
         });
         const isPhotoOrOther = (el) => {
           const t = labelOf(el).toLowerCase();
-          return /photo|video|camera|sticker|contact|poll|event|location|image/i.test(t);
+          return /photo|video|camera|sticker|contact|poll|event|location|image|emoji|mic|voice|send/i.test(t);
         };
         const findDocumentItem = () => {
           const direct =
@@ -5784,6 +5774,41 @@ async function clickAttachDocumentUi(webContents, appId = '') {
           }) || null;
         };
 
+        // Prefer the paperclip sitting to the left of the compose box (Arattai).
+        const findComposePaperclip = () => {
+          const compose = document.querySelector(composeSel);
+          if (!compose) return null;
+          const cr = compose.getBoundingClientRect();
+          const root =
+            compose.closest('footer, form, [class*="composer" i], [class*="Composer"], [class*="input-area" i], [class*="InputArea"]')
+            || compose.parentElement?.parentElement
+            || compose.parentElement
+            || document.body;
+          const candidates = Array.from(
+            root.querySelectorAll('button, [role="button"], label, span, div, a'),
+          );
+          let best = null;
+          let bestScore = -1;
+          for (const el of candidates) {
+            if (!visible(el) || isPhotoOrOther(el)) continue;
+            const er = el.getBoundingClientRect();
+            if (er.width < 10 || er.height < 10 || er.width > 72 || er.height > 72) continue;
+            const t = labelOf(el).toLowerCase();
+            let score = 0;
+            if (/attach|paper\\s*clip|upload|clip/.test(t)) score += 8;
+            if (el.querySelector?.('svg, img, [data-icon], use')) score += 2;
+            // Left of compose, same row.
+            if (er.right <= cr.left + 12 && Math.abs((er.top + er.bottom) / 2 - (cr.top + cr.bottom) / 2) < 36) {
+              score += 6;
+            }
+            if (score > bestScore) {
+              bestScore = score;
+              best = el;
+            }
+          }
+          return bestScore >= 6 ? best : null;
+        };
+
         // WhatsApp Web: plus / attach → Document (must click Document, not Photos).
         const waAttach =
           document.querySelector('[data-testid="conversation-clip"]')
@@ -5792,7 +5817,7 @@ async function clickAttachDocumentUi(webContents, appId = '') {
           || document.querySelector('div[title="Attach"]')
           || document.querySelector('span[data-icon="plus"]')?.closest('button,[role="button"]')
           || byText(/^\\s*attach\\s*$/i);
-        if (waAttach && click(waAttach)) {
+        if (!isArattai && waAttach && click(waAttach)) {
           const deadline = Date.now() + 2200;
           while (Date.now() < deadline) {
             await wait(80);
@@ -5807,19 +5832,22 @@ async function clickAttachDocumentUi(webContents, appId = '') {
 
         // Arattai / generic paperclip — often opens a chooser without a Document submenu.
         const genericAttach =
-          byText(/attach|paper\\s*clip|clip|upload|file/i)
+          findComposePaperclip()
           || document.querySelector('[aria-label*="attach" i]')
           || document.querySelector('[title*="attach" i]')
           || document.querySelector('[aria-label*="upload" i]')
-          || document.querySelector('[data-icon="plus"]')?.closest('button,[role="button"]')
+          || document.querySelector('[title*="upload" i]')
+          || byText(/^\\s*(attach|upload|paper\\s*clip)\\s*$/i)
           || document.querySelector('input[type="file"]')?.closest('button,label,[role="button"]');
         if (genericAttach && click(genericAttach)) {
-          const deadline = Date.now() + 2000;
+          const deadline = Date.now() + 2500;
           while (Date.now() < deadline) {
             await wait(80);
-            const doc = findDocumentItem() || byText(/\\bdocument\\b|\\bpdf\\b|\\bfile\\b/i);
-            if (doc && !isPhotoOrOther(doc) && click(doc)) {
-              return { ok: true, via: 'generic-document' };
+            if (!isArattai) {
+              const doc = findDocumentItem() || byText(/\\bdocument\\b|\\bpdf\\b|\\bfile\\b/i);
+              if (doc && !isPhotoOrOther(doc) && click(doc)) {
+                return { ok: true, via: 'generic-document' };
+              }
             }
             if (document.querySelector('input[type="file"]')) {
               return { ok: true, via: 'generic-attach-open' };
@@ -5980,14 +6008,20 @@ async function dropFileOntoGuestChat(webContents, filePath) {
           if (!a || a === '*' || a.includes('*/*')) return true;
           return /pdf|msword|officedocument|opendocument|\\.docx?|\\.xlsx?|\\.pptx?|\\.txt|\\.csv|\\.zip|text\\/plain|application\\//i.test(a);
         };
+        const composeSel = ${JSON.stringify(guestComposeSelector())};
         const targets = [
           document.querySelector('#main'),
           document.querySelector('[data-testid="conversation-panel-wrapper"]'),
           document.querySelector('[data-testid="conversation-panel-body"]'),
           document.querySelector('[data-testid="conversation-compose-box-input"]'),
           document.querySelector('footer'),
+          document.querySelector(composeSel),
+          document.querySelector('[class*="composer" i]'),
+          document.querySelector('[class*="Composer"]'),
+          document.querySelector('[class*="chat-content" i]'),
           document.querySelector('[contenteditable="true"][role="textbox"]'),
           document.querySelector('[contenteditable="true"]'),
+          document.querySelector('textarea'),
           document.body,
         ].filter(Boolean);
         let dropped = false;
@@ -6064,6 +6098,11 @@ async function attachDocumentToGuest(webContents, filePath, { appId = '' } = {})
     return { ok: false, error: validated.error || 'Document file missing.' };
   }
 
+  const targetApp = String(appId || '');
+  // WhatsApp Photos accept is image-only — must use Document input.
+  // Arattai uses one unrestricted file input behind the paperclip.
+  const documentOnly = targetApp === 'whatsapp';
+
   const dbg = await ensureGuestDebugger(webContents);
   let chooserHandled = false;
   let chooserError = '';
@@ -6105,7 +6144,7 @@ async function attachDocumentToGuest(webContents, filePath, { appId = '' } = {})
 
     const menu = await clickAttachDocumentUi(webContents, appId);
     // WhatsApp: must open Document path. Injecting into Photos yields "File not supported".
-    if (String(appId || '') === 'whatsapp' && !menu?.ok) {
+    if (targetApp === 'whatsapp' && !menu?.ok) {
       return {
         ok: false,
         error:
@@ -6117,10 +6156,16 @@ async function attachDocumentToGuest(webContents, filePath, { appId = '' } = {})
     const start = Date.now();
     while (!chooserHandled && Date.now() - start < 7000) {
       await sleepMs(120);
-      // Only inject into a document-capable input (never image/*).
-      if (Date.now() - start > 500) {
-        const injected = await setFileInputViaCdp(webContents, abs, { documentOnly: true });
+      if (Date.now() - start > 400) {
+        const injected = await setFileInputViaCdp(webContents, abs, { documentOnly });
         if (injected.ok) return injected;
+        // Arattai: retry without accept filtering if the first pass found nothing.
+        if (targetApp === 'arattai') {
+          const anyInput = await setFileInputViaCdp(webContents, abs, {
+            documentOnly: false,
+          });
+          if (anyInput.ok) return anyInput;
+        }
       }
     }
     if (chooserHandled) {
@@ -6131,11 +6176,27 @@ async function attachDocumentToGuest(webContents, filePath, { appId = '' } = {})
       console.warn('[forward] file chooser handle failed', chooserError);
     }
 
-    const injected = await setFileInputViaCdp(webContents, abs, { documentOnly: true });
+    let injected = await setFileInputViaCdp(webContents, abs, { documentOnly });
     if (injected.ok) return injected;
+    if (targetApp === 'arattai') {
+      injected = await setFileInputViaCdp(webContents, abs, { documentOnly: false });
+      if (injected.ok) return injected;
+    }
 
     const dropped = await dropFileOntoGuestChat(webContents, abs);
     if (dropped.ok) return dropped;
+
+    // Last try: click paperclip again, then CDP once more (Arattai mounts input late).
+    if (targetApp === 'arattai') {
+      await clickAttachDocumentUi(webContents, appId);
+      await sleepMs(350);
+      injected = await setFileInputViaCdp(webContents, abs, { documentOnly: false });
+      if (injected.ok) return injected;
+      if (chooserHandled) {
+        await sleepMs(200);
+        return { ok: true, method: 'file-chooser-retry' };
+      }
+    }
 
     return {
       ok: false,
@@ -6282,6 +6343,7 @@ async function deliverForwardToTarget(targetId) {
         }
         window.__asperaForwardRecipientArmed = false;
         window.__asperaForwardRecipientPicked = false;
+        window.__asperaForwardRecipientConfirmed = false;
         window.__asperaForwardRecipientHandler = null;
         return true;
       })()`,

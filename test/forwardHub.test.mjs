@@ -12,7 +12,12 @@ import {
   forwardPickerHint,
   forwardPickerSteps,
   forwardReadyMessage,
+  forwardRecipientClickSelector,
+  forwardRecipientConfirmSelector,
   forwardWaitMessage,
+  guestComposeDetectJs,
+  guestComposeSelector,
+  GUEST_COMPOSE_SELECTORS,
   hasStrongDocumentEvidence,
   isDocumentAccept,
   isForwardAppId,
@@ -318,4 +323,21 @@ test('classifyForwardFileBytes rejects PNG thumbs and accepts %PDF', () => {
   assert.deepEqual(classifyForwardFileBytes(pdf, 'Policy.pdf'), { ok: true, kind: 'pdf' });
   const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
   assert.equal(classifyForwardFileBytes(jpeg, 'scan.pdf').ok, false);
+});
+
+test('guest compose selectors cover Arattai message box, not only WhatsApp', () => {
+  const joined = guestComposeSelector();
+  assert.match(joined, /Type your message/);
+  assert.match(joined, /textarea/);
+  assert.match(joined, /contenteditable/);
+  assert.ok(GUEST_COMPOSE_SELECTORS.length >= 8);
+  const detect = guestComposeDetectJs();
+  assert.match(detect, /type your message/);
+  assert.match(detect, /conversation-compose-box-input/);
+  assert.match(forwardRecipientClickSelector(), /ChatList|chat-list|listitem/i);
+  assert.match(forwardRecipientConfirmSelector(), /Type your message|composer|textbox/i);
+  assert.match(
+    forwardWaitMessage('document', 'Arattai', 'a.pdf'),
+    /message box if that chat is already open/,
+  );
 });

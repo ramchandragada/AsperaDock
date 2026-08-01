@@ -155,14 +155,16 @@ export function forwardPickerHint(kind = 'text') {
 
 export function forwardWaitMessage(kind, targetName, fileName = '') {
   const account = targetName || 'the account';
+  const how =
+    'search or open the recipient (or click the message box if that chat is already open)';
   if (kind === 'document') {
     const name = fileName ? `“${fileName}”` : 'the document';
-    return `In ${account}, search or open the recipient — then Hub will place ${name}.`;
+    return `In ${account}, ${how} — then Hub will place ${name}.`;
   }
   if (kind === 'image') {
-    return `In ${account}, search or open the recipient — then Hub will place the image.`;
+    return `In ${account}, ${how} — then Hub will place the image.`;
   }
-  return `In ${account}, search or open the recipient — then Hub will place the text.`;
+  return `In ${account}, ${how} — then Hub will place the text.`;
 }
 
 export function forwardReadyMessage(kind, targetName, { ok = true, fileName = '' } = {}) {
@@ -509,4 +511,132 @@ export function classifyForwardFileBytes(header, fileName = '') {
     return { ok: true, kind: 'document' };
   }
   return { ok: false, kind: 'unknown', error: 'Unsupported or unrecognized file type.' };
+}
+
+/**
+ * CSS selectors used to find / focus an open chat compose box.
+ * Detection uses {@link guestComposeDetectJs} so WhatsApp's search box is not
+ * mistaken for a chat composer.
+ */
+export const GUEST_COMPOSE_SELECTORS = Object.freeze([
+  '[data-testid="conversation-compose-box-input"]',
+  'footer [contenteditable="true"]',
+  '[contenteditable="true"][role="textbox"]',
+  '[contenteditable="true"][data-tab]',
+  '[role="textbox"][contenteditable="true"]',
+  'div[contenteditable="true"]',
+  'textarea',
+  '[role="textbox"]',
+  '[placeholder*="Type your message" i]',
+  '[data-placeholder*="Type your message" i]',
+  '[placeholder*="message here" i]',
+  '[data-placeholder*="message here" i]',
+  '[aria-placeholder*="Type your message" i]',
+]);
+
+/** Comma-joined selector for focus / queryAll. */
+export function guestComposeSelector() {
+  return GUEST_COMPOSE_SELECTORS.join(', ');
+}
+
+/**
+ * JS expression (IIFE body) that returns true when a real chat composer is open.
+ * Covers Arattai ("Type your message here…") without matching list search boxes.
+ */
+export function guestComposeDetectJs() {
+  return `(() => {
+    if (document.querySelector('[data-testid="conversation-compose-box-input"]')) return true;
+    if (document.querySelector('footer [contenteditable="true"]')) return true;
+    if (document.querySelector('[contenteditable="true"][data-tab]')) return true;
+    const nodes = document.querySelectorAll(
+      '[contenteditable="true"], textarea, [role="textbox"], [placeholder], [data-placeholder], [aria-placeholder]',
+    );
+    const vh = window.innerHeight || 800;
+    for (const n of nodes) {
+      const ph = String(
+        n.getAttribute('placeholder')
+          || n.getAttribute('data-placeholder')
+          || n.getAttribute('aria-placeholder')
+          || n.getAttribute('aria-label')
+          || '',
+      ).toLowerCase();
+      if (/type your message|message here|type a message/.test(ph)) return true;
+      try {
+        const r = n.getBoundingClientRect();
+        const style = window.getComputedStyle(n);
+        if (style.display === 'none' || style.visibility === 'hidden') continue;
+        // Bottom composer: wide editable near the bottom of the viewport.
+        if (r.width >= 120 && r.height >= 24 && r.top > vh * 0.55 && r.bottom <= vh + 4) {
+          // Skip obvious search fields in the chat list column.
+          if (/search/i.test(ph)) continue;
+          if (n.closest && n.closest('[data-testid="chat-list"], [class*="chat-list" i], [class*="ChatList"]')) {
+            continue;
+          }
+          return true;
+        }
+      } catch (e) {}
+    }
+    return false;
+  })()`;
+}
+
+/**
+ * Chat-list / search-result click targets for recipient picking.
+ * Includes Arattai / Zoho-style list rows, not only WhatsApp testids.
+ */
+export const FORWARD_RECIPIENT_CLICK_SELECTORS = Object.freeze([
+  '[data-testid="cell-frame-container"]',
+  '[data-testid="list-item"]',
+  '[data-testid="chat"]',
+  '[data-testid="chat-list"] [role="listitem"]',
+  '[data-testid="contact"]',
+  '[role="listitem"]',
+  'div[role="row"]',
+  'a[href*="chat"]',
+  'a[href*="send"]',
+  '[class*="ChatList"] [tabindex]',
+  '[class*="chat-list"] [tabindex]',
+  '[class*="conversation"] [tabindex]',
+  '[class*="chatlist" i] [tabindex]',
+  '[class*="ChatListItem" i]',
+  '[class*="chat-list-item" i]',
+  '[class*="Roster" i] [tabindex]',
+  '[class*="roster" i] [tabindex]',
+  '[class*="lhs" i] [tabindex]',
+  '[class*="chats-list" i] > *',
+  '[class*="ChatsList" i] > *',
+]);
+
+/**
+ * Clicking these affirms "use the already-open chat" (compose / conversation panel).
+ * Needed when Arattai already has Pocket (or any chat) open — title does not change.
+ */
+export const FORWARD_RECIPIENT_CONFIRM_SELECTORS = Object.freeze([
+  '[data-testid="conversation-compose-box-input"]',
+  '[data-testid="conversation-panel-wrapper"]',
+  '[data-testid="conversation-panel-body"]',
+  '#main',
+  'footer',
+  'textarea',
+  '[contenteditable="true"]',
+  '[role="textbox"]',
+  '[placeholder*="Type your message" i]',
+  '[data-placeholder*="Type your message" i]',
+  '[placeholder*="message here" i]',
+  '[data-placeholder*="message here" i]',
+  '[class*="composer" i]',
+  '[class*="Composer"]',
+  '[class*="message-input" i]',
+  '[class*="MessageInput" i]',
+  '[class*="chat-content" i]',
+  '[class*="ChatContent" i]',
+  '[class*="conversation-panel" i]',
+]);
+
+export function forwardRecipientClickSelector() {
+  return FORWARD_RECIPIENT_CLICK_SELECTORS.join(', ');
+}
+
+export function forwardRecipientConfirmSelector() {
+  return FORWARD_RECIPIENT_CONFIRM_SELECTORS.join(', ');
 }
