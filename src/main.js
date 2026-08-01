@@ -5880,8 +5880,8 @@ function attachGuestContextMenu(webContents) {
           beginForwardFromGuest(webContents, params).catch(() => {});
         },
       });
-      // Optional override when PDF/Office evidence is clear. Primary Forward
-      // auto-detects text / image / document with the same steps everywhere.
+      // Explicit document path — PDF tiles often look like images to Electron.
+      // Same Forward steps afterward (account → recipient → Hub places → Send).
       if (
         shouldOfferDocumentForwardMenu({
           linkURL: params.linkURL,
@@ -5891,10 +5891,11 @@ function attachGuestContextMenu(webContents) {
           text: params.selectionText,
           fileName: params.titleText || params.altText,
           hasImage: !!params.hasImageContents,
+          hasImageContents: !!params.hasImageContents,
         })
       ) {
         template.push({
-          label: 'Forward as document…',
+          label: 'Forward document with Aspera Hub',
           click: () => {
             beginForwardFromGuest(webContents, params, { forceDocument: true }).catch(
               () => {},

@@ -121,14 +121,24 @@ export function shouldForwardAsDocument(opts = {}) {
 }
 
 /**
- * Whether the context menu should offer the explicit document override.
- * Primary action is always "Forward with Aspera Hub" (auto-detects).
- * Show the override only when there is real PDF/Office evidence — never on
- * ordinary photos (that confused users with a second, failing path).
+ * Whether the context menu should offer "Forward document with Aspera Hub".
+ *
+ * Primary action remains "Forward with Aspera Hub" (auto-detects).
+ * PDF chat tiles are usually exposed to Electron as images (Copy image…),
+ * so image contents must still offer the explicit document path — otherwise
+ * users lose Forward document on real PDFs like Police_verification_report.
  */
 export function shouldOfferDocumentForwardMenu(opts = {}) {
   const mediaType = String(opts.mediaType || '').toLowerCase();
   if (mediaType === 'file') return true;
+  // PDF preview bubbles look like images to Chromium — keep document action.
+  if (opts.hasImage || opts.hasImageContents) return true;
+  if (String(opts.linkURL || '').trim()) {
+    return (
+      hasStrongDocumentEvidence({ ...opts, hasImage: false }) ||
+      isDocumentExtension(extensionOf(opts.linkURL))
+    );
+  }
   return hasStrongDocumentEvidence({
     ...opts,
     hasImage: false,

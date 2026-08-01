@@ -115,15 +115,22 @@ test('photo bubbles with Download are not treated as documents', () => {
   assert.equal(looksLikeDocument({ hasDownload: true, hasImage: true }), false);
 });
 
-test('context menu document override only for real document evidence', () => {
-  // Ordinary photos: primary Forward only (auto-detect). No second confusing item.
+test('context menu offers Forward document for PDF image tiles and files', () => {
+  // PDF chat tiles are exposed as images (Copy image…) — document action must stay.
   assert.equal(
     shouldOfferDocumentForwardMenu({
       hasImage: true,
       mediaType: 'image',
       srcURL: 'blob:https://web.arattai.in/x',
     }),
-    false,
+    true,
+  );
+  assert.equal(
+    shouldOfferDocumentForwardMenu({
+      hasImageContents: true,
+      mediaType: 'image',
+    }),
+    true,
   );
   assert.equal(
     shouldOfferDocumentForwardMenu({
