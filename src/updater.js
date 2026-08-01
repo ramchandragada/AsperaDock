@@ -191,16 +191,25 @@ async function fetchJson(url) {
       Accept: 'application/json',
       'Cache-Control': 'no-cache',
       Pragma: 'no-cache',
+      'User-Agent': 'AsperaHub-Updater',
       'X-AsperaDock-Version': currentVersion(),
     },
     cache: 'no-store',
+    redirect: 'follow',
   });
   if (!res.ok) throw new Error(`Feed responded ${res.status}`);
   return res.json();
 }
 
+function usingDefaultGithubFeed() {
+  return (
+    !String(settings().updateFeedUrl || '').trim() &&
+    String(settings().updateChannel || 'stable') === 'stable'
+  );
+}
+
 /** GitHub CDN can lag on /releases/latest/download — API is fresher. */
-async function fetchLatestTagFromGithubApi() {
+async function fetchLatestGithubRelease() {
   try {
     const res = await fetch(`https://api.github.com/repos/${GITHUB_SLUG}/releases/latest`, {
       headers: {
@@ -210,28 +219,78 @@ async function fetchLatestTagFromGithubApi() {
         Pragma: 'no-cache',
       },
       cache: 'no-store',
+      redirect: 'follow',
     });
     if (!res.ok) return null;
-    const data = await res.json();
-    const tag = String(data?.tag_name || '').replace(/^v/, '').trim();
-    return tag || null;
+    return await res.json();
   } catch {
     return null;
   }
+}
+
+async function fetchLatestTagFromGithubApi() {
+  const data = await fetchLatestGithubRelease();
+  const tag = String(data?.tag_name || '')
+    .replace(/^v/, '')
+    .trim();
+  return tag || null;
+}
+
+/**
+ * When /releases/latest/download/latest.json 404s (release created before the
+ * manifest asset lands), resolve via the Releases API asset URL or tag path.
+ */
+async function fetchManifestFromGithubReleaseApi(bust) {
+  const data = await fetchLatestGithubRelease();
+  if (!data) throw new Error('GitHub Releases API unavailable');
+  const tag = String(data.tag_name || '')
+    .replace(/^v/, '')
+    .trim();
+  if (!tag) throw new Error('GitHub Releases API missing tag');
+
+  const assets = Array.isArray(data.assets) ? data.assets : [];
+  const manifestAsset = assets.find((a) => String(a?.name || '') === 'latest.json');
+  if (manifestAsset?.browser_download_url) {
+    const url = String(manifestAsset.browser_download_url);
+    return fetchJson(`${url}${url.includes('?') ? '&' : '?'}${bust}`);
+  }
+
+  return fetchJson(
+    `https://github.com/${GITHUB_SLUG}/releases/download/v${encodeURIComponent(tag)}/latest.json?${bust}`,
+  );
 }
 
 async function fetchManifest() {
   const bust = `t=${Date.now()}&cv=${encodeURIComponent(currentVersion())}`;
   const base = feedUrl();
   const primaryUrl = `${base}${base.includes('?') ? '&' : '?'}${bust}`;
-  let manifest = await fetchJson(primaryUrl);
+  const defaultGithub = usingDefaultGithubFeed();
+
+  let manifest;
+  let primaryError;
+  try {
+    manifest = await fetchJson(primaryUrl);
+  } catch (error) {
+    primaryError = error;
+    if (!defaultGithub) throw error;
+    try {
+      manifest = await fetchManifestFromGithubReleaseApi(`t=${Date.now()}&fallback=api`);
+    } catch {
+      // Brief retry — CI often uploads latest.json a few seconds after the .deb.
+      await new Promise((resolve) => setTimeout(resolve, 1600));
+      try {
+        manifest = await fetchJson(
+          `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}&retry=1`,
+        );
+      } catch {
+        throw primaryError;
+      }
+    }
+  }
   if (!manifest || !manifest.version) throw new Error('Manifest missing version');
 
   // Default GitHub feed only — verify against Releases API when CDN is stale.
-  const usingDefaultGithub =
-    !String(settings().updateFeedUrl || '').trim() &&
-    String(settings().updateChannel || 'stable') === 'stable';
-  if (usingDefaultGithub) {
+  if (defaultGithub) {
     const apiVer = await fetchLatestTagFromGithubApi();
     if (apiVer && compareVersions(apiVer, manifest.version) > 0) {
       const tagUrl = `https://github.com/${GITHUB_SLUG}/releases/download/v${apiVer}/latest.json?${bust}`;
