@@ -6,6 +6,11 @@ import {
   describeForwardPayload,
   buildForwardClipboardText,
   extractDocumentFileName,
+  forwardContentKind,
+  forwardPickerHint,
+  forwardPickerSteps,
+  forwardReadyMessage,
+  forwardWaitMessage,
   hasStrongDocumentEvidence,
   isDocumentAccept,
   isForwardAppId,
@@ -110,15 +115,15 @@ test('photo bubbles with Download are not treated as documents', () => {
   assert.equal(looksLikeDocument({ hasDownload: true, hasImage: true }), false);
 });
 
-test('context menu offers Forward document for image tiles and files', () => {
-  // PDF chat tiles are exposed as images (Copy image…) — document action must stay.
+test('context menu document override only for real document evidence', () => {
+  // Ordinary photos: primary Forward only (auto-detect). No second confusing item.
   assert.equal(
     shouldOfferDocumentForwardMenu({
       hasImage: true,
       mediaType: 'image',
       srcURL: 'blob:https://web.arattai.in/x',
     }),
-    true,
+    false,
   );
   assert.equal(
     shouldOfferDocumentForwardMenu({
@@ -139,6 +144,28 @@ test('context menu offers Forward document for image tiles and files', () => {
       linkURL: 'https://cdn.example/a.pdf',
     }),
     true,
+  );
+});
+
+test('unified forward messaging is content-aware but same steps', () => {
+  assert.equal(forwardContentKind({ isDocument: true }), 'document');
+  assert.equal(forwardContentKind({ hasImage: true }), 'image');
+  assert.equal(forwardContentKind({ text: 'hi' }), 'text');
+  assert.match(forwardPickerSteps(), /Choose account/);
+  assert.match(forwardPickerHint('text'), /Same flow/);
+  assert.match(forwardPickerHint('image'), /Same flow/);
+  assert.match(forwardPickerHint('document'), /Same flow/);
+  assert.match(
+    forwardWaitMessage('text', 'Work WhatsApp'),
+    /place the text/,
+  );
+  assert.match(
+    forwardWaitMessage('image', 'Work WhatsApp'),
+    /place the image/,
+  );
+  assert.match(
+    forwardReadyMessage('document', 'Arattai', { ok: true, fileName: 'a.pdf' }),
+    /Review and Send/,
   );
 });
 

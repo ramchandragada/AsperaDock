@@ -55,6 +55,10 @@ export function buildForwardPickerHtml(dark = false) {
   .text strong, .text span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .text span { color:${muted}; font-size:12px; font-weight:500; }
   .empty { color:${muted}; font-size:12px; padding:8px 2px; }
+  .steps {
+    flex:0 0 auto; background:${card}; border-radius:10px; padding:8px 10px;
+    color:${text}; font-size:11px; font-weight:700; line-height:1.4;
+  }
   .hint { flex:0 0 auto; color:${muted}; font-size:11px; font-weight:600; line-height:1.35; }
 </style>
 </head>
@@ -68,9 +72,10 @@ export function buildForwardPickerHtml(dark = false) {
       <button type="button" class="btn" id="close">Close</button>
     </header>
     <div class="preview" id="preview">Preparing…</div>
+    <div class="steps" id="steps">1) Choose account → 2) Search or open recipient → 3) Hub places it → 4) You Send</div>
     <div class="label">Send to account</div>
     <div class="list" id="list"></div>
-    <div class="hint">After you pick an account, search or open the recipient — then Hub pastes the image or attaches the document.</div>
+    <div class="hint" id="hint">Same steps for text, images, and documents — WhatsApp or Arattai.</div>
   </div>
   <script>
     const api = window.forwardPickerApi;
@@ -82,6 +87,8 @@ export function buildForwardPickerHtml(dark = false) {
         ? ('From ' + data.sourceLabel)
         : 'Choose an account';
       document.getElementById('preview').textContent = data?.preview || 'Selected content';
+      if (data?.steps) document.getElementById('steps').textContent = data.steps;
+      if (data?.hint) document.getElementById('hint').textContent = data.hint;
       const list = document.getElementById('list');
       const targets = data?.targets || [];
       if (!targets.length) {

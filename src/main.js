@@ -28,6 +28,12 @@ import {
   describeForwardPayload,
   extensionOf,
   extractDocumentFileName,
+  forwardContentKind,
+  forwardPickerHint,
+  forwardPickerSteps,
+  forwardReadyMessage,
+  forwardTimeoutMessage,
+  forwardWaitMessage,
   isDocumentExtension,
   isForwardAppId,
   classifyForwardFileBytes,
@@ -4843,6 +4849,7 @@ function openForwardPickerWindow({
   );
   win.webContents.once('did-finish-load', () => {
     if (win.isDestroyed()) return;
+    const kind = forwardContentKind(forwardPayload);
     win.webContents.send('forward-picker:init', {
       sourceLabel: source?.name || forwardPayload.sourceName || 'this chat',
       preview: describeForwardPayload({
@@ -4854,6 +4861,9 @@ function openForwardPickerWindow({
           forwardPayload.fileName ||
           (forwardPayload.filePath ? path.basename(forwardPayload.filePath) : ''),
       }),
+      kind,
+      steps: forwardPickerSteps(),
+      hint: forwardPickerHint(kind),
       targets,
     });
   });
@@ -5625,8 +5635,14 @@ async function deliverForwardToTarget(targetId) {
     !!payload.isDocument &&
     !!payload.filePath &&
     fs.existsSync(payload.filePath);
+  const kind = forwardContentKind({
+    isDocument,
+    hasImage: !!payload.hasImage,
+  });
   const clipText = buildForwardClipboardText(payload);
 
+  // Stage content the same way for every direction: clipboard for text/image,
+  // file path for documents (placed after the user picks a recipient).
   if (isDocument) {
     try {
       clipboard.clear();
@@ -5665,15 +5681,13 @@ async function deliverForwardToTarget(targetId) {
   let attached = false;
   let detail = '';
 
-  // Never dump into whoever happens to be open — user must search/choose recipient.
+  // Unified step 2: never dump into whoever is already open.
   const initialChat = await getGuestChatKey(wc);
   try {
     if (Notification.isSupported()) {
       new Notification({
         title: 'Forward with Aspera Hub',
-        body: isDocument
-          ? `In ${targetName}, search or open the recipient — then “${docName}” will attach.`
-          : `In ${targetName}, search or open the recipient — then the image will paste.`,
+        body: forwardWaitMessage(kind, targetName, docName),
         silent: true,
       }).show();
     }
@@ -5687,9 +5701,7 @@ async function deliverForwardToTarget(targetId) {
   });
 
   if (!picked.ok) {
-    detail = isDocument
-      ? `Timed out waiting for a recipient in ${targetName}. Open the chat and use Attach → Document for “${docName}”.`
-      : `Timed out waiting for a recipient in ${targetName}. Open the chat and press Ctrl+V to paste.`;
+    detail = forwardTimeoutMessage(kind, targetName, docName);
     try {
       if (Notification.isSupported()) {
         new Notification({
@@ -5709,7 +5721,7 @@ async function deliverForwardToTarget(targetId) {
         // ignore
       }
     }
-    return { ok: false, needRecipient: true, isDocument, detail };
+    return { ok: false, needRecipient: true, isDocument, kind, detail };
   }
 
   try {
@@ -5732,6 +5744,7 @@ async function deliverForwardToTarget(targetId) {
   await sleepMs(280);
   await markActiveComposeTarget(targetId);
 
+  // Unified step 3: Hub places content (paste text/image, attach document).
   if (isDocument) {
     let result = await attachDocumentToGuest(wc, payload.filePath, {
       appId: target.appId,
@@ -5740,18 +5753,18 @@ async function deliverForwardToTarget(targetId) {
       result = await waitForChatAndAttachDocument(wc, payload.filePath, target.appId);
     }
     attached = !!result.ok;
-    if (attached) {
-      detail = `“${docName}” attached in ${targetName}. Add a caption if you want, then Send.`;
-    } else {
+    if (!attached) {
       writeLinuxFileClipboard(payload.filePath);
       try {
         shell.showItemInFolder(payload.filePath);
       } catch {
         // ignore
       }
-      detail =
-        `Could not auto-attach in ${targetName}. File is ready — Attach → Document and pick “${docName}”.`;
     }
+    detail = forwardReadyMessage(kind, targetName, {
+      ok: attached,
+      fileName: docName,
+    });
   } else {
     pasted = await stageForwardPaste(targetId);
     if (!pasted) {
@@ -5762,11 +5775,10 @@ async function deliverForwardToTarget(targetId) {
     if (!pasted) {
       pasted = await waitForChatAndPasteForward(targetId);
     }
-    detail = pasted
-      ? `Pasted in ${targetName}. Add a caption if you want, then Send.`
-      : `Recipient ready in ${targetName}. Press Ctrl+V to paste, then Send.`;
+    detail = forwardReadyMessage(kind, targetName, { ok: pasted });
   }
 
+  // Unified step 4 cue: same toast style for every content type / direction.
   try {
     if (Notification.isSupported()) {
       new Notification({
@@ -5779,18 +5791,13 @@ async function deliverForwardToTarget(targetId) {
     // ignore
   }
 
-  if (isDocument && !attached && mainWindow && !mainWindow.isDestroyed()) {
-    await dialog.showMessageBox(mainWindow, {
-      type: 'info',
-      title: 'Forward document',
-      message: `Could not auto-attach ${docName}`,
-      detail:
-        `Open the recipient chat in ${targetName}, then Attach → Document and pick the highlighted file.`,
-      buttons: ['OK'],
-    });
-  }
-
-  return { ok: true, pasted, attached, isDocument };
+  return {
+    ok: true,
+    pasted,
+    attached,
+    isDocument,
+    kind,
+  };
 }
 
 /**
@@ -5873,9 +5880,8 @@ function attachGuestContextMenu(webContents) {
           beginForwardFromGuest(webContents, params).catch(() => {});
         },
       });
-      // Offer document path only when there is real PDF/Office evidence.
-      // Plain photos must not show this — users click it by mistake and hit
-      // "Could not get the PDF/document file."
+      // Optional override when PDF/Office evidence is clear. Primary Forward
+      // auto-detects text / image / document with the same steps everywhere.
       if (
         shouldOfferDocumentForwardMenu({
           linkURL: params.linkURL,
@@ -5883,11 +5889,12 @@ function attachGuestContextMenu(webContents) {
           mediaType: params.mediaType,
           titleText: params.titleText || params.altText,
           text: params.selectionText,
+          fileName: params.titleText || params.altText,
           hasImage: !!params.hasImageContents,
         })
       ) {
         template.push({
-          label: 'Forward document with Aspera Hub',
+          label: 'Forward as document…',
           click: () => {
             beginForwardFromGuest(webContents, params, { forceDocument: true }).catch(
               () => {},

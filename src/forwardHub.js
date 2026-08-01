@@ -121,22 +121,80 @@ export function shouldForwardAsDocument(opts = {}) {
 }
 
 /**
- * Whether the context menu should offer "Forward document with Aspera Hub".
- *
- * PDF chat tiles are usually exposed to Electron as images (Copy image…), so
- * when hasImage is true we still offer the explicit document path. Ordinary
- * photo Forward uses the default "Forward with Aspera Hub" item.
+ * Whether the context menu should offer the explicit document override.
+ * Primary action is always "Forward with Aspera Hub" (auto-detects).
+ * Show the override only when there is real PDF/Office evidence — never on
+ * ordinary photos (that confused users with a second, failing path).
  */
 export function shouldOfferDocumentForwardMenu(opts = {}) {
   const mediaType = String(opts.mediaType || '').toLowerCase();
   if (mediaType === 'file') return true;
-  // PDF preview bubbles look like images — keep the document action available.
-  if (opts.hasImage || opts.hasImageContents) return true;
-  if (String(opts.linkURL || '').trim()) return true;
   return hasStrongDocumentEvidence({
     ...opts,
     hasImage: false,
   });
+}
+
+/** Normalized content kind for one shared Forward UX. */
+export function forwardContentKind(payload = {}) {
+  if (payload.isDocument) return 'document';
+  if (payload.hasImage) return 'image';
+  return 'text';
+}
+
+/** One-line steps shown in the account picker (same for every content type). */
+export function forwardPickerSteps() {
+  return '1) Choose account → 2) Search or open recipient → 3) Hub places it → 4) You Send';
+}
+
+export function forwardPickerHint(kind = 'text') {
+  if (kind === 'document') {
+    return 'Same flow as text and images. After you open the recipient, Hub attaches the document — then Send.';
+  }
+  if (kind === 'image') {
+    return 'Same flow as text and documents. After you open the recipient, Hub pastes the image — then Send.';
+  }
+  return 'Same flow as images and documents. After you open the recipient, Hub pastes the text — then Send.';
+}
+
+export function forwardWaitMessage(kind, targetName, fileName = '') {
+  const account = targetName || 'the account';
+  if (kind === 'document') {
+    const name = fileName ? `“${fileName}”` : 'the document';
+    return `In ${account}, search or open the recipient — then Hub will place ${name}.`;
+  }
+  if (kind === 'image') {
+    return `In ${account}, search or open the recipient — then Hub will place the image.`;
+  }
+  return `In ${account}, search or open the recipient — then Hub will place the text.`;
+}
+
+export function forwardReadyMessage(kind, targetName, { ok = true, fileName = '' } = {}) {
+  const account = targetName || 'the account';
+  if (!ok) {
+    if (kind === 'document') {
+      const name = fileName ? `“${fileName}”` : 'the document';
+      return `Recipient ready in ${account}. If needed: Attach → Document and pick ${name}, then Send.`;
+    }
+    return `Recipient ready in ${account}. Press Ctrl+V to paste, then Send.`;
+  }
+  if (kind === 'document') {
+    const name = fileName ? `“${fileName}”` : 'Document';
+    return `${name} ready in ${account}. Review and Send.`;
+  }
+  if (kind === 'image') {
+    return `Image ready in ${account}. Review and Send.`;
+  }
+  return `Text ready in ${account}. Review and Send.`;
+}
+
+export function forwardTimeoutMessage(kind, targetName, fileName = '') {
+  const account = targetName || 'the account';
+  if (kind === 'document') {
+    const name = fileName ? `“${fileName}”` : 'the document';
+    return `Timed out waiting for a recipient in ${account}. Open the chat, then Attach → Document for ${name}.`;
+  }
+  return `Timed out waiting for a recipient in ${account}. Open the chat and press Ctrl+V to paste.`;
 }
 
 /** Extract a document-looking filename from free text (chat bubble labels). */

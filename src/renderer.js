@@ -1436,6 +1436,7 @@ function openShortcuts() {
 }
 
 function closeShortcuts() {
+  stopShortcutCapture({ restore: false });
   els.shortcutsModal.classList.add('hidden');
   syncOverlayFromModals();
 }
