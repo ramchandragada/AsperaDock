@@ -6740,9 +6740,13 @@ aiResultHandle('ai-result:sync-refine', (_e, payload) => {
     };
     return { ok: true };
   }
+  const rawText =
+    payload && typeof payload === 'object' && 'text' in payload
+      ? payload.text
+      : payload;
   aiResultContext = {
     ...aiResultContext,
-    refinedText: String(payload?.text ?? payload || ''),
+    refinedText: String(rawText || ''),
   };
   return { ok: true };
 });
