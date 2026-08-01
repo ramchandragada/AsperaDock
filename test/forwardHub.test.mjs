@@ -7,6 +7,7 @@ import {
   extractDocumentFileName,
   isForwardAppId,
   looksLikeDocument,
+  mimeForFilename,
   sanitizeForwardFilename,
 } from '../src/forwardHub.js';
 
@@ -94,4 +95,9 @@ test('document clipboard text does not dump local file path into chat', () => {
 test('sanitizeForwardFilename keeps safe pdf names', () => {
   assert.equal(sanitizeForwardFilename('My Invoice.pdf'), 'My Invoice.pdf');
   assert.match(sanitizeForwardFilename('../../evil.pdf'), /evil\.pdf$/);
+});
+
+test('mimeForFilename maps pdf documents', () => {
+  assert.equal(mimeForFilename('a.pdf'), 'application/pdf');
+  assert.equal(mimeForFilename('sheet.xlsx'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 });

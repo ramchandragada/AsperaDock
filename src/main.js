@@ -31,6 +31,7 @@ import {
   isDocumentExtension,
   isForwardAppId,
   looksLikeDocument,
+  mimeForFilename,
   sanitizeForwardFilename,
 } from './forwardHub.js';
 import { spawnSync } from 'node:child_process';
@@ -4877,6 +4878,346 @@ async function stageForwardPaste(serviceId) {
   }
 }
 
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function guestHasOpenCompose(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    return !!(await webContents.executeJavaScript(
+      `!!(
+        document.querySelector('[data-testid="conversation-compose-box-input"]')
+        || document.querySelector('footer [contenteditable="true"]')
+        || document.querySelector('[contenteditable="true"][role="textbox"]')
+        || document.querySelector('[contenteditable="true"][data-tab]')
+      )`,
+      true,
+    ));
+  } catch {
+    return false;
+  }
+}
+
+async function ensureGuestDebugger(webContents) {
+  const dbg = webContents.debugger;
+  if (!dbg.isAttached()) {
+    try {
+      dbg.attach('1.3');
+    } catch {
+      // May already be attached by another helper.
+    }
+  }
+  return dbg;
+}
+
+/** Click Attach → Document (WhatsApp) or equivalent attach control (Arattai). */
+async function clickAttachDocumentUi(webContents, appId = '') {
+  if (!webContents || webContents.isDestroyed()) return { ok: false };
+  try {
+    return await webContents.executeJavaScript(
+      `(async () => {
+        const app = ${JSON.stringify(String(appId || ''))};
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const visible = (el) => {
+          if (!el) return false;
+          const s = window.getComputedStyle(el);
+          const r = el.getBoundingClientRect();
+          return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+        };
+        const click = (el) => {
+          if (!el || !visible(el)) return false;
+          try { el.click(); return true; } catch (e) { return false; }
+        };
+        const byText = (re) => Array.from(document.querySelectorAll(
+          'button,[role="button"],li,div,span,a',
+        )).find((el) => {
+          if (!visible(el)) return false;
+          const t = [
+            el.getAttribute('aria-label') || '',
+            el.getAttribute('title') || '',
+            el.textContent || '',
+          ].join(' ');
+          return re.test(t);
+        });
+
+        // WhatsApp Web: plus / attach → Document
+        const waAttach =
+          document.querySelector('[data-testid="conversation-clip"]')
+          || document.querySelector('[data-testid="attach-menu-plus"]')
+          || document.querySelector('button[aria-label="Attach"]')
+          || document.querySelector('div[title="Attach"]')
+          || document.querySelector('span[data-icon="plus"]')?.closest('button,[role="button"]')
+          || byText(/^\\s*attach\\s*$/i);
+        if (waAttach && click(waAttach)) {
+          await wait(400);
+          const doc =
+            document.querySelector('[data-testid="mi-attach-document"]')
+            || document.querySelector('span[data-icon="document"]')?.closest('li,button,[role="button"]')
+            || byText(/document/i);
+          if (doc && click(doc)) return { ok: true, via: 'whatsapp-document' };
+          return { ok: true, via: 'whatsapp-attach-open' };
+        }
+
+        // Arattai / generic paperclip
+        const genericAttach =
+          byText(/attach|paper\\s*clip|clip/i)
+          || document.querySelector('[aria-label*="attach" i]')
+          || document.querySelector('[title*="attach" i]')
+          || document.querySelector('input[type="file"]')?.closest('button,label,[role="button"]');
+        if (genericAttach && click(genericAttach)) {
+          await wait(400);
+          const doc = byText(/document|pdf|file/i);
+          if (doc && click(doc)) return { ok: true, via: 'generic-document' };
+          return { ok: true, via: 'generic-attach-open' };
+        }
+
+        if (document.querySelector('input[type="file"]')) {
+          return { ok: true, via: 'file-input-ready', app };
+        }
+        return { ok: false };
+      })()`,
+      true,
+    );
+  } catch {
+    return { ok: false };
+  }
+}
+
+async function setFileInputViaCdp(webContents, filePath) {
+  const abs = path.resolve(filePath);
+  if (!webContents || webContents.isDestroyed() || !fs.existsSync(abs)) {
+    return { ok: false };
+  }
+  try {
+    const dbg = await ensureGuestDebugger(webContents);
+    await dbg.sendCommand('DOM.enable');
+    await dbg.sendCommand('Runtime.enable');
+    const evalResult = await dbg.sendCommand('Runtime.evaluate', {
+      expression: `(() => {
+        const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+        if (!inputs.length) return null;
+        // Prefer the most recently added / accept-all document input.
+        const ranked = inputs.sort((a, b) => {
+          const score = (el) => {
+            const accept = String(el.getAttribute('accept') || '').toLowerCase();
+            let s = 0;
+            if (!accept || accept.includes('pdf') || accept.includes('.doc') || accept.includes('*')) s += 2;
+            if (accept.includes('image') && !accept.includes('pdf')) s -= 2;
+            return s;
+          };
+          return score(b) - score(a);
+        });
+        return ranked[0];
+      })()`,
+      returnByValue: false,
+    });
+    const objectId = evalResult?.result?.objectId;
+    if (!objectId) return { ok: false };
+    const { node } = await dbg.sendCommand('DOM.requestNode', { objectId });
+    if (!node?.nodeId) return { ok: false };
+    await dbg.sendCommand('DOM.setFileInputFiles', {
+      nodeId: node.nodeId,
+      files: [abs],
+    });
+    // Nudge change listeners.
+    await webContents.executeJavaScript(
+      `(() => {
+        const inputs = document.querySelectorAll('input[type="file"]');
+        inputs.forEach((el) => {
+          try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+          try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+        });
+        return true;
+      })()`,
+      true,
+    );
+    return { ok: true, method: 'cdp-set-files' };
+  } catch (error) {
+    console.warn('[forward] CDP setFileInputFiles failed', error);
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+/** Drop a real File onto the open chat (works like OS drag-and-drop for many web apps). */
+async function dropFileOntoGuestChat(webContents, filePath) {
+  const abs = path.resolve(filePath);
+  if (!webContents || webContents.isDestroyed() || !fs.existsSync(abs)) {
+    return { ok: false };
+  }
+  const stat = fs.statSync(abs);
+  // Keep IPC payload reasonable — large docs use CDP attach instead.
+  if (stat.size > 12 * 1024 * 1024) return { ok: false, error: 'too-large-for-drop' };
+  const b64 = fs.readFileSync(abs).toString('base64');
+  const name = path.basename(abs);
+  const mime = mimeForFilename(name);
+  try {
+    const result = await webContents.executeJavaScript(
+      `(() => {
+        const b64 = ${JSON.stringify(b64)};
+        const name = ${JSON.stringify(name)};
+        const mime = ${JSON.stringify(mime)};
+        const binary = atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        const file = new File([bytes], name, { type: mime });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        const targets = [
+          document.querySelector('#main'),
+          document.querySelector('[data-testid="conversation-panel-wrapper"]'),
+          document.querySelector('[data-testid="conversation-panel-body"]'),
+          document.querySelector('[data-testid="conversation-compose-box-input"]'),
+          document.querySelector('footer'),
+          document.querySelector('[contenteditable="true"][role="textbox"]'),
+          document.querySelector('[contenteditable="true"]'),
+          document.body,
+        ].filter(Boolean);
+        let dropped = false;
+        for (const target of targets) {
+          for (const type of ['dragenter', 'dragover', 'drop']) {
+            const ev = new DragEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              dataTransfer: dt,
+            });
+            target.dispatchEvent(ev);
+          }
+          dropped = true;
+        }
+        const input = document.querySelector('input[type="file"]');
+        if (input) {
+          try {
+            const iDt = new DataTransfer();
+            iDt.items.add(file);
+            input.files = iDt.files;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            return { ok: true, method: 'input-files' };
+          } catch (e) {}
+        }
+        return { ok: dropped, method: 'drop' };
+      })()`,
+      true,
+    );
+    return result?.ok ? { ok: true, method: result.method || 'drop' } : { ok: false };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+/**
+ * Attach a local document into the guest chat the seamless way:
+ * file-chooser intercept → Attach/Document click → CDP set files → DOM drop.
+ */
+async function attachDocumentToGuest(webContents, filePath, { appId = '' } = {}) {
+  const abs = path.resolve(filePath);
+  if (!webContents || webContents.isDestroyed()) {
+    return { ok: false, error: 'Chat view is gone.' };
+  }
+  if (!fs.existsSync(abs)) {
+    return { ok: false, error: 'Document file missing.' };
+  }
+
+  const dbg = await ensureGuestDebugger(webContents);
+  let chooserHandled = false;
+  let chooserError = '';
+  const onMessage = (_event, method) => {
+    if (method !== 'Page.fileChooserOpened' || chooserHandled) return;
+    chooserHandled = true;
+    dbg
+      .sendCommand('Page.handleFileChooser', {
+        action: 'select',
+        files: [abs],
+      })
+      .catch((error) => {
+        chooserError = String(error?.message || error);
+        chooserHandled = false;
+      });
+  };
+
+  try {
+    dbg.on('message', onMessage);
+    try {
+      await dbg.sendCommand('Page.enable');
+    } catch {
+      // ignore
+    }
+    try {
+      await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
+    } catch (error) {
+      console.warn('[forward] setInterceptFileChooserDialog failed', error);
+    }
+
+    const composeOpen = await guestHasOpenCompose(webContents);
+    if (!composeOpen) {
+      return {
+        ok: false,
+        needChat: true,
+        error: 'Open the person or group chat first.',
+      };
+    }
+
+    await clickAttachDocumentUi(webContents, appId);
+
+    const start = Date.now();
+    while (!chooserHandled && Date.now() - start < 7000) {
+      await sleepMs(120);
+      // If a file input appeared without a chooser event, inject via CDP.
+      if (Date.now() - start > 900) {
+        const injected = await setFileInputViaCdp(webContents, abs);
+        if (injected.ok) return injected;
+      }
+    }
+    if (chooserHandled) {
+      await sleepMs(250);
+      return { ok: true, method: 'file-chooser' };
+    }
+    if (chooserError) {
+      console.warn('[forward] file chooser handle failed', chooserError);
+    }
+
+    const injected = await setFileInputViaCdp(webContents, abs);
+    if (injected.ok) return injected;
+
+    const dropped = await dropFileOntoGuestChat(webContents, abs);
+    if (dropped.ok) return dropped;
+
+    return {
+      ok: false,
+      error: 'Could not attach the document automatically.',
+    };
+  } finally {
+    try {
+      dbg.removeListener('message', onMessage);
+    } catch {
+      // ignore
+    }
+    try {
+      await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * If no chat is open yet, wait briefly for the user to click one, then attach.
+ */
+async function waitForChatAndAttachDocument(webContents, filePath, appId = '') {
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    if (!webContents || webContents.isDestroyed()) {
+      return { ok: false, error: 'Chat view is gone.' };
+    }
+    if (await guestHasOpenCompose(webContents)) {
+      await sleepMs(350);
+      return attachDocumentToGuest(webContents, filePath, { appId });
+    }
+    await sleepMs(400);
+  }
+  return { ok: false, needChat: true, error: 'Timed out waiting for a chat.' };
+}
+
 async function deliverForwardToTarget(targetId) {
   const payload = forwardPayload;
   if (!payload) return { ok: false, error: 'Nothing to forward.' };
@@ -4892,13 +5233,11 @@ async function deliverForwardToTarget(targetId) {
   const clipText = buildForwardClipboardText(payload);
 
   if (isDocument) {
-    // Clear any leftover PDF-thumbnail image from earlier copyImageAt / selection.
     try {
       clipboard.clear();
     } catch {
       // ignore
     }
-    writeLinuxFileClipboard(payload.filePath);
   } else {
     /** @type {Electron.Data} */
     const write = {};
@@ -4918,29 +5257,54 @@ async function deliverForwardToTarget(targetId) {
 
   closeForwardPickerWindow();
   activateService(targetId);
-  await new Promise((resolve) => setTimeout(resolve, 480));
+  await sleepMs(520);
   await markActiveComposeTarget(targetId);
-
-  // Documents: never Ctrl+V into WhatsApp — paste would use a preview image.
-  // User attaches via Attach → Document with the file highlighted in the folder.
-  let pasted = false;
-  if (!isDocument) {
-    pasted = await stageForwardPaste(targetId);
-  }
 
   const targetName = target.name || target.defaultName || 'account';
   const docName =
     payload.fileName ||
     (payload.filePath ? path.basename(payload.filePath) : 'document');
-  let detail;
+  const entry = views.get(targetId);
+  const wc = entry?.view?.webContents;
+
+  let pasted = false;
+  let attached = false;
+  let detail = '';
+
   if (isDocument) {
-    detail = `Switched to ${targetName}. Open the chat → Attach → Document and choose “${docName}”.`;
-    try {
-      shell.showItemInFolder(payload.filePath);
-    } catch {
-      // ignore
+    let result = await attachDocumentToGuest(wc, payload.filePath, {
+      appId: target.appId,
+    });
+    if (!result.ok && result.needChat) {
+      try {
+        if (Notification.isSupported()) {
+          new Notification({
+            title: 'Forward with Aspera Hub',
+            body: `Open the chat in ${targetName} — attaching “${docName}” automatically…`,
+            silent: true,
+          }).show();
+        }
+      } catch {
+        // ignore
+      }
+      result = await waitForChatAndAttachDocument(wc, payload.filePath, target.appId);
+    }
+    attached = !!result.ok;
+    if (attached) {
+      detail = `“${docName}” attached in ${targetName}. Add a caption if you want, then Send.`;
+    } else {
+      // Last resort only — keep product usable if CDP attach fails on a UI change.
+      writeLinuxFileClipboard(payload.filePath);
+      try {
+        shell.showItemInFolder(payload.filePath);
+      } catch {
+        // ignore
+      }
+      detail =
+        `Could not auto-attach in ${targetName}. File is ready — Attach → Document and pick “${docName}”.`;
     }
   } else {
+    pasted = await stageForwardPaste(targetId);
     detail = pasted
       ? `Staged in ${targetName}. Open the right chat if needed, then send.`
       : `Switched to ${targetName}. Open a chat and press Ctrl+V to paste.`;
@@ -4958,20 +5322,19 @@ async function deliverForwardToTarget(targetId) {
     // ignore
   }
 
-  if (isDocument && mainWindow && !mainWindow.isDestroyed()) {
+  if (isDocument && !attached && mainWindow && !mainWindow.isDestroyed()) {
     await dialog.showMessageBox(mainWindow, {
       type: 'info',
       title: 'Forward document',
-      message: `${docName} is ready`,
+      message: `Could not auto-attach ${docName}`,
       detail:
-        `Switched to ${targetName}.\n\n` +
-        'In the chat, use Attach → Document (not Photos / Gallery) and pick the highlighted file.\n' +
-        'Hub will not paste PDF previews as images.',
+        `Open the chat in ${targetName}, then Attach → Document and pick the highlighted file.\n` +
+        'Image forwards still use quick Ctrl+V; document auto-attach depends on the chat UI.',
       buttons: ['OK'],
     });
   }
 
-  return { ok: true, pasted, isDocument };
+  return { ok: true, pasted, attached, isDocument };
 }
 
 /**
