@@ -156,24 +156,43 @@ const existing = spawnSync('gh', ['release', 'view', tag, '--repo', GITHUB_SLUG]
   stdio: 'pipe',
 });
 
+// Upload the .deb/.AppImage first, then latest.json last so clients that
+// race a publish never see a new manifest pointing at a missing artifact.
+const manifestUploads = uploadPaths.filter((p) => /\.json$/i.test(p));
+const artifactUploads = uploadPaths.filter((p) => !/\.json$/i.test(p));
+
 if (existing.status === 0) {
   console.log(`Release ${tag} already exists — uploading / replacing assets…`);
-  run('gh', [
-    'release',
-    'upload',
-    tag,
-    ...uploadPaths,
-    '--repo',
-    GITHUB_SLUG,
-    '--clobber',
-  ]);
+  if (artifactUploads.length) {
+    run('gh', [
+      'release',
+      'upload',
+      tag,
+      ...artifactUploads,
+      '--repo',
+      GITHUB_SLUG,
+      '--clobber',
+    ]);
+  }
+  if (manifestUploads.length) {
+    run('gh', [
+      'release',
+      'upload',
+      tag,
+      ...manifestUploads,
+      '--repo',
+      GITHUB_SLUG,
+      '--clobber',
+    ]);
+  }
 } else {
   console.log(`Creating GitHub release ${tag}…`);
+  // Create with artifacts only; attach manifest after so latest.json is never first.
   const createArgs = [
     'release',
     'create',
     tag,
-    ...uploadPaths,
+    ...artifactUploads,
     '--repo',
     GITHUB_SLUG,
     '--title',
@@ -184,6 +203,17 @@ if (existing.status === 0) {
   if (isPrerelease) createArgs.push('--prerelease');
   if (channel !== 'stable') createArgs.push('--target', 'HEAD');
   run('gh', createArgs);
+  if (manifestUploads.length) {
+    run('gh', [
+      'release',
+      'upload',
+      tag,
+      ...manifestUploads,
+      '--repo',
+      GITHUB_SLUG,
+      '--clobber',
+    ]);
+  }
 }
 
 const latestUrl = `https://github.com/${GITHUB_SLUG}/releases/latest/download/${manifestName}`;

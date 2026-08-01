@@ -28,7 +28,7 @@
  * }
  */
 
-import { app, dialog, shell, BrowserWindow } from 'electron';
+import { app, dialog, shell, BrowserWindow, Notification } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -475,7 +475,9 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
       // If auto-download is off, silent checks must still prompt (not stay quiet).
       await promptAvailable();
     } else if (file) {
-      downloadUpdate().catch((err) => reportError('update-download', { message: String(err) }));
+      downloadUpdate({ quiet: true }).catch((err) =>
+        reportError('update-download', { message: String(err) }),
+      );
     }
     return {
       available: true,
@@ -542,8 +544,44 @@ async function assertDownloadedIntegrity(filePath = downloadedPath) {
   return filePath;
 }
 
-/** Stream-download the pending artifact, verify checksum, report progress. */
-export async function downloadUpdate() {
+async function fetchUpdateArtifact(url, { attempts = 4 } = {}) {
+  let lastError = null;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch(url, {
+        redirect: 'follow',
+        headers: {
+          Accept: 'application/octet-stream,*/*',
+          'User-Agent': 'AsperaHub-Updater',
+          'Cache-Control': 'no-cache',
+        },
+      });
+      if (res.ok && res.body) return res;
+      lastError = new Error(`Download failed ${res.status}`);
+      // Release asset clobber / CDN race — wait and retry.
+      if (![404, 408, 425, 429, 500, 502, 503, 504].includes(res.status)) {
+        throw lastError;
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (!/Download failed|fetch|network|ECONN|ETIMEDOUT|404/i.test(lastError.message)) {
+        throw lastError;
+      }
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, 900 * (i + 1)));
+  }
+  throw lastError || new Error('Download failed');
+}
+
+/**
+ * Stream-download the pending artifact, verify checksum, report progress.
+ * @param {{ quiet?: boolean }} [opts] quiet=true for background auto-download
+ *   (no blocking error dialog — must not interrupt Forward / chat work).
+ */
+export async function downloadUpdate(opts = {}) {
+  const quiet = !!opts.quiet;
   if (!pendingUpdate?.file?.url) {
     return { ok: false, error: 'No update file available for this install type' };
   }
@@ -557,8 +595,7 @@ export async function downloadUpdate() {
 
   try {
     broadcast('download-start', { version: pendingUpdate.version });
-    const res = await fetch(url);
-    if (!res.ok || !res.body) throw new Error(`Download failed ${res.status}`);
+    const res = await fetchUpdateArtifact(url);
 
     const total = Number(res.headers.get('content-length')) || size || 0;
     let received = 0;
@@ -626,13 +663,28 @@ export async function downloadUpdate() {
     const message = String(error?.message || error);
     broadcast('error', { message });
     reportError('update-download', { message });
-    await showUpdateBox({
-      type: 'error',
-      title: 'Update download failed',
-      message: 'Could not download the update.',
-      detail: message,
-      buttons: ['OK'],
-    });
+    // Background checks must not steal focus with a modal (e.g. during Forward).
+    if (!quiet) {
+      await showUpdateBox({
+        type: 'error',
+        title: 'Update download failed',
+        message: 'Could not download the update.',
+        detail: message,
+        buttons: ['OK'],
+      });
+    } else {
+      try {
+        if (Notification.isSupported()) {
+          new Notification({
+            title: 'Aspera Hub update',
+            body: 'Update download will retry later.',
+            silent: true,
+          }).show();
+        }
+      } catch {
+        // ignore
+      }
+    }
     return { ok: false, error: message };
   }
 }
@@ -1000,7 +1052,7 @@ async function promptAvailable() {
       cancelId: 1,
     });
     if (r.response === 0) {
-      downloadUpdate().catch((err) =>
+      downloadUpdate({ quiet: false }).catch((err) =>
         reportError('update-download', { message: String(err) }),
       );
     } else {
@@ -1010,7 +1062,7 @@ async function promptAvailable() {
     reportError('update-prompt', { message: String(error?.message || error) });
     // Dialog failed (focus/parent issues on some Linux sessions) — still fetch if allowed.
     if (settings().autoUpdateDownload !== false && pendingUpdate?.file) {
-      downloadUpdate().catch((err) =>
+      downloadUpdate({ quiet: true }).catch((err) =>
         reportError('update-download', { message: String(err) }),
       );
     }
