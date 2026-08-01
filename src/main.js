@@ -5003,9 +5003,9 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
       }
     }
 
-    // Never paste a PDF preview tile as a photo when the bubble is clearly a document
-    // (or the user chose Forward document). Plain Forward on a real photo may still
-    // use the image path if document capture was only a soft/false hint.
+    // Never paste a PDF preview tile as a photo when the bubble is clearly a document.
+    // Plain Forward on a real photo may still use the image path if document capture
+    // was only a soft/false hint.
     if (!filePath) {
       if (!forceDocument && hasImageContents && !strongDocument) {
         console.warn('[forward] document capture missed; falling back to image forward');
@@ -5016,8 +5016,7 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
           message: 'Could not get the PDF/document file.',
           detail:
             'Aspera Hub will not paste the preview thumbnail as a photo.\n\n' +
-            'Try: tap the download arrow on the document in this chat once, then Forward again.\n' +
-            'Or right-click the PDF card → “Forward document with Aspera Hub”.',
+            'Try: tap the download arrow on the document in this chat once, then right-click → Forward with Aspera Hub again.',
           buttons: ['OK'],
         };
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -6157,35 +6156,13 @@ function attachGuestContextMenu(webContents) {
         targetCount: forwardTargets.length,
       })
     ) {
+      // One action only — Hub detects text / image / PDF behind the curtains.
       template.push({
         label: 'Forward with Aspera Hub',
         click: () => {
           beginForwardFromGuest(webContents, params).catch(() => {});
         },
       });
-      // Explicit document path — PDF tiles often look like images to Electron.
-      // Same Forward steps afterward (account → recipient → Hub places → Send).
-      if (
-        shouldOfferDocumentForwardMenu({
-          linkURL: params.linkURL,
-          srcURL: params.srcURL,
-          mediaType: params.mediaType,
-          titleText: params.titleText || params.altText,
-          text: params.selectionText,
-          fileName: params.titleText || params.altText,
-          hasImage: !!params.hasImageContents,
-          hasImageContents: !!params.hasImageContents,
-        })
-      ) {
-        template.push({
-          label: 'Forward document with Aspera Hub',
-          click: () => {
-            beginForwardFromGuest(webContents, params, { forceDocument: true }).catch(
-              () => {},
-            );
-          },
-        });
-      }
       template.push({ type: 'separator' });
     }
 

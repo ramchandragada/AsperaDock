@@ -156,42 +156,45 @@ test('photo bubbles with Download are not treated as documents', () => {
   assert.equal(looksLikeDocument({ hasDownload: true, hasImage: true }), false);
 });
 
-test('context menu offers Forward document for PDF image tiles and files', () => {
-  // PDF chat tiles are exposed as images (Copy image…) — document action must stay.
+test('context menu is one Forward action; Hub auto-detects document vs image', () => {
+  // Never show a second "Forward document…" entry — one click, Hub decides.
   assert.equal(
     shouldOfferDocumentForwardMenu({
       hasImage: true,
       mediaType: 'image',
       srcURL: 'blob:https://web.arattai.in/x',
     }),
-    true,
-  );
-  assert.equal(
-    shouldOfferDocumentForwardMenu({
-      hasImageContents: true,
-      mediaType: 'image',
-    }),
-    true,
+    false,
   );
   assert.equal(
     shouldOfferDocumentForwardMenu({
       mediaType: 'file',
       fileName: 'scan.pdf',
     }),
-    true,
-  );
-  assert.equal(
-    shouldOfferDocumentForwardMenu({
-      hasImage: true,
-      titleText: 'Invoice.pdf',
-    }),
-    true,
+    false,
   );
   assert.equal(
     shouldOfferDocumentForwardMenu({
       linkURL: 'https://cdn.example/a.pdf',
     }),
+    false,
+  );
+  // Auto-detect still routes PDF tiles (look like images) to the document path.
+  assert.equal(
+    shouldForwardAsDocument({
+      hasImage: true,
+      nearbyText: 'Police_verification_report_52... PDF 2 pages · 148 KB',
+    }),
     true,
+  );
+  assert.equal(
+    shouldForwardAsDocument({
+      hasImage: true,
+      hasDownload: true,
+      mediaType: 'image',
+      srcURL: 'blob:https://web.arattai.in/photo',
+    }),
+    false,
   );
 });
 

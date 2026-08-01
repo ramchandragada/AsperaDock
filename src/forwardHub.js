@@ -113,8 +113,9 @@ export function looksLikeDocument(opts = {}) {
 
 /**
  * Decide whether Forward should take the document capture path.
- * Right-click on a clear photo must stay on the image path unless the user
- * explicitly chose "Forward document" or strong PDF/Office evidence exists.
+ * One menu action ("Forward with Aspera Hub") auto-detects: PDF/Office
+ * bubbles use the document path; clear photos stay on the image path.
+ * `forceDocument` remains for tests / internal callers only.
  */
 export function shouldForwardAsDocument(opts = {}) {
   if (opts.forceDocument) return true;
@@ -123,28 +124,11 @@ export function shouldForwardAsDocument(opts = {}) {
 }
 
 /**
- * Whether the context menu should offer "Forward document with Aspera Hub".
- *
- * Primary action remains "Forward with Aspera Hub" (auto-detects).
- * PDF chat tiles are usually exposed to Electron as images (Copy image…),
- * so image contents must still offer the explicit document path — otherwise
- * users lose Forward document on real PDFs like Police_verification_report.
+ * Context menu: never offer a second "Forward document…" entry.
+ * Hub decides image vs document behind one "Forward with Aspera Hub" action.
  */
-export function shouldOfferDocumentForwardMenu(opts = {}) {
-  const mediaType = String(opts.mediaType || '').toLowerCase();
-  if (mediaType === 'file') return true;
-  // PDF preview bubbles look like images to Chromium — keep document action.
-  if (opts.hasImage || opts.hasImageContents) return true;
-  if (String(opts.linkURL || '').trim()) {
-    return (
-      hasStrongDocumentEvidence({ ...opts, hasImage: false }) ||
-      isDocumentExtension(extensionOf(opts.linkURL))
-    );
-  }
-  return hasStrongDocumentEvidence({
-    ...opts,
-    hasImage: false,
-  });
+export function shouldOfferDocumentForwardMenu(_opts = {}) {
+  return false;
 }
 
 /** Normalized content kind for one shared Forward UX. */
