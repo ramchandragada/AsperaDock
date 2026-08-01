@@ -4,6 +4,7 @@ import {
   canOfferForward,
   describeForwardPayload,
   buildForwardClipboardText,
+  extractDocumentFileName,
   isForwardAppId,
   looksLikeDocument,
   sanitizeForwardFilename,
@@ -52,10 +53,13 @@ test('looksLikeDocument detects PDF names and URLs', () => {
   assert.equal(looksLikeDocument({ fileName: 'Invoice Q1.pdf' }), true);
   assert.equal(looksLikeDocument({ titleText: 'report.PDF' }), true);
   assert.equal(looksLikeDocument({ mediaType: 'file' }), true);
+  assert.equal(looksLikeDocument({ nearbyText: 'Policy.pdf 1.2 MB PDF' }), true);
+  assert.equal(looksLikeDocument({ docLikely: true }), true);
   assert.equal(
     looksLikeDocument({ srcURL: 'https://cdn.example/preview.png' }),
     false,
   );
+  assert.equal(extractDocumentFileName('Shared Policy.pdf · 820 KB'), 'Shared Policy.pdf');
 });
 
 test('document forward description prefers Document label', () => {

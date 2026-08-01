@@ -27,6 +27,7 @@ import {
   canOfferForward,
   describeForwardPayload,
   extensionOf,
+  extractDocumentFileName,
   isDocumentExtension,
   isForwardAppId,
   looksLikeDocument,
@@ -4248,21 +4249,39 @@ async function captureForwardImage(webContents, params) {
   return nativeImage.createEmpty();
 }
 
-async function findNearbyDocumentUrl(webContents, x, y) {
-  if (!webContents || webContents.isDestroyed()) return { url: '', name: '' };
+async function inspectForwardContext(webContents, x, y) {
+  const empty = {
+    url: '',
+    name: '',
+    nearbyText: '',
+    hasDownload: false,
+    hasDocIcon: false,
+    docLikely: false,
+  };
+  if (!webContents || webContents.isDestroyed()) return empty;
   try {
     const result = await webContents.executeJavaScript(
       `(() => {
         const x = ${Number(x) || 0};
         const y = ${Number(y) || 0};
         const start = document.elementFromPoint(x, y);
+        if (!start) {
+          return {
+            url: '', name: '', nearbyText: '', hasDownload: false,
+            hasDocIcon: false, docLikely: false,
+          };
+        }
         const isDoc = (href, name) => {
           const s = String(href || '') + ' ' + String(name || '');
           return /\\.(pdf|docx?|xlsx?|pptx?|txt|csv|zip|rar|7z)(\\?|#|$)/i.test(s)
             || /application\\/pdf|\\/pdf\\b/i.test(s)
             || /\\bpdf\\b/i.test(String(name || ''));
         };
-        const pick = (node) => {
+        const abs = (href) => {
+          try { return new URL(href, location.href).href; }
+          catch (e) { return String(href || ''); }
+        };
+        const pickLink = (node) => {
           if (!node) return null;
           if (node.tagName === 'A' && node.href && isDoc(node.href, node.download || node.textContent)) {
             return {
@@ -4275,6 +4294,7 @@ async function findNearbyDocumentUrl(webContents, x, y) {
             node.getAttribute?.('data-url') ||
             node.getAttribute?.('data-src') ||
             node.getAttribute?.('data-file-url') ||
+            node.getAttribute?.('data-original') ||
             '';
           const attrName =
             node.getAttribute?.('download') ||
@@ -4283,48 +4303,204 @@ async function findNearbyDocumentUrl(webContents, x, y) {
             node.getAttribute?.('aria-label') ||
             '';
           if (attrUrl && isDoc(attrUrl, attrName)) {
-            try {
-              return {
-                url: new URL(attrUrl, location.href).href,
-                name: String(attrName || '').trim(),
-              };
-            } catch (e) {
-              return { url: attrUrl, name: String(attrName || '').trim() };
-            }
+            return { url: abs(attrUrl), name: String(attrName || '').trim() };
           }
           return null;
         };
+
+        // Prefer a message/bubble container so "Invoice.pdf" labels are visible.
+        let root = start;
+        for (let i = 0; i < 14 && root && root !== document.body; i += 1) {
+          const role = String(root.getAttribute?.('role') || '');
+          const cls = String(root.className || '');
+          const testid = String(root.getAttribute?.('data-testid') || '');
+          if (
+            role === 'row' ||
+            /message|bubble|msg|document|attachment|media/i.test(cls + ' ' + testid)
+          ) {
+            break;
+          }
+          if (root.parentElement) root = root.parentElement;
+        }
+
+        let url = '';
+        let name = '';
         let node = start;
         for (let i = 0; i < 12 && node; i += 1) {
-          const direct = pick(node);
-          if (direct) return direct;
-          const anchor = node.querySelector?.('a[href]');
-          const nested = pick(anchor);
-          if (nested) return nested;
+          const direct = pickLink(node);
+          if (direct) { url = direct.url; name = direct.name; break; }
           node = node.parentElement;
         }
-        // Fallback: any document link inside the nearest message-like container.
-        let root = start;
-        for (let i = 0; i < 10 && root; i += 1) {
-          if (root.querySelectorAll) {
-            const links = root.querySelectorAll('a[href]');
-            for (const a of links) {
-              const hit = pick(a);
-              if (hit) return hit;
-            }
+        if (!url && root?.querySelectorAll) {
+          for (const a of root.querySelectorAll('a[href], [download], [data-url], [data-file-url]')) {
+            const hit = pickLink(a);
+            if (hit) { url = hit.url; name = hit.name; break; }
           }
-          root = root.parentElement;
         }
-        return { url: '', name: '' };
+
+        const nearbyText = String(root?.innerText || start.innerText || '')
+          .replace(/\\s+/g, ' ')
+          .trim()
+          .slice(0, 500);
+        const fileFromText = (nearbyText.match(/([\\w.\\- ()[\\]]+\\.(?:pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv))\\b/i) || [])[1] || '';
+        if (!name && fileFromText) name = fileFromText;
+
+        const hasDownload = !!(root?.querySelector?.(
+          [
+            '[aria-label*="download" i]',
+            '[title*="download" i]',
+            '[aria-label*="Download" i]',
+            '[data-testid*="download" i]',
+            '[data-icon="download"]',
+            'a[download]',
+            'button[aria-label*="save" i]',
+            '[aria-label*="Save as" i]',
+          ].join(', '),
+        ));
+        const hasDocIcon = !!(root?.querySelector?.(
+          [
+            '[data-icon="document"]',
+            '[data-testid*="document" i]',
+            '[aria-label*="document" i]',
+            '[aria-label*="PDF" i]',
+            '[class*="document" i]',
+            '[class*="Document" i]',
+          ].join(', '),
+        ));
+        const docLikely =
+          !!url ||
+          !!fileFromText ||
+          hasDocIcon ||
+          /\\bPDF\\b/.test(nearbyText) ||
+          /\\b(Document|Attachment)\\b/i.test(nearbyText) ||
+          /\\.(pdf|docx?|xlsx?|pptx?)\\b/i.test(nearbyText);
+
+        return {
+          url,
+          name: String(name || '').trim(),
+          nearbyText,
+          hasDownload,
+          hasDocIcon,
+          docLikely,
+        };
       })()`,
       true,
     );
     return {
       url: String(result?.url || '').trim(),
       name: String(result?.name || '').trim(),
+      nearbyText: String(result?.nearbyText || '').trim(),
+      hasDownload: !!result?.hasDownload,
+      hasDocIcon: !!result?.hasDocIcon,
+      docLikely: !!result?.docLikely,
     };
   } catch {
-    return { url: '', name: '' };
+    return empty;
+  }
+}
+
+/**
+ * Trigger the chat app's own download control and capture the file via
+ * pendingForwardDownload (will-download hijack).
+ */
+async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '') {
+  if (!webContents || webContents.isDestroyed()) {
+    return { ok: false, error: 'Chat view is gone.' };
+  }
+  const downloadPromise = new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (pendingForwardDownload?.reject === reject) pendingForwardDownload = null;
+      reject(new Error('Document download timed out.'));
+    }, 20_000);
+    pendingForwardDownload = {
+      fileName,
+      resolve: (filePath) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(filePath);
+      },
+      reject: (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+    };
+  });
+
+  let clicked = false;
+  try {
+    clicked = !!(await webContents.executeJavaScript(
+      `(() => {
+        const x = ${Number(x) || 0};
+        const y = ${Number(y) || 0};
+        const start = document.elementFromPoint(x, y);
+        if (!start) return false;
+        let root = start;
+        for (let i = 0; i < 14 && root && root !== document.body; i += 1) {
+          const role = String(root.getAttribute?.('role') || '');
+          const cls = String(root.className || '');
+          const testid = String(root.getAttribute?.('data-testid') || '');
+          if (
+            role === 'row' ||
+            /message|bubble|msg|document|attachment|media/i.test(cls + ' ' + testid)
+          ) break;
+          root = root.parentElement;
+        }
+        const selectors = [
+          '[aria-label*="download" i]',
+          '[title*="download" i]',
+          '[data-testid*="download" i]',
+          '[data-icon="download"]',
+          'a[download]',
+          'button[aria-label*="save" i]',
+          '[aria-label*="Save as" i]',
+          '[aria-label*="Download" i]',
+        ];
+        const scope = root || document;
+        for (const sel of selectors) {
+          const btn = scope.querySelector(sel);
+          if (!btn) continue;
+          try { btn.click(); return true; } catch (e) {}
+        }
+        // Some apps download when the document card / filename itself is clicked.
+        const label = Array.from(scope.querySelectorAll('span, div, a, button')).find((n) =>
+          /\\.(pdf|docx?|xlsx?|pptx?)\\b/i.test(String(n.textContent || ''))
+        );
+        if (label) {
+          try { label.click(); return true; } catch (e) {}
+        }
+        return false;
+      })()`,
+      true,
+    ));
+  } catch {
+    clicked = false;
+  }
+
+  if (!clicked) {
+    if (pendingForwardDownload) {
+      const pending = pendingForwardDownload;
+      pendingForwardDownload = null;
+      pending.reject(new Error('No download control in this message.'));
+    }
+    try {
+      await downloadPromise;
+    } catch {
+      // expected
+    }
+    return { ok: false, error: 'No download control in this message.' };
+  }
+
+  try {
+    const filePath = await downloadPromise;
+    return { ok: true, filePath };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
   }
 }
 
@@ -4400,7 +4576,8 @@ function writeLinuxFileClipboard(filePath) {
   return false;
 }
 
-async function beginForwardFromGuest(webContents, params = {}) {
+async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
+  const forceDocument = !!opts.forceDocument;
   const sourceId = serviceIdForWebContents(webContents);
   const source = getService(sourceId);
   if (!source || !isForwardAppId(source.appId)) {
@@ -4429,26 +4606,35 @@ async function beginForwardFromGuest(webContents, params = {}) {
   if (linkURL.startsWith('javascript:')) linkURL = '';
   const srcURL = String(params.srcURL || '').trim();
   const titleText = String(params.titleText || params.altText || '').trim();
-  const nearby = await findNearbyDocumentUrl(webContents, params.x, params.y);
+  const ctx = await inspectForwardContext(webContents, params.x, params.y);
   const srcLooksLikeImage =
     /^data:image\//i.test(srcURL) ||
-    /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(srcURL);
+    /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(srcURL) ||
+    /^blob:/i.test(srcURL);
   // Prefer real document links — never treat a preview thumbnail URL as the PDF.
-  const candidateUrl = linkURL || nearby.url || (srcLooksLikeImage ? '' : srcURL);
+  const candidateUrl = linkURL || ctx.url || (srcLooksLikeImage ? '' : srcURL);
   const candidateName =
-    nearby.name ||
+    ctx.name ||
+    extractDocumentFileName(ctx.nearbyText) ||
+    extractDocumentFileName(titleText) ||
+    extractDocumentFileName(text) ||
     titleText ||
-    text ||
     (candidateUrl ? path.basename(candidateUrl.split('?')[0]) : '');
 
-  const documentHint = looksLikeDocument({
-    linkURL: candidateUrl || linkURL || nearby.url,
-    srcURL: srcLooksLikeImage ? '' : srcURL,
-    fileName: candidateName,
-    text,
-    titleText,
-    mediaType: params.mediaType,
-  });
+  const documentHint =
+    forceDocument ||
+    looksLikeDocument({
+      linkURL: candidateUrl || linkURL || ctx.url,
+      srcURL: srcLooksLikeImage ? '' : srcURL,
+      fileName: candidateName,
+      text,
+      titleText,
+      nearbyText: ctx.nearbyText,
+      mediaType: params.mediaType,
+      hasDownload: ctx.hasDownload,
+      hasDocIcon: ctx.hasDocIcon,
+      docLikely: ctx.docLikely,
+    });
 
   let filePath = '';
   let fileName = '';
@@ -4456,55 +4642,85 @@ async function beginForwardFromGuest(webContents, params = {}) {
   let imagePath = '';
   let hasImage = false;
 
-  if (documentHint && candidateUrl) {
-    try {
-      filePath = await downloadForwardFile(
-        webContents,
-        candidateUrl,
-        sanitizeForwardFilename(
-          candidateName || 'document.pdf',
-          extensionOf(candidateName) || extensionOf(candidateUrl) || 'pdf',
-        ),
-      );
-      fileName = path.basename(filePath);
-      isDocument = isDocumentExtension(extensionOf(fileName)) || documentHint;
-    } catch (error) {
-      // Keep going — may still forward as text/link, but never as a fake image PDF.
-      console.warn('[forward] document download failed', error);
-    }
-  }
+  if (documentHint) {
+    const hintedName = sanitizeForwardFilename(
+      candidateName || 'document.pdf',
+      extensionOf(candidateName) || extensionOf(candidateUrl) || 'pdf',
+    );
 
-  // Only capture a bitmap when this is truly an image, not a PDF/doc preview tile.
-  if (!isDocument && !documentHint) {
+    // 1) Direct URL download when we have a real document link.
+    if (candidateUrl && !srcLooksLikeImage) {
+      try {
+        filePath = await downloadForwardFile(webContents, candidateUrl, hintedName);
+      } catch (error) {
+        console.warn('[forward] document URL download failed', error);
+      }
+    }
+
+    // 2) Click the chat app's download control and intercept will-download.
+    if (!filePath) {
+      const ui = await tryCaptureDocumentByUiDownload(
+        webContents,
+        params.x,
+        params.y,
+        hintedName,
+      );
+      if (ui.ok && ui.filePath) filePath = ui.filePath;
+      else console.warn('[forward] UI document download failed', ui.error);
+    }
+
+    if (filePath && fs.existsSync(filePath)) {
+      // Guard: if we accidentally downloaded a tiny preview image, reject it.
+      const ext = extensionOf(filePath);
+      const size = fs.statSync(filePath).size;
+      const looksImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext);
+      if (looksImage || size < 512) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch {
+          // ignore
+        }
+        filePath = '';
+      } else {
+        fileName = path.basename(filePath);
+        isDocument = true;
+      }
+    }
+
+    // Documents must NEVER fall through to preview-image paste.
+    if (!filePath) {
+      const box = {
+        type: 'warning',
+        title: 'Forward with Aspera Hub',
+        message: 'Could not get the PDF/document file.',
+        detail:
+          'Aspera Hub will not paste the preview thumbnail as a photo.\n\n' +
+          'Try: open/download the document once in this chat, then Forward again.\n' +
+          'Or use right-click → “Forward document with Aspera Hub”.',
+        buttons: ['OK'],
+      };
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        await dialog.showMessageBox(mainWindow, box);
+      } else {
+        await dialog.showMessageBox(box);
+      }
+      return { ok: false, error: 'Document download failed.' };
+    }
+  } else {
+    // True photos only — never call copyImageAt while investigating documents
+    // (that pollutes the clipboard with the PDF thumbnail).
     const image = await captureForwardImage(webContents, params);
     imagePath = saveForwardImage(image);
     hasImage = !!(imagePath || (image && !image.isEmpty()));
   }
 
-  if (!text && !hasImage && !linkURL && !filePath && !nearby.url) {
+  if (!text && !hasImage && !linkURL && !filePath && !ctx.url) {
     return { ok: false, error: 'Select text, an image, or a document to forward.' };
-  }
-
-  if (documentHint && !filePath) {
-    const box = {
-      type: 'warning',
-      title: 'Forward with Aspera Hub',
-      message: 'Could not download the PDF/document.',
-      detail:
-        'Aspera Hub avoided pasting the preview image as a photo. Open the message’s download/open link once, then try Forward again — or download the file and attach it manually in the other account.',
-      buttons: ['OK'],
-    };
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      await dialog.showMessageBox(mainWindow, box);
-    } else {
-      await dialog.showMessageBox(box);
-    }
-    return { ok: false, error: 'Document download failed.' };
   }
 
   forwardPayload = {
     text: isDocument ? '' : text,
-    linkURL: isDocument ? '' : linkURL || nearby.url || '',
+    linkURL: isDocument ? '' : linkURL || ctx.url || '',
     imagePath,
     filePath,
     fileName,
@@ -4674,18 +4890,15 @@ async function deliverForwardToTarget(targetId) {
     !!payload.filePath &&
     fs.existsSync(payload.filePath);
   const clipText = buildForwardClipboardText(payload);
-  let fileOnClipboard = false;
 
   if (isDocument) {
-    // Never put the PDF preview bitmap on the clipboard — that became a photo.
-    fileOnClipboard = writeLinuxFileClipboard(payload.filePath);
-    if (!fileOnClipboard && clipText) {
-      try {
-        clipboard.writeText(clipText);
-      } catch {
-        // ignore
-      }
+    // Clear any leftover PDF-thumbnail image from earlier copyImageAt / selection.
+    try {
+      clipboard.clear();
+    } catch {
+      // ignore
     }
+    writeLinuxFileClipboard(payload.filePath);
   } else {
     /** @type {Electron.Data} */
     const write = {};
@@ -4708,11 +4921,10 @@ async function deliverForwardToTarget(targetId) {
   await new Promise((resolve) => setTimeout(resolve, 480));
   await markActiveComposeTarget(targetId);
 
+  // Documents: never Ctrl+V into WhatsApp — paste would use a preview image.
+  // User attaches via Attach → Document with the file highlighted in the folder.
   let pasted = false;
   if (!isDocument) {
-    pasted = await stageForwardPaste(targetId);
-  } else if (fileOnClipboard) {
-    // Best-effort: some web apps accept pasted files from the OS clipboard.
     pasted = await stageForwardPaste(targetId);
   }
 
@@ -4722,9 +4934,7 @@ async function deliverForwardToTarget(targetId) {
     (payload.filePath ? path.basename(payload.filePath) : 'document');
   let detail;
   if (isDocument) {
-    detail = pasted
-      ? `Document staged in ${targetName}. Confirm it is a file (not a photo), then send.`
-      : `Switched to ${targetName}. Open the chat → Attach → Document and choose “${docName}”.`;
+    detail = `Switched to ${targetName}. Open the chat → Attach → Document and choose “${docName}”.`;
     try {
       shell.showItemInFolder(payload.filePath);
     } catch {
@@ -4748,15 +4958,15 @@ async function deliverForwardToTarget(targetId) {
     // ignore
   }
 
-  if (isDocument && !pasted && mainWindow && !mainWindow.isDestroyed()) {
+  if (isDocument && mainWindow && !mainWindow.isDestroyed()) {
     await dialog.showMessageBox(mainWindow, {
       type: 'info',
       title: 'Forward document',
       message: `${docName} is ready`,
       detail:
         `Switched to ${targetName}.\n\n` +
-        'In the chat, use Attach → Document (not Photos) and pick the highlighted file.\n' +
-        'Aspera Hub no longer pastes PDF previews as images.',
+        'In the chat, use Attach → Document (not Photos / Gallery) and pick the highlighted file.\n' +
+        'Hub will not paste PDF previews as images.',
       buttons: ['OK'],
     });
   }
@@ -4844,6 +5054,17 @@ function attachGuestContextMenu(webContents) {
           beginForwardFromGuest(webContents, params).catch(() => {});
         },
       });
+      // Explicit document path — PDF chat tiles often look like images to Electron.
+      if (params.hasImageContents || params.linkURL || params.mediaType === 'file') {
+        template.push({
+          label: 'Forward document with Aspera Hub',
+          click: () => {
+            beginForwardFromGuest(webContents, params, { forceDocument: true }).catch(
+              () => {},
+            );
+          },
+        });
+      }
       template.push({ type: 'separator' });
     }
 

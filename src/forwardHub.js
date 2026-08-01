@@ -43,15 +43,19 @@ export function isDocumentExtension(ext) {
 }
 
 /**
- * True when a URL/name/mime looks like a document rather than a photo.
- * PDF chat previews often expose an image thumbnail — callers must prefer the
- * document URL over that preview image.
+ * True when a URL/name/mime/nearby chat bubble looks like a document rather
+ * than a photo. PDF chat previews often expose only an image thumbnail —
+ * callers must prefer the real file and never paste that preview as a photo.
  */
 export function looksLikeDocument(opts = {}) {
   const url = String(opts.url || opts.linkURL || opts.srcURL || '').trim();
   const name = String(opts.fileName || opts.titleText || opts.altText || opts.text || '').trim();
+  const nearby = String(opts.nearbyText || '').trim();
   const mime = String(opts.mimeType || opts.mediaType || '').trim().toLowerCase();
   if (mime === 'file' || mime.includes('pdf') || mime.includes('document') || mime.includes('msword')) {
+    return true;
+  }
+  if (opts.hasDocIcon || opts.hasDownload || opts.docLikely) {
     return true;
   }
   if (isDocumentExtension(extensionOf(url)) || isDocumentExtension(extensionOf(name))) {
@@ -63,7 +67,23 @@ export function looksLikeDocument(opts = {}) {
   if (/\/pdf\b|\.pdf\b|application%2Fpdf|application\/pdf/i.test(url)) {
     return true;
   }
+  // Chat bubbles often show "Something.pdf" / "PDF · 1.2 MB" next to a preview tile.
+  if (
+    /\b[\w.\- ()[\]]+\.(pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv)\b/i.test(nearby) ||
+    /\bPDF\b/.test(nearby) ||
+    /\b(Document|Attachment)\b/i.test(nearby)
+  ) {
+    return true;
+  }
   return false;
+}
+
+/** Extract a document-looking filename from free text (chat bubble labels). */
+export function extractDocumentFileName(text) {
+  const m = String(text || '').match(
+    /([\w.\- ()[\]]+\.(?:pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv))\b/i,
+  );
+  return m ? m[1].trim() : '';
 }
 
 /**
