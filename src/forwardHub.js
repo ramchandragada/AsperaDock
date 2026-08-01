@@ -197,3 +197,63 @@ export function mimeForFilename(name) {
   };
   return map[ext] || 'application/octet-stream';
 }
+
+/** True when an <input accept> is photos/videos only (unsafe for PDF inject). */
+export function isImageOnlyAccept(accept) {
+  const a = String(accept || '').toLowerCase().trim();
+  if (!a) return false;
+  const hasDoc =
+    /pdf|msword|officedocument|opendocument|\.docx?|\.xlsx?|\.pptx?|\.txt|\.csv|\.zip|text\/plain|application\//i.test(
+      a,
+    );
+  if (hasDoc) return false;
+  return (
+    /image\//.test(a) ||
+    /image\*/.test(a) ||
+    /\.(png|jpe?g|gif|webp|bmp|heic|svg)/.test(a) ||
+    (/video\//.test(a) && !hasDoc)
+  );
+}
+
+/** True when an <input accept> can take a document/PDF. */
+export function isDocumentAccept(accept) {
+  const a = String(accept || '').toLowerCase().trim();
+  if (isImageOnlyAccept(a)) return false;
+  if (!a) return true; // unrestricted — OK for documents
+  // Bare "*" means all files. Do NOT treat "image/*" as unrestricted (handled above).
+  if (a === '*' || a === '*/*' || a.includes('*/*')) return true;
+  return /pdf|msword|officedocument|opendocument|\.docx?|\.xlsx?|\.pptx?|\.txt|\.csv|\.zip|text\/plain|application\//i.test(
+    a,
+  );
+}
+
+/**
+ * Sniff whether a downloaded forward artifact is a real document (not a PNG thumb).
+ * @param {Uint8Array|Buffer} header first bytes of the file
+ * @param {string} fileName
+ */
+export function classifyForwardFileBytes(header, fileName = '') {
+  const bytes = header instanceof Uint8Array ? header : new Uint8Array(header || []);
+  const ext = extensionOf(fileName);
+  const asLatin = String.fromCharCode(...bytes.slice(0, Math.min(8, bytes.length)));
+  if (bytes.length >= 4 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) {
+    return { ok: false, kind: 'image', error: 'Got a PNG preview instead of the document.' };
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return { ok: false, kind: 'image', error: 'Got a JPEG preview instead of the document.' };
+  }
+  if (bytes.length >= 5 && asLatin.startsWith('%PDF-')) {
+    return { ok: true, kind: 'pdf' };
+  }
+  if (ext === 'pdf') {
+    return { ok: false, kind: 'invalid', error: 'File is not a valid PDF.' };
+  }
+  // ZIP-based Office formats start with PK
+  if (bytes.length >= 2 && bytes[0] === 0x50 && bytes[1] === 0x4b) {
+    return { ok: true, kind: 'zip-office' };
+  }
+  if (isDocumentExtension(ext)) {
+    return { ok: true, kind: 'document' };
+  }
+  return { ok: false, kind: 'unknown', error: 'Unsupported or unrecognized file type.' };
+}

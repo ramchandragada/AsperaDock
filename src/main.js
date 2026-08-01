@@ -30,6 +30,9 @@ import {
   extractDocumentFileName,
   isDocumentExtension,
   isForwardAppId,
+  classifyForwardFileBytes,
+  isDocumentAccept,
+  isImageOnlyAccept,
   looksLikeDocument,
   mimeForFilename,
   sanitizeForwardFilename,
@@ -4671,17 +4674,31 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
     }
 
     if (filePath && fs.existsSync(filePath)) {
-      // Guard: if we accidentally downloaded a tiny preview image, reject it.
+      // Guard: reject preview thumbs / non-document bytes (causes "File not supported").
       const ext = extensionOf(filePath);
       const size = fs.statSync(filePath).size;
       const looksImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext);
-      if (looksImage || size < 512) {
+      let header = Buffer.alloc(0);
+      try {
+        const fd = fs.openSync(filePath, 'r');
+        header = Buffer.alloc(16);
+        const n = fs.readSync(fd, header, 0, 16, 0);
+        fs.closeSync(fd);
+        header = header.subarray(0, n);
+      } catch {
+        header = Buffer.alloc(0);
+      }
+      const classified = classifyForwardFileBytes(header, path.basename(filePath));
+      if (looksImage || size < 512 || !classified.ok) {
         try {
           fs.unlinkSync(filePath);
         } catch {
           // ignore
         }
         filePath = '';
+        if (!classified.ok) {
+          console.warn('[forward] rejected non-document download', classified.error || classified.kind);
+        }
       } else {
         fileName = path.basename(filePath);
         isDocument = true;
@@ -4914,10 +4931,11 @@ async function ensureGuestDebugger(webContents) {
 /** Click Attach → Document (WhatsApp) or equivalent attach control (Arattai). */
 async function clickAttachDocumentUi(webContents, appId = '') {
   if (!webContents || webContents.isDestroyed()) return { ok: false };
+  const requireDocument = String(appId || '') === 'whatsapp';
   try {
     return await webContents.executeJavaScript(
       `(async () => {
-        const app = ${JSON.stringify(String(appId || ''))};
+        const requireDocument = ${JSON.stringify(requireDocument)};
         const wait = (ms) => new Promise((r) => setTimeout(r, ms));
         const visible = (el) => {
           if (!el) return false;
@@ -4927,21 +4945,43 @@ async function clickAttachDocumentUi(webContents, appId = '') {
         };
         const click = (el) => {
           if (!el || !visible(el)) return false;
+          try { el.focus({ preventScroll: true }); } catch (e) {}
           try { el.click(); return true; } catch (e) { return false; }
         };
-        const byText = (re) => Array.from(document.querySelectorAll(
-          'button,[role="button"],li,div,span,a',
-        )).find((el) => {
+        const labelOf = (el) => [
+          el.getAttribute('aria-label') || '',
+          el.getAttribute('title') || '',
+          el.getAttribute('data-testid') || '',
+          el.textContent || '',
+        ].join(' ').replace(/\\s+/g, ' ').trim();
+        const all = () => Array.from(document.querySelectorAll(
+          'button,[role="button"],li,[role="menuitem"],div,span,a',
+        ));
+        const byText = (re) => all().find((el) => {
           if (!visible(el)) return false;
-          const t = [
-            el.getAttribute('aria-label') || '',
-            el.getAttribute('title') || '',
-            el.textContent || '',
-          ].join(' ');
-          return re.test(t);
+          return re.test(labelOf(el));
         });
+        const isPhotoOrOther = (el) => {
+          const t = labelOf(el).toLowerCase();
+          return /photo|video|camera|sticker|contact|poll|event|location|image/i.test(t);
+        };
+        const findDocumentItem = () => {
+          const direct =
+            document.querySelector('[data-testid="mi-attach-document"]')
+            || document.querySelector('span[data-icon="document"]')?.closest('li,button,[role="button"],[role="menuitem"]');
+          if (direct && visible(direct) && !isPhotoOrOther(direct)) return direct;
+          return all().find((el) => {
+            if (!visible(el) || isPhotoOrOther(el)) return false;
+            const t = labelOf(el).toLowerCase();
+            const icon = String(el.getAttribute('data-icon') || el.querySelector?.('[data-icon]')?.getAttribute?.('data-icon') || '').toLowerCase();
+            if (icon.includes('document') || icon.includes('doc')) return true;
+            if (t === 'document' || t === 'documents') return true;
+            if (/\\bdocument\\b/.test(t) && !/photo|video/.test(t)) return true;
+            return false;
+          }) || null;
+        };
 
-        // WhatsApp Web: plus / attach → Document
+        // WhatsApp Web: plus / attach → Document (must click Document, not Photos).
         const waAttach =
           document.querySelector('[data-testid="conversation-clip"]')
           || document.querySelector('[data-testid="attach-menu-plus"]')
@@ -4950,13 +4990,16 @@ async function clickAttachDocumentUi(webContents, appId = '') {
           || document.querySelector('span[data-icon="plus"]')?.closest('button,[role="button"]')
           || byText(/^\\s*attach\\s*$/i);
         if (waAttach && click(waAttach)) {
-          await wait(400);
-          const doc =
-            document.querySelector('[data-testid="mi-attach-document"]')
-            || document.querySelector('span[data-icon="document"]')?.closest('li,button,[role="button"]')
-            || byText(/document/i);
-          if (doc && click(doc)) return { ok: true, via: 'whatsapp-document' };
-          return { ok: true, via: 'whatsapp-attach-open' };
+          const deadline = Date.now() + 2200;
+          while (Date.now() < deadline) {
+            await wait(80);
+            const doc = findDocumentItem();
+            if (doc && click(doc)) return { ok: true, via: 'whatsapp-document' };
+          }
+          if (requireDocument) {
+            return { ok: false, reason: 'document_menu_missing' };
+          }
+          return { ok: false, reason: 'document_menu_missing', via: 'whatsapp-attach-open' };
         }
 
         // Arattai / generic paperclip
@@ -4966,25 +5009,38 @@ async function clickAttachDocumentUi(webContents, appId = '') {
           || document.querySelector('[title*="attach" i]')
           || document.querySelector('input[type="file"]')?.closest('button,label,[role="button"]');
         if (genericAttach && click(genericAttach)) {
-          await wait(400);
-          const doc = byText(/document|pdf|file/i);
-          if (doc && click(doc)) return { ok: true, via: 'generic-document' };
-          return { ok: true, via: 'generic-attach-open' };
+          const deadline = Date.now() + 1600;
+          while (Date.now() < deadline) {
+            await wait(80);
+            const doc = findDocumentItem() || byText(/\\bdocument\\b|\\bpdf\\b/i);
+            if (doc && !isPhotoOrOther(doc) && click(doc)) {
+              return { ok: true, via: 'generic-document' };
+            }
+          }
+          // Some apps open a document-capable chooser from attach alone.
+          if (!requireDocument && document.querySelector('input[type="file"]')) {
+            return { ok: true, via: 'generic-attach-open' };
+          }
+          return { ok: false, reason: 'document_menu_missing' };
         }
 
-        if (document.querySelector('input[type="file"]')) {
-          return { ok: true, via: 'file-input-ready', app };
+        if (!requireDocument && document.querySelector('input[type="file"]')) {
+          return { ok: true, via: 'file-input-ready' };
         }
-        return { ok: false };
+        return { ok: false, reason: 'attach_missing' };
       })()`,
       true,
     );
-  } catch {
-    return { ok: false };
+  } catch (error) {
+    return { ok: false, reason: String(error?.message || error) };
   }
 }
 
-async function setFileInputViaCdp(webContents, filePath) {
+/**
+ * Inject a local file into a guest <input type="file"> via CDP.
+ * For documents, never target image/video-only accept attributes (WhatsApp Photos).
+ */
+async function setFileInputViaCdp(webContents, filePath, { documentOnly = true } = {}) {
   const abs = path.resolve(filePath);
   if (!webContents || webContents.isDestroyed() || !fs.existsSync(abs)) {
     return { ok: false };
@@ -4992,47 +5048,91 @@ async function setFileInputViaCdp(webContents, filePath) {
   try {
     const dbg = await ensureGuestDebugger(webContents);
     await dbg.sendCommand('DOM.enable');
-    await dbg.sendCommand('Runtime.enable');
-    const evalResult = await dbg.sendCommand('Runtime.evaluate', {
-      expression: `(() => {
-        const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
-        if (!inputs.length) return null;
-        // Prefer the most recently added / accept-all document input.
-        const ranked = inputs.sort((a, b) => {
-          const score = (el) => {
-            const accept = String(el.getAttribute('accept') || '').toLowerCase();
-            let s = 0;
-            if (!accept || accept.includes('pdf') || accept.includes('.doc') || accept.includes('*')) s += 2;
-            if (accept.includes('image') && !accept.includes('pdf')) s -= 2;
-            return s;
-          };
-          return score(b) - score(a);
-        });
-        return ranked[0];
-      })()`,
-      returnByValue: false,
+    const { root } = await dbg.sendCommand('DOM.getDocument', { depth: -1 });
+    const { nodeIds } = await dbg.sendCommand('DOM.querySelectorAll', {
+      nodeId: root.nodeId,
+      selector: 'input[type="file"]',
     });
-    const objectId = evalResult?.result?.objectId;
-    if (!objectId) return { ok: false };
-    const { node } = await dbg.sendCommand('DOM.requestNode', { objectId });
-    if (!node?.nodeId) return { ok: false };
+    if (!Array.isArray(nodeIds) || !nodeIds.length) {
+      return { ok: false, reason: 'no_file_input' };
+    }
+
+    const scored = [];
+    for (let i = 0; i < nodeIds.length; i += 1) {
+      const nodeId = nodeIds[i];
+      let accept = '';
+      let multiple = false;
+      try {
+        const { attributes } = await dbg.sendCommand('DOM.getAttributes', { nodeId });
+        const attrs = {};
+        for (let j = 0; j + 1 < (attributes || []).length; j += 2) {
+          attrs[String(attributes[j]).toLowerCase()] = String(attributes[j + 1] || '');
+        }
+        accept = String(attrs.accept || '');
+        multiple = Object.prototype.hasOwnProperty.call(attrs, 'multiple');
+      } catch {
+        /* ignore */
+      }
+      const imageOnly = isImageOnlyAccept(accept);
+      const docOk = isDocumentAccept(accept);
+      let score = 0;
+      if (documentOnly) {
+        if (imageOnly || !docOk) continue;
+        if (/pdf|application\/pdf/i.test(accept)) score += 5;
+        else if (/application\//i.test(accept)) score += 3;
+        else if (!accept.trim() || accept.trim() === '*' || accept.includes('*/*')) score += 2;
+        else score += 1;
+      } else {
+        if (docOk) score += 3;
+        if (imageOnly) score -= 4;
+      }
+      if (multiple) score += 1;
+      // Prefer later (menu-opened) inputs when scores tie.
+      score += i * 0.01;
+      scored.push({ nodeId, score, accept });
+    }
+
+    if (!scored.length) {
+      return {
+        ok: false,
+        reason: documentOnly ? 'no_document_file_input' : 'no_file_input',
+        totalInputs: nodeIds.length,
+      };
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    const best = scored[0];
     await dbg.sendCommand('DOM.setFileInputFiles', {
-      nodeId: node.nodeId,
+      nodeId: best.nodeId,
       files: [abs],
     });
-    // Nudge change listeners.
     await webContents.executeJavaScript(
       `(() => {
-        const inputs = document.querySelectorAll('input[type="file"]');
-        inputs.forEach((el) => {
+        const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+        // Nudge the document-capable input(s); skip image-only to avoid WA errors.
+        const isImageOnly = (accept) => {
+          const a = String(accept || '').toLowerCase().trim();
+          if (!a) return false;
+          const hasDoc = /pdf|msword|officedocument|opendocument|\\.docx?|\\.xlsx?|\\.pptx?|\\.txt|\\.csv|\\.zip|text\\/plain|application\\//i.test(a);
+          if (hasDoc) return false;
+          return /image\\//.test(a) || /\\.(png|jpe?g|gif|webp|bmp|heic|svg)/.test(a) || /video\\//.test(a);
+        };
+        for (const el of inputs) {
+          if (isImageOnly(el.getAttribute('accept'))) continue;
           try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
           try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
-        });
+        }
         return true;
       })()`,
       true,
     );
-    return { ok: true, method: 'cdp-set-files' };
+    return {
+      ok: true,
+      method: 'cdp-set-files',
+      documentOnly: !!documentOnly,
+      accept: best.accept || '',
+      score: best.score,
+    };
   } catch (error) {
     console.warn('[forward] CDP setFileInputFiles failed', error);
     return { ok: false, error: String(error?.message || error) };
@@ -5063,6 +5163,19 @@ async function dropFileOntoGuestChat(webContents, filePath) {
         const file = new File([bytes], name, { type: mime });
         const dt = new DataTransfer();
         dt.items.add(file);
+        const isImageOnly = (accept) => {
+          const a = String(accept || '').toLowerCase().trim();
+          if (!a) return false;
+          const hasDoc = /pdf|msword|officedocument|opendocument|\\.docx?|\\.xlsx?|\\.pptx?|\\.txt|\\.csv|\\.zip|text\\/plain|application\\//i.test(a);
+          if (hasDoc) return false;
+          return /image\\//.test(a) || /\\.(png|jpe?g|gif|webp|bmp|heic|svg)/.test(a) || /video\\//.test(a);
+        };
+        const isDocAccept = (accept) => {
+          const a = String(accept || '').toLowerCase().trim();
+          if (isImageOnly(a)) return false;
+          if (!a || a === '*' || a.includes('*/*')) return true;
+          return /pdf|msword|officedocument|opendocument|\\.docx?|\\.xlsx?|\\.pptx?|\\.txt|\\.csv|\\.zip|text\\/plain|application\\//i.test(a);
+        };
         const targets = [
           document.querySelector('#main'),
           document.querySelector('[data-testid="conversation-panel-wrapper"]'),
@@ -5085,13 +5198,15 @@ async function dropFileOntoGuestChat(webContents, filePath) {
           }
           dropped = true;
         }
-        const input = document.querySelector('input[type="file"]');
-        if (input) {
+        const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+        const docInput = inputs.find((el) => isDocAccept(el.getAttribute('accept'))) || null;
+        // Never assign a PDF into Photos & videos input — WhatsApp shows "File not supported".
+        if (docInput) {
           try {
             const iDt = new DataTransfer();
             iDt.items.add(file);
-            input.files = iDt.files;
-            input.dispatchEvent(new Event('change', { bubbles: true }));
+            docInput.files = iDt.files;
+            docInput.dispatchEvent(new Event('change', { bubbles: true }));
             return { ok: true, method: 'input-files' };
           } catch (e) {}
         }
@@ -5105,6 +5220,32 @@ async function dropFileOntoGuestChat(webContents, filePath) {
   }
 }
 
+function validateLocalForwardDocument(filePath) {
+  const abs = path.resolve(filePath);
+  if (!fs.existsSync(abs)) {
+    return { ok: false, error: 'Document file missing.' };
+  }
+  const size = fs.statSync(abs).size;
+  if (size < 32) {
+    return { ok: false, error: 'Document file is empty or too small.' };
+  }
+  let header = Buffer.alloc(0);
+  try {
+    const fd = fs.openSync(abs, 'r');
+    header = Buffer.alloc(16);
+    const n = fs.readSync(fd, header, 0, 16, 0);
+    fs.closeSync(fd);
+    header = header.subarray(0, n);
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+  const classified = classifyForwardFileBytes(header, path.basename(abs));
+  if (!classified.ok) {
+    return { ok: false, error: classified.error || 'Unsupported file type.' };
+  }
+  return { ok: true, kind: classified.kind, size };
+}
+
 /**
  * Attach a local document into the guest chat the seamless way:
  * file-chooser intercept → Attach/Document click → CDP set files → DOM drop.
@@ -5114,8 +5255,9 @@ async function attachDocumentToGuest(webContents, filePath, { appId = '' } = {})
   if (!webContents || webContents.isDestroyed()) {
     return { ok: false, error: 'Chat view is gone.' };
   }
-  if (!fs.existsSync(abs)) {
-    return { ok: false, error: 'Document file missing.' };
+  const validated = validateLocalForwardDocument(abs);
+  if (!validated.ok) {
+    return { ok: false, error: validated.error || 'Document file missing.' };
   }
 
   const dbg = await ensureGuestDebugger(webContents);
@@ -5157,14 +5299,23 @@ async function attachDocumentToGuest(webContents, filePath, { appId = '' } = {})
       };
     }
 
-    await clickAttachDocumentUi(webContents, appId);
+    const menu = await clickAttachDocumentUi(webContents, appId);
+    // WhatsApp: must open Document path. Injecting into Photos yields "File not supported".
+    if (String(appId || '') === 'whatsapp' && !menu?.ok) {
+      return {
+        ok: false,
+        error:
+          'Could not open Attach → Document. Open the chat, then try Forward again.',
+        reason: menu?.reason || 'document_menu_missing',
+      };
+    }
 
     const start = Date.now();
     while (!chooserHandled && Date.now() - start < 7000) {
       await sleepMs(120);
-      // If a file input appeared without a chooser event, inject via CDP.
-      if (Date.now() - start > 900) {
-        const injected = await setFileInputViaCdp(webContents, abs);
+      // Only inject into a document-capable input (never image/*).
+      if (Date.now() - start > 500) {
+        const injected = await setFileInputViaCdp(webContents, abs, { documentOnly: true });
         if (injected.ok) return injected;
       }
     }
@@ -5176,7 +5327,7 @@ async function attachDocumentToGuest(webContents, filePath, { appId = '' } = {})
       console.warn('[forward] file chooser handle failed', chooserError);
     }
 
-    const injected = await setFileInputViaCdp(webContents, abs);
+    const injected = await setFileInputViaCdp(webContents, abs, { documentOnly: true });
     if (injected.ok) return injected;
 
     const dropped = await dropFileOntoGuestChat(webContents, abs);

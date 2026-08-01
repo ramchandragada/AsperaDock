@@ -2,10 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   canOfferForward,
+  classifyForwardFileBytes,
   describeForwardPayload,
   buildForwardClipboardText,
   extractDocumentFileName,
+  isDocumentAccept,
   isForwardAppId,
+  isImageOnlyAccept,
   looksLikeDocument,
   mimeForFilename,
   sanitizeForwardFilename,
@@ -100,4 +103,25 @@ test('sanitizeForwardFilename keeps safe pdf names', () => {
 test('mimeForFilename maps pdf documents', () => {
   assert.equal(mimeForFilename('a.pdf'), 'application/pdf');
   assert.equal(mimeForFilename('sheet.xlsx'), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+});
+
+test('WhatsApp Photos accept is image-only; Document accept is safe for PDF', () => {
+  assert.equal(isImageOnlyAccept('image/*,video/mp4,video/3gpp,video/quicktime'), true);
+  assert.equal(isDocumentAccept('image/*,video/mp4,video/3gpp,video/quicktime'), false);
+  // Old bug: accept.includes("*") treated image/* as a document input.
+  assert.equal(isDocumentAccept('image/*'), false);
+  assert.equal(isDocumentAccept(''), true);
+  assert.equal(isDocumentAccept('*'), true);
+  assert.equal(isDocumentAccept('*/*'), true);
+  assert.equal(isDocumentAccept('.pdf,.doc,.docx,application/pdf'), true);
+  assert.equal(isImageOnlyAccept('.pdf,.doc'), false);
+});
+
+test('classifyForwardFileBytes rejects PNG thumbs and accepts %PDF', () => {
+  const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  assert.equal(classifyForwardFileBytes(png, 'Policy.pdf').ok, false);
+  const pdf = Uint8Array.from([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34]); // %PDF-1.4
+  assert.deepEqual(classifyForwardFileBytes(pdf, 'Policy.pdf'), { ok: true, kind: 'pdf' });
+  const jpeg = Uint8Array.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0]);
+  assert.equal(classifyForwardFileBytes(jpeg, 'scan.pdf').ok, false);
 });
