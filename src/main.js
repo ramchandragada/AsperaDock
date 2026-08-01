@@ -26,8 +26,13 @@ import {
   buildForwardClipboardText,
   canOfferForward,
   describeForwardPayload,
+  extensionOf,
+  isDocumentExtension,
   isForwardAppId,
+  looksLikeDocument,
+  sanitizeForwardFilename,
 } from './forwardHub.js';
+import { spawnSync } from 'node:child_process';
 import {
   installUnpackedExtension,
   listInstalledExtensions,
@@ -388,12 +393,16 @@ let forwardPickerWindow = null;
  *   linkURL: string,
  *   imagePath: string,
  *   filePath: string,
+ *   fileName: string,
  *   hasImage: boolean,
+ *   isDocument: boolean,
  *   sourceServiceId: string,
  *   sourceAppId: string,
  *   sourceName: string,
  * }} */
 let forwardPayload = null;
+/** One-shot download hijack used while capturing a document to forward. */
+let pendingForwardDownload = null;
 /** Floating Chrome-like Extensions manager. */
 let extensionsWindow = null;
 let settings = loadSettings();
@@ -3947,6 +3956,34 @@ function configureSession(partitionSession, partitionKey) {
   );
 
   partitionSession.on('will-download', (_event, item) => {
+    // Silent capture for Forward-with-Hub (must not show Save dialog).
+    if (pendingForwardDownload) {
+      const pending = pendingForwardDownload;
+      pendingForwardDownload = null;
+      try {
+        const hinted = String(pending.fileName || '').trim();
+        const rawName = hinted || item.getFilename() || 'document.bin';
+        const name = sanitizeForwardFilename(
+          rawName,
+          extensionOf(rawName) || 'bin',
+        );
+        const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
+        item.setSavePath(savePath);
+        item.once('done', (_e, state) => {
+          if (state === 'completed') pending.resolve(item.getSavePath());
+          else pending.reject(new Error(`Download ${state}`));
+        });
+      } catch (error) {
+        try {
+          item.cancel();
+        } catch {
+          // ignore
+        }
+        pending.reject(error);
+      }
+      return;
+    }
+
     if (settings.downloadPath) {
       item.setSavePath(path.join(settings.downloadPath, item.getFilename()));
     } else {
@@ -4211,6 +4248,158 @@ async function captureForwardImage(webContents, params) {
   return nativeImage.createEmpty();
 }
 
+async function findNearbyDocumentUrl(webContents, x, y) {
+  if (!webContents || webContents.isDestroyed()) return { url: '', name: '' };
+  try {
+    const result = await webContents.executeJavaScript(
+      `(() => {
+        const x = ${Number(x) || 0};
+        const y = ${Number(y) || 0};
+        const start = document.elementFromPoint(x, y);
+        const isDoc = (href, name) => {
+          const s = String(href || '') + ' ' + String(name || '');
+          return /\\.(pdf|docx?|xlsx?|pptx?|txt|csv|zip|rar|7z)(\\?|#|$)/i.test(s)
+            || /application\\/pdf|\\/pdf\\b/i.test(s)
+            || /\\bpdf\\b/i.test(String(name || ''));
+        };
+        const pick = (node) => {
+          if (!node) return null;
+          if (node.tagName === 'A' && node.href && isDoc(node.href, node.download || node.textContent)) {
+            return {
+              url: node.href,
+              name: String(node.download || node.textContent || '').trim(),
+            };
+          }
+          const attrUrl =
+            node.getAttribute?.('href') ||
+            node.getAttribute?.('data-url') ||
+            node.getAttribute?.('data-src') ||
+            node.getAttribute?.('data-file-url') ||
+            '';
+          const attrName =
+            node.getAttribute?.('download') ||
+            node.getAttribute?.('data-filename') ||
+            node.getAttribute?.('title') ||
+            node.getAttribute?.('aria-label') ||
+            '';
+          if (attrUrl && isDoc(attrUrl, attrName)) {
+            try {
+              return {
+                url: new URL(attrUrl, location.href).href,
+                name: String(attrName || '').trim(),
+              };
+            } catch (e) {
+              return { url: attrUrl, name: String(attrName || '').trim() };
+            }
+          }
+          return null;
+        };
+        let node = start;
+        for (let i = 0; i < 12 && node; i += 1) {
+          const direct = pick(node);
+          if (direct) return direct;
+          const anchor = node.querySelector?.('a[href]');
+          const nested = pick(anchor);
+          if (nested) return nested;
+          node = node.parentElement;
+        }
+        // Fallback: any document link inside the nearest message-like container.
+        let root = start;
+        for (let i = 0; i < 10 && root; i += 1) {
+          if (root.querySelectorAll) {
+            const links = root.querySelectorAll('a[href]');
+            for (const a of links) {
+              const hit = pick(a);
+              if (hit) return hit;
+            }
+          }
+          root = root.parentElement;
+        }
+        return { url: '', name: '' };
+      })()`,
+      true,
+    );
+    return {
+      url: String(result?.url || '').trim(),
+      name: String(result?.name || '').trim(),
+    };
+  } catch {
+    return { url: '', name: '' };
+  }
+}
+
+function downloadForwardFile(webContents, url, fileName = '') {
+  return new Promise((resolve, reject) => {
+    if (!webContents || webContents.isDestroyed()) {
+      reject(new Error('Chat view is gone.'));
+      return;
+    }
+    const target = String(url || '').trim();
+    if (!target || target.startsWith('javascript:')) {
+      reject(new Error('No downloadable document URL.'));
+      return;
+    }
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (pendingForwardDownload?.reject === reject) pendingForwardDownload = null;
+      reject(new Error('Document download timed out.'));
+    }, 45_000);
+    pendingForwardDownload = {
+      fileName,
+      resolve: (filePath) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(filePath);
+      },
+      reject: (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+    };
+    try {
+      webContents.downloadURL(target);
+    } catch (error) {
+      pendingForwardDownload = null;
+      clearTimeout(timer);
+      reject(error);
+    }
+  });
+}
+
+function writeLinuxFileClipboard(filePath) {
+  if (process.platform !== 'linux') return false;
+  const abs = path.resolve(String(filePath || ''));
+  if (!abs || !fs.existsSync(abs)) return false;
+  const uri = `file://${abs}`;
+  const attempts = [
+    {
+      args: ['-selection', 'clipboard', '-t', 'x-special/gnome-copied-files'],
+      input: `copy\n${uri}\n`,
+    },
+    {
+      args: ['-selection', 'clipboard', '-t', 'text/uri-list'],
+      input: `${uri}\n`,
+    },
+  ];
+  for (const attempt of attempts) {
+    try {
+      const result = spawnSync('xclip', attempt.args, {
+        input: attempt.input,
+        encoding: 'utf8',
+      });
+      if (result.status === 0) return true;
+    } catch {
+      // try next
+    }
+  }
+  return false;
+}
+
 async function beginForwardFromGuest(webContents, params = {}) {
   const sourceId = serviceIdForWebContents(webContents);
   const source = getService(sourceId);
@@ -4236,21 +4425,91 @@ async function beginForwardFromGuest(webContents, params = {}) {
   }
 
   const text = String(params.selectionText || '').trim();
-  const linkURL = String(params.linkURL || '').trim();
-  const image = await captureForwardImage(webContents, params);
-  const imagePath = saveForwardImage(image);
-  const hasImage = !!(imagePath || (image && !image.isEmpty()));
+  let linkURL = String(params.linkURL || '').trim();
+  if (linkURL.startsWith('javascript:')) linkURL = '';
+  const srcURL = String(params.srcURL || '').trim();
+  const titleText = String(params.titleText || params.altText || '').trim();
+  const nearby = await findNearbyDocumentUrl(webContents, params.x, params.y);
+  const srcLooksLikeImage =
+    /^data:image\//i.test(srcURL) ||
+    /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(srcURL);
+  // Prefer real document links — never treat a preview thumbnail URL as the PDF.
+  const candidateUrl = linkURL || nearby.url || (srcLooksLikeImage ? '' : srcURL);
+  const candidateName =
+    nearby.name ||
+    titleText ||
+    text ||
+    (candidateUrl ? path.basename(candidateUrl.split('?')[0]) : '');
 
-  if (!text && !hasImage && !linkURL) {
-    return { ok: false, error: 'Select text, an image, or a link to forward.' };
+  const documentHint = looksLikeDocument({
+    linkURL: candidateUrl || linkURL || nearby.url,
+    srcURL: srcLooksLikeImage ? '' : srcURL,
+    fileName: candidateName,
+    text,
+    titleText,
+    mediaType: params.mediaType,
+  });
+
+  let filePath = '';
+  let fileName = '';
+  let isDocument = false;
+  let imagePath = '';
+  let hasImage = false;
+
+  if (documentHint && candidateUrl) {
+    try {
+      filePath = await downloadForwardFile(
+        webContents,
+        candidateUrl,
+        sanitizeForwardFilename(
+          candidateName || 'document.pdf',
+          extensionOf(candidateName) || extensionOf(candidateUrl) || 'pdf',
+        ),
+      );
+      fileName = path.basename(filePath);
+      isDocument = isDocumentExtension(extensionOf(fileName)) || documentHint;
+    } catch (error) {
+      // Keep going — may still forward as text/link, but never as a fake image PDF.
+      console.warn('[forward] document download failed', error);
+    }
+  }
+
+  // Only capture a bitmap when this is truly an image, not a PDF/doc preview tile.
+  if (!isDocument && !documentHint) {
+    const image = await captureForwardImage(webContents, params);
+    imagePath = saveForwardImage(image);
+    hasImage = !!(imagePath || (image && !image.isEmpty()));
+  }
+
+  if (!text && !hasImage && !linkURL && !filePath && !nearby.url) {
+    return { ok: false, error: 'Select text, an image, or a document to forward.' };
+  }
+
+  if (documentHint && !filePath) {
+    const box = {
+      type: 'warning',
+      title: 'Forward with Aspera Hub',
+      message: 'Could not download the PDF/document.',
+      detail:
+        'Aspera Hub avoided pasting the preview image as a photo. Open the message’s download/open link once, then try Forward again — or download the file and attach it manually in the other account.',
+      buttons: ['OK'],
+    };
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await dialog.showMessageBox(mainWindow, box);
+    } else {
+      await dialog.showMessageBox(box);
+    }
+    return { ok: false, error: 'Document download failed.' };
   }
 
   forwardPayload = {
-    text,
-    linkURL: linkURL.startsWith('javascript:') ? '' : linkURL,
+    text: isDocument ? '' : text,
+    linkURL: isDocument ? '' : linkURL || nearby.url || '',
     imagePath,
-    filePath: '',
+    filePath,
+    fileName,
     hasImage,
+    isDocument,
     sourceServiceId: source.id,
     sourceAppId: source.appId,
     sourceName: source.name || source.defaultName || source.appId,
@@ -4338,10 +4597,11 @@ function openForwardPickerWindow({
       preview: describeForwardPayload({
         text: forwardPayload.text,
         hasImage: forwardPayload.hasImage,
+        isDocument: forwardPayload.isDocument,
         linkURL: forwardPayload.linkURL,
-        fileName: forwardPayload.filePath
-          ? path.basename(forwardPayload.filePath)
-          : '',
+        fileName:
+          forwardPayload.fileName ||
+          (forwardPayload.filePath ? path.basename(forwardPayload.filePath) : ''),
       }),
       targets,
     });
@@ -4409,19 +4669,37 @@ async function deliverForwardToTarget(targetId) {
     return { ok: false, error: 'Choose a WhatsApp or Arattai account.' };
   }
 
+  const isDocument =
+    !!payload.isDocument &&
+    !!payload.filePath &&
+    fs.existsSync(payload.filePath);
   const clipText = buildForwardClipboardText(payload);
-  /** @type {Electron.Data} */
-  const write = {};
-  if (clipText) write.text = clipText;
-  if (payload.imagePath && fs.existsSync(payload.imagePath)) {
-    const image = nativeImage.createFromPath(payload.imagePath);
-    if (!image.isEmpty()) write.image = image;
-  }
-  if (Object.keys(write).length) {
-    try {
-      clipboard.write(write);
-    } catch {
-      if (clipText) clipboard.writeText(clipText);
+  let fileOnClipboard = false;
+
+  if (isDocument) {
+    // Never put the PDF preview bitmap on the clipboard — that became a photo.
+    fileOnClipboard = writeLinuxFileClipboard(payload.filePath);
+    if (!fileOnClipboard && clipText) {
+      try {
+        clipboard.writeText(clipText);
+      } catch {
+        // ignore
+      }
+    }
+  } else {
+    /** @type {Electron.Data} */
+    const write = {};
+    if (clipText) write.text = clipText;
+    if (payload.imagePath && fs.existsSync(payload.imagePath)) {
+      const image = nativeImage.createFromPath(payload.imagePath);
+      if (!image.isEmpty()) write.image = image;
+    }
+    if (Object.keys(write).length) {
+      try {
+        clipboard.write(write);
+      } catch {
+        if (clipText) clipboard.writeText(clipText);
+      }
     }
   }
 
@@ -4429,12 +4707,34 @@ async function deliverForwardToTarget(targetId) {
   activateService(targetId);
   await new Promise((resolve) => setTimeout(resolve, 480));
   await markActiveComposeTarget(targetId);
-  const pasted = await stageForwardPaste(targetId);
+
+  let pasted = false;
+  if (!isDocument) {
+    pasted = await stageForwardPaste(targetId);
+  } else if (fileOnClipboard) {
+    // Best-effort: some web apps accept pasted files from the OS clipboard.
+    pasted = await stageForwardPaste(targetId);
+  }
 
   const targetName = target.name || target.defaultName || 'account';
-  const detail = pasted
-    ? `Staged in ${targetName}. Open the right chat if needed, then send.`
-    : `Switched to ${targetName}. Open a chat and press Ctrl+V to paste.`;
+  const docName =
+    payload.fileName ||
+    (payload.filePath ? path.basename(payload.filePath) : 'document');
+  let detail;
+  if (isDocument) {
+    detail = pasted
+      ? `Document staged in ${targetName}. Confirm it is a file (not a photo), then send.`
+      : `Switched to ${targetName}. Open the chat → Attach → Document and choose “${docName}”.`;
+    try {
+      shell.showItemInFolder(payload.filePath);
+    } catch {
+      // ignore
+    }
+  } else {
+    detail = pasted
+      ? `Staged in ${targetName}. Open the right chat if needed, then send.`
+      : `Switched to ${targetName}. Open a chat and press Ctrl+V to paste.`;
+  }
 
   try {
     if (Notification.isSupported()) {
@@ -4448,7 +4748,20 @@ async function deliverForwardToTarget(targetId) {
     // ignore
   }
 
-  return { ok: true, pasted };
+  if (isDocument && !pasted && mainWindow && !mainWindow.isDestroyed()) {
+    await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Forward document',
+      message: `${docName} is ready`,
+      detail:
+        `Switched to ${targetName}.\n\n` +
+        'In the chat, use Attach → Document (not Photos) and pick the highlighted file.\n' +
+        'Aspera Hub no longer pastes PDF previews as images.',
+      buttons: ['OK'],
+    });
+  }
+
+  return { ok: true, pasted, isDocument };
 }
 
 /**
@@ -4519,6 +4832,9 @@ function attachGuestContextMenu(webContents) {
         hasSelection,
         hasImage: !!params.hasImageContents,
         linkURL: params.linkURL,
+        srcURL: params.srcURL,
+        mediaType: params.mediaType,
+        titleText: params.titleText || params.altText,
         targetCount: forwardTargets.length,
       })
     ) {

@@ -1,12 +1,69 @@
 /**
  * Cross-account Forward helpers for WhatsApp / Arattai.
- * MVP: capture text/image/link → pick another Hub instance → stage for send.
+ * MVP: capture text/image/document → pick another Hub instance → stage for send.
  */
 
 export const FORWARD_APP_IDS = Object.freeze(['whatsapp', 'arattai']);
 
+/** Common document extensions employees forward across chats. */
+export const FORWARD_DOCUMENT_EXTS = Object.freeze([
+  'pdf',
+  'doc',
+  'docx',
+  'xls',
+  'xlsx',
+  'ppt',
+  'pptx',
+  'txt',
+  'csv',
+  'rtf',
+  'odt',
+  'ods',
+  'odp',
+  'zip',
+  'rar',
+  '7z',
+  'json',
+  'xml',
+]);
+
 export function isForwardAppId(appId) {
   return FORWARD_APP_IDS.includes(String(appId || ''));
+}
+
+export function extensionOf(value) {
+  const raw = String(value || '').split('?')[0].split('#')[0];
+  const base = raw.includes('/') ? raw.split('/').pop() : raw;
+  const m = String(base || '').match(/\.([a-z0-9]{1,8})$/i);
+  return m ? m[1].toLowerCase() : '';
+}
+
+export function isDocumentExtension(ext) {
+  return FORWARD_DOCUMENT_EXTS.includes(String(ext || '').toLowerCase());
+}
+
+/**
+ * True when a URL/name/mime looks like a document rather than a photo.
+ * PDF chat previews often expose an image thumbnail — callers must prefer the
+ * document URL over that preview image.
+ */
+export function looksLikeDocument(opts = {}) {
+  const url = String(opts.url || opts.linkURL || opts.srcURL || '').trim();
+  const name = String(opts.fileName || opts.titleText || opts.altText || opts.text || '').trim();
+  const mime = String(opts.mimeType || opts.mediaType || '').trim().toLowerCase();
+  if (mime === 'file' || mime.includes('pdf') || mime.includes('document') || mime.includes('msword')) {
+    return true;
+  }
+  if (isDocumentExtension(extensionOf(url)) || isDocumentExtension(extensionOf(name))) {
+    return true;
+  }
+  if (/\b(pdf|document|attachment|\.docx?|\.xlsx?|\.pptx?)\b/i.test(name)) {
+    return true;
+  }
+  if (/\/pdf\b|\.pdf\b|application%2Fpdf|application\/pdf/i.test(url)) {
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -16,6 +73,9 @@ export function isForwardAppId(appId) {
  *   hasSelection?: boolean,
  *   hasImage?: boolean,
  *   linkURL?: string,
+ *   srcURL?: string,
+ *   mediaType?: string,
+ *   titleText?: string,
  *   targetCount?: number,
  * }} opts
  */
@@ -26,21 +86,28 @@ export function canOfferForward(opts = {}) {
   const hasImage = !!opts.hasImage;
   const linkURL = String(opts.linkURL || '').trim();
   const hasLink = !!linkURL && !linkURL.startsWith('javascript:');
-  return hasSelection || hasImage || hasLink;
+  const hasDocument = looksLikeDocument(opts);
+  return hasSelection || hasImage || hasLink || hasDocument;
 }
 
 /**
- * @param {{ text?: string, hasImage?: boolean, linkURL?: string, fileName?: string }} payload
+ * @param {{ text?: string, hasImage?: boolean, linkURL?: string, fileName?: string, isDocument?: boolean }} payload
  */
 export function describeForwardPayload(payload = {}) {
   const text = String(payload.text || '').trim();
   const linkURL = String(payload.linkURL || '').trim();
   const fileName = String(payload.fileName || '').trim();
   const parts = [];
-  if (payload.hasImage) parts.push('Image');
-  if (fileName) parts.push(fileName);
-  else if (linkURL) parts.push('Link');
-  if (text) {
+  if (payload.isDocument || looksLikeDocument({ fileName, linkURL, text })) {
+    parts.push(fileName ? `Document · ${fileName}` : 'Document');
+  } else if (payload.hasImage) {
+    parts.push('Image');
+  } else if (fileName) {
+    parts.push(fileName);
+  } else if (linkURL) {
+    parts.push('Link');
+  }
+  if (text && !fileName) {
     const preview = text.length > 80 ? `${text.slice(0, 77)}…` : text;
     parts.push(preview);
   }
@@ -50,7 +117,8 @@ export function describeForwardPayload(payload = {}) {
 
 /**
  * Build clipboard staging text (includes link when useful).
- * @param {{ text?: string, linkURL?: string, filePath?: string }} payload
+ * Prefer not to dump local file paths into chat text when a real file is staged.
+ * @param {{ text?: string, linkURL?: string, filePath?: string, isDocument?: boolean }} payload
  */
 export function buildForwardClipboardText(payload = {}) {
   const text = String(payload.text || '').trim();
@@ -58,9 +126,28 @@ export function buildForwardClipboardText(payload = {}) {
   const filePath = String(payload.filePath || '').trim();
   const chunks = [];
   if (text) chunks.push(text);
-  if (linkURL && !text.includes(linkURL)) chunks.push(linkURL);
-  if (filePath && !chunks.some((c) => c.includes(filePath))) {
+  if (linkURL && !text.includes(linkURL) && !payload.isDocument) {
+    chunks.push(linkURL);
+  }
+  // Documents are staged as files — avoid pasting "File saved: …" into the chat.
+  if (filePath && !payload.isDocument && !chunks.some((c) => c.includes(filePath))) {
     chunks.push(`File saved: ${filePath}`);
   }
   return chunks.join('\n\n').trim();
+}
+
+export function sanitizeForwardFilename(name, fallbackExt = 'bin') {
+  let base = String(name || '')
+    .split(/[/\\]/)
+    .pop()
+    .replace(/[^\w.\- ()[\]]+/g, '_')
+    .replace(/_+/g, '_')
+    .trim();
+  if (!base || base === '.' || base === '..') {
+    base = `document.${fallbackExt}`;
+  }
+  if (!extensionOf(base) && fallbackExt) {
+    base = `${base}.${fallbackExt}`;
+  }
+  return base.slice(0, 180);
 }
