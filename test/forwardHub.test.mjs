@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import {
   arattaiFullFileUrlFromAny,
   buildArattaiDownloadUrl,
+  buildForwardClipboardText,
   canOfferForward,
   classifyForwardFileBytes,
   describeForwardPayload,
-  buildForwardClipboardText,
   extractDocumentFileName,
   forwardContentKind,
   forwardPickerHint,
@@ -17,10 +17,13 @@ import {
   isDocumentAccept,
   isForwardAppId,
   isImageOnlyAccept,
+  isJunkForwardLink,
   looksLikeDocument,
+  matchRecentDownload,
   mimeForFilename,
   parseArattaiMediaUrl,
   sanitizeForwardFilename,
+  sanitizeForwardLinkURL,
   shouldForwardAsDocument,
   shouldOfferDocumentForwardMenu,
 } from '../src/forwardHub.js';
@@ -33,6 +36,14 @@ test('forward is only for WhatsApp and Arattai with targets', () => {
     canOfferForward({
       appId: 'whatsapp',
       hasSelection: true,
+      targetCount: 1,
+    }),
+    true,
+  );
+  // WhatsApp media often has no Electron selection/image flags — still offer Forward.
+  assert.equal(
+    canOfferForward({
+      appId: 'whatsapp',
       targetCount: 1,
     }),
     true,
@@ -60,6 +71,35 @@ test('forward is only for WhatsApp and Arattai with targets', () => {
       targetCount: 1,
     }),
     true,
+  );
+});
+
+test('text forward never appends Arattai profile/thumbnail webdownload links', () => {
+  const junk =
+    'https://files.arattai.in/webdownload?x-service=arattai&x-cli-msg=%7B%22entity%22%3A%22user_profile_picture%22%2C%22thumbnail%22%3Atrue%7D&event-id=2625008';
+  assert.equal(isJunkForwardLink(junk), true);
+  assert.equal(sanitizeForwardLinkURL(junk), '');
+  assert.equal(
+    buildForwardClipboardText({
+      text: 'PALINDIA COMPUTER TRAINING PRIVATE LIMITED',
+      linkURL: junk,
+    }),
+    'PALINDIA COMPUTER TRAINING PRIVATE LIMITED',
+  );
+  assert.equal(
+    buildForwardClipboardText({
+      text: 'hello',
+      linkURL: 'https://example.com/note',
+    }),
+    'hello\n\nhttps://example.com/note',
+  );
+  assert.equal(
+    matchRecentDownload(
+      [{ path: '/tmp/PDF_Sign_Verifier_Laptop_Setup.pdf', name: 'PDF_Sign_Verifier_Laptop_Setup.pdf', at: Date.now() }],
+      'PDF_Sign_Verifier_Laptop_Setup.pdf',
+      'PDF_Sign_Verifier_Laptop_Setup.pdf 2 pages · 5 KB PDF',
+    ),
+    '/tmp/PDF_Sign_Verifier_Laptop_Setup.pdf',
   );
 });
 

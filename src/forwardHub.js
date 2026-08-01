@@ -167,21 +167,23 @@ export function forwardWaitMessage(kind, targetName, fileName = '') {
 
 export function forwardReadyMessage(kind, targetName, { ok = true, fileName = '' } = {}) {
   const account = targetName || 'the account';
-  if (!ok) {
+  // Same cue for every direction / content type when Hub placed content.
+  if (ok) {
     if (kind === 'document') {
-      const name = fileName ? `“${fileName}”` : 'the document';
-      return `Recipient ready in ${account}. If needed: Attach → Document and pick ${name}, then Send.`;
+      const name = fileName ? `“${fileName}”` : 'Document';
+      return `${name} ready in ${account}. Review and Send.`;
     }
-    return `Recipient ready in ${account}. Press Ctrl+V to paste, then Send.`;
+    if (kind === 'image') {
+      return `Image ready in ${account}. Review and Send.`;
+    }
+    return `Text ready in ${account}. Review and Send.`;
   }
+  // Fallback only when auto-place failed — still one consistent instruction.
   if (kind === 'document') {
-    const name = fileName ? `“${fileName}”` : 'Document';
-    return `${name} ready in ${account}. Review and Send.`;
+    const name = fileName ? `“${fileName}”` : 'the document';
+    return `Recipient ready in ${account}. Press Ctrl+V (or Attach → Document) for ${name}, then Send.`;
   }
-  if (kind === 'image') {
-    return `Image ready in ${account}. Review and Send.`;
-  }
-  return `Text ready in ${account}. Review and Send.`;
+  return `Recipient ready in ${account}. Press Ctrl+V to paste, then Send.`;
 }
 
 export function forwardTimeoutMessage(kind, targetName, fileName = '') {
@@ -269,6 +271,10 @@ export function arattaiFullFileUrlFromAny(url, chatIdFallback = '') {
 
 /**
  * Whether the guest context menu should offer Forward.
+ * On WhatsApp/Arattai with a target account, always offer the single Forward
+ * action — Hub inspects the bubble and decides text / image / document.
+ * Electron hit-tests often miss WA media (no hasImageContents), which used to
+ * hide Forward entirely while WhatsApp's own menu still appeared.
  * @param {{
  *   appId?: string,
  *   hasSelection?: boolean,
@@ -278,17 +284,43 @@ export function arattaiFullFileUrlFromAny(url, chatIdFallback = '') {
  *   mediaType?: string,
  *   titleText?: string,
  *   targetCount?: number,
+ *   alwaysOnMessaging?: boolean,
  * }} opts
  */
 export function canOfferForward(opts = {}) {
   if (!isForwardAppId(opts.appId)) return false;
   if (Number(opts.targetCount) <= 0) return false;
+  if (opts.alwaysOnMessaging !== false) return true;
   const hasSelection = !!opts.hasSelection;
   const hasImage = !!opts.hasImage;
   const linkURL = String(opts.linkURL || '').trim();
   const hasLink = !!linkURL && !linkURL.startsWith('javascript:');
   const hasDocument = looksLikeDocument(opts);
   return hasSelection || hasImage || hasLink || hasDocument;
+}
+
+/**
+ * Links that must never be pasted alongside forwarded text.
+ * Arattai mention/profile tiles and PDF thumbnails expose webdownload URLs
+ * that look like "the message link" but are junk in WhatsApp.
+ */
+export function isJunkForwardLink(url) {
+  const u = String(url || '').trim();
+  if (!u || u.startsWith('javascript:')) return true;
+  if (/^blob:/i.test(u) || /^data:/i.test(u)) return true;
+  if (/files\.arattai\.in\/webdownload/i.test(u)) return true;
+  if (/\/v1\/attachments\//i.test(u)) return true;
+  if (/user_profile_picture|fallback_dp|thumbnail=true|"thumbnail":true/i.test(u)) {
+    return true;
+  }
+  return false;
+}
+
+/** Link safe to include in a text forward clipboard payload. */
+export function sanitizeForwardLinkURL(url) {
+  const u = String(url || '').trim();
+  if (!u || isJunkForwardLink(u)) return '';
+  return u;
 }
 
 /**
@@ -323,7 +355,7 @@ export function describeForwardPayload(payload = {}) {
  */
 export function buildForwardClipboardText(payload = {}) {
   const text = String(payload.text || '').trim();
-  const linkURL = String(payload.linkURL || '').trim();
+  const linkURL = sanitizeForwardLinkURL(payload.linkURL);
   const filePath = String(payload.filePath || '').trim();
   const chunks = [];
   if (text) chunks.push(text);
@@ -335,6 +367,46 @@ export function buildForwardClipboardText(payload = {}) {
     chunks.push(`File saved: ${filePath}`);
   }
   return chunks.join('\n\n').trim();
+}
+
+/**
+ * Match a recently downloaded guest file to a forward candidate name.
+ * Used when the user already tapped Download in chat before Forward.
+ */
+export function matchRecentDownload(recent = [], candidateName = '', nearbyText = '') {
+  const list = Array.isArray(recent) ? recent : [];
+  const want = String(candidateName || '').trim().toLowerCase();
+  const nearby = String(nearbyText || '').toLowerCase();
+  const now = Date.now();
+  const fresh = list.filter((row) => row && row.path && now - Number(row.at || 0) < 15 * 60_000);
+  if (!fresh.length) return '';
+  const score = (row) => {
+    const name = String(row.name || pathBasename(row.path)).toLowerCase();
+    let s = 0;
+    if (want && name === want) s += 100;
+    if (want && want.length >= 6 && name.includes(want.replace(/\.pdf$/i, ''))) s += 60;
+    if (want && name.endsWith('.pdf') && nearby.includes(name.replace(/\.pdf$/i, ''))) s += 40;
+    if (/\.pdf$/i.test(name) && /\bpdf\b/i.test(nearby)) s += 10;
+    if (isDocumentExtension(extensionOf(name))) s += 5;
+    return s;
+  };
+  let best = null;
+  let bestScore = 0;
+  for (const row of fresh) {
+    const s = score(row);
+    if (s > bestScore) {
+      best = row;
+      bestScore = s;
+    }
+  }
+  if (!best || bestScore < 10) return '';
+  return String(best.path || '');
+}
+
+function pathBasename(filePath) {
+  const s = String(filePath || '');
+  const parts = s.split(/[/\\]/);
+  return parts[parts.length - 1] || s;
 }
 
 export function sanitizeForwardFilename(name, fallbackExt = 'bin') {

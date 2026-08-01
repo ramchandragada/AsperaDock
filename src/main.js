@@ -26,6 +26,7 @@ import {
   arattaiFullFileUrlFromAny,
   buildForwardClipboardText,
   canOfferForward,
+  classifyForwardFileBytes,
   describeForwardPayload,
   extensionOf,
   extractDocumentFileName,
@@ -36,16 +37,16 @@ import {
   forwardTimeoutMessage,
   forwardWaitMessage,
   hasStrongDocumentEvidence,
+  isDocumentAccept,
   isDocumentExtension,
   isForwardAppId,
-  classifyForwardFileBytes,
-  isDocumentAccept,
   isImageOnlyAccept,
   looksLikeDocument,
+  matchRecentDownload,
   mimeForFilename,
   sanitizeForwardFilename,
+  sanitizeForwardLinkURL,
   shouldForwardAsDocument,
-  shouldOfferDocumentForwardMenu,
 } from './forwardHub.js';
 import { spawnSync } from 'node:child_process';
 import {
@@ -423,6 +424,9 @@ let forwardPickerWindow = null;
 let forwardPayload = null;
 /** One-shot download hijack used while capturing a document to forward. */
 let pendingForwardDownload = null;
+/** Recent guest downloads (user tapped Download) — reused by Forward. */
+const recentGuestDownloads = [];
+const RECENT_DOWNLOAD_MAX = 40;
 /** Floating Chrome-like Extensions manager. */
 let extensionsWindow = null;
 let settings = loadSettings();
@@ -4020,12 +4024,28 @@ function configureSession(partitionSession, partitionKey) {
     }
     item.once('done', (_e, state) => {
       if (state !== 'completed') return;
-      if (settings.openFolderOnDownload) shell.showItemInFolder(item.getSavePath());
-      if (settings.openFileOnDownload) shell.openPath(item.getSavePath());
+      const savePath = item.getSavePath();
+      rememberGuestDownload(savePath, item.getFilename?.() || path.basename(savePath));
+      if (settings.openFolderOnDownload) shell.showItemInFolder(savePath);
+      if (settings.openFileOnDownload) shell.openPath(savePath);
     });
   });
 
   syncExtensionsIntoSession(partitionSession).catch(() => {});
+}
+
+function rememberGuestDownload(filePath, fileName = '') {
+  const abs = String(filePath || '').trim();
+  if (!abs || !fs.existsSync(abs)) return;
+  const name = String(fileName || path.basename(abs)).trim();
+  const ext = extensionOf(name || abs);
+  if (!isDocumentExtension(ext) && !['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) {
+    return;
+  }
+  recentGuestDownloads.unshift({ path: abs, name, at: Date.now() });
+  if (recentGuestDownloads.length > RECENT_DOWNLOAD_MAX) {
+    recentGuestDownloads.length = RECENT_DOWNLOAD_MAX;
+  }
 }
 
 function getSessionExtensionsApi(partitionSession) {
@@ -4215,6 +4235,27 @@ function serviceIdForWebContents(webContents) {
   if (!webContents) return activeServiceId;
   for (const [id, entry] of views.entries()) {
     if (entry?.view?.webContents === webContents) return id;
+  }
+  // PDF preview / child popups are tracked separately.
+  for (const [id, set] of servicePopups.entries()) {
+    if (!set) continue;
+    for (const win of set) {
+      try {
+        if (win && !win.isDestroyed() && win.webContents === webContents) return id;
+      } catch {
+        // ignore
+      }
+    }
+  }
+  try {
+    const owner = BrowserWindow.fromWebContents(webContents);
+    if (owner) {
+      for (const [id, set] of servicePopups.entries()) {
+        if (set?.has?.(owner)) return id;
+      }
+    }
+  } catch {
+    // ignore
   }
   return activeServiceId;
 }
@@ -4847,6 +4888,32 @@ function writeLinuxFileClipboard(filePath) {
   return false;
 }
 
+async function fetchArattaiDocumentViaSession(webContents, downloadUrl, fileName = '') {
+  const url = String(downloadUrl || '').trim();
+  if (!url || !webContents || webContents.isDestroyed()) {
+    return { ok: false, error: 'No Arattai download URL.' };
+  }
+  try {
+    const ses = webContents.session;
+    if (!ses?.fetch) return { ok: false, error: 'Session fetch unavailable.' };
+    const res = await ses.fetch(url, { bypassCustomProtocolHandlers: true });
+    if (!res.ok) return { ok: false, error: `Download HTTP ${res.status}` };
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 64) return { ok: false, error: 'Empty download.' };
+    const classified = classifyForwardFileBytes(buf.subarray(0, 16), fileName || 'document.pdf');
+    if (!classified.ok) return { ok: false, error: classified.error || classified.kind };
+    const name = sanitizeForwardFilename(
+      fileName || 'document.pdf',
+      extensionOf(fileName) || (classified.kind === 'pdf' ? 'pdf' : 'bin'),
+    );
+    const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
+    fs.writeFileSync(savePath, buf);
+    return { ok: true, filePath: savePath };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
 async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
   const forceDocument = !!opts.forceDocument;
   const sourceId = serviceIdForWebContents(webContents);
@@ -4873,8 +4940,8 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
   }
 
   const text = String(params.selectionText || '').trim();
-  let linkURL = String(params.linkURL || '').trim();
-  if (linkURL.startsWith('javascript:')) linkURL = '';
+  // Never treat Arattai profile/thumbnail webdownload URLs as the message link.
+  let linkURL = sanitizeForwardLinkURL(params.linkURL);
   const srcURL = String(params.srcURL || '').trim();
   const titleText = String(params.titleText || params.altText || '').trim();
   const ctx = await inspectForwardContext(webContents, params.x, params.y);
@@ -4883,14 +4950,15 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
     /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(srcURL) ||
     /^blob:/i.test(srcURL);
   // Prefer real document links — never treat a preview thumbnail URL as the PDF.
-  const candidateUrl = linkURL || ctx.url || (srcLooksLikeImage ? '' : srcURL);
+  // ctx.url may be an Arattai webdownload (used for file capture only).
+  const candidateUrl = linkURL || String(ctx.url || '').trim() || (srcLooksLikeImage ? '' : srcURL);
   const candidateName =
     ctx.name ||
     extractDocumentFileName(ctx.nearbyText) ||
     extractDocumentFileName(titleText) ||
     extractDocumentFileName(text) ||
     titleText ||
-    (candidateUrl ? path.basename(candidateUrl.split('?')[0]) : '');
+    '';
 
   const hasImageContents = !!params.hasImageContents;
   const strongDocument = hasStrongDocumentEvidence({
@@ -4937,20 +5005,49 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
     const arattaiUrl =
       String(ctx.arattaiDownloadUrl || '').trim() ||
       arattaiFullFileUrlFromAny(candidateUrl, ctx.chatId) ||
-      arattaiFullFileUrlFromAny(linkURL, ctx.chatId) ||
+      arattaiFullFileUrlFromAny(String(params.linkURL || ''), ctx.chatId) ||
       arattaiFullFileUrlFromAny(srcURL, ctx.chatId);
 
-    // 1) Arattai UDS full-file URL (thumbnail URLs rebuilt without thumbnail flag).
+    // 0) User already downloaded this file in chat — reuse it.
+    if (!filePath) {
+      const recentPath = matchRecentDownload(
+        recentGuestDownloads,
+        hintedName,
+        ctx.nearbyText || candidateName,
+      );
+      if (recentPath && fs.existsSync(recentPath)) {
+        try {
+          const dest = path.join(
+            forwardTempDir(),
+            `${Date.now()}-${path.basename(recentPath)}`,
+          );
+          fs.copyFileSync(recentPath, dest);
+          filePath = dest;
+        } catch (error) {
+          console.warn('[forward] reuse recent download failed', error);
+        }
+      }
+    }
+
+    // 1) Arattai UDS via session cookies (more reliable than downloadURL).
     if (!filePath && arattaiUrl) {
-      try {
-        filePath = await downloadForwardFile(webContents, arattaiUrl, hintedName);
-      } catch (error) {
-        console.warn('[forward] Arattai document URL download failed', error);
+      const fetched = await fetchArattaiDocumentViaSession(
+        webContents,
+        arattaiUrl,
+        hintedName,
+      );
+      if (fetched.ok) filePath = fetched.filePath;
+      else {
+        try {
+          filePath = await downloadForwardFile(webContents, arattaiUrl, hintedName);
+        } catch (error) {
+          console.warn('[forward] Arattai document URL download failed', error);
+        }
       }
     }
 
     // 2) Direct URL download when we have a real document link.
-    if (!filePath && candidateUrl && !srcLooksLikeImage) {
+    if (!filePath && candidateUrl && !srcLooksLikeImage && !/webdownload/i.test(candidateUrl)) {
       try {
         filePath = await downloadForwardFile(webContents, candidateUrl, hintedName);
       } catch (error) {
@@ -4969,6 +5066,16 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
       );
       if (ui.ok && ui.filePath) filePath = ui.filePath;
       else console.warn('[forward] UI document download failed', ui.error);
+    }
+
+    // 4) Retry session fetch after UI click (Arattai may warm the file).
+    if (!filePath && arattaiUrl) {
+      const fetched = await fetchArattaiDocumentViaSession(
+        webContents,
+        arattaiUrl,
+        hintedName,
+      );
+      if (fetched.ok) filePath = fetched.filePath;
     }
 
     if (filePath && fs.existsSync(filePath)) {
@@ -5037,13 +5144,28 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
     hasImage = !!(imagePath || (image && !image.isEmpty()));
   }
 
-  if (!text && !hasImage && !linkURL && !filePath && !ctx.url) {
+  if (!text && !hasImage && !linkURL && !filePath && !isDocument) {
+    // Right-click on empty chrome / no capturable bubble.
+    const box = {
+      type: 'info',
+      title: 'Forward with Aspera Hub',
+      message: 'Nothing to forward here.',
+      detail:
+        'Right-click the message text, photo, or PDF card you want to send to another Hub account.',
+      buttons: ['OK'],
+    };
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await dialog.showMessageBox(mainWindow, box);
+    } else {
+      await dialog.showMessageBox(box);
+    }
     return { ok: false, error: 'Select text, an image, or a document to forward.' };
   }
 
   forwardPayload = {
     text: isDocument ? '' : text,
-    linkURL: isDocument ? '' : linkURL || ctx.url || '',
+    // Never append Arattai webdownload / profile URLs to text paste.
+    linkURL: isDocument ? '' : sanitizeForwardLinkURL(linkURL),
     imagePath,
     filePath,
     fileName,
@@ -5538,29 +5660,30 @@ async function clickAttachDocumentUi(webContents, appId = '') {
           return { ok: false, reason: 'document_menu_missing', via: 'whatsapp-attach-open' };
         }
 
-        // Arattai / generic paperclip
+        // Arattai / generic paperclip — often opens a chooser without a Document submenu.
         const genericAttach =
-          byText(/attach|paper\\s*clip|clip/i)
+          byText(/attach|paper\\s*clip|clip|upload|file/i)
           || document.querySelector('[aria-label*="attach" i]')
           || document.querySelector('[title*="attach" i]')
+          || document.querySelector('[aria-label*="upload" i]')
+          || document.querySelector('[data-icon="plus"]')?.closest('button,[role="button"]')
           || document.querySelector('input[type="file"]')?.closest('button,label,[role="button"]');
         if (genericAttach && click(genericAttach)) {
-          const deadline = Date.now() + 1600;
+          const deadline = Date.now() + 2000;
           while (Date.now() < deadline) {
             await wait(80);
-            const doc = findDocumentItem() || byText(/\\bdocument\\b|\\bpdf\\b/i);
+            const doc = findDocumentItem() || byText(/\\bdocument\\b|\\bpdf\\b|\\bfile\\b/i);
             if (doc && !isPhotoOrOther(doc) && click(doc)) {
               return { ok: true, via: 'generic-document' };
             }
+            if (document.querySelector('input[type="file"]')) {
+              return { ok: true, via: 'generic-attach-open' };
+            }
           }
-          // Some apps open a document-capable chooser from attach alone.
-          if (!requireDocument && document.querySelector('input[type="file"]')) {
-            return { ok: true, via: 'generic-attach-open' };
-          }
-          return { ok: false, reason: 'document_menu_missing' };
+          return { ok: true, via: 'generic-attach-clicked' };
         }
 
-        if (!requireDocument && document.querySelector('input[type="file"]')) {
+        if (document.querySelector('input[type="file"]')) {
           return { ok: true, via: 'file-input-ready' };
         }
         return { ok: false, reason: 'attach_missing' };
@@ -6026,7 +6149,8 @@ async function deliverForwardToTarget(targetId) {
   await sleepMs(280);
   await markActiveComposeTarget(targetId);
 
-  // Unified step 3: Hub places content (paste text/image, attach document).
+  // Unified step 3: Hub places content the same way every direction.
+  // Documents → attach; text/images → paste. On failure, stage clipboard + Ctrl+V.
   if (isDocument) {
     let result = await attachDocumentToGuest(wc, payload.filePath, {
       appId: target.appId,
@@ -6036,12 +6160,11 @@ async function deliverForwardToTarget(targetId) {
     }
     attached = !!result.ok;
     if (!attached) {
+      // Same fallback for WhatsApp ↔ Arattai: file on clipboard, try Ctrl+V once.
       writeLinuxFileClipboard(payload.filePath);
-      try {
-        shell.showItemInFolder(payload.filePath);
-      } catch {
-        // ignore
-      }
+      await sleepMs(120);
+      pasted = await stageForwardPaste(targetId);
+      if (pasted) attached = true;
     }
     detail = forwardReadyMessage(kind, targetName, {
       ok: attached,
@@ -6083,13 +6206,69 @@ async function deliverForwardToTarget(targetId) {
 }
 
 /**
+ * Suppress WhatsApp/Arattai in-page context menus so Hub's single menu wins.
+ * Without this, users only see Message info / Reply / Forward / Delete and
+ * never get "Forward with Aspera Hub".
+ */
+async function injectForwardAppContextMenuGuard(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  try {
+    await webContents.executeJavaScript(
+      `(() => {
+        if (window.__asperaHubCtxGuard) return true;
+        window.__asperaHubCtxGuard = true;
+        document.addEventListener(
+          'contextmenu',
+          (e) => {
+            try {
+              e.preventDefault();
+              e.stopPropagation();
+              if (typeof e.stopImmediatePropagation === 'function') {
+                e.stopImmediatePropagation();
+              }
+            } catch (err) {}
+          },
+          true,
+        );
+        return true;
+      })()`,
+      true,
+    );
+  } catch {
+    // ignore
+  }
+}
+
+/**
  * Native right-click menu for guest pages (Cut / Copy / Paste / Select All…).
  * Electron does not show Chromium's built-in menu unless we handle this event.
+ * WhatsApp/Arattai: one Forward entry — Hub decides text / image / document.
  */
 function attachGuestContextMenu(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
+  webContents.on('dom-ready', () => {
+    const sid = serviceIdForWebContents(webContents);
+    const svc = getService(sid) || getService(activeServiceId);
+    if (svc && isForwardAppId(svc.appId)) {
+      injectForwardAppContextMenuGuard(webContents).catch(() => {});
+    }
+  });
+  webContents.on('did-finish-load', () => {
+    const sid = serviceIdForWebContents(webContents);
+    const svc = getService(sid) || getService(activeServiceId);
+    if (svc && isForwardAppId(svc.appId)) {
+      injectForwardAppContextMenuGuard(webContents).catch(() => {});
+    }
+  });
+
   webContents.on('context-menu', (_event, params) => {
     if (webContents.isDestroyed()) return;
+
+    const sourceServiceId = serviceIdForWebContents(webContents);
+    const service = getService(sourceServiceId) || getService(activeServiceId);
+    if (service && isForwardAppId(service.appId)) {
+      injectForwardAppContextMenuGuard(webContents).catch(() => {});
+    }
 
     /** @type {Electron.MenuItemConstructorOptions[]} */
     const template = [];
@@ -6110,14 +6289,15 @@ function attachGuestContextMenu(webContents) {
       template.push({ type: 'separator' });
     }
 
-    if (params.linkURL) {
+    const safeLink = sanitizeForwardLinkURL(params.linkURL);
+    if (safeLink) {
       template.push({
         label: 'Open link',
-        click: () => openExternalSafe(params.linkURL),
+        click: () => openExternalSafe(safeLink),
       });
       template.push({
         label: 'Copy link address',
-        click: () => clipboard.writeText(params.linkURL),
+        click: () => clipboard.writeText(safeLink),
       });
       template.push({ type: 'separator' });
     }
@@ -6140,8 +6320,6 @@ function attachGuestContextMenu(webContents) {
 
     const editable = params.isEditable;
     const hasSelection = Boolean(params.selectionText);
-    const sourceServiceId = serviceIdForWebContents(webContents);
-    const service = getService(sourceServiceId) || getService(activeServiceId);
     const forwardTargets = service ? listForwardTargets(service.id) : [];
     if (
       service &&
@@ -6149,14 +6327,15 @@ function attachGuestContextMenu(webContents) {
         appId: service.appId,
         hasSelection,
         hasImage: !!params.hasImageContents,
-        linkURL: params.linkURL,
+        linkURL: safeLink,
         srcURL: params.srcURL,
         mediaType: params.mediaType,
         titleText: params.titleText || params.altText,
         targetCount: forwardTargets.length,
+        alwaysOnMessaging: true,
       })
     ) {
-      // One action only — Hub detects text / image / PDF behind the curtains.
+      // One action only — same in chat and in PDF/image preview windows.
       template.push({
         label: 'Forward with Aspera Hub',
         click: () => {
@@ -6180,7 +6359,6 @@ function attachGuestContextMenu(webContents) {
           }).catch(() => {});
         },
       });
-      // Send/compose box: polish the employee's own draft before sending.
       if (editable) {
         template.push({
           label: 'Refine with Aspera AI',
@@ -6237,8 +6415,6 @@ function attachGuestContextMenu(webContents) {
       template.push({ type: 'separator' });
       template.push({ label: 'Select all', role: 'selectAll' });
     } else {
-      // Always offer clipboard actions so users can paste into the page
-      // even when the hit-test did not mark an input (common in SPAs).
       template.push({ label: 'Copy', role: 'copy' });
       template.push({ label: 'Paste', role: 'paste' });
       template.push({ label: 'Select all', role: 'selectAll' });
@@ -6246,25 +6422,44 @@ function attachGuestContextMenu(webContents) {
 
     if (!template.length) return;
     const menu = Menu.buildFromTemplate(template);
-    // params.x/y are relative to the guest WebContents; Menu.popup needs window coords.
+
+    let popupWindow =
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
     let popupX = params.x;
     let popupY = params.y;
     try {
-      for (const entry of views.values()) {
-        if (entry?.view?.webContents === webContents) {
-          const bounds = entry.view.getBounds?.() || entry.__lastBounds;
-          if (bounds) {
-            popupX += bounds.x || 0;
-            popupY += bounds.y || 0;
-          }
-          break;
+      const owner = BrowserWindow.fromWebContents(webContents);
+      if (owner && !owner.isDestroyed()) {
+        popupWindow = owner;
+        // Child preview windows: coords are already relative to that window.
+        if (owner !== mainWindow) {
+          popupX = params.x;
+          popupY = params.y;
         }
       }
     } catch {
       // ignore
     }
+    if (popupWindow === mainWindow || !popupWindow) {
+      try {
+        for (const entry of views.values()) {
+          if (entry?.view?.webContents === webContents) {
+            const bounds = entry.view.getBounds?.() || entry.__lastBounds;
+            if (bounds) {
+              popupX += bounds.x || 0;
+              popupY += bounds.y || 0;
+            }
+            break;
+          }
+        }
+      } catch {
+        // ignore
+      }
+      popupWindow =
+        mainWindow && !mainWindow.isDestroyed() ? mainWindow : popupWindow;
+    }
     menu.popup({
-      window: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+      window: popupWindow,
       x: Math.round(popupX),
       y: Math.round(popupY),
     });
