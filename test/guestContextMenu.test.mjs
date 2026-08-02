@@ -88,4 +88,7 @@ test('main guest context menu follows guestContextMenuActionOrder', () => {
   assert.match(src, /guestHubMenuScreenPoint/);
   assert.match(src, /Forward with Aspera Hub/);
   assert.match(src, /Summarize PDF with Aspera AI/);
+  // Chat summarize must not open a Downloads file picker.
+  assert.match(src, /allowPicker: false/);
+  assert.match(src, /Getting PDF from this chat/);
 });

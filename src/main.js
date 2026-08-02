@@ -3342,21 +3342,26 @@ function pickPdfFileForSummarize() {
 }
 
 /**
- * Resolve a PDF path for Summarize: chat capture first, then file picker.
- * @param {{ fast?: boolean, allowPicker?: boolean }} [opts]
- *   fast: skip the slow UI-download click loop (use viewer + recent only).
+ * Resolve a PDF from the chat bubble under the cursor — same idea as text
+ * summarize (no file picker). Mirrors Forward's document capture path.
+ *
+ * @param {{ allowPicker?: boolean, onProgress?: (msg: string) => void }} [opts]
+ *   allowPicker: only for Chrome-menu / no-chat fallback (default false).
  */
 async function resolvePdfPathForSummarize(
   webContents,
   params = {},
   opts = {},
 ) {
-  const fast = opts.fast !== false;
-  const allowPicker = opts.allowPicker !== false;
+  const allowPicker = opts.allowPicker === true;
+  const onProgress =
+    typeof opts.onProgress === 'function' ? opts.onProgress : () => {};
   let filePath = '';
   let fileName = '';
   const titleText = String(params.titleText || params.altText || '');
   const selectionText = String(params.selectionText || '');
+  const linkURL = sanitizeForwardLinkURL(params.linkURL);
+  const srcURL = String(params.srcURL || '').trim();
   let pageTitle = '';
   try {
     pageTitle = String(webContents?.getTitle?.() || '').trim();
@@ -3365,87 +3370,201 @@ async function resolvePdfPathForSummarize(
   }
 
   if (webContents && !webContents.isDestroyed()) {
-    const ctx = await inspectForwardContext(webContents, params.x, params.y).catch(
-      () => ({}),
-    );
-    const candidateName =
-      ctx?.name ||
-      extractDocumentFileName(ctx?.nearbyText) ||
-      extractDocumentFileName(titleText) ||
-      extractDocumentFileName(pageTitle) ||
-      extractDocumentFileName(selectionText) ||
-      titleText ||
-      'document.pdf';
-    const hintedName = sanitizeForwardFilename(
-      candidateName,
-      extensionOf(candidateName) || 'pdf',
-    );
-
-    // 1) Fastest: PDF already open in preview / blob embed.
-    const viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
-    if (viewer.ok) {
-      filePath = viewer.filePath;
-      fileName = path.basename(filePath);
-    }
-
-    // 2) Already downloaded in this session.
-    if (!filePath) {
-      const recentPath = matchRecentDownload(
-        recentGuestDownloads,
-        hintedName,
-        ctx?.nearbyText || candidateName,
+    onProgress('Reading the PDF in this chat…');
+    beginForwardCaptureWindow(45_000);
+    try {
+      const ctx = await inspectForwardContext(
+        webContents,
+        params.x,
+        params.y,
+      ).catch(() => ({}));
+      const candidateUrl =
+        linkURL ||
+        String(ctx?.url || '').trim() ||
+        (!/^data:image\//i.test(srcURL) && !/\.(png|jpe?g|gif|webp)$/i.test(srcURL)
+          ? srcURL
+          : '');
+      const candidateName =
+        ctx?.name ||
+        extractDocumentFileName(ctx?.nearbyText) ||
+        extractDocumentFileName(titleText) ||
+        extractDocumentFileName(pageTitle) ||
+        extractDocumentFileName(selectionText) ||
+        titleText ||
+        'document.pdf';
+      const hintedName = sanitizeForwardFilename(
+        candidateName,
+        extensionOf(candidateName) || extensionOf(candidateUrl) || 'pdf',
       );
-      if (recentPath && fs.existsSync(recentPath)) {
+      fileName = hintedName;
+
+      const arattaiUrl =
+        String(ctx?.arattaiDownloadUrl || '').trim() ||
+        arattaiFullFileUrlFromAny(candidateUrl, ctx?.chatId) ||
+        arattaiFullFileUrlFromAny(String(params.linkURL || ''), ctx?.chatId) ||
+        arattaiFullFileUrlFromAny(srcURL, ctx?.chatId);
+
+      // 0) PDF already open in preview / blob embed.
+      onProgress('Checking open PDF preview…');
+      let viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
+      if (viewer.ok) filePath = viewer.filePath;
+
+      // 0b) Open the bubble preview, then read bytes (WhatsApp often needs this).
+      if (!filePath && (Number(params.x) || Number(params.y))) {
+        onProgress('Opening PDF preview…');
         try {
-          const dest = path.join(
-            forwardTempDir(),
-            `${Date.now()}-${path.basename(recentPath)}`,
-          );
-          fs.copyFileSync(recentPath, dest);
-          filePath = dest;
-          fileName = path.basename(dest);
+          clickWebContentsAt(webContents, Number(params.x) || 0, Number(params.y) || 0);
+          await new Promise((r) => setTimeout(r, 450));
+          viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
+          if (viewer.ok) filePath = viewer.filePath;
         } catch {
           // ignore
         }
       }
-    }
 
-    // 3) Slow UI download click — only when not in fast mode (was the main delay).
-    if (!filePath && !fast) {
-      const ui = await tryCaptureDocumentByUiDownload(
-        webContents,
-        params.x,
-        params.y,
-        hintedName,
-        ctx?.downloadPoints || [],
-      );
-      if (ui.ok && ui.filePath) {
-        filePath = ui.filePath;
-        fileName = path.basename(filePath);
+      // 1) Already downloaded in this Hub session.
+      if (!filePath) {
+        onProgress('Looking for a recent download…');
+        const recentPath = matchRecentDownload(
+          recentGuestDownloads,
+          hintedName,
+          ctx?.nearbyText || candidateName,
+        );
+        if (recentPath && fs.existsSync(recentPath)) {
+          try {
+            const dest = path.join(
+              forwardTempDir(),
+              `${Date.now()}-${path.basename(recentPath)}`,
+            );
+            fs.copyFileSync(recentPath, dest);
+            filePath = dest;
+          } catch {
+            // ignore
+          }
+        }
       }
+
+      // 2) Arattai session / URL fetch.
+      if (!filePath && arattaiUrl) {
+        onProgress('Downloading PDF from chat…');
+        const fetched = await fetchArattaiDocumentViaSession(
+          webContents,
+          arattaiUrl,
+          hintedName,
+        );
+        if (fetched.ok) filePath = fetched.filePath;
+        else {
+          try {
+            filePath = await downloadForwardFile(
+              webContents,
+              arattaiUrl,
+              hintedName,
+            );
+          } catch {
+            // ignore
+          }
+        }
+      }
+
+      // 3) Direct document URL (not a thumbnail).
+      if (
+        !filePath &&
+        candidateUrl &&
+        !/^data:image\//i.test(candidateUrl) &&
+        !/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(candidateUrl) &&
+        !/webdownload/i.test(candidateUrl)
+      ) {
+        onProgress('Downloading PDF…');
+        try {
+          filePath = await downloadForwardFile(
+            webContents,
+            candidateUrl,
+            hintedName,
+          );
+        } catch {
+          // ignore
+        }
+      }
+
+      // 4) Click the chat Download control (same as Forward) — silent Save hijack.
+      if (!filePath) {
+        onProgress('Fetching PDF from the message…');
+        const ui = await tryCaptureDocumentByUiDownload(
+          webContents,
+          params.x,
+          params.y,
+          hintedName,
+          ctx?.downloadPoints || [],
+        );
+        if (ui.ok && ui.filePath) filePath = ui.filePath;
+      }
+
+      // 5) Arattai retry after UI warm-up.
+      if (!filePath && arattaiUrl) {
+        const fetched = await fetchArattaiDocumentViaSession(
+          webContents,
+          arattaiUrl,
+          hintedName,
+        );
+        if (fetched.ok) filePath = fetched.filePath;
+      }
+
+      // Reject non-PDF / tiny thumb captures.
+      if (filePath && fs.existsSync(filePath)) {
+        const ext = extensionOf(filePath);
+        const size = fs.statSync(filePath).size;
+        const looksImage = [
+          'png',
+          'jpg',
+          'jpeg',
+          'gif',
+          'webp',
+          'bmp',
+          'svg',
+        ].includes(ext);
+        let header = Buffer.alloc(0);
+        try {
+          const fd = fs.openSync(filePath, 'r');
+          header = Buffer.alloc(16);
+          const n = fs.readSync(fd, header, 0, 16, 0);
+          fs.closeSync(fd);
+          header = header.subarray(0, n);
+        } catch {
+          header = Buffer.alloc(0);
+        }
+        const classified = classifyForwardFileBytes(
+          header,
+          path.basename(filePath),
+        );
+        if (looksImage || size < 512 || !classified.ok) {
+          try {
+            fs.unlinkSync(filePath);
+          } catch {
+            // ignore
+          }
+          filePath = '';
+        } else {
+          fileName = path.basename(filePath);
+        }
+      }
+    } finally {
+      beginForwardCaptureWindow(3_500);
     }
   }
 
+  // File picker only when explicitly allowed (Chrome menu, no chat target).
   if ((!filePath || !fs.existsSync(filePath)) && allowPicker) {
-    pushAiResult({
-      title: 'Aspera AI · Summarize PDF',
-      meta: 'EN · HI · MR',
-      text: 'Choose the PDF file to summarize…',
-      loading: true,
-      mode: 'summarize',
-      showTrilingual: true,
-      canSuggestReply: false,
-    });
+    onProgress('Choose a PDF file…');
     filePath = pickPdfFileForSummarize();
     fileName = filePath ? path.basename(filePath) : '';
   }
 
-  if (!filePath) {
+  if (!filePath || !fs.existsSync(filePath)) {
     return {
       ok: false,
-      cancelled: true,
+      cancelled: false,
       error:
-        'No PDF found. Tap Download on the PDF once, then try Summarize PDF again — or pick the file.',
+        'Could not read this PDF from the chat. Open the PDF once (or tap Download), then click Summarize PDF with Aspera AI again.',
     };
   }
   return { ok: true, filePath, fileName: fileName || path.basename(filePath) };
@@ -3963,7 +4082,19 @@ function handleChromeMenuAction(type) {
     return { ok: true };
   }
   if (type === 'summarize-pdf') {
-    runAsperaAiSkill('summarize-pdf', { dark: false }).catch(() => {});
+    // Prefer the open chat (same as right-click) — no Downloads picker.
+    const entry = activeServiceId ? views.get(activeServiceId) : null;
+    const wc = entry?.view?.webContents;
+    if (wc && !wc.isDestroyed() && activeAiService()) {
+      runSummarizePdfFromGuest(wc, {
+        x: 0,
+        y: 0,
+        hasImageContents: false,
+      }).catch(() => {});
+    } else {
+      // No messaging app open — allow a one-time file pick.
+      runAsperaAiSkill('summarize-pdf', { dark: false }).catch(() => {});
+    }
     return { ok: true };
   }
   if (type === 'ai-settings') {
@@ -5304,8 +5435,8 @@ function popupGuestPdfActionsMenu(webContents, { x = 0, y = 0 } = {}) {
 }
 
 /**
- * Fast path: open the AI panel immediately, grab the PDF quickly (viewer /
- * recent download), skip the slow Save-dialog UI download loop.
+ * Summarize the PDF under the cursor — same one-click flow as text summarize.
+ * Never opens a Downloads file picker from chat.
  */
 async function runSummarizePdfFromGuest(webContents, params = {}) {
   const { routeOrder } = aiSettingsSnapshot();
@@ -5326,7 +5457,6 @@ async function runSummarizePdfFromGuest(webContents, params = {}) {
     meta: 'EN · HI · MR',
     dark: false,
   });
-  // Keep the result panel above the guest WhatsApp/Arattai view.
   try {
     if (aiResultWindow && !aiResultWindow.isDestroyed()) {
       aiResultWindow.setAlwaysOnTop(true, 'pop-up-menu');
@@ -5335,37 +5465,29 @@ async function runSummarizePdfFromGuest(webContents, params = {}) {
   } catch {
     // ignore
   }
-  pushAiResult({
-    title: 'Aspera AI · Summarize PDF',
-    meta: 'EN · HI · MR',
-    text: 'Getting PDF from chat…',
-    loading: true,
-    mode: 'summarize',
-    showTrilingual: true,
-    canSuggestReply: false,
-  });
 
-  try {
-    const resolved = await resolvePdfPathForSummarize(webContents, params, {
-      fast: true,
-      allowPicker: true,
-    });
-    if (!resolved?.ok) {
-      if (resolved?.cancelled) {
-        closeAiResultWindow();
-        return { ok: false, cancelled: true };
-      }
-      throw new Error(resolved?.error || 'Could not open PDF.');
-    }
+  const pushProgress = (text) => {
     pushAiResult({
       title: 'Aspera AI · Summarize PDF',
-      meta: `EN · HI · MR · ${resolved.fileName || 'document.pdf'}`,
-      text: 'Extracting text…',
+      meta: 'EN · HI · MR',
+      text,
       loading: true,
       mode: 'summarize',
       showTrilingual: true,
       canSuggestReply: false,
     });
+  };
+  pushProgress('Getting PDF from this chat…');
+
+  try {
+    const resolved = await resolvePdfPathForSummarize(webContents, params, {
+      allowPicker: false,
+      onProgress: pushProgress,
+    });
+    if (!resolved?.ok) {
+      throw new Error(resolved?.error || 'Could not read this PDF.');
+    }
+    pushProgress(`Extracting text from ${resolved.fileName || 'PDF'}…`);
     return await runAsperaAiSkill('summarize-pdf', {
       filePath: resolved.filePath,
       fileName: resolved.fileName,
