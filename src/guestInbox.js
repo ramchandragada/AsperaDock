@@ -31,6 +31,7 @@ export function sanitizePinnedPeople(list) {
     const chatKey = normalizeChatKey(raw?.chatKey || name);
     const appId = String(raw?.appId || '').trim();
     if (!serviceId || !name || !chatKey) continue;
+    if (isJunkChatName(name)) continue;
     const id = String(raw?.id || makePinId(serviceId, chatKey));
     if (seen.has(id)) continue;
     seen.add(id);
@@ -40,9 +41,21 @@ export function sanitizePinnedPeople(list) {
   return out;
 }
 
-/** Scrape visible chat-list rows that look unread / need attention. */
-export function scrapeMessagingInboxJs() {
-  return `(() => {
+/** Reject unread badges / chrome mistaken for a contact name. */
+export function isJunkChatName(name) {
+  const n = String(name || '').replace(/\s+/g, ' ').trim();
+  if (!n || n.length < 2) return true;
+  if (/^\d+\+?$/.test(n)) return true;
+  if (/^\d+\s*unread\b/i.test(n)) return true;
+  if (/^unread(\s+messages?)?$/i.test(n)) return true;
+  if (/^pinned$/i.test(n)) return true;
+  if (/^(photo|video|voice|sticker|gif|document|you)$/i.test(n)) return true;
+  return false;
+}
+
+/** Shared DOM helpers injected into guest pages for scrape / pin targeting. */
+function guestChatListHelpersJs() {
+  return `
     const visible = (el) => {
       if (!el) return false;
       try {
@@ -52,9 +65,17 @@ export function scrapeMessagingInboxJs() {
       } catch (e) { return false; }
     };
     const textOf = (el) => String(el?.innerText || el?.textContent || '').replace(/\\s+/g, ' ').trim();
-    const rows = [];
-    const seen = new Set();
-    const cells = Array.from(document.querySelectorAll([
+    const isJunkName = (name) => {
+      const n = String(name || '').replace(/\\s+/g, ' ').trim();
+      if (!n || n.length < 2) return true;
+      if (/^\\d+\\+?$/.test(n)) return true;
+      if (/^\\d+\\s*unread\\b/i.test(n)) return true;
+      if (/^unread(\\s+messages?)?$/i.test(n)) return true;
+      if (/^pinned$/i.test(n)) return true;
+      if (/^(photo|video|voice|sticker|gif|document|you)$/i.test(n)) return true;
+      return false;
+    };
+    const listSel = [
       '[data-testid="cell-frame-container"]',
       '[data-testid="list-item"]',
       '[data-testid="chat"]',
@@ -63,30 +84,43 @@ export function scrapeMessagingInboxJs() {
       '[class*="chat-list-item"]',
       '[class*="chatlist" i] [tabindex]',
       '[class*="ChatList"] [tabindex]',
-    ].join(',')));
-
-    for (const cell of cells) {
-      if (!visible(cell)) continue;
-      const titleEl =
-        cell.querySelector('[data-testid="cell-frame-title"]')
-        || cell.querySelector('[title]')
-        || cell.querySelector('span[dir="auto"]')
-        || cell.querySelector('[class*="title" i]')
-        || cell.querySelector('strong, h3, h4');
-      const name = String(
-        titleEl?.getAttribute?.('title')
-          || titleEl?.textContent
-          || '',
-      ).replace(/\\s+/g, ' ').trim().slice(0, 80);
-      if (!name || name.length < 1) continue;
-      const key = name.toLowerCase();
-      if (seen.has(key)) continue;
-
+    ].join(',');
+    const rowName = (cell) => {
+      if (!cell) return '';
+      const title =
+        cell.querySelector('[data-testid="cell-frame-title"] span[title]')
+        || cell.querySelector('[data-testid="cell-frame-title"]')
+        || cell.querySelector('[data-testid="conversation-info-header-chat-title"]');
+      if (title) {
+        const t = String(title.getAttribute('title') || title.textContent || '')
+          .replace(/\\s+/g, ' ').trim();
+        if (!isJunkName(t)) return t.slice(0, 80);
+      }
+      // WhatsApp row aria-label often starts with the contact name.
+      const aria = String(cell.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
+      if (aria) {
+        const cleaned = aria
+          .replace(/\\d+\\s*unread messages?/ig, '')
+          .replace(/\\bunread messages?\\b/ig, '')
+          .trim();
+        const head = cleaned.split(/[,:]/)[0].trim();
+        if (!isJunkName(head)) return head.slice(0, 80);
+      }
+      // Avoid first [title] / span[dir=auto] — those often hit badges or previews.
+      const spans = Array.from(cell.querySelectorAll('span[dir="auto"], span[title], strong, h3, h4'));
+      for (const el of spans) {
+        if (el.closest('[data-testid="icon-unread-count"], [aria-label*="unread" i]')) continue;
+        const t = String(el.getAttribute('title') || el.textContent || '')
+          .replace(/\\s+/g, ' ').trim();
+        if (!isJunkName(t) && t.length <= 80) return t;
+      }
+      return '';
+    };
+    const rowUnread = (cell) => {
       const unreadEl =
         cell.querySelector('[data-testid="icon-unread-count"]')
-        || cell.querySelector('[aria-label*="unread" i]')
-        || cell.querySelector('span[class*="unread" i]')
-        || cell.querySelector('[class*="badge" i]');
+        || cell.querySelector('[aria-label*="unread message" i]')
+        || cell.querySelector('span[aria-label*="unread" i]');
       let unread = 0;
       const aria = String(unreadEl?.getAttribute?.('aria-label') || '');
       const m = aria.match(/(\\d+)\\s*unread/i) || textOf(unreadEl).match(/^(\\d+)\\+?$/);
@@ -96,27 +130,68 @@ export function scrapeMessagingInboxJs() {
       } else if (unreadEl && visible(unreadEl)) {
         unread = 1;
       }
+      if (!unread) {
+        const rowAria = String(cell.getAttribute('aria-label') || '');
+        const rm = rowAria.match(/(\\d+)\\s*unread/i);
+        if (rm) unread = Math.min(999, parseInt(rm[1], 10) || 1);
+      }
+      return unread;
+    };
+  `;
+}
 
-      // Also treat bold/unread styling as needs-attention when badge missing.
-      const markedUnread = !!(
-        cell.querySelector('[data-testid="icon-unread-count"]')
-        || cell.getAttribute('aria-label')?.toLowerCase?.().includes('unread')
-        || /\\bunread\\b/i.test(cell.className || '')
-      );
-      if (!unread && markedUnread) unread = 1;
+/** Scrape visible chat-list rows that look unread / need attention. */
+export function scrapeMessagingInboxJs() {
+  return `(() => {
+    ${guestChatListHelpersJs()}
+    const rows = [];
+    const seen = new Set();
+    const cells = Array.from(document.querySelectorAll(listSel));
+
+    for (const cell of cells) {
+      if (!visible(cell)) continue;
+      const name = rowName(cell);
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+
+      const unread = rowUnread(cell);
       if (!unread) continue;
 
       const previewEl =
         cell.querySelector('[data-testid="last-msg-body"]')
         || cell.querySelector('[data-testid="cell-frame-secondary"]')
-        || cell.querySelector('span[title][dir="ltr"]')
         || null;
-      const preview = String(previewEl?.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 100);
+      let preview = String(previewEl?.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 100);
+      if (isJunkName(preview) || /^\\d+$/.test(preview)) preview = '';
       seen.add(key);
       rows.push({ chatKey: key, name, preview, unread });
       if (rows.length >= 24) break;
     }
     return { chats: rows, at: Date.now() };
+  })()`;
+}
+
+/** Resolve a chat list row under the cursor (for Pin with Aspera Hub). */
+export function inspectChatListTargetJs(x, y) {
+  const px = Math.round(Number(x) || 0);
+  const py = Math.round(Number(y) || 0);
+  return `(() => {
+    ${guestChatListHelpersJs()}
+    const x = ${px};
+    const y = ${py};
+    let el = document.elementFromPoint(x, y);
+    if (!el) return { ok: false };
+    const cell = el.closest?.(listSel);
+    if (!cell || !visible(cell)) return { ok: false, reason: 'not_chat_row' };
+    const name = rowName(cell);
+    if (!name) return { ok: false, reason: 'no_name' };
+    return {
+      ok: true,
+      name,
+      chatKey: name.toLowerCase(),
+      unread: rowUnread(cell),
+    };
   })()`;
 }
 

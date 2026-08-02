@@ -2,7 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   composeReplyJs,
+  inspectChatListTargetJs,
   isInboxAppId,
+  isJunkChatName,
   makePinId,
   normalizeChatKey,
   openMessagingChatJs,
@@ -38,9 +40,26 @@ test('sanitizePinnedPeople caps at 10 and dedupes', () => {
 test('scrape / open / search / reply scripts mention WhatsApp list hooks', () => {
   assert.match(scrapeMessagingInboxJs(), /cell-frame-container/);
   assert.match(scrapeMessagingInboxJs(), /icon-unread-count/);
+  assert.match(scrapeMessagingInboxJs(), /isJunkName/);
+  assert.match(inspectChatListTargetJs(12, 40), /elementFromPoint/);
   assert.match(openMessagingChatJs('Ada', 'ada'), /chat-list-search|Search/);
   assert.match(searchMessagingChatsJs('parth'), /parth/);
   assert.match(composeReplyJs('Thanks', { send: true }), /compose-btn-send|Enter/);
+});
+
+test('junk chat names reject unread badges mistaken for contacts', () => {
+  assert.equal(isJunkChatName('3'), true);
+  assert.equal(isJunkChatName('unread messages'), true);
+  assert.equal(isJunkChatName('2 unread messages'), true);
+  assert.equal(isJunkChatName('Pinned'), true);
+  assert.equal(isJunkChatName('Ramchandra SIR Gada'), false);
+  assert.deepEqual(
+    sanitizePinnedPeople([
+      { serviceId: 'wa', name: '3', chatKey: '3' },
+      { serviceId: 'wa', name: 'Ada', chatKey: 'ada' },
+    ]).map((p) => p.name),
+    ['Ada'],
+  );
 });
 
 test('about copy honours Cursor, Linux, Linus, and free forever', () => {

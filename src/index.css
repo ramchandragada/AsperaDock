@@ -299,6 +299,24 @@ body {
   padding: 2px 0;
 }
 
+.hub-chip-pin-btn {
+  flex: 0 0 auto;
+  margin-left: 2px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(250, 204, 21, 0.45);
+  background: rgba(250, 204, 21, 0.16);
+  color: #fde68a;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+  cursor: pointer;
+}
+
+.hub-chip-pin-btn:hover {
+  background: rgba(250, 204, 21, 0.28);
+}
+
 body.theme-dark .app-bar-top,
 body.theme-darkest .app-bar-top {
   background:

@@ -54,7 +54,9 @@ import {
 } from './forwardHub.js';
 import {
   composeReplyJs,
+  inspectChatListTargetJs,
   isInboxAppId,
+  isJunkChatName,
   makePinId,
   normalizeChatKey,
   openMessagingChatJs,
@@ -3813,7 +3815,7 @@ async function scrapeServiceInbox(serviceId) {
           preview: String(c?.preview || '').replace(/\s+/g, ' ').trim().slice(0, 100),
           unread: Math.max(0, Number(c?.unread) || 0),
         }))
-        .filter((c) => c.name && c.unread > 0),
+        .filter((c) => c.name && c.unread > 0 && !isJunkChatName(c.name)),
       at: Date.now(),
     });
   } catch {
@@ -3938,7 +3940,19 @@ function pinPerson(payload = {}) {
   }
   const name = String(payload.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
   const chatKey = normalizeChatKey(payload.chatKey || name);
-  if (!name || !chatKey) return { ok: false, error: 'Missing chat name.' };
+  if (!name || !chatKey || isJunkChatName(name)) {
+    return { ok: false, error: 'Could not read that chat name. Right-click the contact in the list.' };
+  }
+  const existing = sanitizePinnedPeople(settings.pinnedPeople || []);
+  if (existing.some((p) => p.id === makePinId(service.id, chatKey))) {
+    return { ok: true, pinnedPeople: existing, already: true };
+  }
+  if (existing.length >= 10) {
+    return {
+      ok: false,
+      error: 'Hub pins are full (10). Unpin one from the Pinned strip, then try again.',
+    };
+  }
   const next = sanitizePinnedPeople([
     {
       id: makePinId(service.id, chatKey),
@@ -3947,11 +3961,69 @@ function pinPerson(payload = {}) {
       name,
       appId: service.appId,
     },
-    ...(settings.pinnedPeople || []),
+    ...existing,
   ]);
   settings = saveSettings({ pinnedPeople: next });
   broadcastState();
   return { ok: true, pinnedPeople: next };
+}
+
+/**
+ * Pin a chat from the guest right-click menu.
+ * Uses the chat-list row under the cursor — not WhatsApp/Arattai's own Pin.
+ */
+async function pinChatFromGuestContext(webContents, service, params = {}) {
+  if (!webContents || webContents.isDestroyed() || !service) {
+    return { ok: false };
+  }
+  let name = '';
+  let chatKey = '';
+  try {
+    const hit = await webContents.executeJavaScript(
+      inspectChatListTargetJs(params.x, params.y),
+      true,
+    );
+    if (hit?.ok) {
+      name = String(hit.name || '').trim();
+      chatKey = String(hit.chatKey || '').trim();
+    }
+  } catch {
+    // ignore
+  }
+  // Open conversation header as fallback when right-clicking inside an open chat.
+  if (!name || isJunkChatName(name)) {
+    try {
+      const key = await getGuestChatKey(webContents);
+      if (key?.title && !isJunkChatName(key.title)) {
+        name = key.title;
+        chatKey = normalizeChatKey(key.title);
+      }
+    } catch {
+      // ignore
+    }
+  }
+  const result = pinPerson({
+    serviceId: service.id,
+    name,
+    chatKey,
+    appId: service.appId,
+  });
+  try {
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Aspera Hub',
+        body: result.ok
+          ? result.already
+            ? `“${name}” is already in Hub Pinned.`
+            : `Pinned “${name}” in Hub (not WhatsApp’s 3-pin limit).`
+          : result.error || 'Could not pin that chat.',
+        silent: true,
+      }).show();
+    }
+  } catch {
+    // ignore
+  }
+  return result;
 }
 
 function unpinPerson(pinId) {
@@ -6739,6 +6811,17 @@ function attachGuestContextMenu(webContents) {
     const editable = params.isEditable;
     const hasSelection = Boolean(params.selectionText);
     const forwardTargets = service ? listForwardTargets(service.id) : [];
+
+    // Hub pins (up to 10) — independent of WhatsApp's 3 / Arattai's in-app pins.
+    if (service && isInboxAppId(service.appId)) {
+      template.push({
+        label: 'Pin with Aspera Hub',
+        click: () => {
+          pinChatFromGuestContext(webContents, service, params).catch(() => {});
+        },
+      });
+    }
+
     if (
       service &&
       canOfferForward({
@@ -6760,6 +6843,8 @@ function attachGuestContextMenu(webContents) {
           beginForwardFromGuest(webContents, params).catch(() => {});
         },
       });
+      template.push({ type: 'separator' });
+    } else if (service && isInboxAppId(service.appId)) {
       template.push({ type: 'separator' });
     }
 

@@ -439,11 +439,15 @@ function makeHubChip({
   pinned = false,
   onClick,
   onContext,
+  onPin,
 }) {
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.className = `hub-chip${pinned ? ' hub-chip-pin' : ''}`;
-  btn.title = accountLabel ? `${name} · ${accountLabel}` : name;
+  const tip = accountLabel ? `${name} · ${accountLabel}` : name;
+  btn.title = pinned
+    ? `${tip}\nClick to open · Right-click to unpin`
+    : `${tip}\nClick to open · Pin icon or right-click to pin in Hub (up to 10 — not WhatsApp’s 3)`;
   const dot = document.createElement('span');
   dot.className = 'hub-chip-dot';
   dot.style.background = color || '#94a3b8';
@@ -457,6 +461,18 @@ function makeHubChip({
     badge.className = 'hub-chip-badge';
     badge.textContent = unread > 99 ? '99+' : String(unread);
     btn.appendChild(badge);
+  }
+  if (onPin && !pinned) {
+    const pinBtn = document.createElement('span');
+    pinBtn.className = 'hub-chip-pin-btn';
+    pinBtn.title = 'Pin in Aspera Hub (up to 10)';
+    pinBtn.textContent = 'Pin';
+    pinBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onPin();
+    });
+    btn.appendChild(pinBtn);
   }
   btn.addEventListener('click', onClick);
   if (onContext) btn.addEventListener('contextmenu', onContext);
@@ -476,7 +492,9 @@ function renderHubRails() {
   if (!pins.length) {
     const empty = document.createElement('span');
     empty.className = 'hub-chip-empty';
-    empty.textContent = 'Right-click a chat below to pin';
+    empty.textContent = 'Right-click a chat in WhatsApp/Arattai → Pin with Aspera Hub';
+    empty.title =
+      'Hub pins are separate from WhatsApp (max 3) and Arattai pins. You can pin up to 10 here.';
     els.pinRail.appendChild(empty);
   } else {
     for (const pin of pins) {
@@ -495,7 +513,7 @@ function renderHubRails() {
           },
           onContext: async (e) => {
             e.preventDefault();
-            if (confirm(`Unpin “${pin.name}”?`)) {
+            if (confirm(`Unpin “${pin.name}” from Hub?`)) {
               await window.asperadock.unpinPerson?.(pin.id);
             }
           },
@@ -513,6 +531,12 @@ function renderHubRails() {
     return;
   }
   for (const item of inbox) {
+    const pinPayload = {
+      serviceId: item.serviceId,
+      name: item.name,
+      chatKey: item.chatKey,
+      appId: item.appId,
+    };
     els.inboxRail.appendChild(
       makeHubChip({
         name: item.name,
@@ -526,14 +550,14 @@ function renderHubRails() {
             chatKey: item.chatKey,
           });
         },
+        onPin: async () => {
+          const result = await window.asperadock.pinPerson?.(pinPayload);
+          if (result && result.ok === false && result.error) alert(result.error);
+        },
         onContext: async (e) => {
           e.preventDefault();
-          await window.asperadock.pinPerson?.({
-            serviceId: item.serviceId,
-            name: item.name,
-            chatKey: item.chatKey,
-            appId: item.appId,
-          });
+          const result = await window.asperadock.pinPerson?.(pinPayload);
+          if (result && result.ok === false && result.error) alert(result.error);
         },
       }),
     );
