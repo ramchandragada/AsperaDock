@@ -585,6 +585,10 @@ export function guestComposeDetectJs() {
  * Includes Arattai / Zoho-style list rows, not only WhatsApp testids.
  */
 export const FORWARD_RECIPIENT_CLICK_SELECTORS = Object.freeze([
+  '.art-chat-item',
+  '[id^="art-chat-item-"]',
+  '#lhs_chatlist .art-chat-item',
+  '[chid].art-chat-item',
   '[data-testid="cell-frame-container"]',
   '[data-testid="list-item"]',
   '[data-testid="chat"]',

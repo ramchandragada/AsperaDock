@@ -49,7 +49,10 @@ export function isJunkChatName(name) {
   if (/^\d+\s*unread\b/i.test(n)) return true;
   if (/^unread(\s+messages?)?$/i.test(n)) return true;
   if (/^pinned$/i.test(n)) return true;
-  if (/^(photo|video|voice|sticker|gif|document|you)$/i.test(n)) return true;
+  if (/^(photo|video|voice|sticker|gif|document|you|chats|channels|direct|groups|archived|search|mute|unmute)$/i.test(n)) {
+    return true;
+  }
+  if (/^(type your message|message here|search chats)/i.test(n)) return true;
   return false;
 }
 
@@ -72,10 +75,20 @@ function guestChatListHelpersJs() {
       if (/^\\d+\\s*unread\\b/i.test(n)) return true;
       if (/^unread(\\s+messages?)?$/i.test(n)) return true;
       if (/^pinned$/i.test(n)) return true;
-      if (/^(photo|video|voice|sticker|gif|document|you)$/i.test(n)) return true;
+      if (/^(photo|video|voice|sticker|gif|document|you|chats|archived|search|mute|unmute)$/i.test(n)) return true;
+      if (/^(type your message|message here|search chats)/i.test(n)) return true;
+      if (/your personal storage/i.test(n) && n.length > 40) return false; // Pocket subtitle ok with name
       return false;
     };
+    // WhatsApp + Arattai list rows.
+    // Arattai (Vue): .art-chat-item with bare attribute chid=… (not data-chid).
     const listSel = [
+      '.art-chat-item',
+      '[id^="art-chat-item-"]',
+      '#lhs_chatlist .art-chat-item',
+      '[data-id="lhs_activechats"] .art-chat-item',
+      '[chid].art-chat-item',
+      '[chid][data-context]',
       '[data-testid="cell-frame-container"]',
       '[data-testid="list-item"]',
       '[data-testid="chat"]',
@@ -84,35 +97,83 @@ function guestChatListHelpersJs() {
       '[class*="chat-list-item"]',
       '[class*="chatlist" i] [tabindex]',
       '[class*="ChatList"] [tabindex]',
+      '[class*="chats-list" i] > *',
+      '[class*="ChatsList" i] > *',
+      '[class*="chat-row" i]',
+      '[class*="ChatRow" i]',
+      '[class*="roster" i] [tabindex]',
+      '[class*="Roster" i] [tabindex]',
+      '[data-chid]',
+      '[data-chatid]',
+      '[data-chat-id]',
+      'li[id*="chat" i]',
     ].join(',');
+    const titleCandidateSel = [
+      '.chat-title-text',
+      '.chat-title-wrapper .chat-title-text',
+      '.art-chat-title',
+      '[data-testid="cell-frame-title"] span[title]',
+      '[data-testid="cell-frame-title"]',
+      '[data-testid="conversation-info-header-chat-title"]',
+      '[class*="chat-title" i]',
+      '[class*="ChatTitle" i]',
+      '[class*="title-text" i]',
+      '[class*="TitleText" i]',
+      '[class*="dname" i]',
+      '[class*="channel-name" i]',
+      '[class*="ChannelName" i]',
+      '[class*="contact-name" i]',
+      '[class*="ContactName" i]',
+      '[class*="username" i]',
+      'h1','h2','h3','h4','strong',
+      'span[title]',
+      'div[title]',
+      'p[title]',
+    ].join(',');
+    const tryText = (raw) => {
+      const t = String(raw || '').replace(/\\s+/g, ' ').trim();
+      if (isJunkName(t) || t.length > 80) return '';
+      // Prefer first line when preview is appended with newlines.
+      const first = t.split(/[\\n|]/)[0].trim();
+      return isJunkName(first) ? '' : first.slice(0, 80);
+    };
     const rowName = (cell) => {
       if (!cell) return '';
-      const title =
-        cell.querySelector('[data-testid="cell-frame-title"] span[title]')
-        || cell.querySelector('[data-testid="cell-frame-title"]')
-        || cell.querySelector('[data-testid="conversation-info-header-chat-title"]');
-      if (title) {
-        const t = String(title.getAttribute('title') || title.textContent || '')
-          .replace(/\\s+/g, ' ').trim();
-        if (!isJunkName(t)) return t.slice(0, 80);
+      // Prefer Arattai chat-title-text (title attr holds full untruncated name).
+      const artTitle =
+        cell.querySelector?.('.chat-title-text')
+        || cell.querySelector?.('.chat-title-wrapper [title]');
+      if (artTitle) {
+        const t = tryText(artTitle.getAttribute('title') || artTitle.textContent);
+        if (t) return t;
       }
-      // WhatsApp row aria-label often starts with the contact name.
-      const aria = String(cell.getAttribute('aria-label') || '').replace(/\\s+/g, ' ').trim();
+      for (const el of cell.querySelectorAll(titleCandidateSel)) {
+        if (el.closest('[data-testid="icon-unread-count"], [aria-label*="unread" i], [class*="badge" i], [class*="time" i], .lhs-list-counter, .lhs-list-msginfo')) {
+          continue;
+        }
+        const t = tryText(el.getAttribute('title') || el.textContent);
+        if (t) return t;
+      }
+      // WhatsApp / Arattai aria-label often starts with the contact name.
+      const aria = String(cell.getAttribute('aria-label') || cell.getAttribute('title') || '')
+        .replace(/\\s+/g, ' ').trim();
       if (aria) {
         const cleaned = aria
           .replace(/\\d+\\s*unread messages?/ig, '')
           .replace(/\\bunread messages?\\b/ig, '')
+          .replace(/\\bmuted\\b/ig, '')
           .trim();
-        const head = cleaned.split(/[,:]/)[0].trim();
-        if (!isJunkName(head)) return head.slice(0, 80);
+        const head = tryText(cleaned.split(/[,:]/)[0]);
+        if (head) return head;
       }
-      // Avoid first [title] / span[dir=auto] — those often hit badges or previews.
-      const spans = Array.from(cell.querySelectorAll('span[dir="auto"], span[title], strong, h3, h4'));
-      for (const el of spans) {
-        if (el.closest('[data-testid="icon-unread-count"], [aria-label*="unread" i]')) continue;
-        const t = String(el.getAttribute('title') || el.textContent || '')
-          .replace(/\\s+/g, ' ').trim();
-        if (!isJunkName(t) && t.length <= 80) return t;
+      // Fallback: first non-junk text line in the row (Arattai often lacks WA testids).
+      const lines = String(cell.innerText || '')
+        .split(/\\n+/)
+        .map((l) => l.replace(/\\s+/g, ' ').trim())
+        .filter(Boolean);
+      for (const line of lines) {
+        const t = tryText(line);
+        if (t && !/^\\d{1,2}:\\d{2}/.test(t) && !/^(am|pm)$/i.test(t) && !/ago$/i.test(t)) return t;
       }
       return '';
     };
@@ -120,14 +181,17 @@ function guestChatListHelpersJs() {
       const unreadEl =
         cell.querySelector('[data-testid="icon-unread-count"]')
         || cell.querySelector('[aria-label*="unread message" i]')
-        || cell.querySelector('span[aria-label*="unread" i]');
+        || cell.querySelector('span[aria-label*="unread" i]')
+        || cell.querySelector('.lhs-list-counter')
+        || cell.querySelector('[class*="unread" i]')
+        || cell.querySelector('[class*="badge" i]');
       let unread = 0;
       const aria = String(unreadEl?.getAttribute?.('aria-label') || '');
       const m = aria.match(/(\\d+)\\s*unread/i) || textOf(unreadEl).match(/^(\\d+)\\+?$/);
       if (m) unread = Math.min(999, parseInt(m[1], 10) || 0);
       else if (unreadEl && visible(unreadEl) && /\\d/.test(textOf(unreadEl))) {
         unread = Math.min(999, parseInt(textOf(unreadEl), 10) || 1);
-      } else if (unreadEl && visible(unreadEl)) {
+      } else if (unreadEl && visible(unreadEl) && /badge|unread|counter/i.test(unreadEl.className || '')) {
         unread = 1;
       }
       if (!unread) {
@@ -136,6 +200,64 @@ function guestChatListHelpersJs() {
         if (rm) unread = Math.min(999, parseInt(rm[1], 10) || 1);
       }
       return unread;
+    };
+    const rowContainsPoint = (el, x, y) => {
+      if (!el?.getBoundingClientRect) return false;
+      const r = el.getBoundingClientRect();
+      return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+        && r.width >= 100 && r.height >= 28 && r.height <= 160;
+    };
+    const findChatRowFromPoint = (x, y) => {
+      // Prefer stacked hits — Arattai's own context menu can sit above the row.
+      const stack = typeof document.elementsFromPoint === 'function'
+        ? document.elementsFromPoint(x, y)
+        : [document.elementFromPoint(x, y)].filter(Boolean);
+      for (const el of stack) {
+        if (!el?.closest) continue;
+        const direct = el.closest(listSel);
+        if (direct && visible(direct) && rowName(direct)) return direct;
+      }
+      // Geometry scan: find .art-chat-item / list row whose box contains the point.
+      const candidates = Array.from(document.querySelectorAll(
+        '.art-chat-item, [id^="art-chat-item-"], [data-testid="cell-frame-container"], [role="listitem"]',
+      ));
+      for (const cell of candidates) {
+        if (!visible(cell) || !rowContainsPoint(cell, x, y)) continue;
+        if (rowName(cell)) return cell;
+      }
+      // Walk up from topmost hit for rows without WA testids.
+      let cur = stack[0] || null;
+      for (let i = 0; i < 14 && cur && cur !== document.body; i += 1) {
+        if (visible(cur) && rowContainsPoint(cur, x, y)) {
+          // Prefer the actual Arattai row ancestor if present.
+          const art = cur.closest?.('.art-chat-item, [id^="art-chat-item-"]');
+          if (art && rowName(art)) return art;
+          const name = rowName(cur);
+          if (name) return cur;
+        }
+        cur = cur.parentElement;
+      }
+      return null;
+    };
+    const openChatHeaderName = () => {
+      const header =
+        document.querySelector('.art-chwindow-hdr')
+        || document.querySelector('[data-testid="conversation-info-header"]')
+        || document.querySelector('#main header')
+        || document.querySelector('[class*="chat-header" i]')
+        || document.querySelector('[class*="ChatHeader" i]')
+        || document.querySelector('header');
+      const title = String(
+        header?.querySelector?.('.chat-title-text')?.getAttribute?.('title')
+        || header?.querySelector?.('.chat-title-text')?.textContent
+        || header?.querySelector?.('.art-chat-title')?.textContent
+        || header?.querySelector?.('[data-testid="conversation-info-header-chat-title"]')?.textContent
+        || header?.querySelector?.('span[title]')?.getAttribute?.('title')
+        || header?.querySelector?.('[dir="auto"]')?.textContent
+        || header?.querySelector?.('h1,h2,h3,[role="heading"]')?.textContent
+        || '',
+      ).replace(/\\s+/g, ' ').trim();
+      return tryText(title) || (isJunkName(title) ? '' : title.slice(0, 80));
     };
   `;
 }
@@ -180,18 +302,32 @@ export function inspectChatListTargetJs(x, y) {
     ${guestChatListHelpersJs()}
     const x = ${px};
     const y = ${py};
-    let el = document.elementFromPoint(x, y);
-    if (!el) return { ok: false };
-    const cell = el.closest?.(listSel);
-    if (!cell || !visible(cell)) return { ok: false, reason: 'not_chat_row' };
-    const name = rowName(cell);
-    if (!name) return { ok: false, reason: 'no_name' };
-    return {
-      ok: true,
-      name,
-      chatKey: name.toLowerCase(),
-      unread: rowUnread(cell),
-    };
+    const cell = findChatRowFromPoint(x, y);
+    if (cell) {
+      const name = rowName(cell);
+      if (name) {
+        return {
+          ok: true,
+          name,
+          chatKey: name.toLowerCase(),
+          unread: rowUnread(cell),
+          via: 'list-row',
+          chid: String(cell.getAttribute?.('chid') || cell.getAttribute?.('data-chid') || ''),
+        };
+      }
+    }
+    // Open-chat header fallback (right-click inside the conversation / after Arattai menu covers the row).
+    const headerName = openChatHeaderName();
+    if (headerName) {
+      return {
+        ok: true,
+        name: headerName.slice(0, 80),
+        chatKey: headerName.toLowerCase(),
+        unread: 0,
+        via: 'open-header',
+      };
+    }
+    return { ok: false, reason: 'not_chat_row' };
   })()`;
 }
 
@@ -247,21 +383,7 @@ export function openMessagingChatJs(name, chatKey = '') {
       }
       return bestScore >= 45 ? best : null;
     };
-    const openHeaderName = () => {
-      const header =
-        document.querySelector('[data-testid="conversation-info-header"]')
-        || document.querySelector('#main header')
-        || document.querySelector('[class*="chat-header" i]')
-        || document.querySelector('header');
-      const title = String(
-        header?.querySelector?.('[data-testid="conversation-info-header-chat-title"]')?.textContent
-        || header?.querySelector?.('span[title]')?.getAttribute?.('title')
-        || header?.querySelector?.('[dir="auto"]')?.textContent
-        || header?.querySelector?.('h1,h2,h3,[role="heading"]')?.textContent
-        || '',
-      ).replace(/\\s+/g, ' ').trim();
-      return title;
-    };
+    const openHeaderName = () => openChatHeaderName();
     const composeOpen = () => {
       if (document.querySelector('[data-testid="conversation-compose-box-input"]')) return true;
       if (document.querySelector('footer [contenteditable="true"]')) return true;
@@ -444,35 +566,15 @@ export function composeReplyJs(text, { send = false } = {}) {
 export function searchMessagingChatsJs(query) {
   const q = String(query || '').trim().toLowerCase();
   return `(() => {
+    ${guestChatListHelpersJs()}
     const q = ${JSON.stringify(q)};
     if (!q) return { chats: [] };
-    const visible = (el) => {
-      if (!el) return false;
-      try {
-        const s = window.getComputedStyle(el);
-        const r = el.getBoundingClientRect();
-        return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 8 && r.height > 8;
-      } catch (e) { return false; }
-    };
     const out = [];
     const seen = new Set();
-    const cells = Array.from(document.querySelectorAll([
-      '[data-testid="cell-frame-container"]',
-      '[data-testid="list-item"]',
-      '[role="listitem"]',
-      '[class*="ChatListItem"]',
-      '[class*="chat-list-item"]',
-      '[class*="ChatList"] [tabindex]',
-    ].join(',')));
+    const cells = Array.from(document.querySelectorAll(listSel));
     for (const cell of cells) {
       if (!visible(cell)) continue;
-      const titleEl =
-        cell.querySelector('[data-testid="cell-frame-title"]')
-        || cell.querySelector('[title]')
-        || cell.querySelector('span[dir="auto"]')
-        || cell.querySelector('[class*="title" i]');
-      const name = String(titleEl?.getAttribute?.('title') || titleEl?.textContent || '')
-        .replace(/\\s+/g, ' ').trim().slice(0, 80);
+      const name = rowName(cell);
       if (!name) continue;
       const key = name.toLowerCase();
       if (seen.has(key)) continue;

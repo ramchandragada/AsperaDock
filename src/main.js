@@ -4018,24 +4018,43 @@ function pinPerson(payload = {}) {
 /**
  * Pin a chat from the guest right-click menu.
  * Uses the chat-list row under the cursor — not WhatsApp/Arattai's own Pin.
+ * Prefer a hit resolved when the menu opened (Arattai's overlay can cover the row later).
  */
-async function pinChatFromGuestContext(webContents, service, params = {}) {
+async function pinChatFromGuestContext(webContents, service, params = {}, preHit = null) {
   if (!webContents || webContents.isDestroyed() || !service) {
     return { ok: false };
   }
   let name = '';
   let chatKey = '';
-  try {
-    const hit = await webContents.executeJavaScript(
-      inspectChatListTargetJs(params.x, params.y),
-      true,
-    );
-    if (hit?.ok) {
-      name = String(hit.name || '').trim();
-      chatKey = String(hit.chatKey || '').trim();
+  const applyHit = (hit) => {
+    if (!hit?.ok) return;
+    const n = String(hit.name || '').trim();
+    if (!n || isJunkChatName(n)) return;
+    name = n;
+    chatKey = String(hit.chatKey || normalizeChatKey(n)).trim();
+  };
+  applyHit(preHit);
+  if (!name) {
+    try {
+      const hit = await webContents.executeJavaScript(
+        inspectChatListTargetJs(params.x, params.y),
+        true,
+      );
+      applyHit(hit);
+    } catch {
+      // ignore
     }
-  } catch {
-    // ignore
+  }
+  // Selection / titleText from the context-menu event (contact name under cursor).
+  if (!name || isJunkChatName(name)) {
+    for (const raw of [params.selectionText, params.titleText, params.altText]) {
+      const n = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+      if (n && !isJunkChatName(n)) {
+        name = n;
+        chatKey = normalizeChatKey(n);
+        break;
+      }
+    }
   }
   // Open conversation header as fallback when right-clicking inside an open chat.
   if (!name || isJunkChatName(name)) {
@@ -4062,7 +4081,7 @@ async function pinChatFromGuestContext(webContents, service, params = {}) {
         body: result.ok
           ? result.already
             ? `“${name}” is already in Hub Pinned.`
-            : `Pinned “${name}” in Hub (not WhatsApp’s 3-pin limit).`
+            : `Pinned “${name}” in Hub (works for Arattai + WhatsApp; Hub pins ≠ in-app pins).`
           : result.error || 'Could not pin that chat.',
         silent: true,
       }).show();
@@ -5931,14 +5950,18 @@ async function getGuestChatKey(webContents) {
     const result = await webContents.executeJavaScript(
       `(() => {
         const header =
-          document.querySelector('[data-testid="conversation-info-header"]')
+          document.querySelector('.art-chwindow-hdr')
+          || document.querySelector('[data-testid="conversation-info-header"]')
           || document.querySelector('#main header')
           || document.querySelector('[class*="chat-header" i]')
           || document.querySelector('[class*="ChatHeader" i]')
           || document.querySelector('[class*="conversation-header" i]')
           || document.querySelector('header');
         const title = String(
-          header?.querySelector?.('[data-testid="conversation-info-header-chat-title"]')?.textContent
+          header?.querySelector?.('.chat-title-text')?.getAttribute?.('title')
+          || header?.querySelector?.('.chat-title-text')?.textContent
+          || header?.querySelector?.('.art-chat-title')?.textContent
+          || header?.querySelector?.('[data-testid="conversation-info-header-chat-title"]')?.textContent
           || header?.querySelector?.('span[title]')?.getAttribute?.('title')
           || header?.querySelector?.('[dir="auto"]')?.textContent
           || header?.querySelector?.('h1,h2,h3,[role="heading"]')?.textContent
@@ -6860,11 +6883,19 @@ function attachGuestContextMenu(webContents) {
     const forwardTargets = service ? listForwardTargets(service.id) : [];
 
     // Hub pins (up to 10) — independent of WhatsApp's 3 / Arattai's in-app pins.
+    // Resolve the row immediately — Arattai's own menu overlay can cover it by click time.
     if (service && isInboxAppId(service.appId)) {
+      const pinHitPromise = webContents
+        .executeJavaScript(inspectChatListTargetJs(params.x, params.y), true)
+        .catch(() => null);
       template.push({
         label: 'Pin with Aspera Hub',
         click: () => {
-          pinChatFromGuestContext(webContents, service, params).catch(() => {});
+          pinHitPromise
+            .then((preHit) =>
+              pinChatFromGuestContext(webContents, service, params, preHit),
+            )
+            .catch(() => {});
         },
       });
     }
