@@ -69,6 +69,7 @@ import {
   sanitizePriorMessages,
   scrapeNearbyMessagesJs,
 } from './guestChatContext.js';
+import { guestContextMenuActionOrder } from './guestContextMenu.js';
 import { aboutDetailText } from './aboutCopy.js';
 import { spawnSync } from 'node:child_process';
 import {
@@ -6998,10 +6999,31 @@ function attachGuestContextMenu(webContents) {
     const editable = params.isEditable;
     const hasSelection = Boolean(params.selectionText);
     const forwardTargets = service ? listForwardTargets(service.id) : [];
+    const canForward = !!(
+      service &&
+      canOfferForward({
+        appId: service.appId,
+        hasSelection,
+        hasImage: !!params.hasImageContents,
+        linkURL: safeLink,
+        srcURL: params.srcURL,
+        mediaType: params.mediaType,
+        titleText: params.titleText || params.altText,
+        targetCount: forwardTargets.length,
+        alwaysOnMessaging: true,
+      })
+    );
+    const canSummarize = !!(
+      hasSelection &&
+      service &&
+      isAiAllowedAppId(service.appId) &&
+      settings.aiEnabled !== false
+    );
 
-    // Hub pins (up to 10) — independent of WhatsApp's 3 / Arattai's in-app pins.
-    // Resolve the row immediately — Arattai's own menu overlay can cover it by click time.
-    if (service && isInboxAppId(service.appId)) {
+    // With selected message text: Summarize → Forward (Pin does not apply to a selection).
+    // On chat-list rows (no selection): Pin → Forward.
+    const pushPinItem = () => {
+      if (!(service && isInboxAppId(service.appId) && !hasSelection)) return;
       const pinHitPromise = webContents
         .executeJavaScript(inspectChatListTargetJs(params.x, params.y), true)
         .catch(() => null);
@@ -7015,40 +7037,18 @@ function attachGuestContextMenu(webContents) {
             .catch(() => {});
         },
       });
-    }
-
-    if (
-      service &&
-      canOfferForward({
-        appId: service.appId,
-        hasSelection,
-        hasImage: !!params.hasImageContents,
-        linkURL: safeLink,
-        srcURL: params.srcURL,
-        mediaType: params.mediaType,
-        titleText: params.titleText || params.altText,
-        targetCount: forwardTargets.length,
-        alwaysOnMessaging: true,
-      })
-    ) {
-      // One action only — same in chat and in PDF/image preview windows.
+    };
+    const pushForwardItem = () => {
+      if (!canForward) return;
       template.push({
         label: 'Forward with Aspera Hub',
         click: () => {
           beginForwardFromGuest(webContents, params).catch(() => {});
         },
       });
-      template.push({ type: 'separator' });
-    } else if (service && isInboxAppId(service.appId)) {
-      template.push({ type: 'separator' });
-    }
-
-    if (
-      hasSelection &&
-      service &&
-      isAiAllowedAppId(service.appId) &&
-      settings.aiEnabled !== false
-    ) {
+    };
+    const pushSummarizeItems = () => {
+      if (!canSummarize) return;
       template.push({
         label: 'Summarize with Aspera AI',
         click: () => {
@@ -7069,6 +7069,21 @@ function attachGuestContextMenu(webContents) {
           },
         });
       }
+    };
+
+    const canPin = !!(service && isInboxAppId(service.appId) && !hasSelection);
+    for (const action of guestContextMenuActionOrder({
+      hasSelection,
+      canSummarize,
+      canForward,
+      canPin,
+    })) {
+      if (action === 'summarize') pushSummarizeItems();
+      else if (action === 'forward') pushForwardItem();
+      else if (action === 'pin') pushPinItem();
+    }
+
+    if (canSummarize || canForward || canPin) {
       template.push({ type: 'separator' });
     }
 
