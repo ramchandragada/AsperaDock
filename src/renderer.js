@@ -497,7 +497,7 @@ function renderHubRails() {
   const hasMessaging = (state.services || []).some(
     (s) => s.appId === 'whatsapp' || s.appId === 'arattai',
   );
-  // Entire strip is for Hub pins only — unified “needs reply” lives in Notifications.
+  // Hub pin strip — up to 10 important WhatsApp / Arattai chats.
   els.hubRails.classList.toggle('hidden', !hasMessaging && !pins.length);
 
   els.pinRail.innerHTML = '';

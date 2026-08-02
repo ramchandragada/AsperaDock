@@ -17,7 +17,6 @@ export function buildNotifCenterHtml(dark = false) {
   const border = dark ? 'rgba(148,163,184,0.18)' : 'rgba(15,23,42,0.10)';
   const card = dark ? '#1e293b' : '#f8fafc';
   const accent = '#1d4ed8';
-  const danger = '#dc2626';
 
   return `<!doctype html>
 <html>
@@ -31,7 +30,7 @@ export function buildNotifCenterHtml(dark = false) {
     color: ${text}; user-select: none;
   }
   .card {
-    margin: 6px; width: 420px; height: 720px; max-height: calc(100vh - 24px);
+    margin: 6px; width: 400px; height: 560px; max-height: calc(100vh - 24px);
     box-sizing: border-box;
     background: ${bg}; border: 1px solid ${border}; border-radius: 14px;
     box-shadow: 0 16px 48px rgba(15, 23, 42, 0.24);
@@ -53,98 +52,31 @@ export function buildNotifCenterHtml(dark = false) {
   .link:hover { text-decoration: underline; }
 
   .body {
-    flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 14px;
+    flex: 1 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px;
     padding: 12px 2px 4px 0; scrollbar-width: thin;
   }
-
-  .section { display: grid; gap: 8px; }
-  .section-head {
-    display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
-    padding: 0 2px;
-  }
-  .section-head .label {
-    font-size: 11px; font-weight: 700; color: ${muted};
-    text-transform: uppercase; letter-spacing: 0.05em;
-  }
-  .section-head .count {
-    font-size: 12px; font-weight: 600; color: ${muted};
-  }
-  .section-hint {
-    margin: -2px 2px 0; font-size: 12px; color: ${muted}; font-weight: 500;
-  }
-
-  .inbox-list, .list { display: grid; gap: 8px; }
-
+  .list { display: grid; gap: 8px; }
   .empty {
-    margin: 0; padding: 18px 14px; border-radius: 10px; background: ${soft};
-    color: ${muted}; font-size: 12.5px; font-weight: 500; text-align: center;
+    margin: 0; padding: 28px 16px; border-radius: 10px; background: ${soft};
+    color: ${muted}; font-size: 13px; font-weight: 500; text-align: center;
   }
-
-  .chat-item {
-    display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: stretch;
-    background: ${card}; border: 1px solid ${border}; border-radius: 12px;
-    padding: 10px; transition: background 0.12s ease, border-color 0.12s ease;
-  }
-  .chat-item:hover { background: ${hover}; border-color: ${dark ? 'rgba(148,163,184,0.28)' : 'rgba(15,23,42,0.16)'}; }
-
-  .chat-open {
-    border: 0; background: transparent; color: inherit; padding: 0; margin: 0;
-    display: grid; grid-template-columns: 40px 1fr; gap: 10px; align-items: start;
-    cursor: pointer; text-align: left; font: inherit; min-width: 0; width: 100%;
-  }
-  .chat-open:focus-visible { outline: 2px solid ${accent}; outline-offset: 2px; border-radius: 8px; }
-
-  .avatar {
-    width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
-    background: #cbd5e1; color: #0f172a; font-size: 14px; font-weight: 700; overflow: hidden;
-    flex: 0 0 auto;
-  }
-  .avatar img { width: 100%; height: 100%; object-fit: cover; }
-
-  .chat-text { display: grid; gap: 3px; min-width: 0; }
-  .chat-title {
-    display: flex; align-items: center; gap: 8px; min-width: 0;
-  }
-  .chat-title strong {
-    font-size: 13.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    min-width: 0;
-  }
-  .badge {
-    flex: 0 0 auto; min-width: 20px; padding: 0 7px; border-radius: 999px;
-    background: ${danger}; color: #fff; font-size: 11px; font-weight: 700; line-height: 20px; text-align: center;
-  }
-  .preview {
-    color: ${text}; font-size: 12.5px; font-weight: 500; opacity: 0.88;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .account {
-    color: ${muted}; font-size: 11.5px; font-weight: 500;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
-
-  .side {
-    display: flex; flex-direction: column; justify-content: center; gap: 6px; flex: 0 0 auto;
-  }
-  .btn {
-    border: 1px solid ${border}; background: ${bg}; color: inherit; border-radius: 8px;
-    font: 600 11.5px/1 inherit; padding: 7px 10px; cursor: pointer; white-space: nowrap;
-  }
-  .btn:hover { background: ${soft}; }
-  .btn.primary { background: ${accent}; border-color: ${accent}; color: #fff; }
-  .btn.primary:hover { filter: brightness(1.05); }
-  .btn:disabled { opacity: 0.55; cursor: default; }
 
   .notif-item {
     display: grid; gap: 8px; background: ${card}; border: 1px solid ${border};
     border-radius: 12px; padding: 10px;
   }
-  .notif-item:hover { border-color: ${dark ? 'rgba(148,163,184,0.28)' : 'rgba(15,23,42,0.16)'}; }
+  .notif-item:hover { border-color: ${dark ? 'rgba(148,163,184,0.28)' : 'rgba(15,23,42,0.16)'}; background: ${hover}; }
   .open-btn {
     border: 0; background: transparent; color: inherit; padding: 0; margin: 0; font: inherit;
     display: grid; grid-template-columns: 40px 1fr; gap: 10px; align-items: start;
     cursor: pointer; text-align: left; width: 100%;
   }
   .open-btn:focus-visible { outline: 2px solid ${accent}; outline-offset: 2px; border-radius: 8px; }
+  .avatar {
+    width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center;
+    background: #cbd5e1; color: #0f172a; font-size: 14px; font-weight: 700; overflow: hidden;
+  }
+  .avatar img { width: 100%; height: 100%; object-fit: cover; }
   .notif-text { display: grid; gap: 3px; min-width: 0; }
   .notif-text strong, .notif-text .body-line {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -152,9 +84,16 @@ export function buildNotifCenterHtml(dark = false) {
   .notif-text strong { font-size: 13.5px; font-weight: 700; }
   .notif-text .body-line { color: ${muted}; font-size: 12.5px; font-weight: 500; }
   .meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .time { color: ${muted}; font-size: 11px; white-space: nowrap; }
+  .account, .time { color: ${muted}; font-size: 11.5px; white-space: nowrap; }
+  .account { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .actions { display: flex; gap: 6px; }
-
+  .btn {
+    border: 1px solid ${border}; background: ${bg}; color: inherit; border-radius: 8px;
+    font: 600 11.5px/1 inherit; padding: 7px 10px; cursor: pointer; white-space: nowrap;
+  }
+  .btn:hover { background: ${soft}; }
+  .btn.primary { background: ${accent}; border-color: ${accent}; color: #fff; }
+  .btn:disabled { opacity: 0.55; cursor: default; }
   .reply-box { display: none; gap: 6px; }
   .reply-box.open { display: grid; }
   .reply-box textarea {
@@ -185,7 +124,7 @@ export function buildNotifCenterHtml(dark = false) {
     <header class="head">
       <div class="head-copy">
         <strong>Notifications</strong>
-        <span>Unread chats and recent alerts across accounts</span>
+        <span>Recent alerts from your apps</span>
       </div>
       <div class="links">
         <button type="button" class="link" id="read-all">Mark all read</button>
@@ -194,22 +133,7 @@ export function buildNotifCenterHtml(dark = false) {
     </header>
 
     <div class="body">
-      <section class="section" aria-labelledby="needs-reply-label">
-        <div class="section-head">
-          <span class="label" id="needs-reply-label">Needs reply</span>
-          <span class="count" id="inbox-count"></span>
-        </div>
-        <p class="section-hint">WhatsApp &amp; Arattai chats waiting across your accounts. Click to open.</p>
-        <div class="inbox-list" id="inbox-list"></div>
-      </section>
-
-      <section class="section" aria-labelledby="recent-label">
-        <div class="section-head">
-          <span class="label" id="recent-label">Recent</span>
-          <span class="count" id="recent-count"></span>
-        </div>
-        <div class="list" id="list"></div>
-      </section>
+      <div class="list" id="list"></div>
     </div>
 
     <div class="monitor hidden" id="monitor">
@@ -231,73 +155,11 @@ export function buildNotifCenterHtml(dark = false) {
       if (hours < 24) return hours + 'h ago';
       return Math.floor(hours / 24) + 'd ago';
     }
-    function paintInbox(data) {
-      const inboxList = document.getElementById('inbox-list');
-      const countEl = document.getElementById('inbox-count');
-      const inbox = data?.inbox || [];
-      countEl.textContent = inbox.length
-        ? (inbox.length === 1 ? '1 chat' : inbox.length + ' chats')
-        : 'All clear';
-      if (!inbox.length) {
-        inboxList.innerHTML = '<p class="empty">Nothing waiting — you are caught up on WhatsApp and Arattai.</p>';
-        return;
-      }
-      inboxList.innerHTML = inbox.map((item, index) => {
-        const initial = esc((item.name || '?').slice(0, 1).toUpperCase());
-        const unread = Math.min(99, Number(item.unread) || 1);
-        const preview = esc(item.preview || 'Unread messages');
-        const account = esc(item.accountLabel || item.appId || 'Messaging');
-        return '<article class="chat-item" data-index="' + index + '">' +
-          '<button type="button" class="chat-open open-inbox" data-index="' + index + '" title="Open chat">' +
-          '<span class="avatar" style="background:' + esc(item.color || '#cbd5e1') + '">' + initial + '</span>' +
-          '<span class="chat-text">' +
-          '<span class="chat-title"><strong>' + esc(item.name) + '</strong>' +
-          '<span class="badge">' + unread + '</span></span>' +
-          '<span class="preview">' + preview + '</span>' +
-          '<span class="account">' + account + '</span>' +
-          '</span></button>' +
-          '<div class="side">' +
-          '<button type="button" class="btn inbox-pin" data-index="' + index + '" title="Pin to Aspera Hub strip">Pin</button>' +
-          '</div></article>';
-      }).join('');
-
-      inboxList.querySelectorAll('.open-inbox').forEach((btn) => {
-        btn.addEventListener('click', () => {
-          const item = inbox[Number(btn.dataset.index)];
-          if (!item) return;
-          api.action('open-inbox', {
-            serviceId: item.serviceId || '',
-            name: item.name || '',
-            chatKey: item.chatKey || '',
-          });
-        });
-      });
-      inboxList.querySelectorAll('.inbox-pin').forEach((btn) => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const item = inbox[Number(btn.dataset.index)];
-          if (!item) return;
-          api.action('pin-inbox', {
-            serviceId: item.serviceId || '',
-            name: item.name || '',
-            chatKey: item.chatKey || '',
-            appId: item.appId || '',
-          });
-          btn.textContent = 'Pinned';
-          btn.disabled = true;
-        });
-      });
-    }
     function paint(data) {
-      paintInbox(data);
       const list = document.getElementById('list');
-      const recentCount = document.getElementById('recent-count');
       const items = data?.notifications || [];
-      recentCount.textContent = items.length
-        ? (items.length === 1 ? '1 alert' : items.length + ' alerts')
-        : '';
       if (!items.length) {
-        list.innerHTML = '<p class="empty">No recent desktop notifications yet.</p>';
+        list.innerHTML = '<p class="empty">No new notifications.<br/>Pin important WhatsApp / Arattai chats in the strip above for quick focus.</p>';
       } else {
         list.innerHTML = items.map((item, index) => {
           const initial = esc((item.title || '?').slice(0, 1).toUpperCase());

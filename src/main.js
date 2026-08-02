@@ -61,7 +61,6 @@ import {
   normalizeChatKey,
   openMessagingChatJs,
   sanitizePinnedPeople,
-  scrapeMessagingInboxJs,
   searchMessagingChatsJs,
 } from './guestInbox.js';
 import {
@@ -405,11 +404,6 @@ const unreadCounts = new Map();
 /** @type {{ id: string, serviceId: string, title: string, body: string, at: number, chatName?: string, chatKey?: string }[]} */
 let notificationLog = [];
 const NOTIFICATION_LOG_MAX = 40;
-/** Per-service scraped unread chats for notification-center “Needs reply”. */
-/** @type {Map<string, { chats: { chatKey: string, name: string, preview: string, unread: number }[], at: number }>} */
-const inboxByService = new Map();
-let inboxPollTimer = null;
-const INBOX_POLL_MS = 8_000;
 /** Dedupe identical toasts per service (fingerprint → last shown at). */
 /** @type {Map<string, { fingerprint: string, at: number }>} */
 const recentNotificationFingerprints = new Map();
@@ -2695,17 +2689,6 @@ function buildNotifCenterData() {
       color: service?.color || '#e2e8f0',
     };
   });
-  const inbox = collectUnifiedInbox().map((item) => ({
-    id: item.id,
-    serviceId: item.serviceId,
-    name: item.name,
-    chatKey: item.chatKey,
-    preview: item.preview || '',
-    unread: item.unread || 1,
-    accountLabel: item.accountLabel || '',
-    appId: item.appId || '',
-    color: item.color || '#64748b',
-  }));
   const monitorOn = !!settings.consumptionMonitor;
   const memoryRows = monitorOn
     ? (settings.serviceInstances || [])
@@ -2716,7 +2699,7 @@ function buildNotifCenterData() {
         .filter((row) => row.mb > 0)
         .sort((a, b) => b.mb - a.mb)
     : [];
-  return { notifications, inbox, monitorOn, memoryRows };
+  return { notifications, monitorOn, memoryRows };
 }
 
 function pushNotifCenterData() {
@@ -2735,8 +2718,8 @@ function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } =
   closeChromeMenuWindow();
   closeNotifCenterWindow();
 
-  const menuW = 440;
-  const menuH = 760;
+  const menuW = 420;
+  const menuH = 580;
   const content = mainWindow.getContentBounds();
   const anchorX = content.x + (Number(x) || 0);
   const anchorY = content.y + (Number(y) || 0);
@@ -3783,22 +3766,6 @@ async function handleNotifCenterAction(type, value) {
     const chatKey = String(value?.chatKey || '');
     return sendQuickReply(serviceId, { name: chatName, chatKey, text });
   }
-  if (type === 'open-inbox') {
-    closeNotifCenterWindow();
-    const serviceId = String(value?.serviceId || '');
-    const chatName = String(value?.name || value?.chatName || '');
-    const chatKey = String(value?.chatKey || '');
-    if (!serviceId || (!chatName && !chatKey)) return { ok: false };
-    return openMessagingChat(serviceId, { name: chatName, chatKey });
-  }
-  if (type === 'pin-inbox') {
-    const serviceId = String(value?.serviceId || '');
-    const name = String(value?.name || '').trim();
-    const chatKey = String(value?.chatKey || normalizeChatKey(name));
-    const appId = String(value?.appId || getService(serviceId)?.appId || '');
-    if (!serviceId || !name) return { ok: false, error: 'Missing chat.' };
-    return pinPerson({ serviceId, name, chatKey, appId });
-  }
   return { ok: false };
 }
 
@@ -3912,79 +3879,6 @@ function logNotification(service, body, titleOverride) {
   ].slice(0, NOTIFICATION_LOG_MAX);
   broadcastState();
   pushNotifCenterData();
-}
-
-function collectUnifiedInbox() {
-  /** @type {{ id: string, serviceId: string, appId: string, accountLabel: string, chatKey: string, name: string, preview: string, unread: number, color?: string }[]} */
-  const items = [];
-  for (const service of orderedServices()) {
-    if (!isInboxAppId(service.appId)) continue;
-    const snap = inboxByService.get(service.id);
-    if (!snap?.chats?.length) continue;
-    const accountLabel = service.title || service.name || 'App';
-    for (const chat of snap.chats) {
-      items.push({
-        id: `${service.id}::${chat.chatKey}`,
-        serviceId: service.id,
-        appId: service.appId,
-        accountLabel,
-        chatKey: chat.chatKey,
-        name: chat.name,
-        preview: chat.preview || '',
-        unread: Number(chat.unread) || 1,
-        color: service.color || '#64748b',
-      });
-    }
-  }
-  items.sort((a, b) => (b.unread || 0) - (a.unread || 0));
-  return items.slice(0, 20);
-}
-
-async function scrapeServiceInbox(serviceId) {
-  const service = getService(serviceId);
-  if (!service || !isInboxAppId(service.appId)) return;
-  const entry = views.get(serviceId);
-  const wc = entry?.view?.webContents;
-  if (!wc || wc.isDestroyed()) {
-    inboxByService.delete(serviceId);
-    return;
-  }
-  try {
-    const result = await wc.executeJavaScript(scrapeMessagingInboxJs(), true);
-    const chats = Array.isArray(result?.chats) ? result.chats : [];
-    inboxByService.set(serviceId, {
-      chats: chats
-        .map((c) => ({
-          chatKey: normalizeChatKey(c?.chatKey || c?.name),
-          name: String(c?.name || '').replace(/\s+/g, ' ').trim().slice(0, 80),
-          preview: String(c?.preview || '').replace(/\s+/g, ' ').trim().slice(0, 100),
-          unread: Math.max(0, Number(c?.unread) || 0),
-        }))
-        .filter((c) => c.name && c.unread > 0 && !isJunkChatName(c.name)),
-      at: Date.now(),
-    });
-  } catch {
-    // Guest may be mid-reload.
-  }
-}
-
-async function pollAllInboxes({ broadcast = true } = {}) {
-  const ids = orderedServices()
-    .filter((s) => isInboxAppId(s.appId) && views.has(s.id))
-    .map((s) => s.id);
-  await Promise.all(ids.map((id) => scrapeServiceInbox(id)));
-  if (broadcast) broadcastState();
-}
-
-function ensureInboxPolling() {
-  if (inboxPollTimer) return;
-  inboxPollTimer = setInterval(() => {
-    pollAllInboxes().catch(() => {});
-  }, INBOX_POLL_MS);
-  // First pass soon after boot / warm loads.
-  setTimeout(() => {
-    pollAllInboxes().catch(() => {});
-  }, 2_500);
 }
 
 async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
@@ -7510,11 +7404,6 @@ function createViewForService(service) {
     // Seed badge from current title without treating it as a new message.
     seedUnreadFromTitle(service.id, webContents);
     refreshBadge();
-    if (isInboxAppId(service.appId)) {
-      setTimeout(() => {
-        scrapeServiceInbox(service.id).then(() => broadcastState()).catch(() => {});
-      }, 1_800);
-    }
     broadcastState();
     const live = getAppConfig(service.id);
     if (settings.allowPageInjection && live.injectCss && live.injectCss.trim()) {
@@ -7778,7 +7667,6 @@ function hibernateService(id, { force = false } = {}) {
   }
   views.delete(id);
   unreadCounts.delete(id);
-  inboxByService.delete(id);
   hibernatedAt.set(id, Date.now());
   if (force && activeServiceId === id) {
     activeServiceId = null;
@@ -8219,7 +8107,6 @@ function currentState() {
     unread: unreadForUi,
     totalUnread: totalUnread(),
     notifications: notificationLog,
-    inbox: collectUnifiedInbox(),
     pinnedPeople: sanitizePinnedPeople(settings.pinnedPeople || []),
     appMemory,
     ai: {
@@ -10027,7 +9914,6 @@ app.whenReady().then(async () => {
   }
   startHibernateTimer();
   startMemoryTimer();
-  ensureInboxPolling();
   watchSystemIdle();
   configureUpdater({
     getSettings: () => settings,
