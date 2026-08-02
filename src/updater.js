@@ -36,6 +36,10 @@ import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { GITHUB_UPDATE_FEED, GITHUB_SLUG } from './github.js';
 import { assertHttpsUrl } from './netTrust.js';
 import { extractWhatsNewNotes, formatUpdatePromptDetail } from './updateNotes.js';
+import {
+  formatDownloadErrorDetail,
+  isRetryableDownloadError,
+} from './updateDownloadErrors.js';
 
 /** Default feed: GitHub Releases (no custom server). */
 const DEFAULT_FEED = GITHUB_UPDATE_FEED;
@@ -595,7 +599,7 @@ async function fetchUpdateArtifact(url, { attempts = 4 } = {}) {
       }
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
-      if (!/Download failed|fetch|network|ECONN|ETIMEDOUT|404/i.test(lastError.message)) {
+      if (!isRetryableDownloadError(lastError.message)) {
         throw lastError;
       }
     }
@@ -603,6 +607,62 @@ async function fetchUpdateArtifact(url, { attempts = 4 } = {}) {
     await new Promise((r) => setTimeout(r, 900 * (i + 1)));
   }
   throw lastError || new Error('Download failed');
+}
+
+/**
+ * Stream one fetch response body to disk while hashing + reporting progress.
+ * Throws on mid-stream abort ("terminated") so callers can retry the whole file.
+ */
+async function streamResponseToFile(res, tmp, { size = 0, onProgress } = {}) {
+  const total = Number(res.headers.get('content-length')) || size || 0;
+  let received = 0;
+  const hash = crypto.createHash('sha256');
+  const out = fs.createWriteStream(tmp);
+  const reader = res.body.getReader();
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      // eslint-disable-next-line no-await-in-loop
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.length;
+      hash.update(value);
+      if (!out.write(Buffer.from(value))) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => out.once('drain', r));
+      }
+      if (total && typeof onProgress === 'function') {
+        onProgress({
+          percent: Math.round((received / total) * 100),
+          received,
+          total,
+        });
+      }
+    }
+  } catch (error) {
+    try {
+      reader.cancel?.();
+    } catch {
+      // ignore
+    }
+    throw error;
+  } finally {
+    try {
+      reader.releaseLock?.();
+    } catch {
+      // ignore
+    }
+  }
+  await new Promise((resolve, reject) => {
+    out.end(() => resolve());
+    out.on('error', reject);
+  });
+  if (total > 0 && received > 0 && received < total * 0.98) {
+    throw new Error(
+      `Download truncated (${received} of ${total} bytes) — connection closed early`,
+    );
+  }
+  return { hash, received, total };
 }
 
 /**
@@ -622,67 +682,82 @@ export async function downloadUpdate(opts = {}) {
   assertHttpsArtifactUrl(url);
   const dest = path.join(updatesDir(), path.basename(new URL(url).pathname) || 'asperadock-update');
   const tmp = `${dest}.part`;
+  const streamAttempts = 4;
+  let lastError = null;
 
   try {
     broadcast('download-start', { version: pendingUpdate.version });
-    const res = await fetchUpdateArtifact(url);
 
-    const total = Number(res.headers.get('content-length')) || size || 0;
-    let received = 0;
-    const hash = crypto.createHash('sha256');
-    const out = fs.createWriteStream(tmp);
-    const reader = res.body.getReader();
-
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-      // eslint-disable-next-line no-await-in-loop
-      const { done, value } = await reader.read();
-      if (done) break;
-      received += value.length;
-      hash.update(value);
-      if (!out.write(Buffer.from(value))) {
-        // eslint-disable-next-line no-await-in-loop
-        await new Promise((r) => out.once('drain', r));
-      }
-      if (total) {
-        broadcast('download-progress', {
-          percent: Math.round((received / total) * 100),
-          received,
-          total,
-        });
-      }
-    }
-    await new Promise((resolve, reject) => {
-      out.end(() => resolve());
-      out.on('error', reject);
-    });
-
-    if (sha256) {
-      const got = hash.digest('hex');
-      if (got.toLowerCase() !== String(sha256).toLowerCase()) {
-        fs.unlinkSync(tmp);
-        throw new Error('Checksum mismatch — download rejected');
-      }
-    } else {
+    for (let attempt = 0; attempt < streamAttempts; attempt += 1) {
       try {
-        if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-      } catch {
-        // ignore
+        try {
+          if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+        } catch {
+          // ignore
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const res = await fetchUpdateArtifact(url);
+        // eslint-disable-next-line no-await-in-loop
+        const { hash } = await streamResponseToFile(res, tmp, {
+          size,
+          onProgress: (progress) => broadcast('download-progress', progress),
+        });
+
+        if (!sha256) {
+          try {
+            if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+          } catch {
+            // ignore
+          }
+          throw new Error(
+            'Update rejected — release is missing a SHA-256 checksum. Refusing to install.',
+          );
+        }
+        const got = hash.digest('hex');
+        if (got.toLowerCase() !== String(sha256).toLowerCase()) {
+          try {
+            if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+          } catch {
+            // ignore
+          }
+          throw new Error('Checksum mismatch — download rejected');
+        }
+
+        fs.renameSync(tmp, dest);
+        downloadedPath = dest;
+        busy = false;
+        broadcast('downloaded', { version: pendingUpdate.version, path: dest });
+
+        // Always prompt — users must see the update while using the app.
+        // autoUpdateInstall still applies on quit if they choose Later.
+        await promptReady();
+        return { ok: true, path: dest };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        try {
+          if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+        } catch {
+          // ignore
+        }
+        // Checksum / policy failures are not worth retrying.
+        if (/Checksum mismatch|missing a SHA-256/i.test(lastError.message)) {
+          throw lastError;
+        }
+        if (!isRetryableDownloadError(lastError.message) || attempt >= streamAttempts - 1) {
+          throw lastError;
+        }
+        broadcast('download-progress', {
+          percent: 0,
+          received: 0,
+          total: size || 0,
+          retrying: true,
+          attempt: attempt + 1,
+        });
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
       }
-      throw new Error(
-        'Update rejected — release is missing a SHA-256 checksum. Refusing to install.',
-      );
     }
-
-    fs.renameSync(tmp, dest);
-    downloadedPath = dest;
-    busy = false;
-    broadcast('downloaded', { version: pendingUpdate.version, path: dest });
-
-    // Always prompt — users must see the update while using the app.
-    // autoUpdateInstall still applies on quit if they choose Later.
-    await promptReady();
-    return { ok: true, path: dest };
+    throw lastError || new Error('Download failed');
   } catch (error) {
     busy = false;
     try {
@@ -702,7 +777,7 @@ export async function downloadUpdate(opts = {}) {
         type: 'error',
         title: 'Update download failed',
         message: 'Could not download the update.',
-        detail: `${message}${raceHint}`,
+        detail: `${formatDownloadErrorDetail(message)}${raceHint}`,
         buttons: ['OK'],
       });
     } else {

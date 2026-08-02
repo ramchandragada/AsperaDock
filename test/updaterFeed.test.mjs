@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GITHUB_UPDATE_FEED, GITHUB_SLUG } from '../src/github.js';
+import {
+  formatDownloadErrorDetail,
+  isRetryableDownloadError,
+} from '../src/updateDownloadErrors.js';
 
 test('default GitHub update feed points at latest.json', () => {
   assert.equal(
@@ -23,6 +27,15 @@ test('live latest.json feed is reachable', async () => {
   const manifest = await res.json();
   assert.ok(manifest.version, 'manifest.version required');
   assert.ok(manifest.files?.deb?.url || manifest.files?.appimage?.url, 'artifact url required');
+});
+
+test('terminated stream errors are retryable with clear copy', () => {
+  assert.equal(isRetryableDownloadError('terminated'), true);
+  assert.equal(isRetryableDownloadError('Download failed 404'), true);
+  assert.equal(isRetryableDownloadError('Checksum mismatch — download rejected'), false);
+  assert.match(formatDownloadErrorDetail('terminated'), /connection closed early/i);
+  assert.match(formatDownloadErrorDetail('terminated'), /Check for updates/i);
+  assert.equal(formatDownloadErrorDetail('Download failed 503'), 'Download failed 503');
 });
 
 test('live latest deb artifact URL is downloadable (no 404)', async () => {
