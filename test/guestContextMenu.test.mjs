@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { guestContextMenuActionOrder } from '../src/guestContextMenu.js';
+import {
+  guestContextMenuActionOrder,
+  shouldOfferPdfSummarizeMenu,
+} from '../src/guestContextMenu.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -51,15 +54,33 @@ test('PDF bubble menu inserts Summarize PDF before Forward', () => {
   );
 });
 
+test('PDF summarize menu is always offered on AI-allowed apps', () => {
+  assert.equal(
+    shouldOfferPdfSummarizeMenu({ aiEnabled: true, aiAllowed: true }),
+    true,
+  );
+  assert.equal(
+    shouldOfferPdfSummarizeMenu({ aiEnabled: false, aiAllowed: true }),
+    false,
+  );
+  assert.equal(
+    shouldOfferPdfSummarizeMenu({ aiEnabled: true, aiAllowed: false }),
+    false,
+  );
+});
+
 test('main guest context menu follows guestContextMenuActionOrder', () => {
   const src = readFileSync(
     fileURLToPath(new URL('../src/main.js', import.meta.url)),
     'utf8',
   );
   assert.match(src, /guestContextMenuActionOrder/);
+  assert.match(src, /shouldOfferPdfSummarizeMenu/);
   assert.match(src, /action === 'summarize'/);
   assert.match(src, /action === 'summarize-pdf'/);
   assert.match(src, /action === 'forward'/);
   assert.match(src, /action === 'pin'/);
   assert.match(src, /Summarize PDF with Aspera AI/);
+  assert.match(src, /ASPERA_PDF_CTX_PREFIX|__ASPERA_DOCK_PDF_CTX__/);
+  assert.match(src, /injectGuestPdfContextBridge/);
 });

@@ -83,7 +83,10 @@ import {
   sanitizePriorMessages,
   scrapeNearbyMessagesJs,
 } from './guestChatContext.js';
-import { guestContextMenuActionOrder } from './guestContextMenu.js';
+import {
+  guestContextMenuActionOrder,
+  shouldOfferPdfSummarizeMenu,
+} from './guestContextMenu.js';
 import { aboutDetailText } from './aboutCopy.js';
 import { spawnSync } from 'node:child_process';
 import {
@@ -470,6 +473,10 @@ const recentNotificationFingerprints = new Map();
 const NOTIFICATION_DEDUPE_MS = 45_000;
 /** Magic prefix for guest → main Notification bridge (console-message). */
 const ASPERA_NOTIFY_PREFIX = '__ASPERA_DOCK_NOTIFY__';
+/** Guest → main: WhatsApp/Arattai PDF right-click (page may preventDefault). */
+const ASPERA_PDF_CTX_PREFIX = '__ASPERA_DOCK_PDF_CTX__';
+/** Debounce Hub guest menus when Electron + page bridge both fire. */
+let lastGuestHubMenuAt = 0;
 /** Renderer-measured chrome size — keeps guest view aligned with wrapped rows. */
 let chromeSize = null;
 /** @type {Record<string, number>} */
@@ -3311,25 +3318,6 @@ function asperaAiSkillTitle(skill) {
   return 'Summarize selection';
 }
 
-/** Sync hint that the right-click target is (or contains) a PDF/document. */
-function guestContextLooksLikePdf(params = {}) {
-  const linkURL = String(params.linkURL || '');
-  const srcURL = String(params.srcURL || '');
-  const titleText = String(params.titleText || params.altText || '');
-  const selectionText = String(params.selectionText || '');
-  const hay = [linkURL, srcURL, titleText, selectionText].join(' ');
-  if (/\.pdf(\b|\?|#|$)/i.test(hay)) return true;
-  if (/\bPDF\b/.test(hay) && extractDocumentFileName(hay)) return true;
-  return looksLikeDocument({
-    linkURL,
-    srcURL,
-    fileName: extractDocumentFileName(hay) || titleText,
-    text: selectionText,
-    titleText,
-    mediaType: params.mediaType,
-  });
-}
-
 function pickPdfFileForSummarize() {
   const picked = dialog.showOpenDialogSync(mainWindow || undefined, {
     title: 'Summarize PDF with Aspera AI',
@@ -5076,6 +5064,262 @@ function handleGuestNotificationBridge(service, rawMessage) {
   if (entry) entry.__lastRichNotifyAt = Date.now();
   emitServiceNotification(service, { title, body, fromTitleCount: false });
   return true;
+}
+
+/**
+ * WhatsApp often preventDefault()s contextmenu and shows only its in-page
+ * menu (Reply / Download / Ask Meta AI). When the guest reports a PDF
+ * right-click and Hub's Electron menu did not open, pop our Hub menu so
+ * "Summarize PDF with Aspera AI" is always available.
+ */
+function handleGuestPdfContextBridge(service, webContents, rawMessage) {
+  const text = String(rawMessage || '');
+  if (!text.startsWith(ASPERA_PDF_CTX_PREFIX)) return false;
+  if (!service || !isAiAllowedAppId(service.appId)) return true;
+  if (settings.aiEnabled === false) return true;
+  let payload = {};
+  try {
+    payload = JSON.parse(text.slice(ASPERA_PDF_CTX_PREFIX.length));
+  } catch {
+    return true;
+  }
+  const x = Number(payload?.x) || 0;
+  const y = Number(payload?.y) || 0;
+  // Electron context-menu already opened — do not double-popup.
+  if (Date.now() - lastGuestHubMenuAt < 400) return true;
+  if (!webContents || webContents.isDestroyed()) return true;
+  // Synthesize a context-menu event payload and reuse the attached handler
+  // by emitting through popup of a compact Hub actions menu.
+  popupGuestPdfActionsMenu(webContents, { x, y });
+  return true;
+}
+
+/** Compact Hub menu when the page swallowed the native context-menu event. */
+function popupGuestPdfActionsMenu(webContents, { x = 0, y = 0 } = {}) {
+  if (!webContents || webContents.isDestroyed()) return;
+  if (Date.now() - lastGuestHubMenuAt < 400) return;
+  lastGuestHubMenuAt = Date.now();
+
+  const sourceServiceId = serviceIdForWebContents(webContents);
+  const service = getService(sourceServiceId) || getService(activeServiceId);
+  if (!service || !isAiAllowedAppId(service.appId)) return;
+  if (settings.aiEnabled === false) return;
+
+  const params = {
+    x,
+    y,
+    selectionText: '',
+    linkURL: '',
+    srcURL: '',
+    titleText: '',
+    altText: '',
+    hasImageContents: true,
+    mediaType: 'image',
+  };
+
+  /** @type {Electron.MenuItemConstructorOptions[]} */
+  const template = [
+    {
+      label: 'Summarize PDF with Aspera AI',
+      click: () => {
+        resolvePdfPathForSummarize(webContents, params)
+          .then((resolved) => {
+            if (!resolved?.ok) {
+              if (resolved?.cancelled) return;
+              throw new Error(resolved?.error || 'Could not open PDF.');
+            }
+            return runAsperaAiSkill('summarize-pdf', {
+              filePath: resolved.filePath,
+              fileName: resolved.fileName,
+              dark: false,
+            });
+          })
+          .catch((error) => {
+            const message = String(error?.message || error);
+            openAiResultWindow({
+              title: 'Aspera AI · Summarize PDF',
+              meta: 'EN · HI · MR',
+              dark: false,
+            });
+            pushAiResult({
+              title: 'Aspera AI · Summarize PDF',
+              meta: 'EN · HI · MR',
+              error: message,
+              text: message,
+              loading: false,
+              canSuggestReply: false,
+            });
+          });
+      },
+    },
+  ];
+
+  const forwardTargets = listForwardTargets(service.id);
+  if (
+    canOfferForward({
+      appId: service.appId,
+      hasSelection: false,
+      hasImage: true,
+      targetCount: forwardTargets.length,
+      alwaysOnMessaging: true,
+    })
+  ) {
+    template.push({
+      label: 'Forward with Aspera Hub',
+      click: () => {
+        beginForwardFromGuest(webContents, params).catch(() => {});
+      },
+    });
+  }
+
+  const menu = Menu.buildFromTemplate(template);
+  let popupWindow =
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  let popupX = x;
+  let popupY = y;
+  try {
+    const owner = BrowserWindow.fromWebContents(webContents);
+    if (owner && !owner.isDestroyed()) {
+      popupWindow = owner;
+      if (owner !== mainWindow) {
+        popupX = x;
+        popupY = y;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  if (popupWindow === mainWindow || !popupWindow) {
+    try {
+      for (const entry of views.values()) {
+        if (entry?.view?.webContents === webContents) {
+          const bounds = entry.view.getBounds?.() || entry.__lastBounds;
+          if (bounds) {
+            popupX += bounds.x || 0;
+            popupY += bounds.y || 0;
+          }
+          break;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    popupWindow =
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow : popupWindow;
+  }
+  menu.popup({
+    window: popupWindow,
+    x: Math.round(popupX),
+    y: Math.round(popupY),
+  });
+}
+
+/** Inject PDF right-click bridge into WhatsApp / Arattai / mail guests. */
+function injectGuestPdfContextBridge(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  const prefix = ASPERA_PDF_CTX_PREFIX;
+  const script = `(() => {
+    if (window.__asperaPdfCtxBridge) return true;
+    window.__asperaPdfCtxBridge = true;
+    const PREFIX = ${JSON.stringify(prefix)};
+
+    function nearbyLooksPdf(el) {
+      let n = el;
+      for (let i = 0; i < 10 && n; i += 1, n = n.parentElement) {
+        const label = String(
+          (n.getAttribute && (n.getAttribute('aria-label') || n.getAttribute('title'))) || '',
+        );
+        const text = String(n.innerText || n.textContent || '').slice(0, 600);
+        const hay = label + ' ' + text;
+        if (/\\.pdf\\b/i.test(hay) || /\\bPDF\\b/.test(hay)) return true;
+        if (
+          n.querySelector &&
+          n.querySelector(
+            '[data-icon="document"], [data-icon="document-refreshed"], [data-icon="audio-document"], [data-testid="document-thumb"]',
+          )
+        ) {
+          return true;
+        }
+      }
+      // Open PDF preview / lightbox title.
+      try {
+        const title = String(document.title || '');
+        if (/\\.pdf\\b/i.test(title) || /\\bPDF\\b/.test(title)) return true;
+      } catch (e) {}
+      return false;
+    }
+
+    function report(x, y) {
+      try {
+        console.log(PREFIX + JSON.stringify({ x: x || 0, y: y || 0, t: Date.now() }));
+      } catch (e) {}
+    }
+
+    document.addEventListener(
+      'contextmenu',
+      (e) => {
+        if (!nearbyLooksPdf(e.target)) return;
+        window.__asperaLastPdfCtx = { x: e.clientX, y: e.clientY, at: Date.now() };
+        // Delay so Electron's context-menu handler can claim first; if the
+        // page preventedDefault (WhatsApp), Hub opens a fallback menu.
+        setTimeout(() => report(e.clientX, e.clientY), 160);
+      },
+      true,
+    );
+
+    // Also inject a row into WhatsApp's in-page menu when it appears on a PDF.
+    const injectInPageItem = () => {
+      const last = window.__asperaLastPdfCtx;
+      if (!last || Date.now() - last.at > 5000) return;
+      if (document.querySelector('[data-aspera-summarize-pdf]')) return;
+      const nodes = Array.from(
+        document.querySelectorAll('div[role="application"] li, div[role="menu"] li, span[role="menuitem"], div[role="button"]'),
+      );
+      const anchor = nodes.find((n) => {
+        const t = String(n.textContent || '').trim();
+        return (
+          /^Ask Meta AI$/i.test(t) ||
+          /^Download$/i.test(t) ||
+          /^Forward$/i.test(t) ||
+          /^React$/i.test(t)
+        );
+      });
+      if (!anchor) return;
+      const row = document.createElement('div');
+      row.setAttribute('data-aspera-summarize-pdf', '1');
+      row.setAttribute('role', 'button');
+      row.tabIndex = 0;
+      row.textContent = 'Summarize PDF with Aspera AI';
+      row.style.cssText =
+        'padding:10px 16px;cursor:pointer;font-size:14.5px;line-height:20px;color:inherit;user-select:none;';
+      row.addEventListener(
+        'click',
+        (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          report(last.x, last.y);
+          try {
+            row.remove();
+          } catch (e) {}
+        },
+        true,
+      );
+      const parent = anchor.parentElement;
+      if (parent) parent.insertBefore(row, anchor);
+      else anchor.insertAdjacentElement('beforebegin', row);
+    };
+
+    const mo = new MutationObserver(() => {
+      try {
+        injectInPageItem();
+      } catch (e) {}
+    });
+    try {
+      mo.observe(document.documentElement, { childList: true, subtree: true });
+    } catch (e) {}
+    return true;
+  })()`;
+  webContents.executeJavaScript(script, true).catch(() => {});
 }
 
 /** Seed unread from the live page title without firing a notification. */
@@ -7727,9 +7971,12 @@ async function deliverForwardToTarget(targetId) {
  */
 function attachGuestContextMenu(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
+  if (webContents.__asperaGuestContextMenu) return;
+  webContents.__asperaGuestContextMenu = true;
 
   webContents.on('context-menu', (_event, params) => {
     if (webContents.isDestroyed()) return;
+    lastGuestHubMenuAt = Date.now();
 
     const sourceServiceId = serviceIdForWebContents(webContents);
     const service = getService(sourceServiceId) || getService(activeServiceId);
@@ -7805,12 +8052,12 @@ function attachGuestContextMenu(webContents) {
       isAiAllowedAppId(service.appId) &&
       settings.aiEnabled !== false
     );
-    const canSummarizePdf = !!(
-      service &&
-      isAiAllowedAppId(service.appId) &&
-      settings.aiEnabled !== false &&
-      guestContextLooksLikePdf(params)
-    );
+    // Always offer on AI-allowed apps — PDF bubbles are often image/blob
+    // previews with no ".pdf" in Electron context-menu params (Arattai/WA).
+    const canSummarizePdf = shouldOfferPdfSummarizeMenu({
+      aiEnabled: settings.aiEnabled !== false,
+      aiAllowed: !!(service && isAiAllowedAppId(service.appId)),
+    });
 
     // With selected message text: Summarize → Forward (Pin does not apply to a selection).
     // On chat-list rows (no selection): Pin → Forward.
@@ -8254,6 +8501,20 @@ function createViewForService(service) {
     attachGuestContextMenu(childWc);
     attachGuestNavigationGate(childWc, service);
     attachPopupSessionAdopt(webContents, childWindow, service);
+    if (isAiAllowedAppId(service.appId) && settings.aiEnabled !== false) {
+      childWc.on('dom-ready', () => injectGuestPdfContextBridge(childWc));
+      childWc.on('console-message', (event, level, message) => {
+        const text =
+          (typeof event === 'object' && event && 'message' in event
+            ? String(event.message || '')
+            : '') ||
+          (typeof message === 'string' ? message : '') ||
+          '';
+        if (!text) return;
+        handleGuestPdfContextBridge(service, childWc, text);
+      });
+      injectGuestPdfContextBridge(childWc);
+    }
     if (isGoogleService(service)) {
       attachGoogleChromeSpoof(childWc, {
         chromeVersion: CHROME_VERSION,
@@ -8272,6 +8533,7 @@ function createViewForService(service) {
       (typeof message === 'string' ? message : '') ||
       '';
     if (!text) return;
+    if (handleGuestPdfContextBridge(service, webContents, text)) return;
     handleGuestNotificationBridge(service, text);
   });
 
@@ -8312,6 +8574,9 @@ function createViewForService(service) {
     seedUnreadFromTitle(service.id, webContents);
     refreshBadge();
     broadcastState();
+    if (isAiAllowedAppId(service.appId) && settings.aiEnabled !== false) {
+      injectGuestPdfContextBridge(webContents);
+    }
     const live = getAppConfig(service.id);
     if (settings.allowPageInjection && live.injectCss && live.injectCss.trim()) {
       try {
@@ -8482,6 +8747,9 @@ function createViewForService(service) {
         if (shouldRunPortalBlankRecovery(service) && service.id === activeServiceId) {
           schedulePortalHealthChecks(service.id);
         }
+      }
+      if (isAiAllowedAppId(service.appId) && settings.aiEnabled !== false) {
+        injectGuestPdfContextBridge(webContents);
       }
     } catch {
       // ignore
