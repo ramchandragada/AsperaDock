@@ -83,4 +83,8 @@ test('main guest context menu follows guestContextMenuActionOrder', () => {
   assert.match(src, /Summarize PDF with Aspera AI/);
   assert.match(src, /ASPERA_PDF_CTX_PREFIX|__ASPERA_DOCK_PDF_CTX__/);
   assert.match(src, /injectGuestPdfContextBridge/);
+  assert.match(src, /runSummarizePdfFromGuest/);
+  // Must not auto-popup a second Electron menu on WhatsApp right-click.
+  assert.doesNotMatch(src, /popupGuestPdfActionsMenu/);
+  assert.match(src, /action: 'summarize'/);
 });

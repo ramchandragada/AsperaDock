@@ -2873,6 +2873,12 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
 
   const win = aiResultWindow;
   attachAiResultContextMenu(win.webContents);
+  // Always paint above the guest WhatsApp/Arattai WebContentsView.
+  try {
+    win.setAlwaysOnTop(true, 'pop-up-menu');
+  } catch {
+    // ignore
+  }
   win.loadURL(
     `data:text/html;charset=utf-8,${encodeURIComponent(buildAiResultHtml(!!dark))}`,
   );
@@ -2888,6 +2894,11 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
     if (!win.isDestroyed()) {
       win.show();
       win.focus();
+      try {
+        win.moveTop();
+      } catch {
+        // ignore
+      }
     }
   });
   // Keep the panel open while reading — do not auto-close on blur.
@@ -3332,8 +3343,16 @@ function pickPdfFileForSummarize() {
 
 /**
  * Resolve a PDF path for Summarize: chat capture first, then file picker.
+ * @param {{ fast?: boolean, allowPicker?: boolean }} [opts]
+ *   fast: skip the slow UI-download click loop (use viewer + recent only).
  */
-async function resolvePdfPathForSummarize(webContents, params = {}) {
+async function resolvePdfPathForSummarize(
+  webContents,
+  params = {},
+  opts = {},
+) {
+  const fast = opts.fast !== false;
+  const allowPicker = opts.allowPicker !== false;
   let filePath = '';
   let fileName = '';
   const titleText = String(params.titleText || params.altText || '');
@@ -3362,12 +3381,14 @@ async function resolvePdfPathForSummarize(webContents, params = {}) {
       extensionOf(candidateName) || 'pdf',
     );
 
+    // 1) Fastest: PDF already open in preview / blob embed.
     const viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
     if (viewer.ok) {
       filePath = viewer.filePath;
       fileName = path.basename(filePath);
     }
 
+    // 2) Already downloaded in this session.
     if (!filePath) {
       const recentPath = matchRecentDownload(
         recentGuestDownloads,
@@ -3389,7 +3410,8 @@ async function resolvePdfPathForSummarize(webContents, params = {}) {
       }
     }
 
-    if (!filePath) {
+    // 3) Slow UI download click — only when not in fast mode (was the main delay).
+    if (!filePath && !fast) {
       const ui = await tryCaptureDocumentByUiDownload(
         webContents,
         params.x,
@@ -3404,13 +3426,27 @@ async function resolvePdfPathForSummarize(webContents, params = {}) {
     }
   }
 
-  if (!filePath || !fs.existsSync(filePath)) {
+  if ((!filePath || !fs.existsSync(filePath)) && allowPicker) {
+    pushAiResult({
+      title: 'Aspera AI · Summarize PDF',
+      meta: 'EN · HI · MR',
+      text: 'Choose the PDF file to summarize…',
+      loading: true,
+      mode: 'summarize',
+      showTrilingual: true,
+      canSuggestReply: false,
+    });
     filePath = pickPdfFileForSummarize();
     fileName = filePath ? path.basename(filePath) : '';
   }
 
   if (!filePath) {
-    return { ok: false, cancelled: true, error: 'No PDF selected.' };
+    return {
+      ok: false,
+      cancelled: true,
+      error:
+        'No PDF found. Tap Download on the PDF once, then try Summarize PDF again — or pick the file.',
+    };
   }
   return { ok: true, filePath, fileName: fileName || path.basename(filePath) };
 }
@@ -3431,6 +3467,7 @@ async function runAsperaAiSkill(
     clickY = 0,
     filePath = '',
     fileName = '',
+    reuseWindow = false,
   } = {},
 ) {
   if (settings.aiEnabled === false) {
@@ -3458,11 +3495,31 @@ async function runAsperaAiSkill(
       ? 'EN · HI · MR'
       : langLabel;
 
-  openAiResultWindow({
-    title: `Aspera AI · ${skillTitle}`,
-    meta: `Auto · ${routeHint} · ${metaLang}`,
-    dark,
-  });
+  const canReuse =
+    reuseWindow && aiResultWindow && !aiResultWindow.isDestroyed();
+  if (!canReuse) {
+    openAiResultWindow({
+      title: `Aspera AI · ${skillTitle}`,
+      meta: `Auto · ${routeHint} · ${metaLang}`,
+      dark,
+    });
+  } else {
+    try {
+      aiResultWindow.setAlwaysOnTop(true, 'pop-up-menu');
+      aiResultWindow.moveTop();
+    } catch {
+      // ignore
+    }
+    pushAiResult({
+      title: `Aspera AI · ${skillTitle}`,
+      meta: `Auto · ${routeHint} · ${metaLang}`,
+      loading: true,
+      text: 'Working…',
+      mode: skill === 'summarize-pdf' ? 'summarize' : undefined,
+      showTrilingual: skill === 'summarize' || skill === 'summarize-pdf',
+      canSuggestReply: false,
+    });
+  }
 
   try {
     let prompt;
@@ -3513,6 +3570,15 @@ async function runAsperaAiSkill(
         pageCount: extracted.pageCount,
         pagesRead: extracted.pagesRead,
         truncated: extracted.truncated,
+      });
+      pushAiResult({
+        title: `Aspera AI · ${skillTitle}`,
+        meta: `${pdfMeta} · ${metaLang}`,
+        text: 'Summarizing in English, Hindi, and Marathi…',
+        loading: true,
+        mode: 'summarize',
+        showTrilingual: true,
+        canSuggestReply: false,
       });
     } else if (skill === 'summarize') {
       const service = activeAiService();
@@ -5067,10 +5133,9 @@ function handleGuestNotificationBridge(service, rawMessage) {
 }
 
 /**
- * WhatsApp often preventDefault()s contextmenu and shows only its in-page
- * menu (Reply / Download / Ask Meta AI). When the guest reports a PDF
- * right-click and Hub's Electron menu did not open, pop our Hub menu so
- * "Summarize PDF with Aspera AI" is always available.
+ * Guest PDF bridge messages (console-message).
+ * - action "summarize": run Summarize PDF (from injected WhatsApp/Arattai item)
+ * Never pop a second Electron menu on top of WhatsApp's in-page menu.
  */
 function handleGuestPdfContextBridge(service, webContents, rawMessage) {
   const text = String(rawMessage || '');
@@ -5083,29 +5148,11 @@ function handleGuestPdfContextBridge(service, webContents, rawMessage) {
   } catch {
     return true;
   }
+  if (String(payload?.action || '') !== 'summarize') return true;
+  if (!webContents || webContents.isDestroyed()) return true;
   const x = Number(payload?.x) || 0;
   const y = Number(payload?.y) || 0;
-  // Electron context-menu already opened — do not double-popup.
-  if (Date.now() - lastGuestHubMenuAt < 400) return true;
-  if (!webContents || webContents.isDestroyed()) return true;
-  // Synthesize a context-menu event payload and reuse the attached handler
-  // by emitting through popup of a compact Hub actions menu.
-  popupGuestPdfActionsMenu(webContents, { x, y });
-  return true;
-}
-
-/** Compact Hub menu when the page swallowed the native context-menu event. */
-function popupGuestPdfActionsMenu(webContents, { x = 0, y = 0 } = {}) {
-  if (!webContents || webContents.isDestroyed()) return;
-  if (Date.now() - lastGuestHubMenuAt < 400) return;
-  lastGuestHubMenuAt = Date.now();
-
-  const sourceServiceId = serviceIdForWebContents(webContents);
-  const service = getService(sourceServiceId) || getService(activeServiceId);
-  if (!service || !isAiAllowedAppId(service.appId)) return;
-  if (settings.aiEnabled === false) return;
-
-  const params = {
+  runSummarizePdfFromGuest(webContents, {
     x,
     y,
     selectionText: '',
@@ -5115,106 +5162,97 @@ function popupGuestPdfActionsMenu(webContents, { x = 0, y = 0 } = {}) {
     altText: '',
     hasImageContents: true,
     mediaType: 'image',
-  };
+  }).catch(() => {});
+  return true;
+}
 
-  /** @type {Electron.MenuItemConstructorOptions[]} */
-  const template = [
-    {
-      label: 'Summarize PDF with Aspera AI',
-      click: () => {
-        resolvePdfPathForSummarize(webContents, params)
-          .then((resolved) => {
-            if (!resolved?.ok) {
-              if (resolved?.cancelled) return;
-              throw new Error(resolved?.error || 'Could not open PDF.');
-            }
-            return runAsperaAiSkill('summarize-pdf', {
-              filePath: resolved.filePath,
-              fileName: resolved.fileName,
-              dark: false,
-            });
-          })
-          .catch((error) => {
-            const message = String(error?.message || error);
-            openAiResultWindow({
-              title: 'Aspera AI · Summarize PDF',
-              meta: 'EN · HI · MR',
-              dark: false,
-            });
-            pushAiResult({
-              title: 'Aspera AI · Summarize PDF',
-              meta: 'EN · HI · MR',
-              error: message,
-              text: message,
-              loading: false,
-              canSuggestReply: false,
-            });
-          });
-      },
-    },
-  ];
-
-  const forwardTargets = listForwardTargets(service.id);
-  if (
-    canOfferForward({
-      appId: service.appId,
-      hasSelection: false,
-      hasImage: true,
-      targetCount: forwardTargets.length,
-      alwaysOnMessaging: true,
-    })
-  ) {
-    template.push({
-      label: 'Forward with Aspera Hub',
-      click: () => {
-        beginForwardFromGuest(webContents, params).catch(() => {});
-      },
-    });
+/**
+ * Fast path: open the AI panel immediately, grab the PDF quickly (viewer /
+ * recent download), skip the slow Save-dialog UI download loop.
+ */
+async function runSummarizePdfFromGuest(webContents, params = {}) {
+  const { routeOrder } = aiSettingsSnapshot();
+  if (settings.aiEnabled === false) {
+    return { ok: false, error: 'Aspera AI is turned off in Settings.' };
+  }
+  if (!routeOrder.length) {
+    mainWindow?.webContents.send('dock:chrome-action', 'settings');
+    return {
+      ok: false,
+      error:
+        'Add at least one AI API key in Settings → Aspera AI (Gemini recommended for speed).',
+    };
   }
 
-  const menu = Menu.buildFromTemplate(template);
-  let popupWindow =
-    mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-  let popupX = x;
-  let popupY = y;
+  openAiResultWindow({
+    title: 'Aspera AI · Summarize PDF',
+    meta: 'EN · HI · MR',
+    dark: false,
+  });
+  // Keep the result panel above the guest WhatsApp/Arattai view.
   try {
-    const owner = BrowserWindow.fromWebContents(webContents);
-    if (owner && !owner.isDestroyed()) {
-      popupWindow = owner;
-      if (owner !== mainWindow) {
-        popupX = x;
-        popupY = y;
-      }
+    if (aiResultWindow && !aiResultWindow.isDestroyed()) {
+      aiResultWindow.setAlwaysOnTop(true, 'pop-up-menu');
+      aiResultWindow.moveTop();
     }
   } catch {
     // ignore
   }
-  if (popupWindow === mainWindow || !popupWindow) {
-    try {
-      for (const entry of views.values()) {
-        if (entry?.view?.webContents === webContents) {
-          const bounds = entry.view.getBounds?.() || entry.__lastBounds;
-          if (bounds) {
-            popupX += bounds.x || 0;
-            popupY += bounds.y || 0;
-          }
-          break;
-        }
-      }
-    } catch {
-      // ignore
-    }
-    popupWindow =
-      mainWindow && !mainWindow.isDestroyed() ? mainWindow : popupWindow;
-  }
-  menu.popup({
-    window: popupWindow,
-    x: Math.round(popupX),
-    y: Math.round(popupY),
+  pushAiResult({
+    title: 'Aspera AI · Summarize PDF',
+    meta: 'EN · HI · MR',
+    text: 'Getting PDF from chat…',
+    loading: true,
+    mode: 'summarize',
+    showTrilingual: true,
+    canSuggestReply: false,
   });
+
+  try {
+    const resolved = await resolvePdfPathForSummarize(webContents, params, {
+      fast: true,
+      allowPicker: true,
+    });
+    if (!resolved?.ok) {
+      if (resolved?.cancelled) {
+        closeAiResultWindow();
+        return { ok: false, cancelled: true };
+      }
+      throw new Error(resolved?.error || 'Could not open PDF.');
+    }
+    pushAiResult({
+      title: 'Aspera AI · Summarize PDF',
+      meta: `EN · HI · MR · ${resolved.fileName || 'document.pdf'}`,
+      text: 'Extracting text…',
+      loading: true,
+      mode: 'summarize',
+      showTrilingual: true,
+      canSuggestReply: false,
+    });
+    return await runAsperaAiSkill('summarize-pdf', {
+      filePath: resolved.filePath,
+      fileName: resolved.fileName,
+      dark: false,
+      reuseWindow: true,
+    });
+  } catch (error) {
+    const message = String(error?.message || error);
+    pushAiResult({
+      title: 'Aspera AI · Summarize PDF',
+      meta: 'EN · HI · MR',
+      error: message,
+      text: message,
+      loading: false,
+      canSuggestReply: false,
+    });
+    return { ok: false, error: message };
+  }
 }
 
-/** Inject PDF right-click bridge into WhatsApp / Arattai / mail guests. */
+/**
+ * Inject Summarize PDF into WhatsApp/Arattai's own right-click menu.
+ * Do not open a separate Electron popup (that overlapped the WA menu).
+ */
 function injectGuestPdfContextBridge(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
   const prefix = ASPERA_PDF_CTX_PREFIX;
@@ -5241,7 +5279,6 @@ function injectGuestPdfContextBridge(webContents) {
           return true;
         }
       }
-      // Open PDF preview / lightbox title.
       try {
         const title = String(document.title || '');
         if (/\\.pdf\\b/i.test(title) || /\\bPDF\\b/.test(title)) return true;
@@ -5249,9 +5286,17 @@ function injectGuestPdfContextBridge(webContents) {
       return false;
     }
 
-    function report(x, y) {
+    function requestSummarize(x, y) {
       try {
-        console.log(PREFIX + JSON.stringify({ x: x || 0, y: y || 0, t: Date.now() }));
+        console.log(
+          PREFIX +
+            JSON.stringify({
+              action: 'summarize',
+              x: x || 0,
+              y: y || 0,
+              t: Date.now(),
+            }),
+        );
       } catch (e) {}
     }
 
@@ -5260,53 +5305,75 @@ function injectGuestPdfContextBridge(webContents) {
       (e) => {
         if (!nearbyLooksPdf(e.target)) return;
         window.__asperaLastPdfCtx = { x: e.clientX, y: e.clientY, at: Date.now() };
-        // Delay so Electron's context-menu handler can claim first; if the
-        // page preventedDefault (WhatsApp), Hub opens a fallback menu.
-        setTimeout(() => report(e.clientX, e.clientY), 160);
+        // Only remember coords — inject into the page menu. Never open a
+        // second floating Hub menu on top of WhatsApp's menu.
       },
       true,
     );
 
-    // Also inject a row into WhatsApp's in-page menu when it appears on a PDF.
     const injectInPageItem = () => {
       const last = window.__asperaLastPdfCtx;
       if (!last || Date.now() - last.at > 5000) return;
       if (document.querySelector('[data-aspera-summarize-pdf]')) return;
       const nodes = Array.from(
-        document.querySelectorAll('div[role="application"] li, div[role="menu"] li, span[role="menuitem"], div[role="button"]'),
+        document.querySelectorAll(
+          'div[role="application"] li, div[role="menu"] li, span[role="menuitem"], div[role="menuitem"], button[role="menuitem"], div[role="button"]',
+        ),
       );
       const anchor = nodes.find((n) => {
         const t = String(n.textContent || '').trim();
         return (
-          /^Ask Meta AI$/i.test(t) ||
+          /^Reply$/i.test(t) ||
           /^Download$/i.test(t) ||
           /^Forward$/i.test(t) ||
-          /^React$/i.test(t)
+          /^React$/i.test(t) ||
+          /^Ask Meta AI$/i.test(t)
         );
       });
       if (!anchor) return;
-      const row = document.createElement('div');
+      const parent = anchor.parentElement;
+      if (!parent) return;
+
+      // Clone a real menu row when possible so fonts/spacing match WhatsApp.
+      const row = anchor.cloneNode(true);
       row.setAttribute('data-aspera-summarize-pdf', '1');
-      row.setAttribute('role', 'button');
-      row.tabIndex = 0;
-      row.textContent = 'Summarize PDF with Aspera AI';
-      row.style.cssText =
-        'padding:10px 16px;cursor:pointer;font-size:14.5px;line-height:20px;color:inherit;user-select:none;';
+      const labelEls = row.querySelectorAll('span, div');
+      let labeled = false;
+      for (const el of labelEls) {
+        const t = String(el.textContent || '').trim();
+        if (
+          t &&
+          t.length < 40 &&
+          el.childElementCount === 0 &&
+          /^(Reply|Download|Forward|React|Ask Meta AI|Pin|Star)$/i.test(t)
+        ) {
+          el.textContent = 'Summarize PDF with Aspera AI';
+          labeled = true;
+          break;
+        }
+      }
+      if (!labeled) {
+        row.textContent = 'Summarize PDF with Aspera AI';
+        row.style.cssText =
+          'padding:9px 16px;cursor:pointer;font-size:14.5px;line-height:21px;color:inherit;user-select:none;display:flex;align-items:center;';
+      }
       row.addEventListener(
         'click',
         (ev) => {
           ev.preventDefault();
           ev.stopPropagation();
-          report(last.x, last.y);
+          requestSummarize(last.x, last.y);
           try {
-            row.remove();
+            // Dismiss WhatsApp's menu by clicking the backdrop / Escape.
+            document.dispatchEvent(
+              new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
+            );
           } catch (e) {}
         },
         true,
       );
-      const parent = anchor.parentElement;
-      if (parent) parent.insertBefore(row, anchor);
-      else anchor.insertAdjacentElement('beforebegin', row);
+      // Place as the first action in the menu (above Download / Forward).
+      parent.insertBefore(row, parent.firstChild);
     };
 
     const mo = new MutationObserver(() => {
@@ -8054,10 +8121,13 @@ function attachGuestContextMenu(webContents) {
     );
     // Always offer on AI-allowed apps — PDF bubbles are often image/blob
     // previews with no ".pdf" in Electron context-menu params (Arattai/WA).
-    const canSummarizePdf = shouldOfferPdfSummarizeMenu({
-      aiEnabled: settings.aiEnabled !== false,
-      aiAllowed: !!(service && isAiAllowedAppId(service.appId)),
-    });
+    // WhatsApp: use the in-page injected item only (a second Electron menu
+    // stacked on WhatsApp's menu and looked broken).
+    const canSummarizePdf =
+      shouldOfferPdfSummarizeMenu({
+        aiEnabled: settings.aiEnabled !== false,
+        aiAllowed: !!(service && isAiAllowedAppId(service.appId)),
+      }) && service?.appId !== 'whatsapp';
 
     // With selected message text: Summarize → Forward (Pin does not apply to a selection).
     // On chat-list rows (no selection): Pin → Forward.
@@ -8114,34 +8184,7 @@ function attachGuestContextMenu(webContents) {
       template.push({
         label: 'Summarize PDF with Aspera AI',
         click: () => {
-          resolvePdfPathForSummarize(webContents, params)
-            .then((resolved) => {
-              if (!resolved?.ok) {
-                if (resolved?.cancelled) return;
-                throw new Error(resolved?.error || 'Could not open PDF.');
-              }
-              return runAsperaAiSkill('summarize-pdf', {
-                filePath: resolved.filePath,
-                fileName: resolved.fileName,
-                dark: false,
-              });
-            })
-            .catch((error) => {
-              const message = String(error?.message || error);
-              openAiResultWindow({
-                title: 'Aspera AI · Summarize PDF',
-                meta: 'EN · HI · MR',
-                dark: false,
-              });
-              pushAiResult({
-                title: 'Aspera AI · Summarize PDF',
-                meta: 'EN · HI · MR',
-                error: message,
-                text: message,
-                loading: false,
-                canSuggestReply: false,
-              });
-            });
+          runSummarizePdfFromGuest(webContents, params).catch(() => {});
         },
       });
     };
