@@ -2735,8 +2735,8 @@ function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } =
   closeChromeMenuWindow();
   closeNotifCenterWindow();
 
-  const menuW = 396;
-  const menuH = 640;
+  const menuW = 440;
+  const menuH = 760;
   const content = mainWindow.getContentBounds();
   const anchorX = content.x + (Number(x) || 0);
   const anchorY = content.y + (Number(y) || 0);
