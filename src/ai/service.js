@@ -23,6 +23,7 @@ import {
   buildCatchMeUpPrompt,
   buildRefineDraftPrompt,
   buildSuggestReplyPrompt,
+  buildSummarizePdfPrompt,
   buildSummarizePrompt,
 } from './skills.js';
 import { buildReviseReplyPrompt } from './replyEditor.js';
@@ -401,6 +402,9 @@ export async function runAiCompletionWithFailover(prompt) {
 export function promptForSkill(skill, payload) {
   if (skill === 'summarize') {
     return buildSummarizePrompt(payload);
+  }
+  if (skill === 'summarize-pdf') {
+    return buildSummarizePdfPrompt(payload);
   }
   if (skill === 'suggest-reply') {
     return buildSuggestReplyPrompt(payload);

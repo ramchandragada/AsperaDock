@@ -87,6 +87,7 @@ export function buildChromeMenuHtml(dark = false) {
   <div class="card">
     ${item('catch-up', ICO.list, 'Catch me up')}
     ${item('summarize', ICO.spark, 'Summarize selection')}
+    ${item('summarize-pdf', ICO.spark, 'Summarize PDF (EN · HI · MR)')}
     ${item('ai-settings', ICO.settings, 'Aspera AI settings')}
     <hr />
     ${item('search', ICO.search, 'Quick search')}

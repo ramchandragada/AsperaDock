@@ -129,6 +129,7 @@ import {
   resetAiProviderSession,
   setAiSettingsReader,
 } from './ai/service.js';
+import { extractPdfTextFromFile } from './ai/pdfText.js';
 import { parseSuggestedReplies } from './ai/replyEditor.js';
 import { parseRefinedDrafts, serializeRefinedDrafts } from './ai/refineDraft.js';
 import {
@@ -3306,7 +3307,124 @@ function activeAiService() {
 function asperaAiSkillTitle(skill) {
   if (skill === 'catch-up') return 'Catch me up';
   if (skill === 'refine') return 'Refine draft';
+  if (skill === 'summarize-pdf') return 'Summarize PDF';
   return 'Summarize selection';
+}
+
+/** Sync hint that the right-click target is (or contains) a PDF/document. */
+function guestContextLooksLikePdf(params = {}) {
+  const linkURL = String(params.linkURL || '');
+  const srcURL = String(params.srcURL || '');
+  const titleText = String(params.titleText || params.altText || '');
+  const selectionText = String(params.selectionText || '');
+  const hay = [linkURL, srcURL, titleText, selectionText].join(' ');
+  if (/\.pdf(\b|\?|#|$)/i.test(hay)) return true;
+  if (/\bPDF\b/.test(hay) && extractDocumentFileName(hay)) return true;
+  return looksLikeDocument({
+    linkURL,
+    srcURL,
+    fileName: extractDocumentFileName(hay) || titleText,
+    text: selectionText,
+    titleText,
+    mediaType: params.mediaType,
+  });
+}
+
+function pickPdfFileForSummarize() {
+  const picked = dialog.showOpenDialogSync(mainWindow || undefined, {
+    title: 'Summarize PDF with Aspera AI',
+    properties: ['openFile'],
+    filters: [
+      { name: 'PDF', extensions: ['pdf'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+  return picked?.[0] ? String(picked[0]) : '';
+}
+
+/**
+ * Resolve a PDF path for Summarize: chat capture first, then file picker.
+ */
+async function resolvePdfPathForSummarize(webContents, params = {}) {
+  let filePath = '';
+  let fileName = '';
+  const titleText = String(params.titleText || params.altText || '');
+  const selectionText = String(params.selectionText || '');
+  let pageTitle = '';
+  try {
+    pageTitle = String(webContents?.getTitle?.() || '').trim();
+  } catch {
+    pageTitle = '';
+  }
+
+  if (webContents && !webContents.isDestroyed()) {
+    const ctx = await inspectForwardContext(webContents, params.x, params.y).catch(
+      () => ({}),
+    );
+    const candidateName =
+      ctx?.name ||
+      extractDocumentFileName(ctx?.nearbyText) ||
+      extractDocumentFileName(titleText) ||
+      extractDocumentFileName(pageTitle) ||
+      extractDocumentFileName(selectionText) ||
+      titleText ||
+      'document.pdf';
+    const hintedName = sanitizeForwardFilename(
+      candidateName,
+      extensionOf(candidateName) || 'pdf',
+    );
+
+    const viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
+    if (viewer.ok) {
+      filePath = viewer.filePath;
+      fileName = path.basename(filePath);
+    }
+
+    if (!filePath) {
+      const recentPath = matchRecentDownload(
+        recentGuestDownloads,
+        hintedName,
+        ctx?.nearbyText || candidateName,
+      );
+      if (recentPath && fs.existsSync(recentPath)) {
+        try {
+          const dest = path.join(
+            forwardTempDir(),
+            `${Date.now()}-${path.basename(recentPath)}`,
+          );
+          fs.copyFileSync(recentPath, dest);
+          filePath = dest;
+          fileName = path.basename(dest);
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    if (!filePath) {
+      const ui = await tryCaptureDocumentByUiDownload(
+        webContents,
+        params.x,
+        params.y,
+        hintedName,
+        ctx?.downloadPoints || [],
+      );
+      if (ui.ok && ui.filePath) {
+        filePath = ui.filePath;
+        fileName = path.basename(filePath);
+      }
+    }
+  }
+
+  if (!filePath || !fs.existsSync(filePath)) {
+    filePath = pickPdfFileForSummarize();
+    fileName = filePath ? path.basename(filePath) : '';
+  }
+
+  if (!filePath) {
+    return { ok: false, cancelled: true, error: 'No PDF selected.' };
+  }
+  return { ok: true, filePath, fileName: fileName || path.basename(filePath) };
 }
 
 function cleanAiPlainText(text) {
@@ -3318,7 +3436,14 @@ function cleanAiPlainText(text) {
 
 async function runAsperaAiSkill(
   skill,
-  { selectionText = '', dark = false, clickX = 0, clickY = 0 } = {},
+  {
+    selectionText = '',
+    dark = false,
+    clickX = 0,
+    clickY = 0,
+    filePath = '',
+    fileName = '',
+  } = {},
 ) {
   if (settings.aiEnabled === false) {
     return { ok: false, error: 'Aspera AI is turned off in Settings.' };
@@ -3339,7 +3464,11 @@ async function runAsperaAiSkill(
   const skillTitle = asperaAiSkillTitle(skill);
   const routeHint = routeOrder.map((p) => p.name).join(' → ');
   const metaLang =
-    skill === 'summarize' || skill === 'refine' ? 'EN · HI · MR' : langLabel;
+    skill === 'summarize' ||
+    skill === 'summarize-pdf' ||
+    skill === 'refine'
+      ? 'EN · HI · MR'
+      : langLabel;
 
   openAiResultWindow({
     title: `Aspera AI · ${skillTitle}`,
@@ -3356,9 +3485,47 @@ async function runAsperaAiSkill(
     let refineAppName = '';
     let refineServiceId = '';
     let refineHasComposeTarget = false;
+    let pdfMeta = '';
     if (skill === 'catch-up') {
       const items = collectCatchUpItems();
       prompt = promptForSkill('catch-up', { items, language });
+    } else if (skill === 'summarize-pdf') {
+      let pdfPath = String(filePath || '').trim();
+      let pdfName = String(fileName || '').trim();
+      if (!pdfPath) {
+        pdfPath = pickPdfFileForSummarize();
+        pdfName = pdfPath ? path.basename(pdfPath) : '';
+      }
+      if (!pdfPath) {
+        throw new Error('Choose a PDF file to summarize.');
+      }
+      const service = activeAiService();
+      summarizeAppName =
+        service?.name || service?.defaultName || service?.appId || 'Document';
+      pushAiResult({
+        title: `Aspera AI · ${skillTitle}`,
+        meta: `Reading PDF · ${pdfName || path.basename(pdfPath)} · ${metaLang}`,
+        text: 'Extracting text from PDF…',
+        loading: true,
+        mode: 'summarize',
+        showTrilingual: true,
+        canSuggestReply: false,
+      });
+      const extracted = await extractPdfTextFromFile(pdfPath);
+      summarizeSelection = extracted.text;
+      pdfMeta = `${pdfName || path.basename(pdfPath)}${
+        extracted.pageCount
+          ? ` · ${extracted.pagesRead}/${extracted.pageCount}p`
+          : ''
+      }${extracted.truncated ? ' · truncated' : ''}`;
+      prompt = promptForSkill('summarize-pdf', {
+        text: extracted.text,
+        fileName: pdfName || path.basename(pdfPath),
+        appName: summarizeAppName,
+        pageCount: extracted.pageCount,
+        pagesRead: extracted.pagesRead,
+        truncated: extracted.truncated,
+      });
     } else if (skill === 'summarize') {
       const service = activeAiService();
       if (!service) {
@@ -3416,9 +3583,9 @@ async function runAsperaAiSkill(
       refineSections = parseRefinedDrafts(result.text);
       resultText = serializeRefinedDrafts(refineSections);
     }
-    if (skill === 'summarize') {
+    if (skill === 'summarize' || skill === 'summarize-pdf') {
       aiResultContext = {
-        skill: 'summarize',
+        skill,
         selectionText: summarizeSelection,
         appName: summarizeAppName,
         priorMessages: summarizePriorMessages,
@@ -3447,14 +3614,22 @@ async function runAsperaAiSkill(
     const priorMeta =
       skill === 'summarize' && summarizePriorMessages.length
         ? ` · +${summarizePriorMessages.length} prior`
-        : '';
+        : skill === 'summarize-pdf' && pdfMeta
+          ? ` · ${pdfMeta}`
+          : '';
     pushAiResult({
       title: `Aspera AI · ${skillTitle}`,
       meta: `${result.providerName} · ${result.model} · ${metaLang}${priorMeta}`,
       text: resultText,
       loading: false,
-      mode: skill === 'refine' ? 'refine' : skill === 'summarize' ? 'summarize' : 'catch-up',
-      showTrilingual: skill === 'summarize',
+      mode:
+        skill === 'refine'
+          ? 'refine'
+          : skill === 'summarize' || skill === 'summarize-pdf'
+            ? 'summarize'
+            : 'catch-up',
+      showTrilingual: skill === 'summarize' || skill === 'summarize-pdf',
+      // Suggest-reply is for chat messages, not whole PDF documents.
       canSuggestReply: skill === 'summarize',
       canUseInCompose: skill === 'refine',
       canRefineAgain: skill === 'refine',
@@ -3731,6 +3906,10 @@ function handleChromeMenuAction(type) {
   }
   if (type === 'summarize') {
     runAsperaAiSkill('summarize', { dark: false }).catch(() => {});
+    return { ok: true };
+  }
+  if (type === 'summarize-pdf') {
+    runAsperaAiSkill('summarize-pdf', { dark: false }).catch(() => {});
     return { ok: true };
   }
   if (type === 'ai-settings') {
@@ -7626,6 +7805,12 @@ function attachGuestContextMenu(webContents) {
       isAiAllowedAppId(service.appId) &&
       settings.aiEnabled !== false
     );
+    const canSummarizePdf = !!(
+      service &&
+      isAiAllowedAppId(service.appId) &&
+      settings.aiEnabled !== false &&
+      guestContextLooksLikePdf(params)
+    );
 
     // With selected message text: Summarize → Forward (Pin does not apply to a selection).
     // On chat-list rows (no selection): Pin → Forward.
@@ -7677,20 +7862,58 @@ function attachGuestContextMenu(webContents) {
         });
       }
     };
+    const pushSummarizePdfItem = () => {
+      if (!canSummarizePdf) return;
+      template.push({
+        label: 'Summarize PDF with Aspera AI',
+        click: () => {
+          resolvePdfPathForSummarize(webContents, params)
+            .then((resolved) => {
+              if (!resolved?.ok) {
+                if (resolved?.cancelled) return;
+                throw new Error(resolved?.error || 'Could not open PDF.');
+              }
+              return runAsperaAiSkill('summarize-pdf', {
+                filePath: resolved.filePath,
+                fileName: resolved.fileName,
+                dark: false,
+              });
+            })
+            .catch((error) => {
+              const message = String(error?.message || error);
+              openAiResultWindow({
+                title: 'Aspera AI · Summarize PDF',
+                meta: 'EN · HI · MR',
+                dark: false,
+              });
+              pushAiResult({
+                title: 'Aspera AI · Summarize PDF',
+                meta: 'EN · HI · MR',
+                error: message,
+                text: message,
+                loading: false,
+                canSuggestReply: false,
+              });
+            });
+        },
+      });
+    };
 
     const canPin = !!(service && isInboxAppId(service.appId) && !hasSelection);
     for (const action of guestContextMenuActionOrder({
       hasSelection,
       canSummarize,
+      canSummarizePdf,
       canForward,
       canPin,
     })) {
       if (action === 'summarize') pushSummarizeItems();
+      else if (action === 'summarize-pdf') pushSummarizePdfItem();
       else if (action === 'forward') pushForwardItem();
       else if (action === 'pin') pushPinItem();
     }
 
-    if (canSummarize || canForward || canPin) {
+    if (canSummarize || canSummarizePdf || canForward || canPin) {
       template.push({ type: 'separator' });
     }
 

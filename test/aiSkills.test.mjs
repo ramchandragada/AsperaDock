@@ -25,8 +25,10 @@ import {
   buildRefineDraftPrompt,
   buildReviseReplyPrompt,
   buildSuggestReplyPrompt,
+  buildSummarizePdfPrompt,
   buildSummarizePrompt,
 } from '../src/ai/skills.js';
+import { extractPdfTextFromBuffer } from '../src/ai/pdfText.js';
 import { extractOpenAiCompatibleText } from '../src/ai/openaiText.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -78,6 +80,38 @@ test('summarize prompt requests English Hindi and Marathi', () => {
   assert.match(prompt, /## Hindi/);
   assert.match(prompt, /## Marathi/);
   assert.match(prompt, /WhatsApp/);
+});
+
+test('summarize-pdf prompt is trilingual and includes document text', () => {
+  const prompt = buildSummarizePdfPrompt({
+    text: 'Sale deed for Survey No 12/4, consideration due 15 August.',
+    fileName: 'sale-deed.pdf',
+    appName: 'WhatsApp',
+    pageCount: 3,
+    pagesRead: 3,
+    truncated: false,
+  });
+  assert.match(prompt, /sale-deed\.pdf/);
+  assert.match(prompt, /Survey No 12\/4/);
+  assert.match(prompt, /## English/);
+  assert.match(prompt, /## Hindi/);
+  assert.match(prompt, /## Marathi/);
+  assert.match(prompt, /Skill: Summarize PDF/);
+});
+
+test('pdf text extraction reads embedded page text', async () => {
+  const content =
+    '%PDF-1.1\n1 0 obj<< /Type /Catalog /Pages 2 0 R >>endobj\n' +
+    '2 0 obj<< /Type /Pages /Kids [3 0 R] /Count 1 >>endobj\n' +
+    '3 0 obj<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>endobj\n' +
+    '4 0 obj<< /Length 44 >>stream\nBT /F1 24 Tf 50 100 Td (Hello Aspera PDF) Tj ET\nendstream\nendobj\n' +
+    '5 0 obj<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>endobj\n' +
+    'xref\n0 6\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000266 00000 n \n0000000361 00000 n \n' +
+    'trailer<< /Size 6 /Root 1 0 R >>\nstartxref\n440\n%%EOF\n';
+  const result = await extractPdfTextFromBuffer(Buffer.from(content));
+  assert.match(result.text, /Hello Aspera PDF/);
+  assert.equal(result.pageCount, 1);
+  assert.equal(result.truncated, false);
 });
 
 test('summarize and suggest-reply prompts include earlier conversation context', () => {
