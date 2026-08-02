@@ -3404,21 +3404,93 @@ async function resolvePdfPathForSummarize(
         arattaiFullFileUrlFromAny(String(params.linkURL || ''), ctx?.chatId) ||
         arattaiFullFileUrlFromAny(srcURL, ctx?.chatId);
 
-      // 0) PDF already open in preview / blob embed.
-      onProgress('Checking open PDF preview…');
+      const viewerAlreadyOpen = await guestPdfViewerIsOpen(webContents);
+
+      // 0) PDF already open — read in-memory bytes from all frames / blob: URLs.
+      onProgress(
+        viewerAlreadyOpen
+          ? 'Reading the open PDF preview…'
+          : 'Checking for an open PDF preview…',
+      );
       let viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
       if (viewer.ok) filePath = viewer.filePath;
 
-      // 0b) Open the bubble preview, then read bytes (WhatsApp often needs this).
-      if (!filePath && (Number(params.x) || Number(params.y))) {
-        onProgress('Opening PDF preview…');
-        try {
-          clickWebContentsAt(webContents, Number(params.x) || 0, Number(params.y) || 0);
-          await new Promise((r) => setTimeout(r, 450));
+      // 0b) Open viewer → click its Download toolbar (do NOT click the page;
+      // that closes WhatsApp's preview).
+      if (!filePath && viewerAlreadyOpen) {
+        onProgress('Saving PDF from the open viewer…');
+        const fromViewer = await tryCaptureOpenViewerDownload(
+          webContents,
+          hintedName,
+        );
+        if (fromViewer.ok) filePath = fromViewer.filePath;
+        // Bytes may appear after the download click warms the blob cache.
+        if (!filePath) {
+          await new Promise((r) => setTimeout(r, 300));
           viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
           if (viewer.ok) filePath = viewer.filePath;
+        }
+      }
+
+      // 0c) Only if no viewer is open: open the bubble, then read bytes.
+      if (
+        !filePath &&
+        !viewerAlreadyOpen &&
+        (Number(params.x) || Number(params.y))
+      ) {
+        onProgress('Opening PDF preview…');
+        try {
+          clickWebContentsAt(
+            webContents,
+            Number(params.x) || 0,
+            Number(params.y) || 0,
+          );
+          await new Promise((r) => setTimeout(r, 600));
+          viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
+          if (viewer.ok) filePath = viewer.filePath;
+          if (!filePath) {
+            const fromViewer = await tryCaptureOpenViewerDownload(
+              webContents,
+              hintedName,
+            );
+            if (fromViewer.ok) filePath = fromViewer.filePath;
+          }
         } catch {
           // ignore
+        }
+      }
+
+      // 0d) PDF opened in a child popup (Adobe / media window).
+      if (!filePath) {
+        const sourceId = serviceIdForWebContents(webContents);
+        const popups = sourceId ? servicePopups.get(sourceId) : null;
+        if (popups && popups.size) {
+          onProgress('Reading PDF from preview window…');
+          for (const popup of [...popups]) {
+            try {
+              if (!popup || popup.isDestroyed()) continue;
+              const childWc = popup.webContents;
+              if (!childWc || childWc.isDestroyed()) continue;
+              const childHit = await tryCaptureViewerDocumentBytes(
+                childWc,
+                hintedName,
+              );
+              if (childHit.ok) {
+                filePath = childHit.filePath;
+                break;
+              }
+              const childDl = await tryCaptureOpenViewerDownload(
+                childWc,
+                hintedName,
+              );
+              if (childDl.ok) {
+                filePath = childDl.filePath;
+                break;
+              }
+            } catch {
+              // ignore
+            }
+          }
         }
       }
 
@@ -3564,7 +3636,7 @@ async function resolvePdfPathForSummarize(
       ok: false,
       cancelled: false,
       error:
-        'Could not read this PDF from the chat. Open the PDF once (or tap Download), then click Summarize PDF with Aspera AI again.',
+        'Could not read this PDF from the open chat. Keep the PDF preview open and try Summarize PDF again — or tap the Download icon in the preview once, then Summarize.',
     };
   }
   return { ok: true, filePath, fileName: fileName || path.basename(filePath) };
@@ -6556,68 +6628,185 @@ function disarmForwardDownload(downloadPromise) {
   return downloadPromise.catch(() => '');
 }
 
+/** Script: find any in-memory PDF (%PDF-) from embeds, blobs, or WA caches. */
+function guestPdfBytesProbeJs() {
+  return `(() => {
+    const toB64 = async (url) => {
+      try {
+        const res = await fetch(url);
+        const buf = await res.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        if (bytes.length < 5) return null;
+        if (!(bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)) {
+          return null;
+        }
+        if (bytes.length > 12 * 1024 * 1024) return null;
+        let bin = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        return { b64: btoa(bin), size: bytes.length, url: String(url || '') };
+      } catch (e) {
+        return null;
+      }
+    };
+
+    const urls = [];
+    const push = (u) => {
+      const s = String(u || '').trim();
+      if (!s || urls.includes(s)) return;
+      urls.push(s);
+    };
+
+    for (const el of document.querySelectorAll(
+      'embed, object, iframe, a[href], a[download], source, video, audio',
+    )) {
+      push(el.src);
+      push(el.href);
+      push(el.getAttribute?.('data'));
+      push(el.getAttribute?.('data-url'));
+      push(el.getAttribute?.('data-src'));
+    }
+
+    // WhatsApp blob: URLs usually have no ".pdf" in the name — collect ALL blobs.
+    try {
+      for (const e of performance.getEntriesByType('resource') || []) {
+        const n = String(e.name || '');
+        if (/^blob:/i.test(n) || /\\.pdf($|\\?|#)/i.test(n) || /application%2Fpdf|application\\/pdf/i.test(n)) {
+          push(n);
+        }
+        // WhatsApp CDN media often already decrypted into blob cache after open.
+        if (/mmg\\.whatsapp\\.net|media\\.whatsapp|web\\.whatsapp\\.com\\/.*media/i.test(n)) {
+          push(n);
+        }
+      }
+    } catch (e) {}
+
+    // Walk open dialogs / media viewers for hidden anchors.
+    try {
+      const roots = [
+        document.querySelector('[role="dialog"]'),
+        document.querySelector('[data-animate-modal-body="true"]'),
+        document.body,
+      ].filter(Boolean);
+      for (const root of roots) {
+        for (const a of root.querySelectorAll('a[href], a[download]')) {
+          push(a.href);
+          push(a.getAttribute('download') ? a.href : '');
+        }
+      }
+    } catch (e) {}
+
+    return (async () => {
+      let best = null;
+      // Prefer larger PDFs (skip tiny broken headers / thumbs).
+      for (const url of urls.slice(0, 40)) {
+        const hit = await toB64(url);
+        if (!hit) continue;
+        if (!best || hit.size > best.size) best = hit;
+      }
+      if (best) return { ok: true, ...best };
+
+      // Last resort: WhatsApp Store media blob for the open document message.
+      try {
+        const modules = window.require && window.require('__debug')
+          ? null
+          : null;
+        void modules;
+      } catch (e) {}
+      try {
+        const chunk = window.webpackChunkwhatsapp_web_client || window.webpackChunkbuild;
+        // Soft probe — ignore if Store is unavailable.
+        void chunk;
+      } catch (e) {}
+
+      return { ok: false, tried: urls.length };
+    })();
+  })()`;
+}
+
 /**
- * Read a PDF already open in the guest / Adobe preview (blob / embed) without
- * clicking Download — avoids Save-dialog races entirely.
+ * True when WhatsApp/Adobe already shows a full-screen PDF / media viewer.
+ * Used so we do not click the page (that closes the open preview).
+ */
+async function guestPdfViewerIsOpen(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    return !!(await webContents.executeJavaScript(
+      `(() => {
+        const dialog = document.querySelector('[role="dialog"]');
+        const body = String(document.body?.innerText || '').slice(0, 4000);
+        const hasPages = /\\b\\d+\\s*\\/\\s*\\d+\\b/.test(body) || /\\bpage\\b/i.test(body);
+        const hasPdfWord = /\\bPDF\\b/i.test(body) || /\\.pdf\\b/i.test(body);
+        const embed = document.querySelector(
+          'embed[type*="pdf" i], embed[src*=".pdf" i], iframe[src*=".pdf" i], iframe[src^="blob:"]',
+        );
+        const mediaViewer = document.querySelector(
+          '[data-icon="media-viewer"], [data-testid="media-viewer"], [aria-label*="Media viewer" i]',
+        );
+        return !!(embed || mediaViewer || (dialog && (hasPages || hasPdfWord)));
+      })()`,
+      true,
+    ));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Read a PDF already open in the guest / Adobe / WhatsApp preview.
+ * Scans the main frame and child frames; tries every blob: URL for %PDF-.
  */
 async function tryCaptureViewerDocumentBytes(webContents, fileName = '') {
   if (!webContents || webContents.isDestroyed()) {
     return { ok: false, error: 'Chat view is gone.' };
   }
+
+  const runInFrame = async (frame) => {
+    try {
+      if (!frame || frame.isDestroyed?.()) return null;
+      return await frame.executeJavaScript(guestPdfBytesProbeJs(), true);
+    } catch {
+      return null;
+    }
+  };
+
   try {
-    const result = await webContents.executeJavaScript(
-      `(() => {
-        const toB64 = async (url) => {
-          const res = await fetch(url);
-          const buf = await res.arrayBuffer();
-          const bytes = new Uint8Array(buf);
-          if (bytes.length < 5) return null;
-          // %PDF-
-          if (!(bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)) {
-            return null;
-          }
-          if (bytes.length > 12 * 1024 * 1024) return null;
-          let bin = '';
-          const chunk = 0x8000;
-          for (let i = 0; i < bytes.length; i += chunk) {
-            bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-          }
-          return { b64: btoa(bin), size: bytes.length };
-        };
-        const urls = [];
-        const push = (u) => {
-          const s = String(u || '').trim();
-          if (!s || urls.includes(s)) return;
-          urls.push(s);
-        };
-        for (const el of document.querySelectorAll('embed, object, iframe, a[href], a[download]')) {
-          push(el.src);
-          push(el.href);
-          push(el.getAttribute?.('data'));
-          push(el.getAttribute?.('data-url'));
+    const frames = [];
+    try {
+      const main = webContents.mainFrame;
+      if (main) {
+        frames.push(main);
+        for (const f of main.framesInSubtree || []) frames.push(f);
+      }
+    } catch {
+      // ignore
+    }
+
+    let result = null;
+    if (frames.length) {
+      for (const frame of frames) {
+        const hit = await runInFrame(frame);
+        if (hit?.ok && hit.b64) {
+          if (!result || Number(hit.size) > Number(result.size)) result = hit;
         }
-        try {
-          for (const e of performance.getEntriesByType('resource') || []) {
-            const n = String(e.name || '');
-            if (/blob:|\\.pdf($|\\?)|application%2Fpdf|application\\/pdf/i.test(n)) push(n);
-          }
-        } catch (e) {}
-        return (async () => {
-          for (const url of urls.slice(0, 12)) {
-            try {
-              const hit = await toB64(url);
-              if (hit) return { ok: true, ...hit, url };
-            } catch (e) {}
-          }
-          return { ok: false };
-        })();
-      })()`,
-      true,
-    );
-    if (!result?.ok || !result.b64) return { ok: false, error: 'No viewer PDF bytes.' };
+      }
+    } else {
+      result = await webContents.executeJavaScript(guestPdfBytesProbeJs(), true);
+    }
+
+    if (!result?.ok || !result.b64) {
+      return { ok: false, error: 'No viewer PDF bytes.' };
+    }
     const buf = Buffer.from(String(result.b64), 'base64');
-    const classified = classifyForwardFileBytes(buf.subarray(0, 16), fileName || 'document.pdf');
-    if (!classified.ok) return { ok: false, error: classified.error || classified.kind };
+    const classified = classifyForwardFileBytes(
+      buf.subarray(0, 16),
+      fileName || 'document.pdf',
+    );
+    if (!classified.ok) {
+      return { ok: false, error: classified.error || classified.kind };
+    }
     const name = sanitizeForwardFilename(
       fileName || 'document.pdf',
       extensionOf(fileName) || 'pdf',
@@ -6627,6 +6816,80 @@ async function tryCaptureViewerDocumentBytes(webContents, fileName = '') {
     return { ok: true, filePath: savePath };
   } catch (error) {
     return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+/**
+ * When a PDF viewer is already open, click its Download control and capture
+ * via will-download (same silent path as Forward).
+ */
+async function tryCaptureOpenViewerDownload(webContents, fileName = '') {
+  if (!webContents || webContents.isDestroyed()) {
+    return { ok: false, error: 'Chat view is gone.' };
+  }
+  const open = await guestPdfViewerIsOpen(webContents);
+  if (!open) return { ok: false, error: 'No open PDF viewer.' };
+
+  beginForwardCaptureWindow(20_000);
+  try {
+    const points = await webContents.executeJavaScript(
+      `(() => {
+        const sels = [
+          '[aria-label="Download"]',
+          '[aria-label*="Download" i]',
+          '[title*="Download" i]',
+          '[data-icon="download"]',
+          '[data-testid="download"]',
+          'button[aria-label*="save" i]',
+          '#download',
+          '#downloadButton',
+          'a[download]',
+          '[aria-label*="Save as" i]',
+        ];
+        const pts = [];
+        const seen = new Set();
+        const scopes = [
+          document.querySelector('[role="dialog"]'),
+          document.querySelector('[data-animate-modal-body="true"]'),
+          document.body,
+        ].filter(Boolean);
+        for (const scope of scopes) {
+          for (const sel of sels) {
+            for (const el of scope.querySelectorAll(sel)) {
+              const r = el.getBoundingClientRect();
+              if (!r || r.width < 2 || r.height < 2) continue;
+              // Prefer controls in the lower toolbar of the open viewer.
+              const x = Math.round(r.left + r.width / 2);
+              const y = Math.round(r.top + r.height / 2);
+              const key = x + ',' + y;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              pts.push({ x, y, yRank: y });
+            }
+          }
+        }
+        pts.sort((a, b) => b.yRank - a.yRank);
+        return pts.slice(0, 8);
+      })()`,
+      true,
+    );
+
+    for (const point of points || []) {
+      const downloadPromise = armForwardDownload(fileName, 6_000);
+      clickWebContentsAt(webContents, point.x, point.y);
+      try {
+        const filePath = await downloadPromise;
+        if (filePath) {
+          beginForwardCaptureWindow(4_000);
+          return { ok: true, filePath };
+        }
+      } catch {
+        await disarmForwardDownload(downloadPromise);
+      }
+    }
+    return { ok: false, error: 'Viewer download control not found.' };
+  } finally {
+    beginForwardCaptureWindow(3_500);
   }
 }
 

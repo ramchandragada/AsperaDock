@@ -91,4 +91,7 @@ test('main guest context menu follows guestContextMenuActionOrder', () => {
   // Chat summarize must not open a Downloads file picker.
   assert.match(src, /allowPicker: false/);
   assert.match(src, /Getting PDF from this chat/);
+  assert.match(src, /tryCaptureOpenViewerDownload/);
+  assert.match(src, /guestPdfViewerIsOpen/);
+  assert.match(src, /guestPdfBytesProbeJs/);
 });
