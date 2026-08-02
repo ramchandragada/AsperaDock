@@ -140,8 +140,24 @@ function guestChatListHelpersJs() {
       const first = t.split(/[\\n|]/)[0].trim();
       return isJunkName(first) ? '' : first.slice(0, 80);
     };
+    const looksLikeMessagePreviewTitle = (title) => {
+      const t = String(title || '').trim();
+      // Group last-message previews: "AYUSH JAIN ABOP: @shrikant …"
+      if (/:\\s*@/.test(t)) return true;
+      if (/^[\\w .'-]{2,40}:\\s+\\S/.test(t) && t.length > 28) return true;
+      return false;
+    };
     const rowName = (cell) => {
       if (!cell) return '';
+      // WhatsApp: title testid only — never last-message body (mention collisions).
+      const waTitle =
+        cell.querySelector?.('[data-testid="cell-frame-title"] span[title]')
+        || cell.querySelector?.('[data-testid="cell-frame-title"]')
+        || cell.querySelector?.('[data-testid="cell-frame-primary"]');
+      if (waTitle) {
+        const t = tryText(waTitle.getAttribute('title') || waTitle.textContent);
+        if (t && !looksLikeMessagePreviewTitle(t)) return t;
+      }
       // Prefer Arattai chat-title-text (title attr holds full untruncated name).
       const artTitle =
         cell.querySelector?.('.chat-title-text')
@@ -151,11 +167,13 @@ function guestChatListHelpersJs() {
         if (t) return t;
       }
       for (const el of cell.querySelectorAll(titleCandidateSel)) {
-        if (el.closest('[data-testid="icon-unread-count"], [aria-label*="unread" i], [class*="badge" i], [class*="time" i], .lhs-list-counter, .lhs-list-msginfo')) {
+        if (el.closest(
+          '[data-testid="icon-unread-count"], [aria-label*="unread" i], [class*="badge" i], [class*="time" i], .lhs-list-counter, .lhs-list-msginfo, [data-testid="last-msg-body"], [data-testid="cell-frame-secondary"]',
+        )) {
           continue;
         }
         const t = tryText(el.getAttribute('title') || el.textContent);
-        if (t) return t;
+        if (t && !looksLikeMessagePreviewTitle(t)) return t;
       }
       // WhatsApp / Arattai aria-label often starts with the contact name.
       const aria = String(cell.getAttribute('aria-label') || cell.getAttribute('title') || '')
@@ -167,16 +185,22 @@ function guestChatListHelpersJs() {
           .replace(/\\bmuted\\b/ig, '')
           .trim();
         const head = tryText(cleaned.split(/[,:]/)[0]);
-        if (head) return head;
+        if (head && !looksLikeMessagePreviewTitle(head)) return head;
       }
-      // Fallback: first non-junk text line in the row (Arattai often lacks WA testids).
+      // Fallback: first non-junk text line in the row (Arattai / recent-search chips).
       const lines = String(cell.innerText || '')
         .split(/\\n+/)
         .map((l) => l.replace(/\\s+/g, ' ').trim())
         .filter(Boolean);
       for (const line of lines) {
         const t = tryText(line);
-        if (t && !/^\\d{1,2}:\\d{2}/.test(t) && !/^(am|pm)$/i.test(t) && !/ago$/i.test(t)) return t;
+        if (
+          t
+          && !looksLikeMessagePreviewTitle(t)
+          && !/^\\d{1,2}:\\d{2}/.test(t)
+          && !/^(am|pm)$/i.test(t)
+          && !/ago$/i.test(t)
+        ) return t;
       }
       return '';
     };
@@ -488,20 +512,61 @@ function messagingPinMatchHelpersJs(name, chatKey = '', nativeId = '') {
       return /search/.test(ph) || el.getAttribute('data-tab') === '3'
         || el.getAttribute?.('data-testid') === 'chat-list-search';
     });
+    const inMessagesSearchSection = (el) => {
+      // WA search results: ignore "Messages" hits (group @mentions of the pin name).
+      let cur = el;
+      for (let i = 0; i < 8 && cur; i += 1) {
+        const label = String(
+          cur.getAttribute?.('aria-label')
+          || cur.getAttribute?.('data-testid')
+          || cur.textContent
+          || '',
+        ).slice(0, 80).toLowerCase();
+        if (/^messages$|\\bmessages\\b/.test(label) && !/chat-list|cell-frame/.test(label)) {
+          // Section headers are short; message rows sit under them.
+          const prev = cur.previousElementSibling || cur.parentElement?.previousElementSibling;
+          const prevTxt = String(prev?.textContent || '').trim().toLowerCase();
+          if (prevTxt === 'messages' || /^messages$/.test(String(cur.textContent || '').trim().toLowerCase())) {
+            return true;
+          }
+        }
+        cur = cur.parentElement;
+      }
+      // Walk up looking for a preceding sibling section header "Messages".
+      cur = el;
+      for (let i = 0; i < 10 && cur; i += 1) {
+        let sib = cur.previousElementSibling;
+        while (sib) {
+          const t = String(sib.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+          if (t === 'messages') return true;
+          if (t === 'chats' || t === 'contacts' || t === 'groups') return false;
+          sib = sib.previousElementSibling;
+        }
+        cur = cur.parentElement;
+      }
+      return false;
+    };
     const findBestChatTarget = () => {
       let best = null;
       let bestScore = -1;
       let bestGroup = false;
       let bestTitle = '';
-      const consider = (title, el) => {
+      const consider = (title, el, bonus = 0) => {
         if (!el || !visible(el) || !inLeftPane(el)) return;
+        if (looksLikeMessagePreviewTitle(title)) return;
+        if (inMessagesSearchSection(el)) return;
         let score = -1;
         const nid = rowNativeId(el);
         if (wantNativeId && nid && nid === wantNativeId) score = 120;
         else score = scoreName(title);
         if (score < 48) return;
         const group = looksLikeGroup(el, title);
-        if (group && score < 100) score -= 30;
+        // Person pins (2+ tokens): never prefer a group over a DM match.
+        if (group) {
+          if (wantTokens.length >= 2 && score < 100) score -= 50;
+          else if (score < 100) score -= 30;
+        }
+        score += bonus;
         if (score < 48) return;
         if (score > bestScore || (score === bestScore && bestGroup && !group)) {
           bestScore = score;
@@ -517,13 +582,43 @@ function messagingPinMatchHelpersJs(name, chatKey = '', nativeId = '') {
         )) {
           if (!visible(cell) || !inLeftPane(cell)) continue;
           if (rowNativeId(cell) === wantNativeId) {
-            consider(rowName(cell) || wantName, clickableRowFrom(cell) || cell);
+            consider(rowName(cell) || wantName, clickableRowFrom(cell) || cell, 0);
             if (bestScore >= 120) return { el: best, title: bestTitle, score: bestScore, group: bestGroup };
           }
         }
       }
+      // Recent-search chips first (video: AYUSH visible here while not in chat list).
+      for (const el of document.querySelectorAll(
+        [
+          '#pane-side [role="list"] [role="listitem"]',
+          '#pane-side [role="button"]',
+          '#pane-side [role="listitem"]',
+          '#pane-side [tabindex="0"]',
+          '[data-testid="cell-frame-container"]',
+          '[data-testid="contact-list-item"]',
+          '[data-testid="list-item-container"]',
+          '.art-chat-item',
+        ].join(','),
+      )) {
+        if (!visible(el) || !inLeftPane(el)) continue;
+        let title = rowName(el);
+        if (!title) {
+          const lines = String(el.innerText || '')
+            .split(/\\n+/)
+            .map((l) => l.replace(/\\s+/g, ' ').trim())
+            .filter(Boolean);
+          title = lines.find((l) => (
+            l.length >= 2 && l.length <= 60 && !isJunkName(l) && !looksLikeMessagePreviewTitle(l)
+          )) || '';
+        }
+        if (!title) continue;
+        const exact = norm(title) === wantN || norm(title) === wantKey;
+        // Boost recent-search / compact chips (avatar grid under "Recent searches").
+        const chipBoost = exact ? 15 : 0;
+        consider(title, el, chipBoost);
+      }
       for (const cell of document.querySelectorAll(listSel)) {
-        consider(rowName(cell), cell);
+        consider(rowName(cell), cell, 0);
       }
       for (const span of document.querySelectorAll(
         '[data-testid="cell-frame-title"] span[title], [data-testid="cell-frame-title"], span[title], div[title]',
@@ -535,22 +630,8 @@ function messagingPinMatchHelpersJs(name, chatKey = '', nativeId = '') {
           '[data-testid="last-msg-body"], [data-testid="cell-frame-secondary"], .lhs-list-msginfo',
         )) continue;
         const title = span.getAttribute?.('title') || span.textContent;
-        consider(title, clickableRowFrom(span));
-      }
-      // Recent-search chips / contact tiles (avatar + short name) — not always list rows.
-      for (const el of document.querySelectorAll(
-        '#pane-side [role="button"], #pane-side [role="listitem"], #pane-side [tabindex="0"], [data-testid="contact-list-item"], .art-chat-item',
-      )) {
-        if (!visible(el) || !inLeftPane(el)) continue;
-        let title = rowName(el);
-        if (!title) {
-          const lines = String(el.innerText || '')
-            .split(/\\n+/)
-            .map((l) => l.replace(/\\s+/g, ' ').trim())
-            .filter(Boolean);
-          title = lines.find((l) => l.length >= 2 && l.length <= 48 && !isJunkName(l)) || '';
-        }
-        if (title) consider(title, el);
+        if (looksLikeMessagePreviewTitle(title)) continue;
+        consider(title, clickableRowFrom(span), 0);
       }
       if (bestScore < 48 || !best) return null;
       return { el: best, title: bestTitle, score: bestScore, group: bestGroup };

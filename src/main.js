@@ -4426,13 +4426,29 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
       const viaStore = await tryStoreOpen(attempt === 0 ? 'wa-store' : 'wa-store-retry');
       if (viaStore) return finishOpenWhatsApp(viaStore);
 
+      // IMPORTANT: try list / Recent-searches chips BEFORE nuclear clear.
+      // Video (AYUSH): chip was visible; wipe dismissed it, then search hit group @mentions.
+      const alreadyPre = await headerOpen();
+      if (alreadyPre) return finishOpenWhatsApp({ ...alreadyPre, via: 'already-open' });
+      // Focus empty search so WhatsApp shows "Recent searches" chips (AYUSH case).
+      try {
+        await focusGuestLeftSearch(wc);
+        await sleepMs(160);
+      } catch {
+        /* ignore */
+      }
+      let opened = await trustedClickTarget(
+        attempt === 0 ? 'recent-or-list' : 'recent-or-list-retry',
+      );
+      if (opened) return finishOpenWhatsApp(opened);
+
       await trustedClearMessagingSearch(wc, { resetPane: true });
       await sleepMs(120);
 
       const already = await headerOpen();
       if (already) return finishOpenWhatsApp({ ...already, via: 'already-open' });
 
-      let opened = await trustedClickTarget(attempt === 0 ? 'list-click' : 'list-retry');
+      opened = await trustedClickTarget(attempt === 0 ? 'list-click' : 'list-retry');
       if (opened) return finishOpenWhatsApp(opened);
 
       // Verified search fill (refuses to proceed if the box still shows the prior pin).
@@ -4448,7 +4464,8 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
               findMessagingChatTargetJs(chatName, key, waId),
               true,
             );
-            if (hit?.ok && hit.score >= 68) {
+            // Require a strong titled match (not Messages/@mention noise).
+            if (hit?.ok && hit.score >= 78 && !hit.group) {
               await focusGuestLeftSearch(wc);
               sendGuestKey(wc, 'Down');
               await sleepMs(70);

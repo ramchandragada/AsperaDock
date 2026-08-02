@@ -124,6 +124,26 @@ export function tryOpenWhatsAppStoreChatJs(name, nativeId = '') {
       }
       return -1;
     };
+    const chatTitles = (chat) => {
+      const out = [];
+      const push = (v) => {
+        const s = String(v || '').trim();
+        if (s && !out.includes(s)) out.push(s);
+      };
+      push(chat?.formattedTitle);
+      push(chat?.name);
+      push(chat?.contact?.name);
+      push(chat?.contact?.pushname);
+      push(chat?.contact?.formattedName);
+      push(chat?.contact?.verifiedName);
+      push(chat?.contact?.notifyName);
+      push(chat?.contact?.businessProfile?.description);
+      try {
+        const fn = chat?.contact?.getFormattedName || chat?.getTitle;
+        if (typeof fn === 'function') push(fn.call(chat.contact || chat));
+      } catch (e) {}
+      return out;
+    };
 
     let models = [];
     try {
@@ -136,6 +156,13 @@ export function tryOpenWhatsAppStoreChatJs(name, nativeId = '') {
     } catch (e) {
       return { ok: false, reason: 'store_read_failed' };
     }
+    // Also try Contact → chat resolve when Chat collection is thin.
+    if ((!Array.isArray(models) || !models.length) && wantId && typeof bag.Chat?.get === 'function') {
+      try {
+        const one = bag.Chat.get(wantId);
+        if (one) models = [one];
+      } catch (e) {}
+    }
     if (!Array.isArray(models) || !models.length) {
       return { ok: false, reason: 'store_empty' };
     }
@@ -147,20 +174,20 @@ export function tryOpenWhatsAppStoreChatJs(name, nativeId = '') {
         const id = String(chat?.id?._serialized || chat?.id || chat?.chatId || '');
         if (wantId && id && (id === wantId || id.includes(wantId))) {
           best = chat;
-          bestScore = 100;
+          bestScore = 120;
           break;
         }
-        const title = String(
-          chat?.formattedTitle
-          || chat?.name
-          || chat?.contact?.name
-          || chat?.contact?.pushname
-          || chat?.contact?.formattedName
-          || '',
-        ).trim();
-        const score = scoreTitle(title);
         const isGroup = !!(chat?.isGroup || chat?.groupMetadata || /@g\\.us$/.test(id));
-        const adj = isGroup && score < 100 ? score - 25 : score;
+        let score = -1;
+        for (const title of chatTitles(chat)) {
+          score = Math.max(score, scoreTitle(title));
+        }
+        // Prefer DMs strongly — group last-message @mentions must not win.
+        let adj = score;
+        if (isGroup) {
+          if (score < 100) adj = score - 40;
+          else adj = score - 5;
+        }
         if (adj > bestScore) {
           bestScore = adj;
           best = chat;

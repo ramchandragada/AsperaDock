@@ -15,6 +15,9 @@ test('WhatsApp Store open script probes all webpackChunk* modules', () => {
   assert.match(js, /123@c\.us/);
   assert.match(js, /shrikant/);
   assert.match(js, /scanRequire|getModelsArray/);
+  // Prefer DMs; match business/verified display names (AYUSH JAIN ABOP case).
+  assert.match(js, /verifiedName|notifyName|chatTitles/);
+  assert.match(js, /isGroup/);
 });
 
 test('WA search mutate clears and inserts via execCommand/paste for CDP userGesture', () => {

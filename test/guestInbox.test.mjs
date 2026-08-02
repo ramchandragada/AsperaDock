@@ -106,6 +106,14 @@ test('openMessagingChatJs clears stale search and prefers DMs over group mention
   assert.match(openJs, /scoreName\(rowName\(row\)/);
 });
 
+test('pin target scoring rejects message-preview titles and Messages search hits', () => {
+  const targetJs = findMessagingChatTargetJs('AYUSH JAIN ABOP', 'ayush jain abop');
+  assert.match(targetJs, /looksLikeMessagePreviewTitle|:\\s*@/);
+  assert.match(targetJs, /inMessagesSearchSection/);
+  assert.match(targetJs, /cell-frame-title/);
+  assert.match(targetJs, /Recent searches|chipBoost|recent-search/i);
+});
+
 test('trusted pin-open helpers return click targets without Escape', () => {
   const targetJs = findMessagingChatTargetJs('shrikant', 'shrikant');
   assert.match(targetJs, /findBestChatTarget|pointOf/);
