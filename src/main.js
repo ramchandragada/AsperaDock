@@ -83,10 +83,7 @@ import {
   sanitizePriorMessages,
   scrapeNearbyMessagesJs,
 } from './guestChatContext.js';
-import {
-  guestContextMenuActionOrder,
-  shouldOfferPdfSummarizeMenu,
-} from './guestContextMenu.js';
+import { guestContextMenuActionOrder } from './guestContextMenu.js';
 import { aboutDetailText } from './aboutCopy.js';
 import { spawnSync } from 'node:child_process';
 import {
@@ -132,7 +129,6 @@ import {
   resetAiProviderSession,
   setAiSettingsReader,
 } from './ai/service.js';
-import { extractPdfTextFromFile } from './ai/pdfText.js';
 import { parseSuggestedReplies } from './ai/replyEditor.js';
 import { parseRefinedDrafts, serializeRefinedDrafts } from './ai/refineDraft.js';
 import {
@@ -473,10 +469,6 @@ const recentNotificationFingerprints = new Map();
 const NOTIFICATION_DEDUPE_MS = 45_000;
 /** Magic prefix for guest → main Notification bridge (console-message). */
 const ASPERA_NOTIFY_PREFIX = '__ASPERA_DOCK_NOTIFY__';
-/** Guest → main: WhatsApp/Arattai PDF right-click (page may preventDefault). */
-const ASPERA_PDF_CTX_PREFIX = '__ASPERA_DOCK_PDF_CTX__';
-/** Debounce Hub guest menus when Electron + page bridge both fire. */
-let lastGuestHubMenuAt = 0;
 /** Renderer-measured chrome size — keeps guest view aligned with wrapped rows. */
 let chromeSize = null;
 /** @type {Record<string, number>} */
@@ -3325,321 +3317,7 @@ function activeAiService() {
 function asperaAiSkillTitle(skill) {
   if (skill === 'catch-up') return 'Catch me up';
   if (skill === 'refine') return 'Refine draft';
-  if (skill === 'summarize-pdf') return 'Summarize PDF';
   return 'Summarize selection';
-}
-
-function pickPdfFileForSummarize() {
-  const picked = dialog.showOpenDialogSync(mainWindow || undefined, {
-    title: 'Summarize PDF with Aspera AI',
-    properties: ['openFile'],
-    filters: [
-      { name: 'PDF', extensions: ['pdf'] },
-      { name: 'All files', extensions: ['*'] },
-    ],
-  });
-  return picked?.[0] ? String(picked[0]) : '';
-}
-
-/**
- * Resolve a PDF from the chat bubble under the cursor — same idea as text
- * summarize (no file picker). Mirrors Forward's document capture path.
- *
- * @param {{ allowPicker?: boolean, onProgress?: (msg: string) => void }} [opts]
- *   allowPicker: only for Chrome-menu / no-chat fallback (default false).
- */
-async function resolvePdfPathForSummarize(
-  webContents,
-  params = {},
-  opts = {},
-) {
-  const allowPicker = opts.allowPicker === true;
-  const onProgress =
-    typeof opts.onProgress === 'function' ? opts.onProgress : () => {};
-  let filePath = '';
-  let fileName = '';
-  const titleText = String(params.titleText || params.altText || '');
-  const selectionText = String(params.selectionText || '');
-  const linkURL = sanitizeForwardLinkURL(params.linkURL);
-  const srcURL = String(params.srcURL || '').trim();
-  let pageTitle = '';
-  try {
-    pageTitle = String(webContents?.getTitle?.() || '').trim();
-  } catch {
-    pageTitle = '';
-  }
-
-  if (webContents && !webContents.isDestroyed()) {
-    onProgress('Reading the PDF in this chat…');
-    beginForwardCaptureWindow(45_000);
-    try {
-      const ctx = await inspectForwardContext(
-        webContents,
-        params.x,
-        params.y,
-      ).catch(() => ({}));
-      const candidateUrl =
-        linkURL ||
-        String(ctx?.url || '').trim() ||
-        (!/^data:image\//i.test(srcURL) && !/\.(png|jpe?g|gif|webp)$/i.test(srcURL)
-          ? srcURL
-          : '');
-      const candidateName =
-        ctx?.name ||
-        extractDocumentFileName(ctx?.nearbyText) ||
-        extractDocumentFileName(titleText) ||
-        extractDocumentFileName(pageTitle) ||
-        extractDocumentFileName(selectionText) ||
-        titleText ||
-        'document.pdf';
-      const hintedName = sanitizeForwardFilename(
-        candidateName,
-        extensionOf(candidateName) || extensionOf(candidateUrl) || 'pdf',
-      );
-      fileName = hintedName;
-
-      const arattaiUrl =
-        String(ctx?.arattaiDownloadUrl || '').trim() ||
-        arattaiFullFileUrlFromAny(candidateUrl, ctx?.chatId) ||
-        arattaiFullFileUrlFromAny(String(params.linkURL || ''), ctx?.chatId) ||
-        arattaiFullFileUrlFromAny(srcURL, ctx?.chatId);
-
-      const viewerAlreadyOpen = await guestPdfViewerIsOpen(webContents);
-
-      // 0) PDF already open — read in-memory bytes from all frames / blob: URLs.
-      onProgress(
-        viewerAlreadyOpen
-          ? 'Reading the open PDF preview…'
-          : 'Checking for an open PDF preview…',
-      );
-      let viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
-      if (viewer.ok) filePath = viewer.filePath;
-
-      // 0b) Open viewer → click its Download toolbar (do NOT click the page;
-      // that closes WhatsApp's preview).
-      if (!filePath && viewerAlreadyOpen) {
-        onProgress('Saving PDF from the open viewer…');
-        const fromViewer = await tryCaptureOpenViewerDownload(
-          webContents,
-          hintedName,
-        );
-        if (fromViewer.ok) filePath = fromViewer.filePath;
-        // Bytes may appear after the download click warms the blob cache.
-        if (!filePath) {
-          await new Promise((r) => setTimeout(r, 300));
-          viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
-          if (viewer.ok) filePath = viewer.filePath;
-        }
-      }
-
-      // 0c) Only if no viewer is open: open the bubble, then read bytes.
-      if (
-        !filePath &&
-        !viewerAlreadyOpen &&
-        (Number(params.x) || Number(params.y))
-      ) {
-        onProgress('Opening PDF preview…');
-        try {
-          clickWebContentsAt(
-            webContents,
-            Number(params.x) || 0,
-            Number(params.y) || 0,
-          );
-          await new Promise((r) => setTimeout(r, 600));
-          viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
-          if (viewer.ok) filePath = viewer.filePath;
-          if (!filePath) {
-            const fromViewer = await tryCaptureOpenViewerDownload(
-              webContents,
-              hintedName,
-            );
-            if (fromViewer.ok) filePath = fromViewer.filePath;
-          }
-        } catch {
-          // ignore
-        }
-      }
-
-      // 0d) PDF opened in a child popup (Adobe / media window).
-      if (!filePath) {
-        const sourceId = serviceIdForWebContents(webContents);
-        const popups = sourceId ? servicePopups.get(sourceId) : null;
-        if (popups && popups.size) {
-          onProgress('Reading PDF from preview window…');
-          for (const popup of [...popups]) {
-            try {
-              if (!popup || popup.isDestroyed()) continue;
-              const childWc = popup.webContents;
-              if (!childWc || childWc.isDestroyed()) continue;
-              const childHit = await tryCaptureViewerDocumentBytes(
-                childWc,
-                hintedName,
-              );
-              if (childHit.ok) {
-                filePath = childHit.filePath;
-                break;
-              }
-              const childDl = await tryCaptureOpenViewerDownload(
-                childWc,
-                hintedName,
-              );
-              if (childDl.ok) {
-                filePath = childDl.filePath;
-                break;
-              }
-            } catch {
-              // ignore
-            }
-          }
-        }
-      }
-
-      // 1) Already downloaded in this Hub session.
-      if (!filePath) {
-        onProgress('Looking for a recent download…');
-        const recentPath = matchRecentDownload(
-          recentGuestDownloads,
-          hintedName,
-          ctx?.nearbyText || candidateName,
-        );
-        if (recentPath && fs.existsSync(recentPath)) {
-          try {
-            const dest = path.join(
-              forwardTempDir(),
-              `${Date.now()}-${path.basename(recentPath)}`,
-            );
-            fs.copyFileSync(recentPath, dest);
-            filePath = dest;
-          } catch {
-            // ignore
-          }
-        }
-      }
-
-      // 2) Arattai session / URL fetch.
-      if (!filePath && arattaiUrl) {
-        onProgress('Downloading PDF from chat…');
-        const fetched = await fetchArattaiDocumentViaSession(
-          webContents,
-          arattaiUrl,
-          hintedName,
-        );
-        if (fetched.ok) filePath = fetched.filePath;
-        else {
-          try {
-            filePath = await downloadForwardFile(
-              webContents,
-              arattaiUrl,
-              hintedName,
-            );
-          } catch {
-            // ignore
-          }
-        }
-      }
-
-      // 3) Direct document URL (not a thumbnail).
-      if (
-        !filePath &&
-        candidateUrl &&
-        !/^data:image\//i.test(candidateUrl) &&
-        !/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(candidateUrl) &&
-        !/webdownload/i.test(candidateUrl)
-      ) {
-        onProgress('Downloading PDF…');
-        try {
-          filePath = await downloadForwardFile(
-            webContents,
-            candidateUrl,
-            hintedName,
-          );
-        } catch {
-          // ignore
-        }
-      }
-
-      // 4) Click the chat Download control (same as Forward) — silent Save hijack.
-      if (!filePath) {
-        onProgress('Fetching PDF from the message…');
-        const ui = await tryCaptureDocumentByUiDownload(
-          webContents,
-          params.x,
-          params.y,
-          hintedName,
-          ctx?.downloadPoints || [],
-        );
-        if (ui.ok && ui.filePath) filePath = ui.filePath;
-      }
-
-      // 5) Arattai retry after UI warm-up.
-      if (!filePath && arattaiUrl) {
-        const fetched = await fetchArattaiDocumentViaSession(
-          webContents,
-          arattaiUrl,
-          hintedName,
-        );
-        if (fetched.ok) filePath = fetched.filePath;
-      }
-
-      // Reject non-PDF / tiny thumb captures.
-      if (filePath && fs.existsSync(filePath)) {
-        const ext = extensionOf(filePath);
-        const size = fs.statSync(filePath).size;
-        const looksImage = [
-          'png',
-          'jpg',
-          'jpeg',
-          'gif',
-          'webp',
-          'bmp',
-          'svg',
-        ].includes(ext);
-        let header = Buffer.alloc(0);
-        try {
-          const fd = fs.openSync(filePath, 'r');
-          header = Buffer.alloc(16);
-          const n = fs.readSync(fd, header, 0, 16, 0);
-          fs.closeSync(fd);
-          header = header.subarray(0, n);
-        } catch {
-          header = Buffer.alloc(0);
-        }
-        const classified = classifyForwardFileBytes(
-          header,
-          path.basename(filePath),
-        );
-        if (looksImage || size < 512 || !classified.ok) {
-          try {
-            fs.unlinkSync(filePath);
-          } catch {
-            // ignore
-          }
-          filePath = '';
-        } else {
-          fileName = path.basename(filePath);
-        }
-      }
-    } finally {
-      beginForwardCaptureWindow(3_500);
-    }
-  }
-
-  // File picker only when explicitly allowed (Chrome menu, no chat target).
-  if ((!filePath || !fs.existsSync(filePath)) && allowPicker) {
-    onProgress('Choose a PDF file…');
-    filePath = pickPdfFileForSummarize();
-    fileName = filePath ? path.basename(filePath) : '';
-  }
-
-  if (!filePath || !fs.existsSync(filePath)) {
-    return {
-      ok: false,
-      cancelled: false,
-      error:
-        'Could not read this PDF from the open chat. Keep the PDF preview open and try Summarize PDF again — or tap the Download icon in the preview once, then Summarize.',
-    };
-  }
-  return { ok: true, filePath, fileName: fileName || path.basename(filePath) };
 }
 
 function cleanAiPlainText(text) {
@@ -3651,15 +3329,7 @@ function cleanAiPlainText(text) {
 
 async function runAsperaAiSkill(
   skill,
-  {
-    selectionText = '',
-    dark = false,
-    clickX = 0,
-    clickY = 0,
-    filePath = '',
-    fileName = '',
-    reuseWindow = false,
-  } = {},
+  { selectionText = '', dark = false, clickX = 0, clickY = 0 } = {},
 ) {
   if (settings.aiEnabled === false) {
     return { ok: false, error: 'Aspera AI is turned off in Settings.' };
@@ -3680,37 +3350,13 @@ async function runAsperaAiSkill(
   const skillTitle = asperaAiSkillTitle(skill);
   const routeHint = routeOrder.map((p) => p.name).join(' → ');
   const metaLang =
-    skill === 'summarize' ||
-    skill === 'summarize-pdf' ||
-    skill === 'refine'
-      ? 'EN · HI · MR'
-      : langLabel;
+    skill === 'summarize' || skill === 'refine' ? 'EN · HI · MR' : langLabel;
 
-  const canReuse =
-    reuseWindow && aiResultWindow && !aiResultWindow.isDestroyed();
-  if (!canReuse) {
-    openAiResultWindow({
-      title: `Aspera AI · ${skillTitle}`,
-      meta: `Auto · ${routeHint} · ${metaLang}`,
-      dark,
-    });
-  } else {
-    try {
-      aiResultWindow.setAlwaysOnTop(true, 'pop-up-menu');
-      aiResultWindow.moveTop();
-    } catch {
-      // ignore
-    }
-    pushAiResult({
-      title: `Aspera AI · ${skillTitle}`,
-      meta: `Auto · ${routeHint} · ${metaLang}`,
-      loading: true,
-      text: 'Working…',
-      mode: skill === 'summarize-pdf' ? 'summarize' : undefined,
-      showTrilingual: skill === 'summarize' || skill === 'summarize-pdf',
-      canSuggestReply: false,
-    });
-  }
+  openAiResultWindow({
+    title: `Aspera AI · ${skillTitle}`,
+    meta: `Auto · ${routeHint} · ${metaLang}`,
+    dark,
+  });
 
   try {
     let prompt;
@@ -3721,56 +3367,9 @@ async function runAsperaAiSkill(
     let refineAppName = '';
     let refineServiceId = '';
     let refineHasComposeTarget = false;
-    let pdfMeta = '';
     if (skill === 'catch-up') {
       const items = collectCatchUpItems();
       prompt = promptForSkill('catch-up', { items, language });
-    } else if (skill === 'summarize-pdf') {
-      let pdfPath = String(filePath || '').trim();
-      let pdfName = String(fileName || '').trim();
-      if (!pdfPath) {
-        pdfPath = pickPdfFileForSummarize();
-        pdfName = pdfPath ? path.basename(pdfPath) : '';
-      }
-      if (!pdfPath) {
-        throw new Error('Choose a PDF file to summarize.');
-      }
-      const service = activeAiService();
-      summarizeAppName =
-        service?.name || service?.defaultName || service?.appId || 'Document';
-      pushAiResult({
-        title: `Aspera AI · ${skillTitle}`,
-        meta: `Reading PDF · ${pdfName || path.basename(pdfPath)} · ${metaLang}`,
-        text: 'Extracting text from PDF…',
-        loading: true,
-        mode: 'summarize',
-        showTrilingual: true,
-        canSuggestReply: false,
-      });
-      const extracted = await extractPdfTextFromFile(pdfPath);
-      summarizeSelection = extracted.text;
-      pdfMeta = `${pdfName || path.basename(pdfPath)}${
-        extracted.pageCount
-          ? ` · ${extracted.pagesRead}/${extracted.pageCount}p`
-          : ''
-      }${extracted.truncated ? ' · truncated' : ''}`;
-      prompt = promptForSkill('summarize-pdf', {
-        text: extracted.text,
-        fileName: pdfName || path.basename(pdfPath),
-        appName: summarizeAppName,
-        pageCount: extracted.pageCount,
-        pagesRead: extracted.pagesRead,
-        truncated: extracted.truncated,
-      });
-      pushAiResult({
-        title: `Aspera AI · ${skillTitle}`,
-        meta: `${pdfMeta} · ${metaLang}`,
-        text: 'Summarizing in English, Hindi, and Marathi…',
-        loading: true,
-        mode: 'summarize',
-        showTrilingual: true,
-        canSuggestReply: false,
-      });
     } else if (skill === 'summarize') {
       const service = activeAiService();
       if (!service) {
@@ -3828,9 +3427,9 @@ async function runAsperaAiSkill(
       refineSections = parseRefinedDrafts(result.text);
       resultText = serializeRefinedDrafts(refineSections);
     }
-    if (skill === 'summarize' || skill === 'summarize-pdf') {
+    if (skill === 'summarize') {
       aiResultContext = {
-        skill,
+        skill: 'summarize',
         selectionText: summarizeSelection,
         appName: summarizeAppName,
         priorMessages: summarizePriorMessages,
@@ -3859,22 +3458,14 @@ async function runAsperaAiSkill(
     const priorMeta =
       skill === 'summarize' && summarizePriorMessages.length
         ? ` · +${summarizePriorMessages.length} prior`
-        : skill === 'summarize-pdf' && pdfMeta
-          ? ` · ${pdfMeta}`
-          : '';
+        : '';
     pushAiResult({
       title: `Aspera AI · ${skillTitle}`,
       meta: `${result.providerName} · ${result.model} · ${metaLang}${priorMeta}`,
       text: resultText,
       loading: false,
-      mode:
-        skill === 'refine'
-          ? 'refine'
-          : skill === 'summarize' || skill === 'summarize-pdf'
-            ? 'summarize'
-            : 'catch-up',
-      showTrilingual: skill === 'summarize' || skill === 'summarize-pdf',
-      // Suggest-reply is for chat messages, not whole PDF documents.
+      mode: skill === 'refine' ? 'refine' : skill === 'summarize' ? 'summarize' : 'catch-up',
+      showTrilingual: skill === 'summarize',
       canSuggestReply: skill === 'summarize',
       canUseInCompose: skill === 'refine',
       canRefineAgain: skill === 'refine',
@@ -4151,22 +3742,6 @@ function handleChromeMenuAction(type) {
   }
   if (type === 'summarize') {
     runAsperaAiSkill('summarize', { dark: false }).catch(() => {});
-    return { ok: true };
-  }
-  if (type === 'summarize-pdf') {
-    // Prefer the open chat (same as right-click) — no Downloads picker.
-    const entry = activeServiceId ? views.get(activeServiceId) : null;
-    const wc = entry?.view?.webContents;
-    if (wc && !wc.isDestroyed() && activeAiService()) {
-      runSummarizePdfFromGuest(wc, {
-        x: 0,
-        y: 0,
-        hasImageContents: false,
-      }).catch(() => {});
-    } else {
-      // No messaging app open — allow a one-time file pick.
-      runAsperaAiSkill('summarize-pdf', { dark: false }).catch(() => {});
-    }
     return { ok: true };
   }
   if (type === 'ai-settings') {
@@ -5335,319 +4910,6 @@ function handleGuestNotificationBridge(service, rawMessage) {
   return true;
 }
 
-/**
- * Guest PDF bridge messages (console-message).
- * - action "menu": show Hub Summarize PDF + Forward beside WhatsApp's menu
- * - action "summarize": run Summarize PDF immediately
- *
- * WhatsApp preventDefault()s contextmenu so Electron's menu often never
- * appears — this bridge restores Hub actions without covering WA's menu.
- */
-function handleGuestPdfContextBridge(service, webContents, rawMessage) {
-  const text = String(rawMessage || '');
-  if (!text.startsWith(ASPERA_PDF_CTX_PREFIX)) return false;
-  if (!service || !isAiAllowedAppId(service.appId)) return true;
-  if (settings.aiEnabled === false) return true;
-  let payload = {};
-  try {
-    payload = JSON.parse(text.slice(ASPERA_PDF_CTX_PREFIX.length));
-  } catch {
-    return true;
-  }
-  if (!webContents || webContents.isDestroyed()) return true;
-  const x = Number(payload?.x) || 0;
-  const y = Number(payload?.y) || 0;
-  const action = String(payload?.action || 'menu');
-
-  if (action === 'summarize') {
-    runSummarizePdfFromGuest(webContents, {
-      x,
-      y,
-      selectionText: '',
-      linkURL: '',
-      srcURL: '',
-      titleText: '',
-      altText: '',
-      hasImageContents: true,
-      mediaType: 'image',
-    }).catch(() => {});
-    return true;
-  }
-
-  // Electron's full guest menu already opened (e.g. Arattai) — do not double.
-  if (Date.now() - lastGuestHubMenuAt < 450) return true;
-  popupGuestPdfActionsMenu(webContents, { x, y });
-  return true;
-}
-
-/**
- * Map guest click coords → main-window coords, then place the Hub menu
- * beside WhatsApp's in-page menu (not on top of it).
- */
-function guestHubMenuScreenPoint(webContents, x = 0, y = 0) {
-  let popupWindow =
-    mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
-  let popupX = Number(x) || 0;
-  let popupY = Number(y) || 0;
-  try {
-    const owner = BrowserWindow.fromWebContents(webContents);
-    if (owner && !owner.isDestroyed()) {
-      popupWindow = owner;
-    }
-  } catch {
-    // ignore
-  }
-  if (popupWindow === mainWindow || !popupWindow) {
-    try {
-      for (const entry of views.values()) {
-        if (entry?.view?.webContents === webContents) {
-          const bounds = entry.view.getBounds?.() || entry.__lastBounds;
-          if (bounds) {
-            popupX += bounds.x || 0;
-            popupY += bounds.y || 0;
-          }
-          break;
-        }
-      }
-    } catch {
-      // ignore
-    }
-    popupWindow =
-      mainWindow && !mainWindow.isDestroyed() ? mainWindow : popupWindow;
-  }
-
-  const hubW = 280;
-  const waMenuW = 236;
-  let contentW = 1200;
-  let contentH = 800;
-  try {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      const b = mainWindow.getContentBounds();
-      contentW = b.width;
-      contentH = b.height;
-    }
-  } catch {
-    // ignore
-  }
-
-  // Prefer to the RIGHT of WhatsApp's menu; flip left if it would clip.
-  let ax = popupX + waMenuW + 10;
-  let ay = Math.max(8, popupY - 28);
-  if (ax + hubW > contentW - 8) {
-    ax = Math.max(8, popupX - hubW - 10);
-  }
-  if (ay + 120 > contentH - 8) {
-    ay = Math.max(8, contentH - 130);
-  }
-  return {
-    window: popupWindow,
-    x: Math.round(ax),
-    y: Math.round(ay),
-  };
-}
-
-/** Compact Hub menu: Summarize PDF + Forward — parked beside WhatsApp's menu. */
-function popupGuestPdfActionsMenu(webContents, { x = 0, y = 0 } = {}) {
-  if (!webContents || webContents.isDestroyed()) return;
-  if (Date.now() - lastGuestHubMenuAt < 400) return;
-  lastGuestHubMenuAt = Date.now();
-
-  const sourceServiceId = serviceIdForWebContents(webContents);
-  const service = getService(sourceServiceId) || getService(activeServiceId);
-  if (!service || !isAiAllowedAppId(service.appId)) return;
-
-  const params = {
-    x,
-    y,
-    selectionText: '',
-    linkURL: '',
-    srcURL: '',
-    titleText: '',
-    altText: '',
-    hasImageContents: true,
-    mediaType: 'image',
-  };
-
-  /** @type {Electron.MenuItemConstructorOptions[]} */
-  const template = [];
-  if (settings.aiEnabled !== false) {
-    template.push({
-      label: 'Summarize PDF with Aspera AI',
-      click: () => {
-        runSummarizePdfFromGuest(webContents, params).catch(() => {});
-      },
-    });
-  }
-
-  const forwardTargets = listForwardTargets(service.id);
-  if (
-    canOfferForward({
-      appId: service.appId,
-      hasSelection: false,
-      hasImage: true,
-      targetCount: forwardTargets.length,
-      alwaysOnMessaging: true,
-    })
-  ) {
-    template.push({
-      label: 'Forward with Aspera Hub',
-      click: () => {
-        beginForwardFromGuest(webContents, params).catch(() => {});
-      },
-    });
-  }
-
-  if (!template.length) return;
-  const pos = guestHubMenuScreenPoint(webContents, x, y);
-  Menu.buildFromTemplate(template).popup({
-    window: pos.window,
-    x: pos.x,
-    y: pos.y,
-  });
-}
-
-/**
- * Summarize the PDF under the cursor — same one-click flow as text summarize.
- * Never opens a Downloads file picker from chat.
- */
-async function runSummarizePdfFromGuest(webContents, params = {}) {
-  const { routeOrder } = aiSettingsSnapshot();
-  if (settings.aiEnabled === false) {
-    return { ok: false, error: 'Aspera AI is turned off in Settings.' };
-  }
-  if (!routeOrder.length) {
-    mainWindow?.webContents.send('dock:chrome-action', 'settings');
-    return {
-      ok: false,
-      error:
-        'Add at least one AI API key in Settings → Aspera AI (Gemini recommended for speed).',
-    };
-  }
-
-  openAiResultWindow({
-    title: 'Aspera AI · Summarize PDF',
-    meta: 'EN · HI · MR',
-    dark: false,
-  });
-  try {
-    if (aiResultWindow && !aiResultWindow.isDestroyed()) {
-      aiResultWindow.setAlwaysOnTop(true, 'pop-up-menu');
-      aiResultWindow.moveTop();
-    }
-  } catch {
-    // ignore
-  }
-
-  const pushProgress = (text) => {
-    pushAiResult({
-      title: 'Aspera AI · Summarize PDF',
-      meta: 'EN · HI · MR',
-      text,
-      loading: true,
-      mode: 'summarize',
-      showTrilingual: true,
-      canSuggestReply: false,
-    });
-  };
-  pushProgress('Getting PDF from this chat…');
-
-  try {
-    const resolved = await resolvePdfPathForSummarize(webContents, params, {
-      allowPicker: false,
-      onProgress: pushProgress,
-    });
-    if (!resolved?.ok) {
-      throw new Error(resolved?.error || 'Could not read this PDF.');
-    }
-    pushProgress(`Extracting text from ${resolved.fileName || 'PDF'}…`);
-    return await runAsperaAiSkill('summarize-pdf', {
-      filePath: resolved.filePath,
-      fileName: resolved.fileName,
-      dark: false,
-      reuseWindow: true,
-    });
-  } catch (error) {
-    const message = String(error?.message || error);
-    pushAiResult({
-      title: 'Aspera AI · Summarize PDF',
-      meta: 'EN · HI · MR',
-      error: message,
-      text: message,
-      loading: false,
-      canSuggestReply: false,
-    });
-    return { ok: false, error: message };
-  }
-}
-
-/**
- * PDF right-click bridge for WhatsApp / Arattai.
- * Asks Hub to open Summarize PDF + Forward beside the page's own menu
- * (WhatsApp often blocks Electron's native context-menu event).
- */
-function injectGuestPdfContextBridge(webContents) {
-  if (!webContents || webContents.isDestroyed()) return;
-  // Allow re-inject after updates (versioned flag).
-  const prefix = ASPERA_PDF_CTX_PREFIX;
-  const script = `(() => {
-    if (window.__asperaPdfCtxBridgeV2) return true;
-    window.__asperaPdfCtxBridgeV2 = true;
-    const PREFIX = ${JSON.stringify(prefix)};
-
-    function nearbyLooksPdf(el) {
-      let n = el;
-      for (let i = 0; i < 10 && n; i += 1, n = n.parentElement) {
-        const label = String(
-          (n.getAttribute && (n.getAttribute('aria-label') || n.getAttribute('title'))) || '',
-        );
-        const text = String(n.innerText || n.textContent || '').slice(0, 600);
-        const hay = label + ' ' + text;
-        if (/\\.pdf\\b/i.test(hay) || /\\bPDF\\b/.test(hay)) return true;
-        if (
-          n.querySelector &&
-          n.querySelector(
-            '[data-icon="document"], [data-icon="document-refreshed"], [data-icon="audio-document"], [data-testid="document-thumb"]',
-          )
-        ) {
-          return true;
-        }
-      }
-      try {
-        const title = String(document.title || '');
-        if (/\\.pdf\\b/i.test(title) || /\\bPDF\\b/.test(title)) return true;
-      } catch (e) {}
-      return false;
-    }
-
-    function report(action, x, y) {
-      try {
-        console.log(
-          PREFIX +
-            JSON.stringify({
-              action: action || 'menu',
-              x: x || 0,
-              y: y || 0,
-              t: Date.now(),
-            }),
-        );
-      } catch (e) {}
-    }
-
-    document.addEventListener(
-      'contextmenu',
-      (e) => {
-        if (!nearbyLooksPdf(e.target)) return;
-        window.__asperaLastPdfCtx = { x: e.clientX, y: e.clientY, at: Date.now() };
-        // Ask Hub to show Summarize PDF + Forward beside WhatsApp's menu.
-        setTimeout(() => report('menu', e.clientX, e.clientY), 40);
-      },
-      true,
-    );
-    return true;
-  })()`;
-  webContents.executeJavaScript(script, true).catch(() => {});
-}
-
 /** Seed unread from the live page title without firing a notification. */
 function seedUnreadFromTitle(serviceId, webContents) {
   let count = 0;
@@ -6730,34 +5992,6 @@ function guestPdfBytesProbeJs() {
  * True when WhatsApp/Adobe already shows a full-screen PDF / media viewer.
  * Used so we do not click the page (that closes the open preview).
  */
-async function guestPdfViewerIsOpen(webContents) {
-  if (!webContents || webContents.isDestroyed()) return false;
-  try {
-    return !!(await webContents.executeJavaScript(
-      `(() => {
-        const dialog = document.querySelector('[role="dialog"]');
-        const body = String(document.body?.innerText || '').slice(0, 4000);
-        const hasPages = /\\b\\d+\\s*\\/\\s*\\d+\\b/.test(body) || /\\bpage\\b/i.test(body);
-        const hasPdfWord = /\\bPDF\\b/i.test(body) || /\\.pdf\\b/i.test(body);
-        const embed = document.querySelector(
-          'embed[type*="pdf" i], embed[src*=".pdf" i], iframe[src*=".pdf" i], iframe[src^="blob:"]',
-        );
-        const mediaViewer = document.querySelector(
-          '[data-icon="media-viewer"], [data-testid="media-viewer"], [aria-label*="Media viewer" i]',
-        );
-        return !!(embed || mediaViewer || (dialog && (hasPages || hasPdfWord)));
-      })()`,
-      true,
-    ));
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Read a PDF already open in the guest / Adobe / WhatsApp preview.
- * Scans the main frame and child frames; tries every blob: URL for %PDF-.
- */
 async function tryCaptureViewerDocumentBytes(webContents, fileName = '') {
   if (!webContents || webContents.isDestroyed()) {
     return { ok: false, error: 'Chat view is gone.' };
@@ -6819,85 +6053,6 @@ async function tryCaptureViewerDocumentBytes(webContents, fileName = '') {
   }
 }
 
-/**
- * When a PDF viewer is already open, click its Download control and capture
- * via will-download (same silent path as Forward).
- */
-async function tryCaptureOpenViewerDownload(webContents, fileName = '') {
-  if (!webContents || webContents.isDestroyed()) {
-    return { ok: false, error: 'Chat view is gone.' };
-  }
-  const open = await guestPdfViewerIsOpen(webContents);
-  if (!open) return { ok: false, error: 'No open PDF viewer.' };
-
-  beginForwardCaptureWindow(20_000);
-  try {
-    const points = await webContents.executeJavaScript(
-      `(() => {
-        const sels = [
-          '[aria-label="Download"]',
-          '[aria-label*="Download" i]',
-          '[title*="Download" i]',
-          '[data-icon="download"]',
-          '[data-testid="download"]',
-          'button[aria-label*="save" i]',
-          '#download',
-          '#downloadButton',
-          'a[download]',
-          '[aria-label*="Save as" i]',
-        ];
-        const pts = [];
-        const seen = new Set();
-        const scopes = [
-          document.querySelector('[role="dialog"]'),
-          document.querySelector('[data-animate-modal-body="true"]'),
-          document.body,
-        ].filter(Boolean);
-        for (const scope of scopes) {
-          for (const sel of sels) {
-            for (const el of scope.querySelectorAll(sel)) {
-              const r = el.getBoundingClientRect();
-              if (!r || r.width < 2 || r.height < 2) continue;
-              // Prefer controls in the lower toolbar of the open viewer.
-              const x = Math.round(r.left + r.width / 2);
-              const y = Math.round(r.top + r.height / 2);
-              const key = x + ',' + y;
-              if (seen.has(key)) continue;
-              seen.add(key);
-              pts.push({ x, y, yRank: y });
-            }
-          }
-        }
-        pts.sort((a, b) => b.yRank - a.yRank);
-        return pts.slice(0, 8);
-      })()`,
-      true,
-    );
-
-    for (const point of points || []) {
-      const downloadPromise = armForwardDownload(fileName, 6_000);
-      clickWebContentsAt(webContents, point.x, point.y);
-      try {
-        const filePath = await downloadPromise;
-        if (filePath) {
-          beginForwardCaptureWindow(4_000);
-          return { ok: true, filePath };
-        }
-      } catch {
-        await disarmForwardDownload(downloadPromise);
-      }
-    }
-    return { ok: false, error: 'Viewer download control not found.' };
-  } finally {
-    beginForwardCaptureWindow(3_500);
-  }
-}
-
-/**
- * Trigger the chat app's own download control and capture the file via
- * pendingForwardDownload (will-download hijack).
- * One click method per attempt — multi-firing caused Save dialog races.
- */
 async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', points = []) {
   if (!webContents || webContents.isDestroyed()) {
     return { ok: false, error: 'Chat view is gone.' };
@@ -8493,7 +7648,6 @@ function attachGuestContextMenu(webContents) {
 
   webContents.on('context-menu', (_event, params) => {
     if (webContents.isDestroyed()) return;
-    lastGuestHubMenuAt = Date.now();
 
     const sourceServiceId = serviceIdForWebContents(webContents);
     const service = getService(sourceServiceId) || getService(activeServiceId);
@@ -8569,14 +7723,6 @@ function attachGuestContextMenu(webContents) {
       isAiAllowedAppId(service.appId) &&
       settings.aiEnabled !== false
     );
-    // Always offer on AI-allowed apps — PDF bubbles are often image/blob
-    // previews with no ".pdf" in Electron context-menu params (Arattai/WA).
-    // WhatsApp also gets a beside-menu via injectGuestPdfContextBridge when
-    // the page blocks Electron's context-menu event.
-    const canSummarizePdf = shouldOfferPdfSummarizeMenu({
-      aiEnabled: settings.aiEnabled !== false,
-      aiAllowed: !!(service && isAiAllowedAppId(service.appId)),
-    });
 
     // With selected message text: Summarize → Forward (Pin does not apply to a selection).
     // On chat-list rows (no selection): Pin → Forward.
@@ -8628,31 +7774,19 @@ function attachGuestContextMenu(webContents) {
         });
       }
     };
-    const pushSummarizePdfItem = () => {
-      if (!canSummarizePdf) return;
-      template.push({
-        label: 'Summarize PDF with Aspera AI',
-        click: () => {
-          runSummarizePdfFromGuest(webContents, params).catch(() => {});
-        },
-      });
-    };
-
     const canPin = !!(service && isInboxAppId(service.appId) && !hasSelection);
     for (const action of guestContextMenuActionOrder({
       hasSelection,
       canSummarize,
-      canSummarizePdf,
       canForward,
       canPin,
     })) {
       if (action === 'summarize') pushSummarizeItems();
-      else if (action === 'summarize-pdf') pushSummarizePdfItem();
       else if (action === 'forward') pushForwardItem();
       else if (action === 'pin') pushPinItem();
     }
 
-    if (canSummarize || canSummarizePdf || canForward || canPin) {
+    if (canSummarize || canForward || canPin) {
       template.push({ type: 'separator' });
     }
 
@@ -8993,20 +8127,6 @@ function createViewForService(service) {
     attachGuestContextMenu(childWc);
     attachGuestNavigationGate(childWc, service);
     attachPopupSessionAdopt(webContents, childWindow, service);
-    if (isAiAllowedAppId(service.appId) && settings.aiEnabled !== false) {
-      childWc.on('dom-ready', () => injectGuestPdfContextBridge(childWc));
-      childWc.on('console-message', (event, level, message) => {
-        const text =
-          (typeof event === 'object' && event && 'message' in event
-            ? String(event.message || '')
-            : '') ||
-          (typeof message === 'string' ? message : '') ||
-          '';
-        if (!text) return;
-        handleGuestPdfContextBridge(service, childWc, text);
-      });
-      injectGuestPdfContextBridge(childWc);
-    }
     if (isGoogleService(service)) {
       attachGoogleChromeSpoof(childWc, {
         chromeVersion: CHROME_VERSION,
@@ -9025,7 +8145,6 @@ function createViewForService(service) {
       (typeof message === 'string' ? message : '') ||
       '';
     if (!text) return;
-    if (handleGuestPdfContextBridge(service, webContents, text)) return;
     handleGuestNotificationBridge(service, text);
   });
 
@@ -9066,9 +8185,6 @@ function createViewForService(service) {
     seedUnreadFromTitle(service.id, webContents);
     refreshBadge();
     broadcastState();
-    if (isAiAllowedAppId(service.appId) && settings.aiEnabled !== false) {
-      injectGuestPdfContextBridge(webContents);
-    }
     const live = getAppConfig(service.id);
     if (settings.allowPageInjection && live.injectCss && live.injectCss.trim()) {
       try {
@@ -9239,9 +8355,6 @@ function createViewForService(service) {
         if (shouldRunPortalBlankRecovery(service) && service.id === activeServiceId) {
           schedulePortalHealthChecks(service.id);
         }
-      }
-      if (isAiAllowedAppId(service.appId) && settings.aiEnabled !== false) {
-        injectGuestPdfContextBridge(webContents);
       }
     } catch {
       // ignore

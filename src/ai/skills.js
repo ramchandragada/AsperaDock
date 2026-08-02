@@ -28,45 +28,6 @@ export function buildSummarizePrompt({ text, appName, priorMessages } = {}) {
   ].filter((line, i, arr) => !(line === '' && arr[i - 1] === '')).join('\n');
 }
 
-/** Trilingual summary of a PDF document (text layer extracted in Hub). */
-export function buildSummarizePdfPrompt({
-  text,
-  fileName,
-  appName,
-  pageCount,
-  pagesRead,
-  truncated,
-} = {}) {
-  const body = String(text || '').trim().slice(0, 24_000);
-  const pages =
-    pageCount > 0
-      ? `Pages: ${pagesRead || pageCount} of ${pageCount}${truncated ? ' (truncated for length)' : ''}.`
-      : truncated
-        ? 'Document text was truncated for length.'
-        : '';
-  return [
-    'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
-    'Skill: Summarize PDF — be clear and useful for busy employees.',
-    `App context: ${appName || 'Document'}.`,
-    `File: ${fileName || 'document.pdf'}.`,
-    pages,
-    'Produce summaries in THREE languages with these exact headings, in order:',
-    '## English',
-    '## Hindi (हिन्दी)',
-    '## Marathi (मराठी)',
-    'Under each heading:',
-    '- one-line TL;DR',
-    '- then max 6 short bullets covering purpose, key facts/numbers, deadlines/actions, and open questions',
-    'Hindi and Marathi use Devanagari. Keep names, amounts, dates, and URLs as-is.',
-    'No invented facts. No preamble outside the headings.',
-    '',
-    'PDF text:',
-    body,
-  ]
-    .filter((line, i, arr) => !(line === '' && arr[i - 1] === ''))
-    .join('\n');
-}
-
 export function buildSuggestReplyPrompt({ text, appName, priorMessages } = {}) {
   const body = String(text || '').trim().slice(0, 6_000);
   const prior = priorContextBlock(priorMessages);

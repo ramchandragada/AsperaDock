@@ -1,9 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  guestContextMenuActionOrder,
-  shouldOfferPdfSummarizeMenu,
-} from '../src/guestContextMenu.js';
+import { guestContextMenuActionOrder } from '../src/guestContextMenu.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -31,41 +28,24 @@ test('chat-list menu without selection is Pin then Forward', () => {
   );
 });
 
-test('PDF bubble menu inserts Summarize PDF before Forward', () => {
+test('menu order never includes summarize-pdf', () => {
   assert.deepEqual(
     guestContextMenuActionOrder({
       hasSelection: false,
       canSummarize: false,
-      canSummarizePdf: true,
       canForward: true,
       canPin: true,
     }),
-    ['pin', 'summarize-pdf', 'forward'],
+    ['pin', 'forward'],
   );
   assert.deepEqual(
     guestContextMenuActionOrder({
       hasSelection: true,
       canSummarize: true,
-      canSummarizePdf: true,
       canForward: true,
       canPin: true,
     }),
-    ['summarize', 'summarize-pdf', 'forward'],
-  );
-});
-
-test('PDF summarize menu is always offered on AI-allowed apps', () => {
-  assert.equal(
-    shouldOfferPdfSummarizeMenu({ aiEnabled: true, aiAllowed: true }),
-    true,
-  );
-  assert.equal(
-    shouldOfferPdfSummarizeMenu({ aiEnabled: false, aiAllowed: true }),
-    false,
-  );
-  assert.equal(
-    shouldOfferPdfSummarizeMenu({ aiEnabled: true, aiAllowed: false }),
-    false,
+    ['summarize', 'forward'],
   );
 });
 
@@ -75,23 +55,17 @@ test('main guest context menu follows guestContextMenuActionOrder', () => {
     'utf8',
   );
   assert.match(src, /guestContextMenuActionOrder/);
-  assert.match(src, /shouldOfferPdfSummarizeMenu/);
   assert.match(src, /action === 'summarize'/);
-  assert.match(src, /action === 'summarize-pdf'/);
   assert.match(src, /action === 'forward'/);
   assert.match(src, /action === 'pin'/);
-  assert.match(src, /Summarize PDF with Aspera AI/);
-  assert.match(src, /ASPERA_PDF_CTX_PREFIX|__ASPERA_DOCK_PDF_CTX__/);
-  assert.match(src, /injectGuestPdfContextBridge/);
-  assert.match(src, /runSummarizePdfFromGuest/);
-  assert.match(src, /popupGuestPdfActionsMenu/);
-  assert.match(src, /guestHubMenuScreenPoint/);
+  assert.match(src, /Summarize with Aspera AI/);
   assert.match(src, /Forward with Aspera Hub/);
-  assert.match(src, /Summarize PDF with Aspera AI/);
-  // Chat summarize must not open a Downloads file picker.
-  assert.match(src, /allowPicker: false/);
-  assert.match(src, /Getting PDF from this chat/);
-  assert.match(src, /tryCaptureOpenViewerDownload/);
-  assert.match(src, /guestPdfViewerIsOpen/);
+  // PDF summarize feature removed — select text in the PDF preview instead.
+  assert.doesNotMatch(src, /summarize-pdf/);
+  assert.doesNotMatch(src, /shouldOfferPdfSummarizeMenu/);
+  assert.doesNotMatch(src, /injectGuestPdfContextBridge/);
+  assert.doesNotMatch(src, /runSummarizePdfFromGuest/);
+  assert.doesNotMatch(src, /Summarize PDF with Aspera AI/);
+  // Forward still captures open PDF viewers.
   assert.match(src, /guestPdfBytesProbeJs/);
 });

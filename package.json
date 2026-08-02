@@ -1,7 +1,7 @@
 {
   "name": "asperadock",
   "productName": "Aspera Hub",
-  "version": "0.4.38",
+  "version": "0.4.39",
   "description": "Aspera Hub — free Linux company workspace for WhatsApp, Arattai, Google Workspace, and Zoho",
   "main": ".vite/build/main.js",
   "private": true,
@@ -46,7 +46,6 @@
   },
   "dependencies": {
     "@sentry/electron": "^7.16.0",
-    "electron-squirrel-startup": "^1.0.1",
-    "pdfjs-dist": "^4.10.38"
+    "electron-squirrel-startup": "^1.0.1"
   }
 }
