@@ -64,6 +64,11 @@ import {
   scrapeMessagingInboxJs,
   searchMessagingChatsJs,
 } from './guestInbox.js';
+import {
+  PRIOR_MESSAGE_COUNT,
+  sanitizePriorMessages,
+  scrapeNearbyMessagesJs,
+} from './guestChatContext.js';
 import { aboutDetailText } from './aboutCopy.js';
 import { spawnSync } from 'node:child_process';
 import {
@@ -3072,6 +3077,36 @@ function collectCatchUpItems() {
   return items.slice(0, 30);
 }
 
+/**
+ * Read ~4–5 earlier messages near the current selection in the open chat/thread.
+ * Best-effort: returns [] if the DOM cannot be scraped (mail layouts vary).
+ */
+async function getNearbyPriorMessages({
+  selectionText = '',
+  clickX = 0,
+  clickY = 0,
+  maxPrior = PRIOR_MESSAGE_COUNT,
+} = {}) {
+  if (!activeServiceId) return [];
+  const entry = views.get(activeServiceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return [];
+  try {
+    const result = await wc.executeJavaScript(
+      scrapeNearbyMessagesJs({
+        selectionText,
+        maxPrior,
+        clickX,
+        clickY,
+      }),
+      true,
+    );
+    return sanitizePriorMessages(result?.messages, { max: maxPrior });
+  } catch {
+    return [];
+  }
+}
+
 async function getActiveSelectionText() {
   if (!activeServiceId) return '';
   const entry = views.get(activeServiceId);
@@ -3227,7 +3262,10 @@ function cleanAiPlainText(text) {
     .trim();
 }
 
-async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}) {
+async function runAsperaAiSkill(
+  skill,
+  { selectionText = '', dark = false, clickX = 0, clickY = 0 } = {},
+) {
   if (settings.aiEnabled === false) {
     return { ok: false, error: 'Aspera AI is turned off in Settings.' };
   }
@@ -3259,6 +3297,7 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
     let prompt;
     let summarizeSelection = '';
     let summarizeAppName = '';
+    let summarizePriorMessages = [];
     let refineSelection = '';
     let refineAppName = '';
     let refineServiceId = '';
@@ -3279,9 +3318,16 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
       }
       summarizeSelection = text;
       summarizeAppName = service.name || service.defaultName || service.appId;
+      // Human-like context: a few messages above the selection in the open thread.
+      summarizePriorMessages = await getNearbyPriorMessages({
+        selectionText: text,
+        clickX,
+        clickY,
+      });
       prompt = promptForSkill('summarize', {
         text,
         appName: summarizeAppName,
+        priorMessages: summarizePriorMessages,
       });
     } else if (skill === 'refine') {
       const service = activeAiService();
@@ -3321,6 +3367,7 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
         skill: 'summarize',
         selectionText: summarizeSelection,
         appName: summarizeAppName,
+        priorMessages: summarizePriorMessages,
         dark: !!dark,
         summaryText: resultText,
         providerName: result.providerName,
@@ -3343,9 +3390,13 @@ async function runAsperaAiSkill(skill, { selectionText = '', dark = false } = {}
     } else {
       aiResultContext = null;
     }
+    const priorMeta =
+      skill === 'summarize' && summarizePriorMessages.length
+        ? ` · +${summarizePriorMessages.length} prior`
+        : '';
     pushAiResult({
       title: `Aspera AI · ${skillTitle}`,
-      meta: `${result.providerName} · ${result.model} · ${metaLang}`,
+      meta: `${result.providerName} · ${result.model} · ${metaLang}${priorMeta}`,
       text: resultText,
       loading: false,
       mode: skill === 'refine' ? 'refine' : skill === 'summarize' ? 'summarize' : 'catch-up',
@@ -3471,6 +3522,7 @@ async function runSuggestRepliesFromAiResult() {
     const prompt = promptForSkill('suggest-reply', {
       text: ctx.selectionText,
       appName: ctx.appName,
+      priorMessages: ctx.priorMessages,
     });
     const result = await runAiCompletionWithFailover(prompt);
     syncPreferredAiProvider();
@@ -3534,6 +3586,7 @@ async function runReviseReplyFromAiResult(payload = {}) {
       language: payload?.language || 'en',
       selectionText: ctx.selectionText,
       appName: ctx.appName,
+      priorMessages: ctx.priorMessages,
     });
     const result = await runAiCompletionWithFailover(prompt);
     syncPreferredAiProvider();
@@ -7001,6 +7054,8 @@ function attachGuestContextMenu(webContents) {
         click: () => {
           runAsperaAiSkill('summarize', {
             selectionText: String(params.selectionText || ''),
+            clickX: Number(params.x) || 0,
+            clickY: Number(params.y) || 0,
           }).catch(() => {});
         },
       });

@@ -80,6 +80,33 @@ test('summarize prompt requests English Hindi and Marathi', () => {
   assert.match(prompt, /WhatsApp/);
 });
 
+test('summarize and suggest-reply prompts include earlier conversation context', () => {
+  const priorMessages = [
+    { role: 'them', text: 'Did the Kerala sale deed arrive?' },
+    { role: 'you', text: 'Not yet — waiting on courier.' },
+    { role: 'them', text: 'Bluedart should deliver today.' },
+  ];
+  const summarize = buildSummarizePrompt({
+    text: 'Received the deed via Bluedart today.',
+    appName: 'WhatsApp',
+    priorMessages,
+  });
+  assert.match(summarize, /Earlier conversation/);
+  assert.match(summarize, /Kerala sale deed/);
+  assert.match(summarize, /\[Them\]/);
+  assert.match(summarize, /Selected text:/);
+  assert.match(summarize, /center the summary on the selection/);
+
+  const replies = buildSuggestReplyPrompt({
+    text: 'Received the deed via Bluedart today.',
+    appName: 'WhatsApp',
+    priorMessages,
+  });
+  assert.match(replies, /Earlier conversation/);
+  assert.match(replies, /Bluedart should deliver/);
+  assert.match(replies, /Read earlier conversation first/);
+});
+
 test('suggest-reply prompt requests EN HI MR drafts', () => {
   const prompt = buildSuggestReplyPrompt({
     text: 'Can we meet at 3pm?',
@@ -98,9 +125,11 @@ test('revise-reply prompt is re-exported from skills', () => {
     language: 'hi',
     selectionText: 'Can we meet at 3pm?',
     appName: 'Arattai',
+    priorMessages: [{ role: 'them', text: 'Free after lunch?' }],
   });
   assert.match(prompt, /Sure, 3pm works/);
   assert.match(prompt, /Hindi/);
+  assert.match(prompt, /Free after lunch/);
 });
 
 test('refine-draft prompt polishes send-box text in EN HI MR', () => {

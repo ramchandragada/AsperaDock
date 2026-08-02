@@ -1,5 +1,7 @@
 /** Parse / serialize trilingual suggested-reply drafts for the AI result panel. */
 
+import { formatPriorMessagesForPrompt } from '../guestChatContext.js';
+
 export const REPLY_SECTIONS = [
   {
     id: 'en',
@@ -112,12 +114,14 @@ export function buildReviseReplyPrompt({
   language,
   selectionText,
   appName,
+  priorMessages,
 }) {
   const langLabel =
     REPLY_SECTIONS.find((s) => s.id === language)?.label ||
     String(language || 'English');
   const draft = String(replyText || '').trim().slice(0, 2_000);
   const context = String(selectionText || '').trim().slice(0, 4_000);
+  const prior = formatPriorMessagesForPrompt(priorMessages);
   return [
     'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
     'Skill: Revise one reply draft — keep meaning, improve clarity and tone.',
@@ -127,11 +131,13 @@ export function buildReviseReplyPrompt({
     '- Output ONLY the revised reply text (1–2 sentences).',
     '- Same language as requested. Hindi/Marathi in Devanagari when applicable.',
     '- Do not invent facts. No preamble, labels, or quotation marks wrappers.',
+    '- Use earlier conversation only for consistency with the thread.',
     '',
+    prior ? `${prior}\n` : '',
     'Original draft to revise:',
     draft || '(empty — write a short polite reply from the message below)',
     '',
     'Message / selection being replied to:',
     context || '(none)',
-  ].join('\n');
+  ].filter((line, i, arr) => !(line === '' && arr[i - 1] === '')).join('\n');
 }

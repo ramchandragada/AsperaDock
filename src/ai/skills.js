@@ -1,7 +1,14 @@
 import { languageInstruction } from './catalog.js';
+import { formatPriorMessagesForPrompt } from '../guestChatContext.js';
 
-export function buildSummarizePrompt({ text, appName }) {
+function priorContextBlock(priorMessages) {
+  const block = formatPriorMessagesForPrompt(priorMessages);
+  return block ? `${block}\n` : '';
+}
+
+export function buildSummarizePrompt({ text, appName, priorMessages } = {}) {
   const body = String(text || '').trim().slice(0, 6_000);
+  const prior = priorContextBlock(priorMessages);
   return [
     'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
     'Skill: Summarize selection — be brief and fast.',
@@ -12,14 +19,18 @@ export function buildSummarizePrompt({ text, appName }) {
     '## Marathi (मराठी)',
     'Under each heading: one-line TL;DR, then max 4 short bullets.',
     'Hindi and Marathi use Devanagari. Keep names/URLs as-is. No invented facts. No preamble.',
+    'If earlier conversation is provided, use it only to understand references,',
+    'pronouns, and what the selected text is responding to — still center the summary on the selection.',
     '',
+    prior,
     'Selected text:',
     body,
-  ].join('\n');
+  ].filter((line, i, arr) => !(line === '' && arr[i - 1] === '')).join('\n');
 }
 
-export function buildSuggestReplyPrompt({ text, appName }) {
+export function buildSuggestReplyPrompt({ text, appName, priorMessages } = {}) {
   const body = String(text || '').trim().slice(0, 6_000);
+  const prior = priorContextBlock(priorMessages);
   return [
     'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
     'Skill: Suggest short reply drafts — be brief and fast.',
@@ -30,10 +41,13 @@ export function buildSuggestReplyPrompt({ text, appName }) {
     '## Marathi replies (मराठी)',
     'Under each: exactly 2 options labeled 1) and 2), each 1–2 sentences.',
     '1) formal, 2) warmer/concise. Hindi/Marathi in Devanagari. No invented facts. No preamble.',
+    'Read earlier conversation first (like a human), then reply to the latest/selected message.',
+    'Stay consistent with names, decisions, and open questions from the earlier thread.',
     '',
+    prior,
     'Message / selection to reply to:',
     body,
-  ].join('\n');
+  ].filter((line, i, arr) => !(line === '' && arr[i - 1] === '')).join('\n');
 }
 
 /** Polish a message the employee typed in the send/compose box before sending. */
