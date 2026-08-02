@@ -73,6 +73,8 @@ import {
   nuclearWipeMessagingSearchJs,
   readMessagingSearchTextJs,
   tryOpenWhatsAppStoreChatJs,
+  waMutateSearchJs,
+  waSearchNodeJs,
 } from './whatsappPinOpen.js';
 import {
   PRIOR_MESSAGE_COUNT,
@@ -3949,69 +3951,123 @@ async function replaceGuestSearchText(webContents, text) {
   return pasted;
 }
 
+/** CDP evaluate with userGesture — required for WhatsApp React contenteditable. */
+async function cdpEvaluate(webContents, expression, { awaitPromise = false } = {}) {
+  if (!webContents || webContents.isDestroyed()) return null;
+  const dbg = await ensureGuestDebugger(webContents);
+  const result = await dbg.sendCommand('Runtime.evaluate', {
+    expression: String(expression || ''),
+    returnByValue: true,
+    awaitPromise: !!awaitPromise,
+    userGesture: true,
+  });
+  if (result?.exceptionDetails) {
+    const msg =
+      result.exceptionDetails?.exception?.description ||
+      result.exceptionDetails?.text ||
+      'cdp_evaluate_failed';
+    throw new Error(String(msg));
+  }
+  return result?.result?.value;
+}
+
+async function cdpClickAt(webContents, x, y) {
+  if (!webContents || webContents.isDestroyed()) return;
+  const dbg = await ensureGuestDebugger(webContents);
+  const cx = Math.max(0, Math.round(Number(x) || 0));
+  const cy = Math.max(0, Math.round(Number(y) || 0));
+  const base = {
+    x: cx,
+    y: cy,
+    button: 'left',
+    clickCount: 1,
+    buttons: 1,
+  };
+  try {
+    await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...base });
+    await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', ...base });
+    await dbg.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      ...base,
+      buttons: 0,
+    });
+  } catch {
+    clickWebContentsAt(webContents, cx, cy);
+  }
+}
+
 async function readGuestSearchText(webContents) {
   if (!webContents || webContents.isDestroyed()) return '';
   try {
-    const got = await webContents.executeJavaScript(readMessagingSearchTextJs(), true);
+    const got = await cdpEvaluate(webContents, readMessagingSearchTextJs());
     return String(got?.text || '').trim();
   } catch {
-    return '';
+    try {
+      const got = await webContents.executeJavaScript(readMessagingSearchTextJs(), true);
+      return String(got?.text || '').trim();
+    } catch {
+      return '';
+    }
   }
 }
 
 /**
- * Nuclear WhatsApp search wipe — verified empty before return.
- * Prior pins left "Kumar Gardas…" in the box because synthetic/Ctrl+A clear no-oped.
+ * Nuclear WhatsApp search wipe — CDP userGesture + verified empty.
+ * Screenshots on 0.4.22 still showed leftover "shrikant" after the first pin.
  */
 async function trustedClearMessagingSearch(webContents, { resetPane = true } = {}) {
   if (!webContents || webContents.isDestroyed()) return false;
-  for (let pass = 0; pass < 5; pass += 1) {
-    let chrome = null;
+  for (let pass = 0; pass < 6; pass += 1) {
+    let node = null;
     let reset = null;
     try {
-      chrome = await webContents.executeJavaScript(findMessagingSearchChromeJs(), true);
-      reset = await webContents.executeJavaScript(findWhatsAppPaneResetJs(), true);
+      node = await cdpEvaluate(webContents, waSearchNodeJs());
+      reset = await cdpEvaluate(webContents, findWhatsAppPaneResetJs());
     } catch {
-      chrome = null;
+      try {
+        node = await webContents.executeJavaScript(waSearchNodeJs(), true);
+        reset = await webContents.executeJavaScript(findWhatsAppPaneResetJs(), true);
+      } catch {
+        node = null;
+      }
     }
 
-    // 1) Explicit clear / geometric X on the search field.
-    const clearPt = chrome?.clear || chrome?.clearHint || reset?.clearHint;
-    if (clearPt && Number.isFinite(clearPt.x)) {
-      clickWebContentsAt(webContents, clearPt.x, clearPt.y);
-      await sleepMs(100);
-    }
+    if (node?.clearX != null) await cdpClickAt(webContents, node.clearX, node.clearY);
+    else if (reset?.clearHint) await cdpClickAt(webContents, reset.clearHint.x, reset.clearHint.y);
+    await sleepMs(70);
 
-    // 2) Focus search, Selection API wipe, then smash Backspace/Delete.
-    const searchPt = chrome?.search || reset?.search;
-    if (searchPt && Number.isFinite(searchPt.x)) {
-      clickWebContentsAt(webContents, searchPt.x, searchPt.y);
-      await sleepMs(90);
+    if (node?.x != null) await cdpClickAt(webContents, node.x, node.y);
+    else if (reset?.search) await cdpClickAt(webContents, reset.search.x, reset.search.y);
+    await sleepMs(70);
+
+    // CDP userGesture mutate — plain executeJavaScript is ignored by WA React.
+    try {
+      await cdpEvaluate(webContents, waMutateSearchJs(''));
+    } catch {
       try {
         await webContents.executeJavaScript(nuclearWipeMessagingSearchJs(), true);
       } catch {
         /* ignore */
       }
-      sendGuestKey(webContents, 'A', ['control']);
-      await sleepMs(30);
-      for (let i = 0; i < 50; i += 1) sendGuestKey(webContents, 'Backspace');
-      for (let i = 0; i < 20; i += 1) sendGuestKey(webContents, 'Delete');
-      await sleepMs(60);
     }
 
-    // 3) Exit search UI (back) and/or reset Chats / All filter.
-    const backPt = chrome?.back || chrome?.backHint || reset?.backHint;
-    if (backPt && Number.isFinite(backPt.x)) {
-      clickWebContentsAt(webContents, backPt.x, backPt.y);
-      await sleepMs(110);
+    // Trusted key smash as belt-and-suspenders.
+    sendGuestKey(webContents, 'A', ['control']);
+    await sleepMs(25);
+    for (let i = 0; i < 40; i += 1) sendGuestKey(webContents, 'Backspace');
+    await sleepMs(40);
+
+    if (node?.backX != null) await cdpClickAt(webContents, node.backX, node.backY);
+    else if (reset?.backHint) await cdpClickAt(webContents, reset.backHint.x, reset.backHint.y);
+    await sleepMs(80);
+
+    if (resetPane && reset?.chats && pass <= 1) {
+      await cdpClickAt(webContents, reset.chats.x, reset.chats.y);
+      await sleepMs(120);
     }
-    if (resetPane && reset?.chats && Number.isFinite(reset.chats.x) && pass === 0) {
-      clickWebContentsAt(webContents, reset.chats.x, reset.chats.y);
-      await sleepMs(140);
-    }
-    if (resetPane && reset?.allFilter && Number.isFinite(reset.allFilter.x) && pass <= 1) {
-      clickWebContentsAt(webContents, reset.allFilter.x, reset.allFilter.y);
-      await sleepMs(100);
+    if (resetPane && reset?.allFilter && pass <= 2) {
+      await cdpClickAt(webContents, reset.allFilter.x, reset.allFilter.y);
+      await sleepMs(80);
     }
 
     try {
@@ -4026,24 +4082,35 @@ async function trustedClearMessagingSearch(webContents, { resetPane = true } = {
   return !(await readGuestSearchText(webContents));
 }
 
-/** Focus left-pane search (not the compose box) via trusted clicks. */
+/** Focus left-pane search (not the compose box) via CDP click. */
 async function focusGuestLeftSearch(webContents) {
   if (!webContents || webContents.isDestroyed()) return false;
   for (let i = 0; i < 4; i += 1) {
-    const box = await webContents.executeJavaScript(findMessagingLeftSearchJs(), true);
-    if (!box?.ok || !Number.isFinite(box.x)) return false;
-    clickWebContentsAt(webContents, box.x, box.y);
-    await sleepMs(140);
-    if (box.isButton) {
-      const input = await webContents.executeJavaScript(findMessagingLeftSearchJs(), true);
-      if (input?.ok && !input.isButton && Number.isFinite(input.x)) {
-        clickWebContentsAt(webContents, input.x, input.y);
-        await sleepMs(100);
-      }
-    }
+    let node = null;
     try {
-      const chrome = await webContents.executeJavaScript(findMessagingSearchChromeJs(), true);
-      if (chrome?.searchFocused) return true;
+      node = await cdpEvaluate(webContents, waSearchNodeJs());
+    } catch {
+      node = await webContents.executeJavaScript(waSearchNodeJs(), true).catch(() => null);
+    }
+    if (!node || !Number.isFinite(node.x)) {
+      const box = await webContents.executeJavaScript(findMessagingLeftSearchJs(), true);
+      if (!box?.ok) return false;
+      await cdpClickAt(webContents, box.x, box.y);
+    } else {
+      await cdpClickAt(webContents, node.x, node.y);
+    }
+    await sleepMs(120);
+    try {
+      const focused = await cdpEvaluate(
+        webContents,
+        `(() => {
+          const el = document.activeElement;
+          return !!(el && (el.getAttribute('data-tab') === '3'
+            || /search/i.test(el.getAttribute('aria-label') || '')
+            || /search/i.test(el.getAttribute('data-placeholder') || '')));
+        })()`,
+      );
+      if (focused) return true;
     } catch {
       /* retry */
     }
@@ -4051,33 +4118,33 @@ async function focusGuestLeftSearch(webContents) {
   return false;
 }
 
-/** Clear then paste pin name; verify the search box actually shows that name. */
+/** Clear then set pin name via CDP userGesture; verify box shows the new name. */
 async function fillGuestSearchVerified(webContents, text) {
   const want = String(text || '').trim();
   const wantN = want.toLowerCase().replace(/\s+/g, ' ');
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     await trustedClearMessagingSearch(webContents, { resetPane: attempt === 0 });
-    const focused = await focusGuestLeftSearch(webContents);
-    if (!focused) continue;
+    const emptied = !(await readGuestSearchText(webContents));
+    if (!emptied && attempt < 4) continue;
+
+    await focusGuestLeftSearch(webContents);
+    let mutated = null;
     try {
-      await webContents.executeJavaScript(nuclearWipeMessagingSearchJs(), true);
+      mutated = await cdpEvaluate(webContents, waMutateSearchJs(want));
     } catch {
-      /* ignore */
+      mutated = null;
     }
-    for (let i = 0; i < 30; i += 1) sendGuestKey(webContents, 'Backspace');
-    await replaceGuestSearchText(webContents, want);
-    await sleepMs(280);
-    // Re-focus and paste again if first paste hit compose.
+    if (!mutated?.ok) {
+      // Fallback: clipboard paste after CDP clear.
+      await focusGuestLeftSearch(webContents);
+      await replaceGuestSearchText(webContents, want);
+      await sleepMs(220);
+    }
+    await sleepMs(260);
     const got = (await readGuestSearchText(webContents)).toLowerCase().replace(/\s+/g, ' ');
     if (got === wantN || (wantN && got.includes(wantN)) || (got && wantN.includes(got) && got.length >= 6)) {
       return true;
     }
-    // Second paste attempt after explicit search re-click.
-    await focusGuestLeftSearch(webContents);
-    await replaceGuestSearchText(webContents, want);
-    await sleepMs(280);
-    const got2 = (await readGuestSearchText(webContents)).toLowerCase().replace(/\s+/g, ' ');
-    if (got2 === wantN || (wantN && got2.includes(wantN))) return true;
   }
   return false;
 }
@@ -4163,14 +4230,46 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     if (!hit?.ok || !Number.isFinite(hit.x) || !Number.isFinite(hit.y)) {
       return null;
     }
-    clickWebContentsAt(wc, hit.x, hit.y);
+    if (isWhatsApp) await cdpClickAt(wc, hit.x, hit.y);
+    else clickWebContentsAt(wc, hit.x, hit.y);
     await sleepMs(380);
     const opened = await headerOpen();
     if (opened) return { ...opened, via };
-    clickWebContentsAt(wc, hit.x, hit.y);
+    if (isWhatsApp) await cdpClickAt(wc, hit.x, hit.y);
+    else clickWebContentsAt(wc, hit.x, hit.y);
     await sleepMs(420);
     const again = await headerOpen();
     return again ? { ...again, via: `${via}-retry` } : null;
+  };
+
+  const tryStoreOpen = async (via) => {
+    try {
+      const storeOpen = await cdpEvaluate(
+        wc,
+        tryOpenWhatsAppStoreChatJs(chatName, waId),
+        { awaitPromise: true },
+      );
+      if (storeOpen?.ok) {
+        await sleepMs(400);
+        const matched = await headerOpen();
+        if (matched) return { ...matched, via };
+      }
+    } catch {
+      try {
+        const storeOpen = await wc.executeJavaScript(
+          tryOpenWhatsAppStoreChatJs(chatName, waId),
+          true,
+        );
+        if (storeOpen?.ok) {
+          await sleepMs(400);
+          const matched = await headerOpen();
+          if (matched) return { ...matched, via };
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    return null;
   };
 
   let lastError = '';
@@ -4179,19 +4278,8 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     try {
       // WhatsApp: open via internal Store first — never depends on search UI state.
       if (isWhatsApp) {
-        try {
-          const storeOpen = await wc.executeJavaScript(
-            tryOpenWhatsAppStoreChatJs(chatName, waId),
-            true,
-          );
-          if (storeOpen?.ok) {
-            await sleepMs(350);
-            const matched = await headerOpen();
-            if (matched) return finishOpen({ ...matched, via: 'wa-store' });
-          }
-        } catch {
-          /* fall through to UI path */
-        }
+        const viaStore = await tryStoreOpen(attempt === 0 ? 'wa-store' : 'wa-store-retry');
+        if (viaStore) return finishOpen(viaStore);
       }
 
       await trustedClearMessagingSearch(wc, { resetPane: isWhatsApp });
@@ -4246,20 +4334,8 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
           lastError = legacy?.reason || 'chat_not_found';
         }
       } else {
-        // One more Store attempt after UI churn.
-        try {
-          const storeOpen = await wc.executeJavaScript(
-            tryOpenWhatsAppStoreChatJs(chatName, waId),
-            true,
-          );
-          if (storeOpen?.ok) {
-            await sleepMs(350);
-            const matched = await headerOpen();
-            if (matched) return finishOpen({ ...matched, via: 'wa-store-retry' });
-          }
-        } catch {
-          /* ignore */
-        }
+        const viaStore = await tryStoreOpen('wa-store-late');
+        if (viaStore) return finishOpen(viaStore);
         lastError = lastError || 'chat_not_found';
       }
     } catch (error) {

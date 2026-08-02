@@ -1,6 +1,6 @@
 /**
  * WhatsApp-specific pin open helpers.
- * Arattai works with generic list/search clicks; WA needs Store open + nuclear search wipe.
+ * Arattai works with generic list/search clicks; WA needs Store + CDP userGesture mutate.
  */
 
 /**
@@ -17,52 +17,93 @@ export function tryOpenWhatsAppStoreChatJs(name, nativeId = '') {
     const wantN = norm(wantName);
     if (!wantN && !wantId) return { ok: false, reason: 'no_target' };
 
-    const probeExports = (exp, bag) => {
+    const bag = {
+      Chat: window.Store?.Chat || null,
+      Cmd: window.Store?.Cmd || null,
+    };
+
+    const takeCmd = (obj) => {
+      if (!obj || bag.Cmd) return;
+      if (typeof obj.openChatBottom === 'function'
+        || typeof obj.openChatAt === 'function'
+        || typeof obj.openChatFromUnread === 'function') {
+        bag.Cmd = obj;
+      }
+    };
+    const takeChat = (obj) => {
+      if (!obj || bag.Chat) return;
+      if (typeof obj.getModelsArray === 'function' || typeof obj.get === 'function') {
+        bag.Chat = obj;
+      }
+    };
+    const probe = (exp) => {
       if (!exp || typeof exp !== 'object') return;
       try {
-        if (!bag.Chat && exp.Chat && (exp.Chat.getModelsArray || exp.Chat.get)) bag.Chat = exp.Chat;
-        if (!bag.Chat && exp.default?.Chat && (exp.default.Chat.getModelsArray || exp.default.Chat.get)) {
-          bag.Chat = exp.default.Chat;
+        takeChat(exp.Chat);
+        takeChat(exp.default?.Chat);
+        takeChat(exp);
+        takeCmd(exp.Cmd);
+        takeCmd(exp.default?.Cmd);
+        takeCmd(exp);
+        takeCmd(exp.default);
+      } catch (e) {}
+    };
+
+    const scanRequire = (req) => {
+      if (!req) return;
+      try {
+        if (req.c) {
+          for (const k of Object.keys(req.c)) {
+            try { probe(req.c[k]?.exports); } catch (e) {}
+            if (bag.Chat && bag.Cmd) return;
+          }
         }
-        if (!bag.Cmd && exp.Cmd && (exp.Cmd.openChatBottom || exp.Cmd.openChatAt || exp.Cmd.openChatFromUnread)) {
-          bag.Cmd = exp.Cmd;
-        }
-        if (!bag.Cmd && exp.default?.Cmd && (exp.default.Cmd.openChatBottom || exp.default.Cmd.openChatAt)) {
-          bag.Cmd = exp.default.Cmd;
+      } catch (e) {}
+      try {
+        const ids = Object.keys(req.m || {});
+        for (const mid of ids) {
+          try { probe(req(mid)); } catch (e) {}
+          if (bag.Chat && bag.Cmd) return;
         }
       } catch (e) {}
     };
 
-    const loadStore = () => {
-      const bag = {
-        Chat: window.Store?.Chat || null,
-        Cmd: window.Store?.Cmd || null,
-      };
-      if (bag.Chat && bag.Cmd) return bag;
-      const chunk =
-        window.webpackChunkwhatsapp_web_client
-        || window.webpackChunkbuild
-        || window.webpackChunkwhatsapp;
-      if (!chunk || typeof chunk.push !== 'function') return bag;
-      try {
-        const id = 'aspera_pin_' + Math.random().toString(36).slice(2);
-        chunk.push([[id], {}, (req) => {
-          try {
-            const cache = req?.c || req?.cache;
-            if (cache) {
-              for (const k of Object.keys(cache)) {
-                try { probeExports(cache[k]?.exports, bag); } catch (e) {}
-                if (bag.Chat && bag.Cmd) break;
-              }
+    if (!bag.Chat || !bag.Cmd) {
+      const chunkKeys = Object.keys(self).filter((k) => /^webpackChunk/i.test(k));
+      for (const key of chunkKeys) {
+        const chunk = self[key];
+        if (!chunk || typeof chunk.push !== 'function') continue;
+        try {
+          await new Promise((resolve) => {
+            const id = 'aspera_pin_' + Math.random().toString(36).slice(2);
+            let done = false;
+            const finish = () => { if (!done) { done = true; resolve(); } };
+            setTimeout(finish, 80);
+            try {
+              chunk.push([[id], {}, (req) => {
+                try { scanRequire(req); } catch (e) {}
+                finish();
+              }]);
+            } catch (e) {
+              finish();
             }
-          } catch (e) {}
-        }]);
-      } catch (e) {}
-      if (bag.Chat || bag.Cmd) {
-        window.Store = Object.assign(window.Store || {}, bag);
+          });
+        } catch (e) {}
+        if (bag.Chat && bag.Cmd) break;
       }
-      return bag;
-    };
+    }
+
+    if (bag.Chat || bag.Cmd) {
+      window.Store = Object.assign(window.Store || {}, bag);
+    }
+    if (!bag.Chat || !bag.Cmd) {
+      return {
+        ok: false,
+        reason: 'store_unavailable',
+        hasChat: !!bag.Chat,
+        hasCmd: !!bag.Cmd,
+      };
+    }
 
     const scoreTitle = (title) => {
       const key = norm(title);
@@ -84,17 +125,12 @@ export function tryOpenWhatsAppStoreChatJs(name, nativeId = '') {
       return -1;
     };
 
-    const store = loadStore();
-    const Chat = store.Chat;
-    const Cmd = store.Cmd;
-    if (!Chat || !Cmd) return { ok: false, reason: 'store_unavailable' };
-
     let models = [];
     try {
-      if (typeof Chat.getModelsArray === 'function') models = Chat.getModelsArray();
-      else if (Chat.models) models = Chat.models;
-      else if (typeof Chat.get === 'function' && wantId) {
-        const one = Chat.get(wantId);
+      if (typeof bag.Chat.getModelsArray === 'function') models = bag.Chat.getModelsArray();
+      else if (Array.isArray(bag.Chat.models)) models = bag.Chat.models;
+      else if (typeof bag.Chat.get === 'function' && wantId) {
+        const one = bag.Chat.get(wantId);
         if (one) models = [one];
       }
     } catch (e) {
@@ -134,9 +170,9 @@ export function tryOpenWhatsAppStoreChatJs(name, nativeId = '') {
     if (!best || bestScore < 60) return { ok: false, reason: 'store_no_match', bestScore };
 
     try {
-      if (typeof Cmd.openChatBottom === 'function') await Cmd.openChatBottom(best);
-      else if (typeof Cmd.openChatAt === 'function') await Cmd.openChatAt(best);
-      else if (typeof Cmd.openChatFromUnread === 'function') await Cmd.openChatFromUnread(best);
+      if (typeof bag.Cmd.openChatBottom === 'function') await bag.Cmd.openChatBottom(best);
+      else if (typeof bag.Cmd.openChatAt === 'function') await bag.Cmd.openChatAt(best);
+      else if (typeof bag.Cmd.openChatFromUnread === 'function') await bag.Cmd.openChatFromUnread(best);
       else return { ok: false, reason: 'store_no_open_cmd' };
       return {
         ok: true,
@@ -150,79 +186,176 @@ export function tryOpenWhatsAppStoreChatJs(name, nativeId = '') {
   })()`;
 }
 
-/** Read current left-pane search text (WA contenteditable / input). */
-export function readMessagingSearchTextJs() {
+/** Find the real WA left-pane search contenteditable (prefer data-tab=3). */
+export function waSearchNodeJs() {
   return `(() => {
-    const nodes = Array.from(document.querySelectorAll(
-      '[contenteditable="true"][data-tab="3"], [data-testid="chat-list-search"], [contenteditable="true"][aria-label*="Search" i], input[placeholder*="Search" i]',
-    ));
     const mid = (window.innerWidth || 1000) * 0.55;
-    for (const el of nodes) {
+    const cands = [];
+    for (const el of document.querySelectorAll(
+      '[contenteditable="true"][data-tab="3"], [contenteditable="true"][data-tab="3"] *, [data-testid="chat-list-search"], [contenteditable="true"][aria-label*="Search" i], [contenteditable="true"][title*="Search" i]',
+    )) {
       try {
-        const r = el.getBoundingClientRect();
-        if (r.width < 8 || r.left >= mid) continue;
+        const node = el.getAttribute?.('contenteditable') === 'true' ? el : el.closest?.('[contenteditable="true"]');
+        if (!node) continue;
+        const r = node.getBoundingClientRect();
+        if (r.width < 40 || r.height < 12 || r.left >= mid) continue;
         const ph = String(
-          el.getAttribute('placeholder')
-            || el.getAttribute('data-placeholder')
-            || el.getAttribute('aria-label')
+          node.getAttribute('placeholder')
+            || node.getAttribute('data-placeholder')
+            || node.getAttribute('aria-label')
+            || node.getAttribute('title')
             || '',
         ).toLowerCase();
         if (/search messages|search this chat/.test(ph)) continue;
-        let text = '';
-        if ('value' in el) text = String(el.value || '');
-        else text = String(el.innerText || el.textContent || '');
-        return { ok: true, text: text.replace(/\\s+/g, ' ').trim() };
+        const text = String(node.innerText || node.textContent || '').replace(/\\s+/g, ' ').trim();
+        const score =
+          (node.getAttribute('data-tab') === '3' ? 50 : 0)
+          + ( /search/.test(ph) ? 20 : 0)
+          + (text ? 10 : 0)
+          + Math.min(20, r.width / 20);
+        cands.push({ node, text, score, r });
       } catch (e) {}
     }
-    return { ok: true, text: '' };
+    cands.sort((a, b) => b.score - a.score);
+    // Prefer a node that already has text when clearing leftovers.
+    const withText = cands.find((c) => c.text);
+    const best = withText || cands[0] || null;
+    if (!best) return null;
+    return {
+      text: best.text,
+      x: Math.round(best.r.left + Math.min(48, best.r.width * 0.2)),
+      y: Math.round(best.r.top + best.r.height / 2),
+      clearX: Math.round(best.r.right - 16),
+      clearY: Math.round(best.r.top + best.r.height / 2),
+      backX: Math.round(Math.max(8, best.r.left - 26)),
+      backY: Math.round(best.r.top + best.r.height / 2),
+      dataTab: best.node.getAttribute('data-tab') || '',
+    };
   })()`;
 }
 
 /**
- * Wipe WA search while it has real focus (call after trusted click on the box).
- * Uses Selection API — synthetic clicks alone never clear WA's React contenteditable.
+ * Clear and optionally set WA search text.
+ * Intended for CDP Runtime.evaluate({ userGesture: true }) — plain
+ * executeJavaScript is ignored by WhatsApp's React contenteditable.
  */
-export function nuclearWipeMessagingSearchJs() {
+export function waMutateSearchJs(text = '') {
+  const value = String(text || '');
   return `(() => {
+    const want = ${JSON.stringify(value)};
     const mid = (window.innerWidth || 1000) * 0.55;
-    const nodes = Array.from(document.querySelectorAll(
-      '[contenteditable="true"][data-tab="3"], [data-testid="chat-list-search"], [contenteditable="true"][aria-label*="Search" i], input[placeholder*="Search" i]',
-    ));
-    let el = null;
-    for (const n of nodes) {
+    let el = document.querySelector('[contenteditable="true"][data-tab="3"]');
+    if (!el) {
+      for (const n of document.querySelectorAll(
+        '[data-testid="chat-list-search"], [contenteditable="true"][aria-label*="Search" i]',
+      )) {
+        try {
+          const r = n.getBoundingClientRect();
+          if (r.width >= 40 && r.left < mid) { el = n; break; }
+        } catch (e) {}
+      }
+    }
+    if (!el) return { ok: false, reason: 'no_search', text: '' };
+
+    // Click any visible clear/cancel near the left pane first.
+    for (const btn of document.querySelectorAll(
+      '[data-testid="search-input-clear"], [aria-label="Clear search"], [aria-label*="Clear search" i], button[aria-label="Cancel"], button[aria-label*="Cancel" i], [data-icon="x"], [data-icon="x-alt"], span[data-icon="x"], span[data-icon="x-alt"]',
+    )) {
       try {
-        const r = n.getBoundingClientRect();
-        if (r.width >= 8 && r.left < mid) { el = n; break; }
+        const r = btn.getBoundingClientRect();
+        if (r.width < 6 || r.left >= mid) continue;
+        (btn.closest('button,[role="button"]') || btn).click();
       } catch (e) {}
     }
-    if (!el) return { ok: false, reason: 'no_search' };
-    try { el.focus(); } catch (e) {}
+
+    try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (e2) {} }
+
+    const read = () => String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+
     try {
-      if ('value' in el) {
-        el.value = '';
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-      } else {
-        const sel = window.getSelection();
-        const range = document.createRange();
-        range.selectNodeContents(el);
-        sel.removeAllRanges();
-        sel.addRange(range);
-        document.execCommand('delete', false, null);
-        el.textContent = '';
-        while (el.firstChild) el.removeChild(el.firstChild);
-        el.dispatchEvent(new InputEvent('input', {
-          bubbles: true, inputType: 'deleteContentBackward', data: null,
+      const sel = window.getSelection();
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.execCommand('delete', false, null);
+      document.execCommand('selectAll', false, null);
+      document.execCommand('delete', false, null);
+    } catch (e) {}
+
+    try {
+      el.textContent = '';
+      while (el.firstChild) el.removeChild(el.firstChild);
+      el.dispatchEvent(new InputEvent('beforeinput', {
+        bubbles: true, cancelable: true, inputType: 'deleteContentBackward', data: null,
+      }));
+      el.dispatchEvent(new InputEvent('input', {
+        bubbles: true, inputType: 'deleteContentBackward', data: null,
+      }));
+    } catch (e) {}
+
+    if (want) {
+      try {
+        document.execCommand('insertText', false, want);
+      } catch (e) {}
+      try {
+        el.dispatchEvent(new InputEvent('beforeinput', {
+          bubbles: true, cancelable: true, inputType: 'insertText', data: want,
         }));
+        el.dispatchEvent(new InputEvent('input', {
+          bubbles: true, inputType: 'insertText', data: want,
+        }));
+      } catch (e) {}
+      // Last resort: paste event with DataTransfer (some WA builds listen only to this).
+      if (read() !== want) {
+        try {
+          const dt = new DataTransfer();
+          dt.setData('text/plain', want);
+          el.dispatchEvent(new ClipboardEvent('paste', {
+            clipboardData: dt, bubbles: true, cancelable: true,
+          }));
+        } catch (e) {}
       }
-    } catch (e) {
-      return { ok: false, reason: String(e?.message || e) };
     }
-    const left = ('value' in el)
-      ? String(el.value || '').trim()
-      : String(el.innerText || el.textContent || '').trim();
-    return { ok: left.length === 0, text: left };
+
+    const text = read();
+    const wantN = want.toLowerCase().replace(/\\s+/g, ' ').trim();
+    const gotN = text.toLowerCase().replace(/\\s+/g, ' ').trim();
+    const matched = !want
+      ? gotN.length === 0
+      : (gotN === wantN || gotN.includes(wantN) || (wantN.includes(gotN) && gotN.length >= 4));
+    return { ok: matched, text, want, focused: document.activeElement === el };
   })()`;
+}
+
+/** Read current left-pane search text (WA contenteditable / input). */
+export function readMessagingSearchTextJs() {
+  return `(() => {
+    const mid = (window.innerWidth || 1000) * 0.55;
+    let bestText = '';
+    let bestScore = -1;
+    for (const el of document.querySelectorAll(
+      '[contenteditable="true"][data-tab="3"], [data-testid="chat-list-search"], [contenteditable="true"][aria-label*="Search" i]',
+    )) {
+      try {
+        const r = el.getBoundingClientRect();
+        if (r.width < 40 || r.left >= mid) continue;
+        const text = String(el.innerText || el.textContent || el.value || '').replace(/\\s+/g, ' ').trim();
+        // Prefer nodes that still hold leftover pin text — empty placeholders score lower.
+        const score = (el.getAttribute('data-tab') === '3' ? 50 : 0) + (text ? 40 : 0) + r.width / 20;
+        if (score > bestScore) { bestScore = score; bestText = text; }
+      } catch (e) {}
+    }
+    return { ok: true, text: bestText };
+  })()`;
+}
+
+/**
+ * Clear and set via the same reader used for verification.
+ * Kept for non-CDP fallbacks.
+ */
+export function nuclearWipeMessagingSearchJs() {
+  return waMutateSearchJs('');
 }
 
 /** Reset WA left pane: Chats nav + All filter coords (exits sticky search UI). */
@@ -272,7 +405,6 @@ export function findWhatsAppPaneResetJs() {
         break;
       }
     }
-    // Geometric clear / back relative to the search field.
     let clearHint = null;
     let backHint = null;
     let search = null;
@@ -281,10 +413,12 @@ export function findWhatsAppPaneResetJs() {
     )) {
       if (!visible(el) || !inLeft(el)) continue;
       const r = el.getBoundingClientRect();
+      const text = String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
       search = {
         x: Math.round(r.left + Math.min(40, r.width * 0.2)),
         y: Math.round(r.top + r.height / 2),
-        hasText: String(el.innerText || el.textContent || el.value || '').trim().length > 0,
+        hasText: text.length > 0,
+        text,
       };
       clearHint = { x: Math.round(r.right - 16), y: Math.round(r.top + r.height / 2) };
       backHint = { x: Math.round(Math.max(8, r.left - 26)), y: Math.round(r.top + r.height / 2) };

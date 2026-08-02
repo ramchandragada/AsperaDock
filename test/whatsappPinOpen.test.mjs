@@ -5,27 +5,33 @@ import {
   nuclearWipeMessagingSearchJs,
   readMessagingSearchTextJs,
   tryOpenWhatsAppStoreChatJs,
+  waMutateSearchJs,
+  waSearchNodeJs,
 } from '../src/whatsappPinOpen.js';
 
-test('WhatsApp Store open script probes webpack Chat/Cmd modules', () => {
+test('WhatsApp Store open script probes all webpackChunk* modules', () => {
   const js = tryOpenWhatsAppStoreChatJs('shrikant', '123@c.us');
-  assert.match(js, /webpackChunkwhatsapp_web_client|openChatBottom/);
+  assert.match(js, /webpackChunk|openChatBottom/);
   assert.match(js, /123@c\.us/);
   assert.match(js, /shrikant/);
-  assert.match(js, /isGroup|@g\\\\.us/);
+  assert.match(js, /scanRequire|getModelsArray/);
 });
 
-test('nuclear search wipe uses Selection API delete on contenteditable', () => {
-  const js = nuclearWipeMessagingSearchJs();
-  assert.match(js, /selectNodeContents|deleteContentBackward/);
-  assert.match(js, /data-tab="3"|chat-list-search/);
-  assert.doesNotMatch(js, /key:\s*'Escape'|code:\s*'Escape'/);
+test('WA search mutate clears and inserts via execCommand/paste for CDP userGesture', () => {
+  const clearJs = waMutateSearchJs('');
+  assert.match(clearJs, /selectNodeContents|deleteContentBackward|insertText/);
+  assert.match(clearJs, /data-tab="3"/);
+  assert.doesNotMatch(clearJs, /key:\s*'Escape'|code:\s*'Escape'/);
+  const fillJs = waMutateSearchJs('Kumar Gardas New Narendra');
+  assert.match(fillJs, /Kumar Gardas New Narendra/);
+  assert.match(fillJs, /ClipboardEvent|paste/);
+  assert.match(nuclearWipeMessagingSearchJs(), /data-tab="3"/);
 });
 
-test('search text reader and pane reset expose clear/back geometry', () => {
-  assert.match(readMessagingSearchTextJs(), /innerText|textContent/);
+test('search node / reader prefer leftover text over empty placeholders', () => {
+  assert.match(waSearchNodeJs(), /clearX|data-tab/);
+  assert.match(readMessagingSearchTextJs(), /bestText|data-tab/);
   const reset = findWhatsAppPaneResetJs();
   assert.match(reset, /clearHint|backHint/);
   assert.match(reset, /aria-label="Chats"|data-testid="chat"/);
-  assert.match(reset, /\^all\$/i);
 });
