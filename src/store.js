@@ -9,6 +9,7 @@ import {
   MAX_WARM_VIEWS_DEFAULT,
 } from './services.js';
 import { defaultShortcutsMap, migrateShortcutsMap } from './shortcutsConfig.js';
+import { sanitizePinnedPeople } from './guestInbox.js';
 
 export const PRIMARY_PROFILE_ID = 'primary';
 
@@ -203,6 +204,12 @@ export const DEFAULTS = {
   serviceLabels: {},
   /** @type {Record<string, object>} */
   serviceConfigs: {},
+
+  /**
+   * Pinned people / groups (WhatsApp & Arattai) shown above the account strip.
+   * @type {{ id: string, serviceId: string, chatKey: string, name: string, appId?: string }[]}
+   */
+  pinnedPeople: [],
 };
 
 let cache = null;
@@ -470,6 +477,7 @@ export function loadSettings() {
           serviceConfigs: parsed.serviceConfigs || {},
           serviceInstances: parsed.serviceInstances || [],
           profiles: parsed.profiles,
+          pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
         }),
       ),
     );

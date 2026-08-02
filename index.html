@@ -12,43 +12,44 @@
   <body class="theme-light layout-top density-normal icon-size-normal">
     <div class="shell">
       <header id="top-bar" class="app-bar app-bar-top">
-        <nav id="apps-top" class="apps-track" aria-label="Apps"></nav>
-        <div class="chrome-brand" title="Aspera">
-          <img id="chrome-wordmark" class="chrome-wordmark" alt="Aspera" draggable="false" />
-        </div>
-        <div class="chrome-actions">
-          <button id="lock-btn" type="button" class="icon-btn lock-btn" title="Lock Aspera Hub (Ctrl+Shift+L)" aria-label="Lock Aspera Hub"></button>
-          <button id="add-app-btn" type="button" class="icon-btn add-app-btn" title="Add app"></button>
-          <span class="chrome-divider" aria-hidden="true"></span>
-          <button id="downloads-btn" type="button" class="icon-btn" title="Open Downloads folder" aria-label="Open Downloads folder"></button>
-          <button id="extensions-btn" type="button" class="icon-btn" title="Extensions" aria-label="Extensions"></button>
-          <button id="check-updates-btn" type="button" class="icon-btn" title="Check for updates" aria-label="Check for updates"></button>
-          <div class="menu-wrap">
-            <button id="notif-btn" type="button" class="icon-btn badge-host" title="Notifications">
-              <span class="icon-slot"></span>
-              <span id="global-badge" class="global-badge hidden">0</span>
-            </button>
-            <div id="notif-center" class="chrome-menu notif-center hidden" role="menu">
-              <header class="notif-head">
-                <strong>Notifications</strong>
-                <div class="notif-head-actions">
-                  <button id="notif-read-all" type="button" class="link-btn">Mark all read</button>
-                  <button id="notif-clear" type="button" class="link-btn">Clear</button>
+        <div class="app-bar-main">
+          <nav id="apps-top" class="apps-track" aria-label="Apps"></nav>
+          <div class="chrome-brand" title="Aspera">
+            <img id="chrome-wordmark" class="chrome-wordmark" alt="Aspera" draggable="false" />
+          </div>
+          <div class="chrome-actions">
+            <button id="lock-btn" type="button" class="icon-btn lock-btn" title="Lock Aspera Hub (Ctrl+Shift+L)" aria-label="Lock Aspera Hub"></button>
+            <button id="add-app-btn" type="button" class="icon-btn add-app-btn" title="Add app"></button>
+            <span class="chrome-divider" aria-hidden="true"></span>
+            <button id="downloads-btn" type="button" class="icon-btn" title="Open Downloads folder" aria-label="Open Downloads folder"></button>
+            <button id="extensions-btn" type="button" class="icon-btn" title="Extensions" aria-label="Extensions"></button>
+            <button id="check-updates-btn" type="button" class="icon-btn" title="Check for updates" aria-label="Check for updates"></button>
+            <div class="menu-wrap">
+              <button id="notif-btn" type="button" class="icon-btn badge-host" title="Notifications">
+                <span class="icon-slot"></span>
+                <span id="global-badge" class="global-badge hidden">0</span>
+              </button>
+              <div id="notif-center" class="chrome-menu notif-center hidden" role="menu">
+                <header class="notif-head">
+                  <strong>Notifications</strong>
+                  <div class="notif-head-actions">
+                    <button id="notif-read-all" type="button" class="link-btn">Mark all read</button>
+                    <button id="notif-clear" type="button" class="link-btn">Clear</button>
+                  </div>
+                </header>
+                <div id="notif-list" class="notif-list"></div>
+                <div id="monitor-block" class="monitor-block hidden">
+                  <div class="monitor-head">Memory per app</div>
+                  <div id="monitor-list" class="monitor-list"></div>
                 </div>
-              </header>
-              <div id="notif-list" class="notif-list"></div>
-              <div id="monitor-block" class="monitor-block hidden">
-                <div class="monitor-head">Memory per app</div>
-                <div id="monitor-list" class="monitor-list"></div>
               </div>
             </div>
-          </div>
-          <div class="menu-wrap">
-            <button id="menu-btn" type="button" class="icon-btn brand-avatar" title="Menu" aria-label="Menu"></button>
-            <div id="app-chrome-menu" class="chrome-menu hidden" role="menu">
-              <button type="button" data-action="search" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="search"></span> Quick search
-              </button>
+            <div class="menu-wrap">
+              <button id="menu-btn" type="button" class="icon-btn brand-avatar" title="Menu" aria-label="Menu"></button>
+              <div id="app-chrome-menu" class="chrome-menu hidden" role="menu">
+                <button type="button" data-action="search" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="search"></span> Quick search
+                </button>
               <button type="button" data-action="focus" class="chrome-menu-item">
                 <span class="chrome-menu-ico" data-ico="focus"></span> Focus mode
               </button>
@@ -90,7 +91,18 @@
                 <span class="chrome-menu-ico" data-ico="info"></span> About
               </button>
               <div id="chrome-menu-version" class="chrome-menu-version">Aspera Hub</div>
+              </div>
             </div>
+          </div>
+        </div>
+        <div id="hub-rails" class="hub-rails hidden" aria-label="Pinned and unread chats">
+          <div class="hub-rail-section">
+            <span class="hub-rail-label">Pinned</span>
+            <div id="pin-rail" class="hub-rail" role="list"></div>
+          </div>
+          <div class="hub-rail-section hub-rail-grow">
+            <span class="hub-rail-label">Needs reply</span>
+            <div id="inbox-rail" class="hub-rail" role="list"></div>
           </div>
         </div>
       </header>
@@ -113,7 +125,7 @@
     <!-- Quick search -->
     <div id="search-modal" class="modal hidden" role="dialog">
       <div class="modal-card search-card">
-        <input id="search-input" type="search" placeholder="Jump to app…" autocomplete="off" />
+        <input id="search-input" type="search" placeholder="Search apps and chats…" autocomplete="off" />
         <ul id="search-results"></ul>
       </div>
     </div>

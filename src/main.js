@@ -52,6 +52,17 @@ import {
   sanitizeForwardLinkURL,
   shouldForwardAsDocument,
 } from './forwardHub.js';
+import {
+  composeReplyJs,
+  isInboxAppId,
+  makePinId,
+  normalizeChatKey,
+  openMessagingChatJs,
+  sanitizePinnedPeople,
+  scrapeMessagingInboxJs,
+  searchMessagingChatsJs,
+} from './guestInbox.js';
+import { aboutDetailText } from './aboutCopy.js';
 import { spawnSync } from 'node:child_process';
 import {
   installUnpackedExtension,
@@ -377,9 +388,14 @@ const hibernatedAt = new Map();
 /** @type {Map<string, number>} */
 const unreadCounts = new Map();
 /** Recent unread activity shown in the notification center. */
-/** @type {{ id: string, serviceId: string, title: string, body: string, at: number }[]} */
+/** @type {{ id: string, serviceId: string, title: string, body: string, at: number, chatName?: string, chatKey?: string }[]} */
 let notificationLog = [];
 const NOTIFICATION_LOG_MAX = 40;
+/** Per-service scraped unread chats for the unified inbox strip. */
+/** @type {Map<string, { chats: { chatKey: string, name: string, preview: string, unread: number }[], at: number }>} */
+const inboxByService = new Map();
+let inboxPollTimer = null;
+const INBOX_POLL_MS = 8_000;
 /** Dedupe identical toasts per service (fingerprint → last shown at). */
 /** @type {Map<string, { fingerprint: string, at: number }>} */
 const recentNotificationFingerprints = new Map();
@@ -2645,11 +2661,17 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
 function buildNotifCenterData() {
   const notifications = (notificationLog || []).slice(0, 40).map((item) => {
     const service = getService(item.serviceId);
+    const canReply = isInboxAppId(service?.appId || item.appId);
     return {
+      id: item.id,
       serviceId: item.serviceId,
       title: item.title,
       body: item.body,
       at: item.at,
+      chatName: item.chatName || '',
+      chatKey: item.chatKey || '',
+      canReply,
+      accountLabel: item.accountLabel || service?.title || service?.name || '',
       logo: service?.logo || null,
       color: service?.color || '#e2e8f0',
     };
@@ -2683,8 +2705,8 @@ function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } =
   closeChromeMenuWindow();
   closeNotifCenterWindow();
 
-  const menuW = 356;
-  const menuH = 540;
+  const menuW = 376;
+  const menuH = 580;
   const content = mainWindow.getContentBounds();
   const anchorX = content.x + (Number(x) || 0);
   const anchorY = content.y + (Number(y) || 0);
@@ -3592,7 +3614,7 @@ function handleChromeMenuAction(type) {
   return { ok: true };
 }
 
-function handleNotifCenterAction(type, value) {
+async function handleNotifCenterAction(type, value) {
   if (type === 'clear') {
     notificationLog = [];
     broadcastState();
@@ -3604,8 +3626,26 @@ function handleNotifCenterAction(type, value) {
   }
   if (type === 'activate') {
     closeNotifCenterWindow();
-    if (value) activateService(value);
+    const serviceId =
+      typeof value === 'string' ? value : String(value?.serviceId || '');
+    const chatName =
+      typeof value === 'object' ? String(value?.chatName || '') : '';
+    const chatKey =
+      typeof value === 'object' ? String(value?.chatKey || '') : '';
+    if (!serviceId) return { ok: false };
+    if (chatName || chatKey) {
+      return openMessagingChat(serviceId, { name: chatName, chatKey });
+    }
+    activateService(serviceId);
     return { ok: true };
+  }
+  if (type === 'reply') {
+    closeNotifCenterWindow();
+    const serviceId = String(value?.serviceId || '');
+    const text = String(value?.text || '').trim();
+    const chatName = String(value?.chatName || value?.title || '');
+    const chatKey = String(value?.chatKey || '');
+    return sendQuickReply(serviceId, { name: chatName, chatKey, text });
   }
   return { ok: false };
 }
@@ -3698,6 +3738,12 @@ function logNotification(service, body, titleOverride) {
   const title = String(
     titleOverride || service.title || service.name || 'App',
   ).trim();
+  const accountLabel = String(service.title || service.name || 'App').trim();
+  // Rich notifications use the sender as title — keep that for jump / reply.
+  const chatName =
+    title && title !== accountLabel && !/^\d+\s*unread$/i.test(title)
+      ? title
+      : '';
   notificationLog = [
     {
       id: `${service.id}-${Date.now().toString(36)}`,
@@ -3705,11 +3751,212 @@ function logNotification(service, body, titleOverride) {
       title,
       body: String(body || '').trim(),
       at: Date.now(),
+      chatName,
+      chatKey: chatName ? normalizeChatKey(chatName) : '',
+      appId: service.appId || '',
+      accountLabel,
     },
     ...notificationLog,
   ].slice(0, NOTIFICATION_LOG_MAX);
   broadcastState();
   pushNotifCenterData();
+}
+
+function collectUnifiedInbox() {
+  /** @type {{ id: string, serviceId: string, appId: string, accountLabel: string, chatKey: string, name: string, preview: string, unread: number, color?: string }[]} */
+  const items = [];
+  for (const service of orderedServices()) {
+    if (!isInboxAppId(service.appId)) continue;
+    const snap = inboxByService.get(service.id);
+    if (!snap?.chats?.length) continue;
+    const accountLabel = service.title || service.name || 'App';
+    for (const chat of snap.chats) {
+      items.push({
+        id: `${service.id}::${chat.chatKey}`,
+        serviceId: service.id,
+        appId: service.appId,
+        accountLabel,
+        chatKey: chat.chatKey,
+        name: chat.name,
+        preview: chat.preview || '',
+        unread: Number(chat.unread) || 1,
+        color: service.color || '#64748b',
+      });
+    }
+  }
+  items.sort((a, b) => (b.unread || 0) - (a.unread || 0));
+  return items.slice(0, 20);
+}
+
+async function scrapeServiceInbox(serviceId) {
+  const service = getService(serviceId);
+  if (!service || !isInboxAppId(service.appId)) return;
+  const entry = views.get(serviceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) {
+    inboxByService.delete(serviceId);
+    return;
+  }
+  try {
+    const result = await wc.executeJavaScript(scrapeMessagingInboxJs(), true);
+    const chats = Array.isArray(result?.chats) ? result.chats : [];
+    inboxByService.set(serviceId, {
+      chats: chats
+        .map((c) => ({
+          chatKey: normalizeChatKey(c?.chatKey || c?.name),
+          name: String(c?.name || '').replace(/\s+/g, ' ').trim().slice(0, 80),
+          preview: String(c?.preview || '').replace(/\s+/g, ' ').trim().slice(0, 100),
+          unread: Math.max(0, Number(c?.unread) || 0),
+        }))
+        .filter((c) => c.name && c.unread > 0),
+      at: Date.now(),
+    });
+  } catch {
+    // Guest may be mid-reload.
+  }
+}
+
+async function pollAllInboxes({ broadcast = true } = {}) {
+  const ids = orderedServices()
+    .filter((s) => isInboxAppId(s.appId) && views.has(s.id))
+    .map((s) => s.id);
+  await Promise.all(ids.map((id) => scrapeServiceInbox(id)));
+  if (broadcast) broadcastState();
+}
+
+function ensureInboxPolling() {
+  if (inboxPollTimer) return;
+  inboxPollTimer = setInterval(() => {
+    pollAllInboxes().catch(() => {});
+  }, INBOX_POLL_MS);
+  // First pass soon after boot / warm loads.
+  setTimeout(() => {
+    pollAllInboxes().catch(() => {});
+  }, 2_500);
+}
+
+async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
+  const service = getService(serviceId);
+  if (!service || !isInboxAppId(service.appId)) {
+    return { ok: false, error: 'Open a WhatsApp or Arattai chat.' };
+  }
+  raiseDockWindow();
+  activateService(serviceId);
+  await sleepMs(450);
+  const entry = views.get(serviceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) {
+    return { ok: false, error: 'Chat view is not ready.' };
+  }
+  try {
+    const result = await wc.executeJavaScript(
+      openMessagingChatJs(name, chatKey || normalizeChatKey(name)),
+      true,
+    );
+    if (result?.ok) {
+      await sleepMs(280);
+      return { ok: true, via: result.via || 'opened' };
+    }
+    return {
+      ok: false,
+      error: `Could not find “${name || 'chat'}”. Open it once in the app, then try again.`,
+    };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+async function sendQuickReply(serviceId, { name = '', chatKey = '', text = '' } = {}) {
+  const message = String(text || '').trim();
+  if (!message) return { ok: false, error: 'Type a short reply first.' };
+  const opened = await openMessagingChat(serviceId, { name, chatKey });
+  if (!opened.ok) return opened;
+  const entry = views.get(serviceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) {
+    return { ok: false, error: 'Chat view is gone.' };
+  }
+  try {
+    await markActiveComposeTarget(serviceId);
+    const placed = await wc.executeJavaScript(
+      composeReplyJs(message, { send: true }),
+      true,
+    );
+    if (placed?.ok) {
+      return { ok: true, via: placed.via || 'sent' };
+    }
+    return {
+      ok: false,
+      error: 'Opened the chat — paste or type your reply, then Send.',
+    };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+async function searchChatsAcrossAccounts(query) {
+  const q = String(query || '').trim();
+  if (!q) return { ok: true, chats: [] };
+  const services = orderedServices().filter(
+    (s) => isInboxAppId(s.appId) && views.has(s.id),
+  );
+  const chats = [];
+  await Promise.all(
+    services.map(async (service) => {
+      const wc = views.get(service.id)?.view?.webContents;
+      if (!wc || wc.isDestroyed()) return;
+      try {
+        const result = await wc.executeJavaScript(searchMessagingChatsJs(q), true);
+        for (const chat of result?.chats || []) {
+          chats.push({
+            serviceId: service.id,
+            appId: service.appId,
+            accountLabel: service.title || service.name || 'App',
+            chatKey: normalizeChatKey(chat.chatKey || chat.name),
+            name: String(chat.name || '').trim(),
+            color: service.color || '#64748b',
+            logo: service.logo || null,
+          });
+        }
+      } catch {
+        // ignore
+      }
+    }),
+  );
+  return { ok: true, chats: chats.slice(0, 30) };
+}
+
+function pinPerson(payload = {}) {
+  const service = getService(payload.serviceId);
+  if (!service || !isInboxAppId(service.appId)) {
+    return { ok: false, error: 'Pin WhatsApp or Arattai chats only.' };
+  }
+  const name = String(payload.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const chatKey = normalizeChatKey(payload.chatKey || name);
+  if (!name || !chatKey) return { ok: false, error: 'Missing chat name.' };
+  const next = sanitizePinnedPeople([
+    {
+      id: makePinId(service.id, chatKey),
+      serviceId: service.id,
+      chatKey,
+      name,
+      appId: service.appId,
+    },
+    ...(settings.pinnedPeople || []),
+  ]);
+  settings = saveSettings({ pinnedPeople: next });
+  broadcastState();
+  return { ok: true, pinnedPeople: next };
+}
+
+function unpinPerson(pinId) {
+  const id = String(pinId || '');
+  const next = sanitizePinnedPeople(
+    (settings.pinnedPeople || []).filter((p) => p.id !== id),
+  );
+  settings = saveSettings({ pinnedPeople: next });
+  broadcastState();
+  return { ok: true, pinnedPeople: next };
 }
 
 /**
@@ -3752,6 +3999,13 @@ function emitServiceNotification(service, { title, body, fromTitleCount = false 
   });
   n.on('click', () => {
     raiseDockWindow();
+    if (isInboxAppId(service.appId) && sender && !hide) {
+      openMessagingChat(service.id, {
+        name: sender,
+        chatKey: normalizeChatKey(sender),
+      }).catch(() => activateService(service.id));
+      return;
+    }
     activateService(service.id);
   });
   n.show();
@@ -6925,6 +7179,11 @@ function createViewForService(service) {
     // Seed badge from current title without treating it as a new message.
     seedUnreadFromTitle(service.id, webContents);
     refreshBadge();
+    if (isInboxAppId(service.appId)) {
+      setTimeout(() => {
+        scrapeServiceInbox(service.id).then(() => broadcastState()).catch(() => {});
+      }, 1_800);
+    }
     broadcastState();
     const live = getAppConfig(service.id);
     if (settings.allowPageInjection && live.injectCss && live.injectCss.trim()) {
@@ -7188,6 +7447,7 @@ function hibernateService(id, { force = false } = {}) {
   }
   views.delete(id);
   unreadCounts.delete(id);
+  inboxByService.delete(id);
   hibernatedAt.set(id, Date.now());
   if (force && activeServiceId === id) {
     activeServiceId = null;
@@ -7628,6 +7888,8 @@ function currentState() {
     unread: unreadForUi,
     totalUnread: totalUnread(),
     notifications: notificationLog,
+    inbox: collectUnifiedInbox(),
+    pinnedPeople: sanitizePinnedPeople(settings.pinnedPeople || []),
     appMemory,
     ai: {
       enabled: settings.aiEnabled !== false,
@@ -8262,9 +8524,10 @@ function showAboutDialog() {
       type: 'info',
       title: 'About Aspera Hub',
       message: `Aspera Hub ${app.getVersion()}`,
-      detail:
-        'Company workspace by Aspera — messaging and business apps in one dock.\n\n' +
-        `Electron ${process.versions.electron} · Chrome ${process.versions.chrome}`,
+      detail: aboutDetailText({
+        electronVersion: process.versions.electron,
+        chromeVersion: process.versions.chrome,
+      }),
       buttons: ['OK'],
       icon: getAppIcon(),
     })
@@ -8680,6 +8943,24 @@ dockHandle('dock:toggle-chrome-menu', (_e, payload) => {
   openChromeMenuWindow(payload || {});
   return { ok: true, open: true };
 });
+dockHandle('dock:open-inbox-chat', async (_e, payload) =>
+  openMessagingChat(String(payload?.serviceId || ''), {
+    name: String(payload?.name || ''),
+    chatKey: String(payload?.chatKey || ''),
+  }),
+);
+dockHandle('dock:pin-person', (_e, payload) => pinPerson(payload || {}));
+dockHandle('dock:unpin-person', (_e, pinId) => unpinPerson(pinId));
+dockHandle('dock:search-chats', async (_e, query) =>
+  searchChatsAcrossAccounts(query),
+);
+dockHandle('dock:quick-reply', async (_e, payload) =>
+  sendQuickReply(String(payload?.serviceId || ''), {
+    name: String(payload?.name || payload?.chatName || ''),
+    chatKey: String(payload?.chatKey || ''),
+    text: String(payload?.text || ''),
+  }),
+);
 dockHandle('dock:open-notif-center', (_e, payload) =>
   openNotifCenterWindow(payload || {}),
 );
@@ -9398,6 +9679,7 @@ app.whenReady().then(async () => {
   }
   startHibernateTimer();
   startMemoryTimer();
+  ensureInboxPolling();
   watchSystemIdle();
   configureUpdater({
     getSettings: () => settings,
