@@ -12,6 +12,9 @@
  *
  * Clients fetch:
  *   https://github.com/ramchandragada/AsperaDock/releases/latest/download/latest.json
+ *
+ * Publish flow (avoids update 404 races):
+ *   draft release → upload .deb → upload latest.json → verify downloads → publish
  */
 
 import fs from 'node:fs';
@@ -77,6 +80,36 @@ function hasGhAuth() {
   if (process.env.GH_TOKEN || process.env.GITHUB_TOKEN) return true;
   const ghCheck = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8' });
   return ghCheck.status === 0;
+}
+
+function ghPipe(args) {
+  return spawnSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+async function urlReachable(url, { attempts = 8 } = {}) {
+  let lastStatus = 0;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch(url, {
+        method: 'HEAD',
+        redirect: 'follow',
+        headers: {
+          Accept: 'application/octet-stream,*/*',
+          'User-Agent': 'AsperaHub-Publish-Verify',
+          'Cache-Control': 'no-cache',
+        },
+      });
+      lastStatus = res.status;
+      if (res.ok) return true;
+    } catch {
+      lastStatus = 0;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, 700 * (i + 1)));
+  }
+  console.error(`Verify failed for ${url} (last HTTP ${lastStatus || 'error'})`);
+  return false;
 }
 
 const artifacts = walk(makeDir).filter((f) => /\.(AppImage|deb|rpm)$/i.test(f));
@@ -151,43 +184,35 @@ const body = [
   '_Electron runtime is bundled — users never update Electron separately._',
 ].join('\n');
 
-const existing = spawnSync('gh', ['release', 'view', tag, '--repo', GITHUB_SLUG], {
-  encoding: 'utf8',
-  stdio: 'pipe',
-});
+const existing = ghPipe(['release', 'view', tag, '--repo', GITHUB_SLUG]);
 
 // Upload the .deb/.AppImage first, then latest.json last so clients that
 // race a publish never see a new manifest pointing at a missing artifact.
 const manifestUploads = uploadPaths.filter((p) => /\.json$/i.test(p));
 const artifactUploads = uploadPaths.filter((p) => !/\.json$/i.test(p));
 
+function uploadClobber(paths) {
+  if (!paths.length) return;
+  run('gh', [
+    'release',
+    'upload',
+    tag,
+    ...paths,
+    '--repo',
+    GITHUB_SLUG,
+    '--clobber',
+  ]);
+}
+
 if (existing.status === 0) {
   console.log(`Release ${tag} already exists — uploading / replacing assets…`);
-  if (artifactUploads.length) {
-    run('gh', [
-      'release',
-      'upload',
-      tag,
-      ...artifactUploads,
-      '--repo',
-      GITHUB_SLUG,
-      '--clobber',
-    ]);
-  }
-  if (manifestUploads.length) {
-    run('gh', [
-      'release',
-      'upload',
-      tag,
-      ...manifestUploads,
-      '--repo',
-      GITHUB_SLUG,
-      '--clobber',
-    ]);
-  }
+  // Keep it draft while replacing so /releases/latest cannot serve a half-ready set.
+  run('gh', ['release', 'edit', tag, '--repo', GITHUB_SLUG, '--draft']);
+  uploadClobber(artifactUploads);
+  uploadClobber(manifestUploads);
 } else {
-  console.log(`Creating GitHub release ${tag}…`);
-  // Create with artifacts only; attach manifest after so latest.json is never first.
+  console.log(`Creating draft GitHub release ${tag}…`);
+  // Create as draft with artifacts only; attach manifest after, then publish.
   const createArgs = [
     'release',
     'create',
@@ -199,22 +224,46 @@ if (existing.status === 0) {
     title,
     '--notes',
     body,
+    '--draft',
   ];
   if (isPrerelease) createArgs.push('--prerelease');
   if (channel !== 'stable') createArgs.push('--target', 'HEAD');
   run('gh', createArgs);
-  if (manifestUploads.length) {
-    run('gh', [
-      'release',
-      'upload',
-      tag,
-      ...manifestUploads,
-      '--repo',
-      GITHUB_SLUG,
-      '--clobber',
-    ]);
-  }
+  uploadClobber(manifestUploads);
 }
+
+console.log('Verifying release assets are downloadable…');
+const verifyUrls = [
+  ...Object.values(files).map((f) => f.url),
+  `${releaseBase}/${encodeURIComponent(manifestName)}`,
+];
+for (const url of verifyUrls) {
+  // eslint-disable-next-line no-await-in-loop
+  const ok = await urlReachable(url);
+  if (!ok) {
+    console.error(
+      'Assets are not publicly downloadable yet — leaving the release as a draft.',
+    );
+    console.error(`Fix uploads, then: gh release edit ${tag} --draft=false`);
+    process.exit(1);
+  }
+  console.log(`✓ ${url}`);
+}
+
+console.log(`Publishing release ${tag}…`);
+run('gh', [
+  'release',
+  'edit',
+  tag,
+  '--repo',
+  GITHUB_SLUG,
+  '--draft=false',
+  '--latest',
+  '--title',
+  title,
+  '--notes',
+  body,
+]);
 
 const latestUrl = `https://github.com/${GITHUB_SLUG}/releases/latest/download/${manifestName}`;
 console.log(`\nDone. Clients will pick up the update from:`);

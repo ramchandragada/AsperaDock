@@ -544,12 +544,35 @@ async function assertDownloadedIntegrity(filePath = downloadedPath) {
   return filePath;
 }
 
+/**
+ * When the manifest URL 404s (publish race / CDN lag), resolve the same
+ * filename from the GitHub Releases API browser_download_url.
+ */
+async function resolveGithubAssetDownloadUrl(url) {
+  if (!usingDefaultGithubFeed()) return null;
+  let fileName = '';
+  try {
+    fileName = decodeURIComponent(path.basename(new URL(url).pathname || ''));
+  } catch {
+    fileName = '';
+  }
+  if (!fileName) return null;
+  const data = await fetchLatestGithubRelease();
+  const assets = Array.isArray(data?.assets) ? data.assets : [];
+  const hit = assets.find((a) => String(a?.name || '') === fileName);
+  const alt = String(hit?.browser_download_url || '').trim();
+  if (!alt || alt === url) return null;
+  return alt;
+}
+
 async function fetchUpdateArtifact(url, { attempts = 4 } = {}) {
   let lastError = null;
+  let activeUrl = url;
+  let triedApiFallback = false;
   for (let i = 0; i < attempts; i += 1) {
     try {
       // eslint-disable-next-line no-await-in-loop
-      const res = await fetch(url, {
+      const res = await fetch(activeUrl, {
         redirect: 'follow',
         headers: {
           Accept: 'application/octet-stream,*/*',
@@ -562,6 +585,13 @@ async function fetchUpdateArtifact(url, { attempts = 4 } = {}) {
       // Release asset clobber / CDN race — wait and retry.
       if (![404, 408, 425, 429, 500, 502, 503, 504].includes(res.status)) {
         throw lastError;
+      }
+      // One-shot: swap to Releases API asset URL after a 404.
+      if (res.status === 404 && !triedApiFallback) {
+        triedApiFallback = true;
+        // eslint-disable-next-line no-await-in-loop
+        const alt = await resolveGithubAssetDownloadUrl(url);
+        if (alt) activeUrl = alt;
       }
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
@@ -665,11 +695,14 @@ export async function downloadUpdate(opts = {}) {
     reportError('update-download', { message });
     // Background checks must not steal focus with a modal (e.g. during Forward).
     if (!quiet) {
+      const raceHint = /Download failed 404/i.test(message)
+        ? '\n\nThe release may still be publishing. Wait a few seconds and try Check for updates again.'
+        : '';
       await showUpdateBox({
         type: 'error',
         title: 'Update download failed',
         message: 'Could not download the update.',
-        detail: message,
+        detail: `${message}${raceHint}`,
         buttons: ['OK'],
       });
     } else {
