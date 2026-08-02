@@ -29,11 +29,19 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const GITHUB_SLUG = process.env.GITHUB_REPOSITORY || 'ramchandragada/AsperaDock';
 
 function arg(name, fallback = '') {
+  const eq = process.argv.find((a) => a.startsWith(`--${name}=`));
+  if (eq) return eq.slice(name.length + 3);
   const i = process.argv.indexOf(`--${name}`);
   if (i === -1) return fallback;
   const next = process.argv[i + 1];
   if (!next || next.startsWith('--')) return true;
-  return next;
+  // npm often strips shell quotes — join tokens until the next flag.
+  const parts = [];
+  for (let j = i + 1; j < process.argv.length; j += 1) {
+    if (String(process.argv[j]).startsWith('--')) break;
+    parts.push(process.argv[j]);
+  }
+  return parts.length ? parts.join(' ') : next;
 }
 
 const channel = String(arg('channel', 'stable'));
@@ -86,7 +94,7 @@ function ghPipe(args) {
   return spawnSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-async function urlReachable(url, { attempts = 8 } = {}) {
+async function urlReachable(url, { attempts = 10 } = {}) {
   let lastStatus = 0;
   for (let i = 0; i < attempts; i += 1) {
     try {
@@ -110,6 +118,40 @@ async function urlReachable(url, { attempts = 8 } = {}) {
   }
   console.error(`Verify failed for ${url} (last HTTP ${lastStatus || 'error'})`);
   return false;
+}
+
+/** Draft releases are not publicly downloadable — confirm assets via API instead. */
+function assertDraftAssetsPresent(expectedNames) {
+  const view = ghPipe([
+    'release',
+    'view',
+    tag,
+    '--repo',
+    GITHUB_SLUG,
+    '--json',
+    'isDraft,assets',
+  ]);
+  if (view.status !== 0) {
+    console.error(view.stderr || 'Could not read draft release assets');
+    return false;
+  }
+  let data;
+  try {
+    data = JSON.parse(view.stdout || '{}');
+  } catch {
+    console.error('Could not parse release view JSON');
+    return false;
+  }
+  const have = new Set(
+    (Array.isArray(data.assets) ? data.assets : []).map((a) => String(a?.name || '')),
+  );
+  const missing = expectedNames.filter((n) => !have.has(n));
+  if (missing.length) {
+    console.error(`Draft release missing assets: ${missing.join(', ')}`);
+    return false;
+  }
+  console.log(`✓ draft assets present: ${expectedNames.join(', ')}`);
+  return true;
 }
 
 const artifacts = walk(makeDir).filter((f) => /\.(AppImage|deb|rpm)$/i.test(f));
@@ -232,22 +274,14 @@ if (existing.status === 0) {
   uploadClobber(manifestUploads);
 }
 
-console.log('Verifying release assets are downloadable…');
-const verifyUrls = [
-  ...Object.values(files).map((f) => f.url),
-  `${releaseBase}/${encodeURIComponent(manifestName)}`,
+const expectedAssetNames = [
+  ...artifactUploads.map((p) => path.basename(p)),
+  ...manifestUploads.map((p) => path.basename(p)),
 ];
-for (const url of verifyUrls) {
-  // eslint-disable-next-line no-await-in-loop
-  const ok = await urlReachable(url);
-  if (!ok) {
-    console.error(
-      'Assets are not publicly downloadable yet — leaving the release as a draft.',
-    );
-    console.error(`Fix uploads, then: gh release edit ${tag} --draft=false`);
-    process.exit(1);
-  }
-  console.log(`✓ ${url}`);
+if (!assertDraftAssetsPresent(expectedAssetNames)) {
+  console.error('Leaving the release as a draft.');
+  console.error(`Fix uploads, then: gh release edit ${tag} --draft=false --latest`);
+  process.exit(1);
 }
 
 console.log(`Publishing release ${tag}…`);
@@ -264,6 +298,24 @@ run('gh', [
   '--notes',
   body,
 ]);
+
+console.log('Verifying public download URLs…');
+const verifyUrls = [
+  ...Object.values(files).map((f) => f.url),
+  `${releaseBase}/${encodeURIComponent(manifestName)}`,
+];
+for (const url of verifyUrls) {
+  // eslint-disable-next-line no-await-in-loop
+  const ok = await urlReachable(url);
+  if (!ok) {
+    console.error(
+      'Published, but public download verify failed — check GitHub CDN lag / assets.',
+    );
+    console.error(`Release page: https://github.com/${GITHUB_SLUG}/releases/tag/${tag}`);
+    process.exit(1);
+  }
+  console.log(`✓ ${url}`);
+}
 
 const latestUrl = `https://github.com/${GITHUB_SLUG}/releases/latest/download/${manifestName}`;
 console.log(`\nDone. Clients will pick up the update from:`);
