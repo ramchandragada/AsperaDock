@@ -4009,6 +4009,8 @@ async function searchChatsAcrossAccounts(query) {
             accountLabel: service.title || service.name || 'App',
             chatKey: normalizeChatKey(chat.chatKey || chat.name),
             name: String(chat.name || '').trim(),
+            match: String(chat.match || 'name'),
+            snippet: String(chat.snippet || '').replace(/\s+/g, ' ').trim().slice(0, 120),
             color: service.color || '#64748b',
             logo: service.logo || null,
           });

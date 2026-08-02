@@ -62,6 +62,16 @@ test('scrape / open / search / reply scripts mention WhatsApp + Arattai list hoo
   assert.match(composeReplyJs('Thanks', { send: true }), /compose-btn-send|Enter/);
 });
 
+test('chat search matches message text and previews, not only names', () => {
+  const js = searchMessagingChatsJs('Settled in Pone Facing any problem');
+  assert.match(js, /textMatches|last-msg-body|copyable-text/);
+  assert.match(js, /match:\s*'message'|match:\s*"message"|'message'/);
+  assert.match(js, /preview/);
+  assert.match(js, /snippetAround|openChatHeaderName/);
+  // Soft match so "ettled" still hits "settled".
+  assert.match(js, /slice\(1\)/);
+});
+
 test('openMessagingChatJs does not treat unrelated compose as success', () => {
   const openJs = openMessagingChatJs('shrikant', 'shrikant');
   // Header must match — compose-only success was the flaky false positive.

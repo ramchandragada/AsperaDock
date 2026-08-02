@@ -663,27 +663,133 @@ export function composeReplyJs(text, { send = false } = {}) {
   })()`;
 }
 
-/** Lightweight name search across the visible chat list (for Hub quick search). */
+/**
+ * Hub quick search across an open WhatsApp/Arattai page:
+ * chat names, last-message previews, and visible messages in the open thread.
+ */
 export function searchMessagingChatsJs(query) {
   const q = String(query || '').trim().toLowerCase();
   return `(() => {
     ${guestChatListHelpersJs()}
-    const q = ${JSON.stringify(q)};
+    const rawQ = ${JSON.stringify(q)};
+    if (!rawQ) return { chats: [] };
+    const norm = (s) => String(s || '')
+      .toLowerCase()
+      .replace(/[^\\p{L}\\p{N}\\s]+/gu, ' ')
+      .replace(/\\s+/g, ' ')
+      .trim();
+    const q = norm(rawQ);
     if (!q) return { chats: [] };
+    const tokens = q.split(' ').filter((t) => t.length >= 3);
+    const textMatches = (hayRaw) => {
+      const hay = norm(hayRaw);
+      if (!hay) return false;
+      if (hay.includes(q)) return true;
+      // Token overlap — tolerates a missing first letter (e.g. "ettled" in "settled").
+      if (tokens.length >= 2) {
+        let hit = 0;
+        for (const t of tokens) {
+          if (hay.includes(t) || (t.length >= 5 && hay.includes(t.slice(1)))) hit += 1;
+        }
+        if (hit >= Math.min(tokens.length, Math.max(2, Math.ceil(tokens.length * 0.6)))) {
+          return true;
+        }
+      } else if (tokens.length === 1) {
+        const t = tokens[0];
+        if (hay.includes(t) || (t.length >= 5 && hay.includes(t.slice(1)))) return true;
+      }
+      return false;
+    };
+    const rowPreview = (cell) => {
+      const previewEl =
+        cell.querySelector('[data-testid="last-msg-body"]')
+        || cell.querySelector('[data-testid="cell-frame-secondary"]')
+        || cell.querySelector('.lhs-list-msginfo')
+        || cell.querySelector('[class*="preview" i]')
+        || null;
+      let preview = textOf(previewEl);
+      if (!preview) {
+        const lines = String(cell.innerText || '')
+          .split(/\\n+/)
+          .map((l) => l.replace(/\\s+/g, ' ').trim())
+          .filter(Boolean);
+        // Skip the title line; take the next substantial line as preview.
+        preview = lines.slice(1).find((l) => l.length >= 4 && !isJunkName(l) && !/^\\d{1,2}:\\d{2}/.test(l)) || '';
+      }
+      return String(preview || '').replace(/\\s+/g, ' ').trim().slice(0, 120);
+    };
+    const snippetAround = (text, max = 90) => {
+      const clean = String(text || '').replace(/\\s+/g, ' ').trim();
+      if (!clean) return '';
+      const hay = norm(clean);
+      let idx = hay.indexOf(q);
+      if (idx < 0 && tokens[0]) idx = hay.indexOf(tokens[0]);
+      if (idx < 0) return clean.slice(0, max);
+      const start = Math.max(0, idx - 18);
+      const end = Math.min(clean.length, start + max);
+      return (start > 0 ? '…' : '') + clean.slice(start, end) + (end < clean.length ? '…' : '');
+    };
+
     const out = [];
     const seen = new Set();
+    const pushHit = (name, match, snippet) => {
+      const key = String(name || '').toLowerCase();
+      if (!name || !key || seen.has(key) || isJunkName(name)) return;
+      seen.add(key);
+      out.push({
+        chatKey: key,
+        name,
+        match: match || 'name',
+        snippet: String(snippet || '').slice(0, 120),
+      });
+    };
+
+    // 1) Chat list: name or last-message preview.
     const cells = Array.from(document.querySelectorAll(listSel));
     for (const cell of cells) {
-      if (!visible(cell)) continue;
+      if (!visible(cell) || out.length >= 16) break;
       const name = rowName(cell);
       if (!name) continue;
-      const key = name.toLowerCase();
-      if (seen.has(key)) continue;
-      if (!key.includes(q)) continue;
-      seen.add(key);
-      out.push({ chatKey: key, name });
-      if (out.length >= 12) break;
+      const preview = rowPreview(cell);
+      if (textMatches(name)) {
+        pushHit(name, 'name', preview);
+      } else if (preview && textMatches(preview)) {
+        pushHit(name, 'preview', snippetAround(preview));
+      }
     }
+
+    // 2) Open conversation: scan visible message bubbles for message text.
+    if (out.length < 16) {
+      const openName = openChatHeaderName();
+      if (openName && !seen.has(openName.toLowerCase())) {
+        const panel =
+          document.querySelector('[data-testid="conversation-panel-body"]')
+          || document.querySelector('[data-testid="conversation-panel-wrapper"]')
+          || document.querySelector('#main')
+          || document.querySelector('.art-chwindow')
+          || document.querySelector('[role="log"]')
+          || document.querySelector('[role="main"]');
+        const msgNodes = panel
+          ? Array.from(panel.querySelectorAll(
+            '[data-testid="msg-container"], [data-message-id], .copyable-text, .selectable-text, [class*="message-in"], [class*="message-out"], [class*="bubble"]',
+          )).filter(visible)
+          : [];
+        for (const node of msgNodes) {
+          if (out.length >= 16) break;
+          const preferred = node.matches?.('.copyable-text, .selectable-text')
+            ? node
+            : node.querySelector?.('.copyable-text, .selectable-text, [data-testid="conversation-text"]');
+          const msg = String((preferred || node).innerText || '')
+            .replace(/\\s+/g, ' ')
+            .trim()
+            .slice(0, 240);
+          if (msg.length < 4 || !textMatches(msg)) continue;
+          pushHit(openName, 'message', snippetAround(msg));
+          break;
+        }
+      }
+    }
+
     return { chats: out };
   })()`;
 }

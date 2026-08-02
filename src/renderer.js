@@ -1848,8 +1848,8 @@ function renderSearch(query) {
   chatPlaceholder.className = 'search-empty';
   chatPlaceholder.dataset.role = 'chat-results';
   chatPlaceholder.textContent = q
-    ? 'Searching chats across accounts…'
-    : 'Type a name to search WhatsApp & Arattai';
+    ? 'Searching names & message text across open accounts…'
+    : 'Search chat names or recent message text in WhatsApp & Arattai';
   els.searchResults.appendChild(chatPlaceholder);
 
   if (searchChatTimer) clearTimeout(searchChatTimer);
@@ -1863,7 +1863,8 @@ function renderSearch(query) {
       const host = els.searchResults.querySelector('[data-role="chat-results"]');
       if (!host) return;
       if (!chats.length) {
-        host.textContent = 'No chats found in open accounts';
+        host.textContent =
+          'No matching chats or recent message text in open accounts. Open the chat (or keep it in the list) and try a shorter phrase.';
         return;
       }
       host.remove();
@@ -1871,8 +1872,33 @@ function renderSearch(query) {
         const li = document.createElement('li');
         const btn = document.createElement('button');
         btn.type = 'button';
-        const label = `${chat.name}<small style="display:block;opacity:.7;font-weight:500">${chat.accountLabel || ''}</small>`;
-        btn.innerHTML = `${logoHtml(chat.logo, (chat.name || '?').slice(0, 1), chat.color)}<span>${label}</span>`;
+        const matchLabel =
+          chat.match === 'message'
+            ? 'Message'
+            : chat.match === 'preview'
+              ? 'Recent message'
+              : 'Chat';
+        btn.innerHTML = logoHtml(
+          chat.logo,
+          (chat.name || '?').slice(0, 1),
+          chat.color,
+        );
+        const span = document.createElement('span');
+        const title = document.createElement('strong');
+        title.style.fontWeight = '700';
+        title.textContent = chat.name || 'Chat';
+        const meta = document.createElement('small');
+        meta.style.cssText = 'display:block;opacity:.65;font-weight:500';
+        meta.textContent = [chat.accountLabel, matchLabel].filter(Boolean).join(' · ');
+        span.append(title, meta);
+        if (chat.snippet) {
+          const snip = document.createElement('small');
+          snip.style.cssText =
+            'display:block;opacity:.75;font-weight:500;margin-top:2px';
+          snip.textContent = chat.snippet;
+          span.appendChild(snip);
+        }
+        btn.appendChild(span);
         btn.querySelector('svg')?.classList.add('search-logo');
         btn.addEventListener('click', async () => {
           await window.asperadock.openInboxChat?.({
