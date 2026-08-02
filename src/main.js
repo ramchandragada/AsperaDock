@@ -299,7 +299,7 @@ function clearStaleChromiumSingleton(userDataPath) {
       const target = fs.readlinkSync(lockPath);
       const m = String(target).match(/-(\d+)$/);
       if (m) {
-        const pid = Number(m[1], 10);
+        const pid = parseInt(m[1], 10);
         if (Number.isFinite(pid) && pid > 0) {
           try {
             process.kill(pid, 0);
