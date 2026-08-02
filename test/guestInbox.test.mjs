@@ -1,11 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  clearMessagingLeftSearchJs,
   composeReplyJs,
+  findMessagingChatTargetJs,
+  findMessagingLeftSearchJs,
   inspectChatListTargetJs,
   isInboxAppId,
   isJunkChatName,
   makePinId,
+  messagingChatHeaderMatchJs,
   normalizeChatKey,
   openMessagingChatJs,
   sanitizePinnedPeople,
@@ -54,7 +58,9 @@ test('scrape / open / search / reply scripts mention WhatsApp + Arattai list hoo
   // Pin-open hardening: paste into search, keyboard confirm, dismiss leftover search.
   assert.match(openJs, /ClipboardEvent|paste/);
   assert.match(openJs, /ArrowDown/);
-  assert.match(openJs, /clearLeftSearch|dismissSearch|Escape/);
+  assert.match(openJs, /clearLeftSearch|dismissSearch/);
+  // Escape closes WhatsApp chats — must not be used to clear search.
+  assert.doesNotMatch(openJs, /key:\s*'Escape'|code:\s*'Escape'/);
   assert.match(openJs, /inLeftPane|cell-frame-title/);
   assert.match(openJs, /scoreName\(header\) >= 56/);
   assert.match(openJs, /looksLikeGroup/);
@@ -88,6 +94,17 @@ test('openMessagingChatJs clears stale search and prefers DMs over group mention
   assert.match(openJs, /searchDirty/);
   // Keyboard confirm only after a strong titled match (not Messages/@mention hits).
   assert.match(openJs, /scoreName\(rowName\(row\)/);
+});
+
+test('trusted pin-open helpers return click targets without Escape', () => {
+  const targetJs = findMessagingChatTargetJs('shrikant', 'shrikant');
+  assert.match(targetJs, /findBestChatTarget|pointOf/);
+  assert.match(targetJs, /isShortSingleToken|looksLikeGroup/);
+  assert.match(findMessagingLeftSearchJs(), /chat-list-search|Search or start/);
+  const clearJs = clearMessagingLeftSearchJs();
+  assert.match(clearJs, /search-input-clear|data-icon="x"/);
+  assert.doesNotMatch(clearJs, /key:\s*'Escape'|code:\s*'Escape'|keyCode:\s*27/);
+  assert.match(messagingChatHeaderMatchJs('Parth Gada', 'parth gada'), /scoreName|openChatHeaderName/);
 });
 
 test('junk chat names reject Arattai chrome mistaken for contacts', () => {

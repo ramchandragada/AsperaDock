@@ -53,11 +53,15 @@ import {
   shouldForwardAsDocument,
 } from './forwardHub.js';
 import {
+  clearMessagingLeftSearchJs,
   composeReplyJs,
+  findMessagingChatTargetJs,
+  findMessagingLeftSearchJs,
   inspectChatListTargetJs,
   isInboxAppId,
   isJunkChatName,
   makePinId,
+  messagingChatHeaderMatchJs,
   normalizeChatKey,
   openMessagingChatJs,
   sanitizePinnedPeople,
@@ -3881,6 +3885,63 @@ function logNotification(service, body, titleOverride) {
   pushNotifCenterData();
 }
 
+async function guestHeaderMatchesPin(wc, chatName, key) {
+  if (!wc || wc.isDestroyed()) return { ok: false, header: '' };
+  try {
+    const match = await wc.executeJavaScript(
+      messagingChatHeaderMatchJs(chatName, key),
+      true,
+    );
+    if (match?.ok) {
+      return { ok: true, header: String(match.header || chatName) };
+    }
+    return { ok: false, header: String(match?.header || '') };
+  } catch {
+    return { ok: false, header: '' };
+  }
+}
+
+/** Trusted key chord into the focused guest control. */
+function sendGuestKey(webContents, keyCode, modifiers = []) {
+  if (!webContents || webContents.isDestroyed()) return;
+  try {
+    webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+    if (!modifiers.length || (keyCode.length === 1 && !modifiers.includes('control') && !modifiers.includes('meta'))) {
+      webContents.sendInputEvent({ type: 'char', keyCode, modifiers });
+    } else if (modifiers.includes('control') || modifiers.includes('meta')) {
+      // Still emit char for Ctrl+A / Ctrl+V on some guests.
+      webContents.sendInputEvent({ type: 'char', keyCode, modifiers });
+    }
+    webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Replace focused search text via trusted Ctrl+A / paste (WA ignores synthetic input). */
+async function replaceGuestSearchText(webContents, text) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  const value = String(text || '');
+  try {
+    webContents.focus();
+  } catch {
+    /* ignore */
+  }
+  sendGuestKey(webContents, 'A', ['control']);
+  await sleepMs(45);
+  sendGuestKey(webContents, 'Backspace');
+  await sleepMs(45);
+  if (!value) return true;
+  try {
+    clipboard.writeText(value);
+  } catch {
+    return false;
+  }
+  const pasted = await sendCtrlVToGuest(webContents);
+  await sleepMs(120);
+  return pasted;
+}
+
 async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
   const service = getService(serviceId);
   if (!service || !isInboxAppId(service.appId)) {
@@ -3938,64 +3999,121 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
   }
   await sleepMs(280);
 
-  const want = normalizeChatKey(chatName || key);
-  const wantTokens = want.split(' ').filter((t) => t.length >= 3);
-  const headerMatchesPin = (openedKey) => {
-    if (!want || !openedKey) return false;
-    if (openedKey === want) return true;
-    if (openedKey.includes(want) || (want.includes(openedKey) && openedKey.length >= 6)) {
-      return true;
+  const confirmOpen = async () => {
+    const match = await guestHeaderMatchesPin(wc, chatName, key);
+    if (!match.ok) return null;
+    await markActiveComposeTarget(serviceId);
+    return { ok: true, via: 'opened', chat: match.header || chatName };
+  };
+
+  const trustedClickTarget = async (via) => {
+    const hit = await wc.executeJavaScript(
+      findMessagingChatTargetJs(chatName, key),
+      true,
+    );
+    if (!hit?.ok || !Number.isFinite(hit.x) || !Number.isFinite(hit.y)) {
+      return null;
     }
-    if (wantTokens.length >= 2) {
-      const hit = wantTokens.filter((t) => openedKey.includes(t)).length;
-      return hit === wantTokens.length || hit >= Math.ceil(wantTokens.length * 0.6);
-    }
-    // Short single-token pins: do not accept loose token-in-title (group noise).
-    if (wantTokens.length === 1) {
-      const tok = wantTokens[0];
-      return (
-        openedKey === tok ||
-        openedKey.startsWith(`${tok} `) ||
-        openedKey.endsWith(` ${tok}`) ||
-        (openedKey.includes(tok) && openedKey.length <= tok.length + 10)
-      );
-    }
-    return false;
+    clickWebContentsAt(wc, hit.x, hit.y);
+    await sleepMs(380);
+    const opened = await confirmOpen();
+    if (opened) return { ...opened, via };
+    // Second click — some WA rows need the title hit twice.
+    clickWebContentsAt(wc, hit.x, hit.y);
+    await sleepMs(420);
+    const again = await confirmOpen();
+    return again ? { ...again, via: `${via}-retry` } : null;
   };
 
   let lastError = '';
   for (let attempt = 0; attempt < 3; attempt += 1) {
     if (wc.isDestroyed()) break;
     try {
-      const result = await wc.executeJavaScript(
+      // Already on this chat?
+      const already = await confirmOpen();
+      if (already) return { ...already, via: 'already-open' };
+
+      // Clear leftover search WITHOUT Escape (Escape closes WA chats → Meta AI pane).
+      try {
+        await wc.executeJavaScript(clearMessagingLeftSearchJs(), true);
+      } catch {
+        /* ignore */
+      }
+      await sleepMs(160);
+
+      let opened = await trustedClickTarget(attempt === 0 ? 'list-click' : 'list-retry');
+      if (opened) {
+        try { await wc.executeJavaScript(clearMessagingLeftSearchJs(), true); } catch { /* ignore */ }
+        return opened;
+      }
+
+      // Focus left search with a trusted click, then paste the pin name.
+      const searchBox = await wc.executeJavaScript(findMessagingLeftSearchJs(), true);
+      if (searchBox?.ok) {
+        clickWebContentsAt(wc, searchBox.x, searchBox.y);
+        await sleepMs(220);
+        // If we hit the search icon/button, resolve the real input next.
+        const searchInput = await wc.executeJavaScript(findMessagingLeftSearchJs(), true);
+        if (searchInput?.ok && !searchInput.isButton) {
+          clickWebContentsAt(wc, searchInput.x, searchInput.y);
+          await sleepMs(120);
+        }
+        await replaceGuestSearchText(wc, chatName);
+        await sleepMs(550);
+
+        const searchStarted = Date.now();
+        while (Date.now() - searchStarted < 5200) {
+          opened = await trustedClickTarget('search-click');
+          if (opened) {
+            try { await wc.executeJavaScript(clearMessagingLeftSearchJs(), true); } catch { /* ignore */ }
+            return opened;
+          }
+          // ArrowDown + Enter as a trusted fallback once a strong titled match exists.
+          if (Date.now() - searchStarted > 900) {
+            const hit = await wc.executeJavaScript(
+              findMessagingChatTargetJs(chatName, key),
+              true,
+            );
+            if (hit?.ok && hit.score >= 68) {
+              sendGuestKey(wc, 'Down');
+              await sleepMs(70);
+              sendGuestKey(wc, 'Enter');
+              await sleepMs(450);
+              opened = await confirmOpen();
+              if (opened) {
+                try { await wc.executeJavaScript(clearMessagingLeftSearchJs(), true); } catch { /* ignore */ }
+                return { ...opened, via: 'search-enter' };
+              }
+            }
+          }
+          await sleepMs(180);
+        }
+      }
+
+      // Legacy JS path (helps Arattai when coords are odd).
+      const legacy = await wc.executeJavaScript(
         openMessagingChatJs(chatName, key),
         true,
       );
-      if (result?.ok) {
-        await sleepMs(220);
-        await markActiveComposeTarget(serviceId);
-        // Confirm the open header belongs to this contact — never accept
-        // "compose is open on some other chat" as a pin success.
-        const opened = await getGuestChatKey(wc);
-        const openedTitle = String(opened?.title || '').trim();
-        const openedKey = normalizeChatKey(openedTitle);
-        if (headerMatchesPin(openedKey)) {
-          return {
-            ok: true,
-            via: result.via || 'opened',
-            chat: openedTitle || chatName,
-          };
-        }
-        lastError = openedTitle
-          ? `Opened “${openedTitle}” instead of “${chatName}”.`
+      if (legacy?.ok) {
+        const matched = await confirmOpen();
+        if (matched) return { ...matched, via: legacy.via || 'legacy-js' };
+        lastError = matched?.header
+          ? `Opened “${matched.header}” instead of “${chatName}”.`
           : `Could not confirm “${chatName}” opened.`;
       } else {
-        lastError = result?.reason || 'chat_not_found';
+        lastError = legacy?.reason || 'chat_not_found';
       }
     } catch (error) {
       lastError = String(error?.message || error);
     }
     await sleepMs(450 + attempt * 200);
+  }
+
+  try {
+    if (!wc.isDestroyed()) await wc.executeJavaScript(clearMessagingLeftSearchJs(), true);
+  } catch {
+    /* ignore */
   }
 
   return {

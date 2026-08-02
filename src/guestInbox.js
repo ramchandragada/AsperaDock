@@ -331,15 +331,16 @@ export function inspectChatListTargetJs(x, y) {
   })()`;
 }
 
-/** Best-effort: open a chat by display name (list click or in-app search). */
-export function openMessagingChatJs(name, chatKey = '') {
+/**
+ * Shared pin-open match helpers (injected into guest pages).
+ * Scores titles only; prefers DMs over group/@mention noise.
+ */
+function messagingPinMatchHelpersJs(name, chatKey = '') {
   const targetName = String(name || '').trim();
   const targetKey = normalizeChatKey(chatKey || targetName);
-  return `(async () => {
-    ${guestChatListHelpersJs()}
+  return `
     const wantName = ${JSON.stringify(targetName)};
     const wantKey = ${JSON.stringify(targetKey)};
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const norm = (s) => String(s || '').toLowerCase().replace(/\\s+/g, ' ').trim();
     const wantN = norm(wantName);
     const midX = () => (window.innerWidth || 1000) * 0.55;
@@ -348,24 +349,6 @@ export function openMessagingChatJs(name, chatKey = '') {
         const r = el.getBoundingClientRect();
         return r.width > 8 && r.left < midX();
       } catch (e) { return false; }
-    };
-    const click = (el) => {
-      if (!el || !visible(el)) return false;
-      try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
-      try {
-        const r = el.getBoundingClientRect();
-        const x = r.left + Math.min(40, Math.max(12, r.width / 2));
-        const y = r.top + r.height / 2;
-        for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
-          el.dispatchEvent(new MouseEvent(type, {
-            bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, buttons: 1,
-          }));
-        }
-        try { el.click(); } catch (e) {}
-        return true;
-      } catch (e) {
-        try { el.click(); return true; } catch (e2) { return false; }
-      }
     };
     const wantTokens = wantN.split(' ').filter((t) => t.length >= 3);
     const isShortSingleToken = wantTokens.length === 1 && wantN.split(' ').length === 1;
@@ -382,14 +365,12 @@ export function openMessagingChatJs(name, chatKey = '') {
       if (/\\b(group|community|broadcast)\\b/.test(aria)) return true;
       return false;
     };
-    // Score chat *titles* only — never last-message previews that mention the pin.
     const scoreName = (title) => {
       const key = norm(title);
       if (!key || isJunkName(key)) return -1;
       if (key === wantKey || key === wantN) return 100;
       if (wantKey && key.includes(wantKey)) return 88;
       if (wantN && key.includes(wantN)) return 84;
-      // Title is a shortening of the pin ("Kumar Gardas" vs full pin).
       if (wantN && wantN.includes(key) && key.length >= 6) return 58;
       if (wantKey && wantKey.includes(key) && key.length >= 6) return 56;
       if (wantTokens.length >= 2) {
@@ -399,8 +380,6 @@ export function openMessagingChatJs(name, chatKey = '') {
         if (hit >= 2 && hit >= Math.ceil(wantTokens.length * 0.6)) return 62;
         return -1;
       }
-      // Short single-token pins ("shrikant"): require title ≈ name.
-      // Weak includes() previously matched group rows / message hits.
       if (isShortSingleToken) {
         const tok = wantTokens[0];
         if (key === tok) return 100;
@@ -424,68 +403,18 @@ export function openMessagingChatJs(name, chatKey = '') {
         || el
       );
     };
-    const findRow = () => {
-      let best = null;
-      let bestScore = -1;
-      let bestGroup = false;
-      const consider = (title, el) => {
-        let score = scoreName(title);
-        if (score < 48 || !el || !visible(el) || !inLeftPane(el)) return;
-        const group = looksLikeGroup(el, title);
-        // Prefer DM/contact rows over groups that only mention the person.
-        if (group && score < 100) score -= 30;
-        if (score < 48) return;
-        if (
-          score > bestScore
-          || (score === bestScore && bestGroup && !group)
-        ) {
-          bestScore = score;
-          best = el;
-          bestGroup = group;
-        }
-      };
-      for (const cell of document.querySelectorAll(listSel)) {
-        consider(rowName(cell), cell);
-      }
-      // Search results / "Recent searches" often expose a title span before the row hooks settle.
-      for (const span of document.querySelectorAll(
-        '[data-testid="cell-frame-title"] span[title], [data-testid="cell-frame-title"], span[title], div[title]',
-      )) {
-        if (span.closest?.('[data-testid="conversation-info-header"], #main header, .art-chwindow-hdr')) {
-          continue;
-        }
-        // Skip last-message / secondary lines — title attr on those can poison matching.
-        if (span.closest?.(
-          '[data-testid="last-msg-body"], [data-testid="cell-frame-secondary"], .lhs-list-msginfo',
-        )) continue;
-        const title = span.getAttribute?.('title') || span.textContent;
-        consider(title, clickableRowFrom(span));
-      }
-      return bestScore >= 48 ? best : null;
-    };
-    const openHeaderName = () => openChatHeaderName();
-    const composeOpen = () => {
-      if (document.querySelector('[data-testid="conversation-compose-box-input"]')) return true;
-      if (document.querySelector('footer [contenteditable="true"]')) return true;
-      const nodes = document.querySelectorAll('[contenteditable="true"], textarea, [role="textbox"]');
-      const vh = window.innerHeight || 800;
-      for (const n of nodes) {
-        const ph = String(n.getAttribute('placeholder') || n.getAttribute('data-placeholder') || '').toLowerCase();
-        if (/search/.test(ph)) continue;
-        if (/type your message|message here|type a message/.test(ph)) return true;
-        try {
-          const r = n.getBoundingClientRect();
-          if (r.width >= 120 && r.top > vh * 0.55 && r.left >= midX() * 0.7) return true;
-        } catch (e) {}
-      }
-      return false;
-    };
-    // Require the open header to match the pin — never treat "some compose is open" as success
-    // (that left users on Parth while search still showed the typed pin name).
-    const confirmedOpen = () => {
-      const header = openHeaderName();
-      if (!header) return false;
-      return scoreName(header) >= 56;
+    const pointOf = (el) => {
+      if (!el || !visible(el)) return null;
+      try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
+      try {
+        const r = el.getBoundingClientRect();
+        if (r.width < 8 || r.height < 8) return null;
+        return {
+          x: Math.round(r.left + Math.min(48, Math.max(16, r.width * 0.22))),
+          y: Math.round(r.top + r.height / 2),
+          title: '',
+        };
+      } catch (e) { return null; }
     };
     const leftSearchEls = () => Array.from(document.querySelectorAll(
       [
@@ -512,6 +441,234 @@ export function openMessagingChatJs(name, chatKey = '') {
       return /search/.test(ph) || el.getAttribute('data-tab') === '3'
         || el.getAttribute?.('data-testid') === 'chat-list-search';
     });
+    const findBestChatTarget = () => {
+      let best = null;
+      let bestScore = -1;
+      let bestGroup = false;
+      let bestTitle = '';
+      const consider = (title, el) => {
+        let score = scoreName(title);
+        if (score < 48 || !el || !visible(el) || !inLeftPane(el)) return;
+        const group = looksLikeGroup(el, title);
+        if (group && score < 100) score -= 30;
+        if (score < 48) return;
+        if (score > bestScore || (score === bestScore && bestGroup && !group)) {
+          bestScore = score;
+          best = el;
+          bestGroup = group;
+          bestTitle = String(title || '').trim();
+        }
+      };
+      for (const cell of document.querySelectorAll(listSel)) {
+        consider(rowName(cell), cell);
+      }
+      for (const span of document.querySelectorAll(
+        '[data-testid="cell-frame-title"] span[title], [data-testid="cell-frame-title"], span[title], div[title]',
+      )) {
+        if (span.closest?.('[data-testid="conversation-info-header"], #main header, .art-chwindow-hdr')) {
+          continue;
+        }
+        if (span.closest?.(
+          '[data-testid="last-msg-body"], [data-testid="cell-frame-secondary"], .lhs-list-msginfo',
+        )) continue;
+        const title = span.getAttribute?.('title') || span.textContent;
+        consider(title, clickableRowFrom(span));
+      }
+      // Recent-search chips / contact tiles (avatar + short name) — not always list rows.
+      for (const el of document.querySelectorAll(
+        '#pane-side [role="button"], #pane-side [role="listitem"], #pane-side [tabindex="0"], [data-testid="contact-list-item"], .art-chat-item',
+      )) {
+        if (!visible(el) || !inLeftPane(el)) continue;
+        let title = rowName(el);
+        if (!title) {
+          const lines = String(el.innerText || '')
+            .split(/\\n+/)
+            .map((l) => l.replace(/\\s+/g, ' ').trim())
+            .filter(Boolean);
+          title = lines.find((l) => l.length >= 2 && l.length <= 48 && !isJunkName(l)) || '';
+        }
+        if (title) consider(title, el);
+      }
+      if (bestScore < 48 || !best) return null;
+      return { el: best, title: bestTitle, score: bestScore, group: bestGroup };
+    };
+  `;
+}
+
+/** Locate a chat row / search chip and return viewport click coordinates. */
+export function findMessagingChatTargetJs(name, chatKey = '') {
+  return `(() => {
+    ${guestChatListHelpersJs()}
+    ${messagingPinMatchHelpersJs(name, chatKey)}
+    const hit = findBestChatTarget();
+    if (!hit?.el) return { ok: false };
+    const clickEl =
+      hit.el.querySelector?.('[data-testid="cell-frame-title"]')
+      || hit.el.querySelector?.('.chat-title-text')
+      || hit.el.querySelector?.('span[title]')
+      || hit.el;
+    const pt = pointOf(clickEl) || pointOf(hit.el);
+    if (!pt) return { ok: false };
+    return {
+      ok: true,
+      x: pt.x,
+      y: pt.y,
+      title: hit.title,
+      score: hit.score,
+      group: !!hit.group,
+    };
+  })()`;
+}
+
+/** Left-pane search box coordinates (WhatsApp / Arattai). */
+export function findMessagingLeftSearchJs() {
+  return `(() => {
+    ${guestChatListHelpersJs()}
+    ${messagingPinMatchHelpersJs('', '')}
+    const el = leftSearchEls()[0] || null;
+    if (!el) {
+      const btn =
+        document.querySelector('[aria-label="Search or start a new chat"]')
+        || document.querySelector('[aria-label*="Search or start" i]')
+        || document.querySelector('[data-icon="search"]')?.closest('button,[role="button"],div');
+      if (!btn || !visible(btn) || !inLeftPane(btn)) return { ok: false };
+      const pt = pointOf(btn);
+      return pt ? { ok: true, x: pt.x, y: pt.y, hasText: false, isButton: true } : { ok: false };
+    }
+    const pt = pointOf(el);
+    if (!pt) return { ok: false };
+    let hasText = false;
+    try {
+      if ('value' in el && String(el.value || '').trim()) hasText = true;
+      else if (String(el.textContent || el.innerText || '').trim()) hasText = true;
+    } catch (e) {}
+    return { ok: true, x: pt.x, y: pt.y, hasText, isButton: false };
+  })()`;
+}
+
+/**
+ * Clear left-pane search without Escape.
+ * Escape on WhatsApp closes the open chat (Meta AI empty pane) — never use it here.
+ */
+export function clearMessagingLeftSearchJs() {
+  return `(() => {
+    ${guestChatListHelpersJs()}
+    ${messagingPinMatchHelpersJs('', '')}
+    let clickedClear = false;
+    let hadText = false;
+    for (const btn of document.querySelectorAll(
+      [
+        'button[aria-label="Cancel"]',
+        'button[aria-label*="Cancel" i]',
+        '[aria-label="Clear search"]',
+        '[aria-label*="Clear search" i]',
+        '[data-testid="search-input-clear"]',
+        '[data-icon="x"]',
+        'span[data-icon="x"]',
+      ].join(','),
+    )) {
+      if (!visible(btn) || !inLeftPane(btn)) continue;
+      const target = btn.closest?.('button,[role="button"]') || btn;
+      try { target.click(); clickedClear = true; } catch (e) {}
+    }
+    for (const el of leftSearchEls()) {
+      try {
+        if (('value' in el && String(el.value || '').trim())
+          || String(el.textContent || el.innerText || '').trim()) {
+          hadText = true;
+        }
+      } catch (e) {}
+      try { el.focus(); } catch (e) {}
+      try {
+        document.execCommand('selectAll', false, null);
+        document.execCommand('delete', false, null);
+      } catch (e) {}
+      try {
+        if ('value' in el) {
+          el.value = '';
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        } else {
+          el.textContent = '';
+          el.dispatchEvent(new InputEvent('input', {
+            bubbles: true, data: '', inputType: 'deleteContentBackward',
+          }));
+        }
+      } catch (e) {}
+    }
+    // Exit search UI via back control only (never key-dismiss — that closes WA chats).
+    for (const btn of document.querySelectorAll(
+      '[data-icon="back"], span[data-icon="back"], button[aria-label*="Back" i]',
+    )) {
+      if (!visible(btn) || !inLeftPane(btn)) continue;
+      try { (btn.closest?.('button,[role="button"]') || btn).click(); clickedClear = true; } catch (e) {}
+    }
+    try { document.activeElement?.blur?.(); } catch (e) {}
+    return { ok: true, hadText, clickedClear };
+  })()`;
+}
+
+/** Whether the open conversation header matches the pin. */
+export function messagingChatHeaderMatchJs(name, chatKey = '') {
+  return `(() => {
+    ${guestChatListHelpersJs()}
+    ${messagingPinMatchHelpersJs(name, chatKey)}
+    const header = openChatHeaderName();
+    const score = scoreName(header);
+    return { ok: score >= 56, header, score };
+  })()`;
+}
+
+/** Best-effort: open a chat by display name (list click or in-app search). */
+export function openMessagingChatJs(name, chatKey = '') {
+  const targetName = String(name || '').trim();
+  const targetKey = normalizeChatKey(chatKey || targetName);
+  return `(async () => {
+    ${guestChatListHelpersJs()}
+    ${messagingPinMatchHelpersJs(targetName, targetKey)}
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const click = (el) => {
+      if (!el || !visible(el)) return false;
+      try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
+      try {
+        const r = el.getBoundingClientRect();
+        const x = r.left + Math.min(40, Math.max(12, r.width / 2));
+        const y = r.top + r.height / 2;
+        for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+          el.dispatchEvent(new MouseEvent(type, {
+            bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, buttons: 1,
+          }));
+        }
+        try { el.click(); } catch (e) {}
+        return true;
+      } catch (e) {
+        try { el.click(); return true; } catch (e2) { return false; }
+      }
+    };
+    const findRow = () => findBestChatTarget()?.el || null;
+    const openHeaderName = () => openChatHeaderName();
+    const composeOpen = () => {
+      if (document.querySelector('[data-testid="conversation-compose-box-input"]')) return true;
+      if (document.querySelector('footer [contenteditable="true"]')) return true;
+      const nodes = document.querySelectorAll('[contenteditable="true"], textarea, [role="textbox"]');
+      const vh = window.innerHeight || 800;
+      for (const n of nodes) {
+        const ph = String(n.getAttribute('placeholder') || n.getAttribute('data-placeholder') || '').toLowerCase();
+        if (/search/.test(ph)) continue;
+        if (/type your message|message here|type a message/.test(ph)) return true;
+        try {
+          const r = n.getBoundingClientRect();
+          if (r.width >= 120 && r.top > vh * 0.55 && r.left >= midX() * 0.7) return true;
+        } catch (e) {}
+      }
+      return false;
+    };
+    // Require the open header to match the pin — never treat "some compose is open" as success
+    // (that left users on Parth while search still showed the typed pin name).
+    const confirmedOpen = () => {
+      const header = openHeaderName();
+      if (!header) return false;
+      return scoreName(header) >= 56;
+    };
     const searchHasText = (el) => {
       if (!el) return false;
       try {
@@ -519,7 +676,7 @@ export function openMessagingChatJs(name, chatKey = '') {
       } catch (e) {}
       return String(el.textContent || el.innerText || '').trim().length > 0;
     };
-    // Stale left-pane queries ("us apple portal price") break the next pin open.
+    // Never Escape — on WhatsApp Escape closes the open chat (Meta AI empty pane).
     const clearLeftSearch = async () => {
       try {
         for (const btn of document.querySelectorAll(
@@ -528,11 +685,10 @@ export function openMessagingChatJs(name, chatKey = '') {
             'button[aria-label*="Cancel" i]',
             '[aria-label="Clear search"]',
             '[aria-label*="Clear search" i]',
-            '[aria-label*="Clear" i]',
             '[data-testid="search-input-clear"]',
             '[data-icon="x"]',
-            '[data-icon="back"]',
             'span[data-icon="x"]',
+            '[data-icon="back"]',
             'span[data-icon="back"]',
           ].join(','),
         )) {
@@ -542,7 +698,6 @@ export function openMessagingChatJs(name, chatKey = '') {
         }
         for (const el of leftSearchEls()) {
           try { el.focus(); } catch (e) {}
-          click(el);
           try {
             document.execCommand('selectAll', false, null);
             document.execCommand('delete', false, null);
@@ -551,7 +706,6 @@ export function openMessagingChatJs(name, chatKey = '') {
             if ('value' in el) {
               el.value = '';
               el.dispatchEvent(new Event('input', { bubbles: true }));
-              el.dispatchEvent(new Event('change', { bubbles: true }));
             } else {
               el.textContent = '';
               el.dispatchEvent(new InputEvent('input', {
@@ -560,13 +714,7 @@ export function openMessagingChatJs(name, chatKey = '') {
             }
           } catch (e) {}
         }
-        for (let i = 0; i < 2; i += 1) {
-          document.activeElement?.blur?.();
-          document.dispatchEvent(new KeyboardEvent('keydown', {
-            key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true,
-          }));
-          await wait(90);
-        }
+        try { document.activeElement?.blur?.(); } catch (e) {}
       } catch (e) {}
     };
     const dismissSearch = clearLeftSearch;
