@@ -199,7 +199,6 @@ function paintToolbarIcons() {
   if (els.downloadsBtn) els.downloadsBtn.innerHTML = icon('download');
   if (els.extensionsBtn) els.extensionsBtn.innerHTML = icon('puzzle');
   if (els.checkUpdatesBtn) els.checkUpdatesBtn.innerHTML = icon('sync');
-  if (els.menuBtn) els.menuBtn.innerHTML = asperaAppIconSvg(24);
   if (els.lockBtn) els.lockBtn.innerHTML = icon('lock');
   if (els.addAppBtn) els.addAppBtn.innerHTML = icon('plus');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
@@ -207,7 +206,7 @@ function paintToolbarIcons() {
   if (els.appMenuHome) els.appMenuHome.innerHTML = icon('home');
   if (els.appMenuReload) els.appMenuReload.innerHTML = icon('sync');
 
-  // Brand surfaces
+  // Brand surfaces — full wordmark is the settings/menu control (right side).
   const chromeWordmark = document.getElementById('chrome-wordmark');
   if (chromeWordmark) chromeWordmark.src = BRAND.wordmarkUrl;
   const emptyBrand = document.getElementById('empty-brand');

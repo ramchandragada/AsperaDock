@@ -369,8 +369,7 @@ body.wrap-tabs .apps-track {
   row-gap: 4px;
 }
 
-body.wrap-tabs.layout-top .chrome-actions,
-body.wrap-tabs.layout-top .chrome-brand {
+body.wrap-tabs.layout-top .chrome-actions {
   align-self: center;
   height: auto;
 }
@@ -384,9 +383,10 @@ body.layout-top .app-bar-top {
   align-items: center;
   gap: var(--apps-gap);
   overflow-x: auto;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: min(100%, calc(100vw - 360px));
+  /* More room for apps — center wordmark removed; brand lives in settings control. */
+  max-width: min(100%, calc(100vw - 280px));
   padding: 2px 4px;
   scrollbar-width: none;
 }
@@ -395,24 +395,14 @@ body.layout-top .app-bar-top {
   display: none;
 }
 
-.chrome-brand {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 110px;
-  padding: 0 10px;
-  pointer-events: none;
-}
-
 .chrome-wordmark {
   display: block;
-  height: clamp(26px, calc(var(--top-bar) * 0.4), 36px);
+  height: clamp(22px, calc(var(--top-bar) * 0.34), 30px);
   width: auto;
-  max-width: min(180px, 24vw);
+  max-width: min(148px, 22vw);
   object-fit: contain;
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+  border-radius: 5px;
+  pointer-events: none;
 }
 
 .chrome-actions {
@@ -481,16 +471,27 @@ body.layout-top .app-bar-top {
   color: #fff !important;
 }
 
-.app-bar-top .brand-avatar {
-  padding: 3px !important;
-  background: rgba(255, 255, 255, 0.04);
+.app-bar-top .brand-menu-btn {
+  width: auto !important;
+  min-width: 0;
+  height: 34px;
+  padding: 3px 8px !important;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--bar-border);
+  color: #fff;
 }
 
-.app-bar-top .brand-avatar .aspera-app-icon {
-  width: 24px;
+.app-bar-top .brand-menu-btn:hover {
+  background: rgba(90, 110, 230, 0.28);
+  border-color: rgba(160, 175, 255, 0.45);
+  color: #fff;
+}
+
+.app-bar-top .brand-menu-btn .chrome-wordmark {
   height: 24px;
-  border-radius: 7px;
+  max-width: 132px;
+  box-shadow: none;
 }
 
 .app-bar-top .app-badge {
@@ -708,16 +709,11 @@ body.layout-right .app-tab.drop-after {
   line-height: 1.45;
 }
 
-.brand-avatar {
-  padding: 2px !important;
+.brand-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   overflow: hidden;
-}
-
-.brand-avatar .aspera-app-icon {
-  width: 22px;
-  height: 22px;
-  display: block;
-  border-radius: 6px;
 }
 
 /* Icon-first tiles — logos lead; labels sit under (max 10 apps on 24" screens). */
