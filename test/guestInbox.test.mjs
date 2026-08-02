@@ -52,7 +52,11 @@ test('scrape / open / search / reply scripts mention WhatsApp + Arattai list hoo
   assert.match(inspectJs, /elementsFromPoint|elementFromPoint/);
   assert.match(inspectJs, /art-chat-item/);
   assert.match(inspectJs, /art-chwindow-hdr|openChatHeaderName/);
-  const openJs = openMessagingChatJs('LFCHS REUNION 22nd Dec 2029', 'lfchs reunion 22nd dec 2029');
+  const openJs = openMessagingChatJs(
+    'LFCHS REUNION 22nd Dec 2029',
+    'lfchs reunion 22nd dec 2029',
+    'chid-123',
+  );
   assert.match(openJs, /chat-list-search|Search/);
   assert.match(openJs, /confirmedOpen|conversation-info-header|art-chwindow-hdr/);
   assert.match(openJs, /pointerdown|mousedown/);
@@ -65,6 +69,11 @@ test('scrape / open / search / reply scripts mention WhatsApp + Arattai list hoo
   assert.match(openJs, /inLeftPane|cell-frame-title/);
   assert.match(openJs, /scoreName\(header\) >= 56/);
   assert.match(openJs, /looksLikeGroup/);
+  // Arattai speed: try native id / list row before nuclear search clear.
+  assert.match(openJs, /wantNativeId|native-id|rowNativeId/);
+  assert.match(openJs, /document\.activeElement === el/);
+  const targetJs = findMessagingChatTargetJs('Pocket', 'pocket', 'chid-abc');
+  assert.match(targetJs, /wantNativeId|chid-abc|rowNativeId/);
   assert.match(searchMessagingChatsJs('parth'), /parth/);
   assert.match(searchMessagingChatsJs('parth'), /art-chat-item/);
   assert.match(composeReplyJs('Thanks', { send: true }), /compose-btn-send|Enter/);
@@ -105,6 +114,9 @@ test('trusted pin-open helpers return click targets without Escape', () => {
   const clearJs = clearMessagingLeftSearchJs();
   assert.match(clearJs, /search-input-clear|data-icon="x"/);
   assert.doesNotMatch(clearJs, /key:\s*'Escape'|code:\s*'Escape'|keyCode:\s*27/);
+  // selectAll only when search is focused — otherwise chat text gets selected.
+  assert.match(clearJs, /document\.activeElement === el/);
+  assert.match(clearJs, /removeAllRanges/);
   assert.match(messagingChatHeaderMatchJs('Parth Gada', 'parth gada'), /scoreName|openChatHeaderName/);
   // Search chrome coords let main clear via sendInputEvent (fixes second-pin failures).
   const chromeJs = findMessagingSearchChromeJs();

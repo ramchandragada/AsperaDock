@@ -352,15 +352,44 @@ export function inspectChatListTargetJs(x, y) {
 /**
  * Shared pin-open match helpers (injected into guest pages).
  * Scores titles only; prefers DMs over group/@mention noise.
+ * Optional nativeId (Arattai chid / WA chat id) wins over name fuzzy match.
  */
-function messagingPinMatchHelpersJs(name, chatKey = '') {
+function messagingPinMatchHelpersJs(name, chatKey = '', nativeId = '') {
   const targetName = String(name || '').trim();
   const targetKey = normalizeChatKey(chatKey || targetName);
+  const wantNative = String(nativeId || '').trim();
   return `
     const wantName = ${JSON.stringify(targetName)};
     const wantKey = ${JSON.stringify(targetKey)};
+    const wantNativeId = ${JSON.stringify(wantNative)};
     const norm = (s) => String(s || '').toLowerCase().replace(/\\s+/g, ' ').trim();
     const wantN = norm(wantName);
+    const rowNativeId = (el) => {
+      if (!el) return '';
+      try {
+        let id = String(
+          el.getAttribute?.('chid')
+          || el.getAttribute?.('data-chid')
+          || el.getAttribute?.('data-chatid')
+          || el.getAttribute?.('data-chat-id')
+          || '',
+        ).trim();
+        if (!id) {
+          const dataId = String(
+            el.getAttribute?.('data-id')
+            || el.closest?.('[data-id]')?.getAttribute?.('data-id')
+            || '',
+          ).trim();
+          if (dataId) id = dataId.replace(/^(true|false)_/, '');
+        }
+        if (!id) {
+          const own = String(el.id || '');
+          const m = own.match(/^art-chat-item-(.+)$/i);
+          if (m) id = m[1];
+        }
+        return id;
+      } catch (e) { return ''; }
+    };
     const midX = () => (window.innerWidth || 1000) * 0.55;
     const inLeftPane = (el) => {
       try {
@@ -465,8 +494,12 @@ function messagingPinMatchHelpersJs(name, chatKey = '') {
       let bestGroup = false;
       let bestTitle = '';
       const consider = (title, el) => {
-        let score = scoreName(title);
-        if (score < 48 || !el || !visible(el) || !inLeftPane(el)) return;
+        if (!el || !visible(el) || !inLeftPane(el)) return;
+        let score = -1;
+        const nid = rowNativeId(el);
+        if (wantNativeId && nid && nid === wantNativeId) score = 120;
+        else score = scoreName(title);
+        if (score < 48) return;
         const group = looksLikeGroup(el, title);
         if (group && score < 100) score -= 30;
         if (score < 48) return;
@@ -474,9 +507,21 @@ function messagingPinMatchHelpersJs(name, chatKey = '') {
           bestScore = score;
           best = el;
           bestGroup = group;
-          bestTitle = String(title || '').trim();
+          bestTitle = String(title || '').trim() || wantName;
         }
       };
+      // Exact Arattai chid / native id first — skips search entirely.
+      if (wantNativeId) {
+        for (const cell of document.querySelectorAll(
+          '[chid], [data-chid], [id^="art-chat-item-"], [data-id]',
+        )) {
+          if (!visible(cell) || !inLeftPane(cell)) continue;
+          if (rowNativeId(cell) === wantNativeId) {
+            consider(rowName(cell) || wantName, clickableRowFrom(cell) || cell);
+            if (bestScore >= 120) return { el: best, title: bestTitle, score: bestScore, group: bestGroup };
+          }
+        }
+      }
       for (const cell of document.querySelectorAll(listSel)) {
         consider(rowName(cell), cell);
       }
@@ -514,10 +559,10 @@ function messagingPinMatchHelpersJs(name, chatKey = '') {
 }
 
 /** Locate a chat row / search chip and return viewport click coordinates. */
-export function findMessagingChatTargetJs(name, chatKey = '') {
+export function findMessagingChatTargetJs(name, chatKey = '', nativeId = '') {
   return `(() => {
     ${guestChatListHelpersJs()}
-    ${messagingPinMatchHelpersJs(name, chatKey)}
+    ${messagingPinMatchHelpersJs(name, chatKey, nativeId)}
     const hit = findBestChatTarget();
     if (!hit?.el) return { ok: false };
     const clickEl =
@@ -534,6 +579,7 @@ export function findMessagingChatTargetJs(name, chatKey = '') {
       title: hit.title,
       score: hit.score,
       group: !!hit.group,
+      nativeId: rowNativeId(hit.el) || '',
     };
   })()`;
 }
@@ -689,9 +735,12 @@ export function clearMessagingLeftSearchJs() {
         }
       } catch (e) {}
       try { el.focus(); } catch (e) {}
+      // Only selectAll when search actually has focus — otherwise chat messages get selected.
       try {
-        document.execCommand('selectAll', false, null);
-        document.execCommand('delete', false, null);
+        if (document.activeElement === el) {
+          document.execCommand('selectAll', false, null);
+          document.execCommand('delete', false, null);
+        }
       } catch (e) {}
       try {
         if ('value' in el) {
@@ -712,6 +761,7 @@ export function clearMessagingLeftSearchJs() {
       if (!visible(btn) || !inLeftPane(btn)) continue;
       try { (btn.closest?.('button,[role="button"]') || btn).click(); clickedClear = true; } catch (e) {}
     }
+    try { window.getSelection()?.removeAllRanges(); } catch (e) {}
     try { document.activeElement?.blur?.(); } catch (e) {}
     return { ok: true, hadText, clickedClear };
   })()`;
@@ -729,12 +779,13 @@ export function messagingChatHeaderMatchJs(name, chatKey = '') {
 }
 
 /** Best-effort: open a chat by display name (list click or in-app search). */
-export function openMessagingChatJs(name, chatKey = '') {
+export function openMessagingChatJs(name, chatKey = '', nativeId = '') {
   const targetName = String(name || '').trim();
   const targetKey = normalizeChatKey(chatKey || targetName);
+  const wantNative = String(nativeId || '').trim();
   return `(async () => {
     ${guestChatListHelpersJs()}
-    ${messagingPinMatchHelpersJs(targetName, targetKey)}
+    ${messagingPinMatchHelpersJs(targetName, targetKey, wantNative)}
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const click = (el) => {
       if (!el || !visible(el)) return false;
@@ -809,8 +860,10 @@ export function openMessagingChatJs(name, chatKey = '') {
         for (const el of leftSearchEls()) {
           try { el.focus(); } catch (e) {}
           try {
-            document.execCommand('selectAll', false, null);
-            document.execCommand('delete', false, null);
+            if (document.activeElement === el) {
+              document.execCommand('selectAll', false, null);
+              document.execCommand('delete', false, null);
+            }
           } catch (e) {}
           try {
             if ('value' in el) {
@@ -824,6 +877,7 @@ export function openMessagingChatJs(name, chatKey = '') {
             }
           } catch (e) {}
         }
+        try { window.getSelection()?.removeAllRanges(); } catch (e) {}
         try { document.activeElement?.blur?.(); } catch (e) {}
       } catch (e) {}
     };
@@ -832,10 +886,12 @@ export function openMessagingChatJs(name, chatKey = '') {
       if (!el) return false;
       try { el.focus(); } catch (e) {}
       click(el);
-      // Wipe any leftover query before typing the pin name.
+      // Wipe leftover query only while search is focused (never select chat text).
       try {
-        document.execCommand('selectAll', false, null);
-        document.execCommand('delete', false, null);
+        if (document.activeElement === el) {
+          document.execCommand('selectAll', false, null);
+          document.execCommand('delete', false, null);
+        }
       } catch (e) {}
       try {
         if ('value' in el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
@@ -862,8 +918,10 @@ export function openMessagingChatJs(name, chatKey = '') {
         }));
       } catch (e) {}
       try {
-        document.execCommand('selectAll', false, null);
-        document.execCommand('insertText', false, text);
+        if (document.activeElement === el) {
+          document.execCommand('selectAll', false, null);
+          document.execCommand('insertText', false, text);
+        }
         el.dispatchEvent(new InputEvent('input', {
           bubbles: true, data: text, inputType: 'insertText',
         }));
@@ -910,12 +968,21 @@ export function openMessagingChatJs(name, chatKey = '') {
     // Already on this chat.
     if (confirmedOpen()) return { ok: true, via: 'already-open' };
 
-    // Always start from a clean left list — stale WA search text is the common failure mode.
-    await clearLeftSearch();
-    await wait(180);
-
+    // Fast path: open by native id / visible list row BEFORE clearing search.
+    // Arattai pins used to feel instant — nuclear clear first made them laggy.
     let row = findRow();
-    let opened = await tryOpenRow(row, 'list-click');
+    let opened = await tryOpenRow(row, wantNativeId ? 'native-id' : 'list-click');
+    if (opened) {
+      await clearLeftSearch();
+      return opened;
+    }
+
+    // Clean left list — stale WA search text is the common failure mode.
+    await clearLeftSearch();
+    await wait(120);
+
+    row = findRow();
+    opened = await tryOpenRow(row, 'list-click');
     if (opened) {
       await clearLeftSearch();
       return opened;

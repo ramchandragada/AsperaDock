@@ -4257,7 +4257,8 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
   }
 
   // After account switch, WA/Arattai list can still be empty for a beat.
-  const listDeadline = Date.now() + 5_000;
+  // Arattai: shorter wait — frequent contacts / recent search often enough.
+  const listDeadline = Date.now() + (isWhatsApp ? 5_000 : 2_000);
   while (Date.now() < listDeadline) {
     if (wc.isDestroyed()) break;
     try {
@@ -4267,6 +4268,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
             document.querySelector('[data-testid="cell-frame-container"]')
             || document.querySelector('.art-chat-item')
             || document.querySelector('[role="listitem"]')
+            || document.querySelector('[chid]')
           );
           const hasSearch = !!(
             document.querySelector('[data-testid="chat-list-search"]')
@@ -4282,9 +4284,9 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     } catch (_) {
       /* retry */
     }
-    await sleepMs(200);
+    await sleepMs(isWhatsApp ? 200 : 100);
   }
-  await sleepMs(280);
+  await sleepMs(isWhatsApp ? 280 : 80);
 
   // Header match only — do not focus compose yet (that steals the next search paste).
   const headerOpen = async () => {
@@ -4293,7 +4295,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     return { ok: true, via: 'opened', chat: match.header || chatName };
   };
 
-  const finishOpen = async (opened) => {
+  const finishOpenWhatsApp = async (opened) => {
     // Dismiss search chrome + clear any accidental message selection (Ctrl+A fallout).
     // Avoid full resetPane/Chats click here — chat is already open.
     await dismissMessagingSearchAfterOpen(wc);
@@ -4302,9 +4304,22 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     return opened;
   };
 
+  /** Arattai: light cleanup only — never WA nuclear wipe / CDP search smash. */
+  const finishOpenArattai = async (opened) => {
+    try {
+      await wc.executeJavaScript(clearMessagingLeftSearchJs(), true);
+    } catch {
+      /* ignore */
+    }
+    await clearGuestPageSelection(wc);
+    await markActiveComposeTarget(serviceId);
+    await clearGuestPageSelection(wc);
+    return opened;
+  };
+
   const trustedClickTarget = async (via) => {
     const hit = await wc.executeJavaScript(
-      findMessagingChatTargetJs(chatName, key),
+      findMessagingChatTargetJs(chatName, key, waId),
       true,
     );
     if (!hit?.ok || !Number.isFinite(hit.x) || !Number.isFinite(hit.y)) {
@@ -4312,16 +4327,67 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     }
     if (isWhatsApp) await cdpClickAt(wc, hit.x, hit.y);
     else clickWebContentsAt(wc, hit.x, hit.y);
-    await sleepMs(380);
+    await sleepMs(isWhatsApp ? 380 : 220);
     const opened = await headerOpen();
     if (opened) return { ...opened, via };
     if (isWhatsApp) await cdpClickAt(wc, hit.x, hit.y);
     else clickWebContentsAt(wc, hit.x, hit.y);
-    await sleepMs(420);
+    await sleepMs(isWhatsApp ? 420 : 260);
     const again = await headerOpen();
     return again ? { ...again, via: `${via}-retry` } : null;
   };
 
+  // ── Arattai fast path ──────────────────────────────────────────────
+  // Video (0.4.23): Arattai pins used to be instant; WA nuclear clear/search
+  // made them laggy (search fill → splash → spinner → late chat switch).
+  if (!isWhatsApp) {
+    let lastError = '';
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (wc.isDestroyed()) break;
+      try {
+        const already = await headerOpen();
+        if (already) return finishOpenArattai({ ...already, via: 'already-open' });
+
+        // Prefer chid / visible list row — no search UI.
+        let opened = await trustedClickTarget(
+          waId && attempt === 0 ? 'arattai-chid' : attempt === 0 ? 'list-click' : 'list-retry',
+        );
+        if (opened) return finishOpenArattai(opened);
+
+        const legacy = await wc.executeJavaScript(
+          openMessagingChatJs(chatName, key, waId),
+          true,
+        );
+        if (legacy?.ok) {
+          const matched = await headerOpen();
+          if (matched) {
+            return finishOpenArattai({ ...matched, via: legacy.via || 'legacy-js' });
+          }
+          lastError = `Could not confirm “${chatName}” opened.`;
+        } else {
+          lastError = legacy?.reason || 'chat_not_found';
+        }
+      } catch (error) {
+        lastError = String(error?.message || error);
+      }
+      await sleepMs(220 + attempt * 120);
+    }
+    try {
+      if (!wc.isDestroyed()) await wc.executeJavaScript(clearMessagingLeftSearchJs(), true);
+    } catch {
+      /* ignore */
+    }
+    await clearGuestPageSelection(wc);
+    return {
+      ok: false,
+      error:
+        lastError && lastError !== 'chat_not_found'
+          ? lastError
+          : `Could not open “${chatName || 'chat'}”. Search that name once in the app, then pin again.`,
+    };
+  }
+
+  // ── WhatsApp hardened path ─────────────────────────────────────────
   const tryStoreOpen = async (via) => {
     try {
       const storeOpen = await cdpEvaluate(
@@ -4357,19 +4423,17 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     if (wc.isDestroyed()) break;
     try {
       // WhatsApp: open via internal Store first — never depends on search UI state.
-      if (isWhatsApp) {
-        const viaStore = await tryStoreOpen(attempt === 0 ? 'wa-store' : 'wa-store-retry');
-        if (viaStore) return finishOpen(viaStore);
-      }
+      const viaStore = await tryStoreOpen(attempt === 0 ? 'wa-store' : 'wa-store-retry');
+      if (viaStore) return finishOpenWhatsApp(viaStore);
 
-      await trustedClearMessagingSearch(wc, { resetPane: isWhatsApp });
+      await trustedClearMessagingSearch(wc, { resetPane: true });
       await sleepMs(120);
 
       const already = await headerOpen();
-      if (already) return finishOpen({ ...already, via: 'already-open' });
+      if (already) return finishOpenWhatsApp({ ...already, via: 'already-open' });
 
       let opened = await trustedClickTarget(attempt === 0 ? 'list-click' : 'list-retry');
-      if (opened) return finishOpen(opened);
+      if (opened) return finishOpenWhatsApp(opened);
 
       // Verified search fill (refuses to proceed if the box still shows the prior pin).
       const filled = await fillGuestSearchVerified(wc, chatName);
@@ -4378,10 +4442,10 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
         const searchStarted = Date.now();
         while (Date.now() - searchStarted < 5600) {
           opened = await trustedClickTarget('search-click');
-          if (opened) return finishOpen(opened);
+          if (opened) return finishOpenWhatsApp(opened);
           if (Date.now() - searchStarted > 900) {
             const hit = await wc.executeJavaScript(
-              findMessagingChatTargetJs(chatName, key),
+              findMessagingChatTargetJs(chatName, key, waId),
               true,
             );
             if (hit?.ok && hit.score >= 68) {
@@ -4391,7 +4455,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
               sendGuestKey(wc, 'Enter');
               await sleepMs(450);
               opened = await headerOpen();
-              if (opened) return finishOpen({ ...opened, via: 'search-enter' });
+              if (opened) return finishOpenWhatsApp({ ...opened, via: 'search-enter' });
             }
           }
           await sleepMs(180);
@@ -4400,24 +4464,9 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
         lastError = 'search_fill_failed';
       }
 
-      // Legacy JS path (helps Arattai when coords are odd).
-      if (!isWhatsApp) {
-        const legacy = await wc.executeJavaScript(
-          openMessagingChatJs(chatName, key),
-          true,
-        );
-        if (legacy?.ok) {
-          const matched = await headerOpen();
-          if (matched) return finishOpen({ ...matched, via: legacy.via || 'legacy-js' });
-          lastError = `Could not confirm “${chatName}” opened.`;
-        } else {
-          lastError = legacy?.reason || 'chat_not_found';
-        }
-      } else {
-        const viaStore = await tryStoreOpen('wa-store-late');
-        if (viaStore) return finishOpen(viaStore);
-        lastError = lastError || 'chat_not_found';
-      }
+      const viaStoreLate = await tryStoreOpen('wa-store-late');
+      if (viaStoreLate) return finishOpenWhatsApp(viaStoreLate);
+      lastError = lastError || 'chat_not_found';
     } catch (error) {
       lastError = String(error?.message || error);
     }
@@ -4425,7 +4474,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
   }
 
   try {
-    if (!wc.isDestroyed()) await trustedClearMessagingSearch(wc, { resetPane: isWhatsApp });
+    if (!wc.isDestroyed()) await trustedClearMessagingSearch(wc, { resetPane: true });
   } catch {
     /* ignore */
   }
