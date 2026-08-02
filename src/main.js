@@ -3927,28 +3927,111 @@ function sendGuestKey(webContents, keyCode, modifiers = []) {
   }
 }
 
-/** Replace focused search text via trusted Ctrl+A / paste (WA ignores synthetic input). */
+/**
+ * Replace left-pane search text.
+ * Never use Ctrl+A here — if focus is on the chat, Ctrl+A selects every message.
+ */
 async function replaceGuestSearchText(webContents, text) {
   if (!webContents || webContents.isDestroyed()) return false;
   const value = String(text || '');
   try {
-    webContents.focus();
+    const mutated = await cdpEvaluate(webContents, waMutateSearchJs(value));
+    if (mutated?.ok) return true;
+  } catch {
+    /* fall through */
+  }
+  // Focus search geometrically, then CDP-mutate again (still no Ctrl+A).
+  try {
+    const node = await cdpEvaluate(webContents, waSearchNodeJs());
+    if (node?.x != null) await cdpClickAt(webContents, node.x, node.y);
+    await sleepMs(80);
+    const mutated = await cdpEvaluate(webContents, waMutateSearchJs(value));
+    if (mutated?.ok) return true;
   } catch {
     /* ignore */
   }
-  sendGuestKey(webContents, 'A', ['control']);
-  await sleepMs(45);
-  sendGuestKey(webContents, 'Backspace');
-  await sleepMs(45);
-  if (!value) return true;
+  return false;
+}
+
+/** Drop any blue text selection left in the open chat after pin-open. */
+async function clearGuestPageSelection(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
   try {
-    clipboard.writeText(value);
+    await cdpEvaluate(
+      webContents,
+      `(() => {
+        try { window.getSelection()?.removeAllRanges(); } catch (e) {}
+        try {
+          const ae = document.activeElement;
+          const ph = String(
+            ae?.getAttribute?.('placeholder')
+              || ae?.getAttribute?.('data-placeholder')
+              || ae?.getAttribute?.('aria-label')
+              || '',
+          ).toLowerCase();
+          // Blur search so the green search chrome goes away; keep compose focused later.
+          if (ae && (ae.getAttribute?.('data-tab') === '3' || /search/.test(ph))) {
+            ae.blur();
+          }
+        } catch (e) {}
+        return true;
+      })()`,
+    );
   } catch {
-    return false;
+    try {
+      await webContents.executeJavaScript(
+        `(() => { try { window.getSelection()?.removeAllRanges(); } catch (e) {} return true; })()`,
+        true,
+      );
+    } catch {
+      /* ignore */
+    }
   }
-  const pasted = await sendCtrlVToGuest(webContents);
-  await sleepMs(120);
-  return pasted;
+}
+
+/**
+ * After a successful pin open: wipe leftover search UI without Ctrl+A,
+ * exit search mode, and clear message-text selection.
+ */
+async function dismissMessagingSearchAfterOpen(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  try {
+    const node = await cdpEvaluate(webContents, waSearchNodeJs());
+    if (node?.clearX != null) {
+      await cdpClickAt(webContents, node.clearX, node.clearY);
+      await sleepMs(60);
+    }
+    if (node?.x != null) {
+      await cdpClickAt(webContents, node.x, node.y);
+      await sleepMs(50);
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    await cdpEvaluate(webContents, waMutateSearchJs(''));
+  } catch {
+    try {
+      await webContents.executeJavaScript(nuclearWipeMessagingSearchJs(), true);
+    } catch {
+      /* ignore */
+    }
+  }
+  try {
+    const node = await cdpEvaluate(webContents, waSearchNodeJs());
+    if (node?.backX != null) {
+      await cdpClickAt(webContents, node.backX, node.backY);
+      await sleepMs(80);
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    await webContents.executeJavaScript(clearMessagingLeftSearchJs(), true);
+  } catch {
+    /* ignore */
+  }
+  await clearGuestPageSelection(webContents);
 }
 
 /** CDP evaluate with userGesture — required for WhatsApp React contenteditable. */
@@ -4041,6 +4124,7 @@ async function trustedClearMessagingSearch(webContents, { resetPane = true } = {
     await sleepMs(70);
 
     // CDP userGesture mutate — plain executeJavaScript is ignored by WA React.
+    // Do NOT send Ctrl+A: if focus is on the conversation it selects every message.
     try {
       await cdpEvaluate(webContents, waMutateSearchJs(''));
     } catch {
@@ -4050,12 +4134,6 @@ async function trustedClearMessagingSearch(webContents, { resetPane = true } = {
         /* ignore */
       }
     }
-
-    // Trusted key smash as belt-and-suspenders.
-    sendGuestKey(webContents, 'A', ['control']);
-    await sleepMs(25);
-    for (let i = 0; i < 40; i += 1) sendGuestKey(webContents, 'Backspace');
-    await sleepMs(40);
 
     if (node?.backX != null) await cdpClickAt(webContents, node.backX, node.backY);
     else if (reset?.backHint) await cdpClickAt(webContents, reset.backHint.x, reset.backHint.y);
@@ -4135,7 +4213,7 @@ async function fillGuestSearchVerified(webContents, text) {
       mutated = null;
     }
     if (!mutated?.ok) {
-      // Fallback: clipboard paste after CDP clear.
+      // Fallback: CDP mutate again after re-focus (never Ctrl+A — selects chat text).
       await focusGuestLeftSearch(webContents);
       await replaceGuestSearchText(webContents, want);
       await sleepMs(220);
@@ -4216,9 +4294,11 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
   };
 
   const finishOpen = async (opened) => {
-    // Verified wipe so the next WhatsApp pin is not blocked by leftover search text.
-    await trustedClearMessagingSearch(wc, { resetPane: isWhatsApp });
+    // Dismiss search chrome + clear any accidental message selection (Ctrl+A fallout).
+    // Avoid full resetPane/Chats click here — chat is already open.
+    await dismissMessagingSearchAfterOpen(wc);
     await markActiveComposeTarget(serviceId);
+    await clearGuestPageSelection(wc);
     return opened;
   };
 
