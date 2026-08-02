@@ -88,6 +88,7 @@ import {
   normalizeAnthropicModel,
   normalizeGeminiModel,
   normalizeGrokModel,
+  normalizeSarvamModel,
 } from './ai/catalog.js';
 import {
   clearAiProviderKey,
@@ -2949,6 +2950,9 @@ function aiSettingsSnapshot() {
   }
   if (provider.id === 'grok') {
     model = normalizeGrokModel(model || provider.defaultModel);
+  }
+  if (provider.id === 'sarvam') {
+    model = normalizeSarvamModel(model || provider.defaultModel);
   }
   if (!model) model = provider.defaultModel;
   return { provider, model, language, routeOrder: order, stickyId: sticky };

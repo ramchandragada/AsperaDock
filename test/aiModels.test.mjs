@@ -57,6 +57,21 @@ test('pickBestModelId chooses a lite/flash model', () => {
   );
 });
 
+test('Sarvam scoring prefers chat LLMs over speech models', () => {
+  assert.ok(
+    scoreModelForWorkplace('sarvam-30b', 'sarvam') >
+      scoreModelForWorkplace('sarvam-105b', 'sarvam'),
+  );
+  assert.ok(
+    scoreModelForWorkplace('sarvam-30b', 'sarvam') >
+      scoreModelForWorkplace('saaras:v3', 'sarvam'),
+  );
+  assert.equal(
+    pickBestModelId(['bulbul:v3', 'sarvam-105b', 'sarvam-30b', 'saaras:v3'], 'sarvam'),
+    'sarvam-30b',
+  );
+});
+
 test('isRetryableModelError covers retired and missing models', () => {
   assert.equal(
     isRetryableModelError(

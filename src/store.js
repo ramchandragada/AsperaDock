@@ -135,7 +135,7 @@ export const DEFAULTS = {
    * API keys are stored separately via OS encryption (ai-provider-keys.json).
    */
   aiEnabled: true,
-  aiProvider: 'gemini', // gemini | grok | sambanova | deepseek | openrouter | anthropic
+  aiProvider: 'gemini', // gemini | grok | sambanova | deepseek | sarvam | openrouter | anthropic
   aiModel: '',
   /**
    * Per-provider model preference.

@@ -14,7 +14,7 @@ export const AI_LANGUAGES = Object.freeze([
 
 /**
  * Fixed try order for speed (also UI order):
- * Gemini → Grok → SambaNova → DeepSeek → OpenRouter → Anthropic.
+ * Gemini → Grok → SambaNova → DeepSeek → Sarvam → OpenRouter → Anthropic.
  * Only providers with a saved key are tried; stop at the first success.
  */
 export const AI_PROVIDER_TRY_ORDER = Object.freeze([
@@ -22,6 +22,7 @@ export const AI_PROVIDER_TRY_ORDER = Object.freeze([
   'grok',
   'sambanova',
   'deepseek',
+  'sarvam',
   'openrouter',
   'anthropic',
 ]);
@@ -74,6 +75,15 @@ export const AI_PROVIDERS = Object.freeze([
     defaultModel: 'deepseek-chat',
     models: ['deepseek-chat', 'deepseek-reasoner'],
     keyHint: 'platform.deepseek.com API key',
+  },
+  {
+    id: 'sarvam',
+    name: 'Sarvam AI',
+    freeTierFriendly: true,
+    // Indic LLMs — OpenAI-compatible chat at api.sarvam.ai (sarvam-m retired).
+    defaultModel: 'sarvam-30b',
+    models: ['sarvam-30b', 'sarvam-105b'],
+    keyHint: 'dashboard.sarvam.ai API key (api-subscription-key)',
   },
   {
     id: 'openrouter',
@@ -148,6 +158,18 @@ export function geminiModelFallbackChain(preferred) {
   return [...new Set(ordered)];
 }
 
+/** Map retired Sarvam chat model ids to current API ids. */
+export function normalizeSarvamModel(model) {
+  const raw = String(model || '').trim();
+  const map = {
+    'sarvam-m': 'sarvam-30b',
+    'sarvam-m-v1': 'sarvam-30b',
+    'sarvam-30b-16k': 'sarvam-30b',
+    'sarvam-105b-32k': 'sarvam-105b',
+  };
+  return map[raw] || raw || 'sarvam-30b';
+}
+
 /** Map retired / mistyped model ids to current Anthropic API ids. */
 export function normalizeAnthropicModel(model) {
   const raw = String(model || '').trim();
@@ -173,7 +195,7 @@ export function aiProviderRouteOrder() {
 
 /**
  * Filter route order to providers that have a saved key.
- * Always Gemini → Grok → SambaNova → DeepSeek → OpenRouter → Anthropic among configured keys.
+ * Always Gemini → Grok → SambaNova → DeepSeek → Sarvam → OpenRouter → Anthropic among configured keys.
  */
 export function configuredProvidersInRouteOrder(configuredIds) {
   const have = new Set(

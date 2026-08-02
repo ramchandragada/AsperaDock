@@ -79,6 +79,16 @@ export function scoreModelForWorkplace(modelId, providerId = '') {
   if (provider === 'deepseek' && m === 'deepseek-chat') score += 40;
   if (provider === 'deepseek' && m.includes('reasoner')) score -= 10;
 
+  // Sarvam: chat LLMs only — skip speech/translate model ids from /v1/models.
+  if (provider === 'sarvam') {
+    if (/^sarvam-30b\b/.test(m)) score += 45;
+    else if (/^sarvam-105b\b/.test(m)) score += 25;
+    else if (/^sarvam-m\b/.test(m)) score -= 20; // retired
+    if (/saaras|saarika|bulbul|mayura|translate|translit|tts|stt/.test(m)) {
+      score -= 500;
+    }
+  }
+
   return score;
 }
 
@@ -263,6 +273,10 @@ export async function listAiProviderModels(providerId, apiKey, { force = false }
       models = await listOpenAiCompatibleModels('https://api.sambanova.ai/v1', apiKey);
     } else if (id === 'deepseek') {
       models = await listOpenAiCompatibleModels('https://api.deepseek.com/v1', apiKey);
+    } else if (id === 'sarvam') {
+      models = await listOpenAiCompatibleModels('https://api.sarvam.ai/v1', apiKey, {
+        'api-subscription-key': apiKey,
+      });
     } else if (id === 'openrouter') {
       models = await listOpenAiCompatibleModels('https://openrouter.ai/api/v1', apiKey, {
         'HTTP-Referer': 'https://asperahub.com',

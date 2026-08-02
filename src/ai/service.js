@@ -3,6 +3,7 @@ import {
   normalizeAnthropicModel,
   normalizeGeminiModel,
   normalizeGrokModel,
+  normalizeSarvamModel,
   resolveAiAttemptOrder,
 } from './catalog.js';
 import {
@@ -176,6 +177,7 @@ function normalizeChosenModel(providerId, model) {
   if (providerId === 'gemini') return normalizeGeminiModel(model);
   if (providerId === 'grok') return normalizeGrokModel(model);
   if (providerId === 'anthropic') return normalizeAnthropicModel(model);
+  if (providerId === 'sarvam') return normalizeSarvamModel(model);
   if (providerId === 'openrouter' && model === 'openrouter/free') {
     return 'google/gemini-flash-latest';
   }
@@ -250,7 +252,18 @@ async function callProviderWithModelChain(providerId, prompt, preferredOverride)
           model,
           prompt,
         });
-      } else {
+      } else if (provider.id === 'sarvam') {
+        // Prefer api-subscription-key (docs primary); Bearer also accepted.
+        text = await callOpenAiCompatible({
+          baseUrl: 'https://api.sarvam.ai/v1',
+          apiKey,
+          model,
+          prompt,
+          extraHeaders: {
+            'api-subscription-key': apiKey,
+          },
+        });
+      } else if (provider.id === 'openrouter') {
         text = await callOpenAiCompatible({
           baseUrl: 'https://openrouter.ai/api/v1',
           apiKey,
@@ -261,6 +274,8 @@ async function callProviderWithModelChain(providerId, prompt, preferredOverride)
             'X-Title': 'Aspera Hub',
           },
         });
+      } else {
+        throw new Error(`Unsupported AI provider: ${provider.id}`);
       }
       return { text, model, providerId: provider.id, providerName: provider.name };
     } catch (error) {

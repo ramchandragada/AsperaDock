@@ -8,6 +8,7 @@ import {
   normalizeAnthropicModel,
   normalizeGeminiModel,
   normalizeGrokModel,
+  normalizeSarvamModel,
   geminiModelFallbackChain,
   aiProviderRouteOrder,
   configuredProvidersInRouteOrder,
@@ -32,12 +33,13 @@ test('AI skills allow only WhatsApp, Arattai, Gmail, Zoho Mail', () => {
   assert.equal(isAiAllowedAppId('zoho-crm'), false);
 });
 
-test('providers include Gemini, Grok, SambaNova, DeepSeek, OpenRouter, Anthropic', () => {
+test('providers include Gemini, Grok, SambaNova, DeepSeek, Sarvam, OpenRouter, Anthropic', () => {
   for (const id of [
     'gemini',
     'grok',
     'sambanova',
     'deepseek',
+    'sarvam',
     'openrouter',
     'anthropic',
   ]) {
@@ -46,6 +48,9 @@ test('providers include Gemini, Grok, SambaNova, DeepSeek, OpenRouter, Anthropic
   assert.equal(getAiProvider('anthropic').freeTierFriendly, false);
   assert.equal(getAiProvider('deepseek').defaultModel, 'deepseek-chat');
   assert.equal(getAiProvider('deepseek').freeTierFriendly, true);
+  assert.equal(getAiProvider('sarvam').defaultModel, 'sarvam-30b');
+  assert.equal(getAiProvider('sarvam').freeTierFriendly, true);
+  assert.ok(getAiProvider('sarvam').models.includes('sarvam-105b'));
 });
 
 test('language instructions cover EN Hindi Marathi', () => {
@@ -130,12 +135,13 @@ test('Anthropic normalizes retired haiku model ids', () => {
   );
 });
 
-test('AI provider try order is Gemini → Grok → SambaNova → DeepSeek → OpenRouter → Anthropic', () => {
+test('AI provider try order is Gemini → Grok → SambaNova → DeepSeek → Sarvam → OpenRouter → Anthropic', () => {
   assert.deepEqual(aiProviderRouteOrder().map((p) => p.id), [
     'gemini',
     'grok',
     'sambanova',
     'deepseek',
+    'sarvam',
     'openrouter',
     'anthropic',
   ]);
@@ -143,11 +149,12 @@ test('AI provider try order is Gemini → Grok → SambaNova → DeepSeek → Op
     configuredProvidersInRouteOrder([
       'anthropic',
       'openrouter',
+      'sarvam',
       'deepseek',
       'gemini',
       'grok',
     ]).map((p) => p.id),
-    ['gemini', 'grok', 'deepseek', 'openrouter', 'anthropic'],
+    ['gemini', 'grok', 'deepseek', 'sarvam', 'openrouter', 'anthropic'],
   );
   assert.deepEqual(
     configuredProvidersInRouteOrder(['openrouter', 'anthropic']).map((p) => p.id),
@@ -161,6 +168,15 @@ test('AI provider try order is Gemini → Grok → SambaNova → DeepSeek → Op
   assert.equal(getAiProvider('gemini').defaultModel, 'gemini-3.1-flash-lite');
   assert.equal(getAiProvider('grok').defaultModel, 'grok-4.5');
   assert.equal(getAiProvider('deepseek').defaultModel, 'deepseek-chat');
+  assert.equal(getAiProvider('sarvam').defaultModel, 'sarvam-30b');
+});
+
+test('Sarvam normalizes retired chat model ids', () => {
+  assert.equal(normalizeSarvamModel('sarvam-m'), 'sarvam-30b');
+  assert.equal(normalizeSarvamModel('sarvam-30b-16k'), 'sarvam-30b');
+  assert.equal(normalizeSarvamModel('sarvam-105b-32k'), 'sarvam-105b');
+  assert.equal(normalizeSarvamModel('sarvam-105b'), 'sarvam-105b');
+  assert.equal(normalizeSarvamModel(''), 'sarvam-30b');
 });
 
 test('Gemini and Grok normalize retired model ids', () => {
