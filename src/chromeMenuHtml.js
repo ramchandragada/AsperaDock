@@ -67,18 +67,19 @@ export function buildChromeMenuHtml(dark = false) {
 <style>
   html, body { margin:0; padding:0; background:transparent; overflow:hidden; font:500 13px/1.3 "Segoe UI","Ubuntu","Cantarell",sans-serif; color:${text}; user-select:none; }
   .card {
-    margin:4px; width:220px; box-sizing:border-box;
+    margin:4px; width:228px; max-height:calc(100vh - 16px); box-sizing:border-box;
     background:${bg}; border:1px solid ${border}; border-radius:12px;
-    box-shadow:0 12px 40px rgba(15,23,42,0.22); padding:6px; display:grid; gap:2px;
+    box-shadow:0 12px 40px rgba(15,23,42,0.22); padding:6px; display:grid; gap:1px;
+    overflow-y:auto; overscroll-behavior:contain;
   }
   .item {
     display:flex; align-items:center; gap:10px; border:0; background:transparent;
-    color:inherit; text-align:left; padding:9px 10px; border-radius:8px; cursor:pointer; font:inherit;
+    color:inherit; text-align:left; padding:8px 10px; border-radius:8px; cursor:pointer; font:inherit;
   }
   .item:hover { background:${hover}; }
   .ico { width:18px; height:18px; display:grid; place-items:center; color:${muted}; flex:0 0 auto; }
   .label { min-width:0; }
-  hr { border:none; border-top:1px solid ${border}; margin:4px 0; }
+  hr { border:none; border-top:1px solid ${border}; margin:3px 0; }
   .ver { padding:6px 10px 4px; font-size:11px; font-weight:600; color:${muted}; }
 </style>
 </head>
@@ -96,6 +97,7 @@ export function buildChromeMenuHtml(dark = false) {
     ${item('extensions', ICO.puzzle, 'Extensions')}
     ${item('profiles', ICO.users, 'Profiles')}
     ${item('shortcuts', ICO.keyboard, 'Shortcuts')}
+    ${item('about', ICO.info, 'About Aspera Hub')}
     <hr />
     ${item('reload', ICO.reload, 'Reload app')}
     ${item('home', ICO.home, 'Go to app home')}
@@ -105,7 +107,6 @@ export function buildChromeMenuHtml(dark = false) {
     ${item('add-app', ICO.plus, 'Add app')}
     <hr />
     ${item('check-updates', ICO.sync, 'Check for updates')}
-    ${item('about', ICO.info, 'About')}
     <div class="ver" id="version">Aspera Hub</div>
   </div>
   <script>

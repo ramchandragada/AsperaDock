@@ -2608,8 +2608,13 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
   closeNotifCenterWindow();
   closeChromeMenuWindow();
 
-  const menuW = 234;
-  const menuH = 680;
+  const menuW = 242;
+  // Tall enough for About + version; clampFloatPosition shrinks into the work area.
+  const display = screen.getDisplayNearestPoint({
+    x: mainWindow.getBounds().x,
+    y: mainWindow.getBounds().y,
+  });
+  const menuH = Math.min(760, Math.max(520, (display?.workArea?.height || 800) - 48));
   const content = mainWindow.getContentBounds();
   const anchorX = content.x + (Number(x) || 0);
   const anchorY = content.y + (Number(y) || 0);
