@@ -3999,27 +3999,29 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
       if (result?.ok) {
         await sleepMs(220);
         await markActiveComposeTarget(serviceId);
-        // Confirm header / compose actually belongs to this contact.
+        // Confirm the open header belongs to this contact — never accept
+        // "compose is open on some other chat" as a pin success.
         const opened = await getGuestChatKey(wc);
         const openedTitle = String(opened?.title || '').trim();
         const openedKey = normalizeChatKey(openedTitle);
         const want = normalizeChatKey(chatName || key);
         const matched =
-          !want ||
-          !openedKey ||
-          openedKey === want ||
-          openedKey.includes(want) ||
-          want.includes(openedKey) ||
-          (want.split(' ').some((t) => t.length >= 4 && openedKey.includes(t)) &&
-            opened?.compose);
-        if (matched || opened?.compose) {
+          !!want &&
+          !!openedKey &&
+          (openedKey === want ||
+            openedKey.includes(want) ||
+            want.includes(openedKey) ||
+            want.split(' ').some((t) => t.length >= 4 && openedKey.includes(t)));
+        if (matched) {
           return {
             ok: true,
             via: result.via || 'opened',
             chat: openedTitle || chatName,
           };
         }
-        lastError = `Opened “${openedTitle || 'chat'}” instead of “${chatName}”.`;
+        lastError = openedTitle
+          ? `Opened “${openedTitle}” instead of “${chatName}”.`
+          : `Could not confirm “${chatName}” opened.`;
       } else {
         lastError = result?.reason || 'chat_not_found';
       }

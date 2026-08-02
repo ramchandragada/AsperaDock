@@ -342,18 +342,26 @@ export function openMessagingChatJs(name, chatKey = '') {
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const norm = (s) => String(s || '').toLowerCase().replace(/\\s+/g, ' ').trim();
     const wantN = norm(wantName);
+    const midX = () => (window.innerWidth || 1000) * 0.55;
+    const inLeftPane = (el) => {
+      try {
+        const r = el.getBoundingClientRect();
+        return r.width > 8 && r.left < midX();
+      } catch (e) { return false; }
+    };
     const click = (el) => {
       if (!el || !visible(el)) return false;
       try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
       try {
         const r = el.getBoundingClientRect();
-        const x = r.left + Math.min(40, r.width / 2);
+        const x = r.left + Math.min(40, Math.max(12, r.width / 2));
         const y = r.top + r.height / 2;
         for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
           el.dispatchEvent(new MouseEvent(type, {
             bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, buttons: 1,
           }));
         }
+        try { el.click(); } catch (e) {}
         return true;
       } catch (e) {
         try { el.click(); return true; } catch (e2) { return false; }
@@ -371,15 +379,39 @@ export function openMessagingChatJs(name, chatKey = '') {
       if (token && key.includes(token)) return 45;
       return -1;
     };
+    const clickableRowFrom = (el) => {
+      if (!el) return null;
+      return (
+        el.closest?.(listSel)
+        || el.closest?.('[data-testid="cell-frame-container"]')
+        || el.closest?.('[role="listitem"]')
+        || el.closest?.('[role="row"]')
+        || el.closest?.('[role="button"]')
+        || el.closest?.('div[tabindex]')
+        || el
+      );
+    };
     const findRow = () => {
-      const cells = Array.from(document.querySelectorAll(listSel));
       let best = null;
       let bestScore = -1;
-      for (const cell of cells) {
-        if (!visible(cell)) continue;
-        const title = rowName(cell);
+      const consider = (title, el) => {
         const score = scoreName(title);
-        if (score > bestScore) { bestScore = score; best = cell; }
+        if (score < 45 || !el || !visible(el) || !inLeftPane(el)) return;
+        // Prefer exact matches; then higher scores.
+        if (score > bestScore) { bestScore = score; best = el; }
+      };
+      for (const cell of document.querySelectorAll(listSel)) {
+        consider(rowName(cell), cell);
+      }
+      // Search results / "Recent searches" often expose a title span before the row hooks settle.
+      for (const span of document.querySelectorAll(
+        '[data-testid="cell-frame-title"] span[title], [data-testid="cell-frame-title"], span[title], div[title]',
+      )) {
+        if (span.closest?.('[data-testid="conversation-info-header"], #main header, .art-chwindow-hdr')) {
+          continue;
+        }
+        const title = span.getAttribute?.('title') || span.textContent;
+        consider(title, clickableRowFrom(span));
       }
       return bestScore >= 45 ? best : null;
     };
@@ -395,105 +427,174 @@ export function openMessagingChatJs(name, chatKey = '') {
         if (/type your message|message here|type a message/.test(ph)) return true;
         try {
           const r = n.getBoundingClientRect();
-          if (r.width >= 120 && r.top > vh * 0.55) return true;
+          if (r.width >= 120 && r.top > vh * 0.55 && r.left >= midX() * 0.7) return true;
         } catch (e) {}
       }
       return false;
     };
+    // Require the open header to match the pin — never treat "some compose is open" as success
+    // (that left users on Parth while search still showed the typed pin name).
     const confirmedOpen = () => {
-      const header = norm(openHeaderName());
-      if (!header) return composeOpen() && !!wantN;
-      if (scoreName(header) >= 45) return true;
-      return false;
+      const header = openHeaderName();
+      if (!header) return false;
+      return scoreName(header) >= 45;
+    };
+    const dismissSearch = async () => {
+      try {
+        for (let i = 0; i < 2; i += 1) {
+          document.activeElement?.blur?.();
+          document.dispatchEvent(new KeyboardEvent('keydown', {
+            key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true,
+          }));
+          await wait(90);
+        }
+      } catch (e) {}
+    };
+    const fillSearch = (el, text) => {
+      if (!el) return false;
+      try { el.focus(); } catch (e) {}
+      click(el);
+      try {
+        document.execCommand('selectAll', false, null);
+        document.execCommand('delete', false, null);
+      } catch (e) {}
+      try {
+        if ('value' in el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+          el.value = text;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return true;
+        }
+      } catch (e) {}
+      // WhatsApp contenteditable often ignores bare textContent — paste + insertText.
+      try {
+        const dt = new DataTransfer();
+        dt.setData('text/plain', text);
+        el.dispatchEvent(new ClipboardEvent('paste', {
+          clipboardData: dt, bubbles: true, cancelable: true,
+        }));
+      } catch (e) {}
+      try {
+        document.execCommand('selectAll', false, null);
+        document.execCommand('insertText', false, text);
+        el.dispatchEvent(new InputEvent('input', {
+          bubbles: true, data: text, inputType: 'insertText',
+        }));
+      } catch (e) {
+        try {
+          el.textContent = text;
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+        } catch (e2) {}
+      }
+      return true;
+    };
+    const tryOpenRow = async (row, via) => {
+      if (!row) return null;
+      // Click the title control when present — more reliable than the outer frame.
+      const titleEl =
+        row.querySelector?.('[data-testid="cell-frame-title"]')
+        || row.querySelector?.('.chat-title-text')
+        || row.querySelector?.('span[title]')
+        || row;
+      click(titleEl);
+      await wait(280);
+      if (confirmedOpen()) return { ok: true, via };
+      click(row);
+      await wait(420);
+      if (confirmedOpen()) return { ok: true, via };
+      return null;
+    };
+    const tryKeyboardOpen = async (searchEl) => {
+      if (!searchEl) return null;
+      try { searchEl.focus(); } catch (e) {}
+      for (const key of [
+        { key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
+        { key: 'Enter', code: 'Enter', keyCode: 13 },
+      ]) {
+        searchEl.dispatchEvent(new KeyboardEvent('keydown', { ...key, which: key.keyCode, bubbles: true }));
+        searchEl.dispatchEvent(new KeyboardEvent('keyup', { ...key, which: key.keyCode, bubbles: true }));
+        await wait(70);
+      }
+      await wait(450);
+      if (confirmedOpen()) return { ok: true, via: 'search-enter' };
+      return null;
     };
 
     // Already on this chat.
     if (confirmedOpen()) return { ok: true, via: 'already-open' };
 
     let row = findRow();
-    if (row && click(row)) {
-      await wait(350);
-      if (confirmedOpen()) return { ok: true, via: 'list-click' };
-    }
+    let opened = await tryOpenRow(row, 'list-click');
+    if (opened) return opened;
 
-    // Open search: WhatsApp filter / chat-list search / Arattai search.
+    // Open left-pane search (not in-chat message search).
     const searchBtn =
       document.querySelector('[data-testid="chat-list-search"]')
+      || document.querySelector('[aria-label="Search or start a new chat"]')
       || document.querySelector('button[aria-label*="Search" i]')
       || document.querySelector('[aria-label*="Search or start" i]')
       || document.querySelector('[data-icon="search"]')?.closest('button,[role="button"],div');
-    if (searchBtn) {
+    if (searchBtn && inLeftPane(searchBtn)) {
       click(searchBtn);
-      await wait(180);
+      await wait(220);
     }
-    let search =
-      document.querySelector('[data-testid="chat-list-search"]')
-      || document.querySelector('div[contenteditable="true"][data-tab="3"]')
-      || document.querySelector('[contenteditable="true"][data-tab="3"]')
-      || document.querySelector('[contenteditable="true"][aria-label*="Search" i]')
-      || document.querySelector('input[placeholder*="Search" i]')
-      || document.querySelector('[placeholder*="Search" i]')
-      || document.querySelector('[data-placeholder*="Search" i]')
-      || document.querySelector('[placeholder*="Search chats" i]');
-    // Prefer a search field in the left pane (not the in-chat message search).
-    if (!search || !visible(search)) {
-      const candidates = Array.from(document.querySelectorAll(
-        '[contenteditable="true"], input[type="text"], input[type="search"]',
-      ));
-      search = candidates.find((el) => {
-        if (!visible(el)) return false;
-        const ph = String(
-          el.getAttribute('placeholder')
-            || el.getAttribute('data-placeholder')
-            || el.getAttribute('aria-label')
-            || '',
-        ).toLowerCase();
-        return /search/.test(ph);
-      }) || search;
-    }
-    if (search && visible(search)) {
-      try { search.focus(); } catch (e) {}
-      click(search);
-      await wait(100);
-      try {
-        document.execCommand('selectAll', false, null);
-        document.execCommand('delete', false, null);
-      } catch (e) {}
-      try {
-        if ('value' in search && search.tagName === 'INPUT') {
-          search.value = wantName;
-          search.dispatchEvent(new Event('input', { bubbles: true }));
-          search.dispatchEvent(new Event('change', { bubbles: true }));
-        } else {
-          document.execCommand('selectAll', false, null);
-          document.execCommand('insertText', false, wantName);
-          search.dispatchEvent(new InputEvent('input', { bubbles: true, data: wantName, inputType: 'insertText' }));
-        }
-      } catch (e) {
-        try {
-          search.textContent = wantName;
-          search.dispatchEvent(new Event('input', { bubbles: true }));
-        } catch (e2) {}
-      }
-      const deadline = Date.now() + 3500;
+    const searchCandidates = Array.from(document.querySelectorAll(
+      [
+        '[data-testid="chat-list-search"]',
+        'div[contenteditable="true"][data-tab="3"]',
+        '[contenteditable="true"][data-tab="3"]',
+        '[contenteditable="true"][aria-label*="Search" i]',
+        '[contenteditable="true"][title*="Search" i]',
+        'input[placeholder*="Search" i]',
+        '[placeholder*="Search" i]',
+        '[data-placeholder*="Search" i]',
+        '[placeholder*="Search chats" i]',
+        '[contenteditable="true"]',
+        'input[type="search"]',
+        'input[type="text"]',
+      ].join(','),
+    )).filter((el) => {
+      if (!visible(el) || !inLeftPane(el)) return false;
+      const ph = String(
+        el.getAttribute('placeholder')
+          || el.getAttribute('data-placeholder')
+          || el.getAttribute('aria-label')
+          || el.getAttribute('title')
+          || '',
+      ).toLowerCase();
+      if (/search messages|search this chat/.test(ph)) return false;
+      if (/search/.test(ph) || el.getAttribute('data-tab') === '3') return true;
+      return el.getAttribute?.('data-testid') === 'chat-list-search';
+    });
+    const search = searchCandidates[0] || null;
+
+    if (search) {
+      fillSearch(search, wantName);
+      await wait(350);
+      const searchStarted = Date.now();
+      const deadline = searchStarted + 4800;
+      let keyboardTried = false;
       while (Date.now() < deadline) {
-        await wait(140);
         row = findRow();
-        if (row && click(row)) {
-          await wait(400);
-          if (confirmedOpen()) return { ok: true, via: 'search-click' };
+        opened = await tryOpenRow(row, 'search-click');
+        if (opened) return opened;
+        // After results settle, ArrowDown+Enter often opens the top match on WA.
+        if (!keyboardTried && Date.now() - searchStarted > 700) {
+          keyboardTried = true;
+          opened = await tryKeyboardOpen(search);
+          if (opened) return opened;
         }
+        await wait(160);
       }
     }
 
-    // Last pass: click any visible matching row again.
+    // Last pass: click any visible matching row again (list may have refreshed).
     row = findRow();
-    if (row && click(row)) {
-      await wait(450);
-      if (confirmedOpen()) return { ok: true, via: 'list-retry' };
-      // Some WA builds open compose a beat later.
-      if (composeOpen()) return { ok: true, via: 'list-compose' };
-    }
+    opened = await tryOpenRow(row, 'list-retry');
+    if (opened) return opened;
+
+    // Leave search UI clean — typed name without an open chat is the flaky failure mode.
+    await dismissSearch();
     return {
       ok: false,
       reason: 'chat_not_found',

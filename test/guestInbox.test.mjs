@@ -51,9 +51,22 @@ test('scrape / open / search / reply scripts mention WhatsApp + Arattai list hoo
   assert.match(openJs, /chat-list-search|Search/);
   assert.match(openJs, /confirmedOpen|conversation-info-header|art-chwindow-hdr/);
   assert.match(openJs, /pointerdown|mousedown/);
+  // Pin-open hardening: paste into search, keyboard confirm, dismiss leftover search.
+  assert.match(openJs, /ClipboardEvent|paste/);
+  assert.match(openJs, /ArrowDown/);
+  assert.match(openJs, /dismissSearch|Escape/);
+  assert.match(openJs, /inLeftPane|cell-frame-title/);
+  assert.match(openJs, /scoreName\(header\) >= 45/);
   assert.match(searchMessagingChatsJs('parth'), /parth/);
   assert.match(searchMessagingChatsJs('parth'), /art-chat-item/);
   assert.match(composeReplyJs('Thanks', { send: true }), /compose-btn-send|Enter/);
+});
+
+test('openMessagingChatJs does not treat unrelated compose as success', () => {
+  const openJs = openMessagingChatJs('shrikant', 'shrikant');
+  // Header must match — compose-only success was the flaky false positive.
+  assert.match(openJs, /scoreName\(header\) >= 45/);
+  assert.doesNotMatch(openJs, /composeOpen\(\) && !!wantN/);
 });
 
 test('junk chat names reject Arattai chrome mistaken for contacts', () => {
