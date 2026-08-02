@@ -3907,7 +3907,61 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
   if (!wc || wc.isDestroyed()) {
     return { ok: false, error: 'Chat view is not ready.' };
   }
-  await sleepMs(350);
+
+  // After account switch, WA/Arattai list can still be empty for a beat.
+  const listDeadline = Date.now() + 5_000;
+  while (Date.now() < listDeadline) {
+    if (wc.isDestroyed()) break;
+    try {
+      const listReady = await wc.executeJavaScript(
+        `(() => {
+          const hasRow = !!(
+            document.querySelector('[data-testid="cell-frame-container"]')
+            || document.querySelector('.art-chat-item')
+            || document.querySelector('[role="listitem"]')
+          );
+          const hasSearch = !!(
+            document.querySelector('[data-testid="chat-list-search"]')
+            || document.querySelector('[contenteditable="true"][data-tab="3"]')
+            || document.querySelector('[aria-label*="Search or start" i]')
+            || document.querySelector('[placeholder*="Search" i]')
+          );
+          return hasRow || hasSearch;
+        })()`,
+        true,
+      );
+      if (listReady) break;
+    } catch (_) {
+      /* retry */
+    }
+    await sleepMs(200);
+  }
+  await sleepMs(280);
+
+  const want = normalizeChatKey(chatName || key);
+  const wantTokens = want.split(' ').filter((t) => t.length >= 3);
+  const headerMatchesPin = (openedKey) => {
+    if (!want || !openedKey) return false;
+    if (openedKey === want) return true;
+    if (openedKey.includes(want) || (want.includes(openedKey) && openedKey.length >= 6)) {
+      return true;
+    }
+    if (wantTokens.length >= 2) {
+      const hit = wantTokens.filter((t) => openedKey.includes(t)).length;
+      return hit === wantTokens.length || hit >= Math.ceil(wantTokens.length * 0.6);
+    }
+    // Short single-token pins: do not accept loose token-in-title (group noise).
+    if (wantTokens.length === 1) {
+      const tok = wantTokens[0];
+      return (
+        openedKey === tok ||
+        openedKey.startsWith(`${tok} `) ||
+        openedKey.endsWith(` ${tok}`) ||
+        (openedKey.includes(tok) && openedKey.length <= tok.length + 10)
+      );
+    }
+    return false;
+  };
 
   let lastError = '';
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -3925,15 +3979,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
         const opened = await getGuestChatKey(wc);
         const openedTitle = String(opened?.title || '').trim();
         const openedKey = normalizeChatKey(openedTitle);
-        const want = normalizeChatKey(chatName || key);
-        const matched =
-          !!want &&
-          !!openedKey &&
-          (openedKey === want ||
-            openedKey.includes(want) ||
-            want.includes(openedKey) ||
-            want.split(' ').some((t) => t.length >= 4 && openedKey.includes(t)));
-        if (matched) {
+        if (headerMatchesPin(openedKey)) {
           return {
             ok: true,
             via: result.via || 'opened',

@@ -367,16 +367,49 @@ export function openMessagingChatJs(name, chatKey = '') {
         try { el.click(); return true; } catch (e2) { return false; }
       }
     };
+    const wantTokens = wantN.split(' ').filter((t) => t.length >= 3);
+    const isShortSingleToken = wantTokens.length === 1 && wantN.split(' ').length === 1;
+    const looksLikeGroup = (el, title) => {
+      const t = norm(title);
+      if (/\\b(group|community|broadcast)\\b/.test(t)) return true;
+      if (/&/.test(String(title || '')) && String(title || '').split(/\\s+/).filter(Boolean).length >= 2) {
+        return true;
+      }
+      if (el?.querySelector?.(
+        '[data-testid="default-group"], [data-icon="default-group"], [data-icon="group"], [data-icon="community"], span[data-icon="default-group"]',
+      )) return true;
+      const aria = String(el?.getAttribute?.('aria-label') || '').toLowerCase();
+      if (/\\b(group|community|broadcast)\\b/.test(aria)) return true;
+      return false;
+    };
+    // Score chat *titles* only — never last-message previews that mention the pin.
     const scoreName = (title) => {
       const key = norm(title);
       if (!key || isJunkName(key)) return -1;
       if (key === wantKey || key === wantN) return 100;
-      if (wantKey && key.includes(wantKey)) return 80;
-      if (wantN && key.includes(wantN)) return 70;
-      if (wantN && wantN.includes(key) && key.length >= 5) return 50;
-      // Match first significant token (e.g. "LFCHS REUNION…" vs full pin name).
-      const token = wantN.split(' ').find((t) => t.length >= 4) || '';
-      if (token && key.includes(token)) return 45;
+      if (wantKey && key.includes(wantKey)) return 88;
+      if (wantN && key.includes(wantN)) return 84;
+      // Title is a shortening of the pin ("Kumar Gardas" vs full pin).
+      if (wantN && wantN.includes(key) && key.length >= 6) return 58;
+      if (wantKey && wantKey.includes(key) && key.length >= 6) return 56;
+      if (wantTokens.length >= 2) {
+        let hit = 0;
+        for (const t of wantTokens) if (key.includes(t)) hit += 1;
+        if (hit === wantTokens.length) return 78;
+        if (hit >= 2 && hit >= Math.ceil(wantTokens.length * 0.6)) return 62;
+        return -1;
+      }
+      // Short single-token pins ("shrikant"): require title ≈ name.
+      // Weak includes() previously matched group rows / message hits.
+      if (isShortSingleToken) {
+        const tok = wantTokens[0];
+        if (key === tok) return 100;
+        if (key.startsWith(tok + ' ') || key.endsWith(' ' + tok)) return 72;
+        if (key.includes(tok) && key.length <= tok.length + 10) return 68;
+        return -1;
+      }
+      const token = wantTokens[0] || '';
+      if (token && key.includes(token) && key.length <= Math.max(24, token.length + 16)) return 48;
       return -1;
     };
     const clickableRowFrom = (el) => {
@@ -394,11 +427,22 @@ export function openMessagingChatJs(name, chatKey = '') {
     const findRow = () => {
       let best = null;
       let bestScore = -1;
+      let bestGroup = false;
       const consider = (title, el) => {
-        const score = scoreName(title);
-        if (score < 45 || !el || !visible(el) || !inLeftPane(el)) return;
-        // Prefer exact matches; then higher scores.
-        if (score > bestScore) { bestScore = score; best = el; }
+        let score = scoreName(title);
+        if (score < 48 || !el || !visible(el) || !inLeftPane(el)) return;
+        const group = looksLikeGroup(el, title);
+        // Prefer DM/contact rows over groups that only mention the person.
+        if (group && score < 100) score -= 30;
+        if (score < 48) return;
+        if (
+          score > bestScore
+          || (score === bestScore && bestGroup && !group)
+        ) {
+          bestScore = score;
+          best = el;
+          bestGroup = group;
+        }
       };
       for (const cell of document.querySelectorAll(listSel)) {
         consider(rowName(cell), cell);
@@ -410,10 +454,14 @@ export function openMessagingChatJs(name, chatKey = '') {
         if (span.closest?.('[data-testid="conversation-info-header"], #main header, .art-chwindow-hdr')) {
           continue;
         }
+        // Skip last-message / secondary lines — title attr on those can poison matching.
+        if (span.closest?.(
+          '[data-testid="last-msg-body"], [data-testid="cell-frame-secondary"], .lhs-list-msginfo',
+        )) continue;
         const title = span.getAttribute?.('title') || span.textContent;
         consider(title, clickableRowFrom(span));
       }
-      return bestScore >= 45 ? best : null;
+      return bestScore >= 48 ? best : null;
     };
     const openHeaderName = () => openChatHeaderName();
     const composeOpen = () => {
@@ -437,10 +485,81 @@ export function openMessagingChatJs(name, chatKey = '') {
     const confirmedOpen = () => {
       const header = openHeaderName();
       if (!header) return false;
-      return scoreName(header) >= 45;
+      return scoreName(header) >= 56;
     };
-    const dismissSearch = async () => {
+    const leftSearchEls = () => Array.from(document.querySelectorAll(
+      [
+        '[data-testid="chat-list-search"]',
+        'div[contenteditable="true"][data-tab="3"]',
+        '[contenteditable="true"][data-tab="3"]',
+        '[contenteditable="true"][aria-label*="Search" i]',
+        '[contenteditable="true"][title*="Search" i]',
+        'input[placeholder*="Search" i]',
+        '[placeholder*="Search" i]',
+        '[data-placeholder*="Search" i]',
+        'input[type="search"]',
+      ].join(','),
+    )).filter((el) => {
+      if (!visible(el) || !inLeftPane(el)) return false;
+      const ph = String(
+        el.getAttribute('placeholder')
+          || el.getAttribute('data-placeholder')
+          || el.getAttribute('aria-label')
+          || el.getAttribute('title')
+          || '',
+      ).toLowerCase();
+      if (/search messages|search this chat/.test(ph)) return false;
+      return /search/.test(ph) || el.getAttribute('data-tab') === '3'
+        || el.getAttribute?.('data-testid') === 'chat-list-search';
+    });
+    const searchHasText = (el) => {
+      if (!el) return false;
       try {
+        if ('value' in el && String(el.value || '').trim()) return true;
+      } catch (e) {}
+      return String(el.textContent || el.innerText || '').trim().length > 0;
+    };
+    // Stale left-pane queries ("us apple portal price") break the next pin open.
+    const clearLeftSearch = async () => {
+      try {
+        for (const btn of document.querySelectorAll(
+          [
+            'button[aria-label="Cancel"]',
+            'button[aria-label*="Cancel" i]',
+            '[aria-label="Clear search"]',
+            '[aria-label*="Clear search" i]',
+            '[aria-label*="Clear" i]',
+            '[data-testid="search-input-clear"]',
+            '[data-icon="x"]',
+            '[data-icon="back"]',
+            'span[data-icon="x"]',
+            'span[data-icon="back"]',
+          ].join(','),
+        )) {
+          if (!visible(btn) || !inLeftPane(btn)) continue;
+          click(btn.closest?.('button,[role="button"]') || btn);
+          await wait(80);
+        }
+        for (const el of leftSearchEls()) {
+          try { el.focus(); } catch (e) {}
+          click(el);
+          try {
+            document.execCommand('selectAll', false, null);
+            document.execCommand('delete', false, null);
+          } catch (e) {}
+          try {
+            if ('value' in el) {
+              el.value = '';
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            } else {
+              el.textContent = '';
+              el.dispatchEvent(new InputEvent('input', {
+                bubbles: true, data: '', inputType: 'deleteContentBackward',
+              }));
+            }
+          } catch (e) {}
+        }
         for (let i = 0; i < 2; i += 1) {
           document.activeElement?.blur?.();
           document.dispatchEvent(new KeyboardEvent('keydown', {
@@ -450,21 +569,31 @@ export function openMessagingChatJs(name, chatKey = '') {
         }
       } catch (e) {}
     };
+    const dismissSearch = clearLeftSearch;
     const fillSearch = (el, text) => {
       if (!el) return false;
       try { el.focus(); } catch (e) {}
       click(el);
+      // Wipe any leftover query before typing the pin name.
       try {
         document.execCommand('selectAll', false, null);
         document.execCommand('delete', false, null);
       } catch (e) {}
       try {
         if ('value' in el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) {
+          el.value = '';
+          el.dispatchEvent(new Event('input', { bubbles: true }));
           el.value = text;
           el.dispatchEvent(new Event('input', { bubbles: true }));
           el.dispatchEvent(new Event('change', { bubbles: true }));
           return true;
         }
+      } catch (e) {}
+      try {
+        el.textContent = '';
+        el.dispatchEvent(new InputEvent('input', {
+          bubbles: true, data: '', inputType: 'deleteContentBackward',
+        }));
       } catch (e) {}
       // WhatsApp contenteditable often ignores bare textContent — paste + insertText.
       try {
@@ -523,9 +652,16 @@ export function openMessagingChatJs(name, chatKey = '') {
     // Already on this chat.
     if (confirmedOpen()) return { ok: true, via: 'already-open' };
 
+    // Always start from a clean left list — stale WA search text is the common failure mode.
+    await clearLeftSearch();
+    await wait(180);
+
     let row = findRow();
     let opened = await tryOpenRow(row, 'list-click');
-    if (opened) return opened;
+    if (opened) {
+      await clearLeftSearch();
+      return opened;
+    }
 
     // Open left-pane search (not in-chat message search).
     const searchBtn =
@@ -538,68 +674,57 @@ export function openMessagingChatJs(name, chatKey = '') {
       click(searchBtn);
       await wait(220);
     }
-    const searchCandidates = Array.from(document.querySelectorAll(
-      [
-        '[data-testid="chat-list-search"]',
-        'div[contenteditable="true"][data-tab="3"]',
-        '[contenteditable="true"][data-tab="3"]',
-        '[contenteditable="true"][aria-label*="Search" i]',
-        '[contenteditable="true"][title*="Search" i]',
-        'input[placeholder*="Search" i]',
-        '[placeholder*="Search" i]',
-        '[data-placeholder*="Search" i]',
-        '[placeholder*="Search chats" i]',
-        '[contenteditable="true"]',
-        'input[type="search"]',
-        'input[type="text"]',
-      ].join(','),
-    )).filter((el) => {
-      if (!visible(el) || !inLeftPane(el)) return false;
-      const ph = String(
-        el.getAttribute('placeholder')
-          || el.getAttribute('data-placeholder')
-          || el.getAttribute('aria-label')
-          || el.getAttribute('title')
-          || '',
-      ).toLowerCase();
-      if (/search messages|search this chat/.test(ph)) return false;
-      if (/search/.test(ph) || el.getAttribute('data-tab') === '3') return true;
-      return el.getAttribute?.('data-testid') === 'chat-list-search';
-    });
-    const search = searchCandidates[0] || null;
+    const search = leftSearchEls()[0] || null;
 
     if (search) {
       fillSearch(search, wantName);
-      await wait(350);
+      // WA search results (esp. Contacts vs Messages) need a beat to settle.
+      await wait(520);
       const searchStarted = Date.now();
-      const deadline = searchStarted + 4800;
+      const deadline = searchStarted + 5600;
       let keyboardTried = false;
       while (Date.now() < deadline) {
         row = findRow();
         opened = await tryOpenRow(row, 'search-click');
-        if (opened) return opened;
-        // After results settle, ArrowDown+Enter often opens the top match on WA.
-        if (!keyboardTried && Date.now() - searchStarted > 700) {
+        if (opened) {
+          await clearLeftSearch();
+          return opened;
+        }
+        // ArrowDown+Enter only after a titled match exists — otherwise WA opens a
+        // Messages hit in a group that merely @mentions the pin name.
+        if (
+          !keyboardTried
+          && row
+          && Date.now() - searchStarted > 900
+          && scoreName(rowName(row) || '') >= 68
+        ) {
           keyboardTried = true;
           opened = await tryKeyboardOpen(search);
-          if (opened) return opened;
+          if (opened) {
+            await clearLeftSearch();
+            return opened;
+          }
         }
-        await wait(160);
+        await wait(180);
       }
     }
 
     // Last pass: click any visible matching row again (list may have refreshed).
     row = findRow();
     opened = await tryOpenRow(row, 'list-retry');
-    if (opened) return opened;
+    if (opened) {
+      await clearLeftSearch();
+      return opened;
+    }
 
     // Leave search UI clean — typed name without an open chat is the flaky failure mode.
-    await dismissSearch();
+    await clearLeftSearch();
     return {
       ok: false,
       reason: 'chat_not_found',
       header: openHeaderName(),
       compose: composeOpen(),
+      searchDirty: leftSearchEls().some(searchHasText),
     };
   })()`;
 }

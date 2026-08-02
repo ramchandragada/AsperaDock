@@ -54,9 +54,10 @@ test('scrape / open / search / reply scripts mention WhatsApp + Arattai list hoo
   // Pin-open hardening: paste into search, keyboard confirm, dismiss leftover search.
   assert.match(openJs, /ClipboardEvent|paste/);
   assert.match(openJs, /ArrowDown/);
-  assert.match(openJs, /dismissSearch|Escape/);
+  assert.match(openJs, /clearLeftSearch|dismissSearch|Escape/);
   assert.match(openJs, /inLeftPane|cell-frame-title/);
-  assert.match(openJs, /scoreName\(header\) >= 45/);
+  assert.match(openJs, /scoreName\(header\) >= 56/);
+  assert.match(openJs, /looksLikeGroup/);
   assert.match(searchMessagingChatsJs('parth'), /parth/);
   assert.match(searchMessagingChatsJs('parth'), /art-chat-item/);
   assert.match(composeReplyJs('Thanks', { send: true }), /compose-btn-send|Enter/);
@@ -75,8 +76,18 @@ test('chat search matches message text and previews, not only names', () => {
 test('openMessagingChatJs does not treat unrelated compose as success', () => {
   const openJs = openMessagingChatJs('shrikant', 'shrikant');
   // Header must match — compose-only success was the flaky false positive.
-  assert.match(openJs, /scoreName\(header\) >= 45/);
+  assert.match(openJs, /scoreName\(header\) >= 56/);
   assert.doesNotMatch(openJs, /composeOpen\(\) && !!wantN/);
+});
+
+test('openMessagingChatJs clears stale search and prefers DMs over group mentions', () => {
+  const openJs = openMessagingChatJs('shrikant', 'shrikant');
+  assert.match(openJs, /clearLeftSearch/);
+  assert.match(openJs, /isShortSingleToken/);
+  assert.match(openJs, /looksLikeGroup/);
+  assert.match(openJs, /searchDirty/);
+  // Keyboard confirm only after a strong titled match (not Messages/@mention hits).
+  assert.match(openJs, /scoreName\(rowName\(row\)/);
 });
 
 test('junk chat names reject Arattai chrome mistaken for contacts', () => {
