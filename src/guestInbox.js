@@ -30,12 +30,15 @@ export function sanitizePinnedPeople(list) {
     const name = String(raw?.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
     const chatKey = normalizeChatKey(raw?.chatKey || name);
     const appId = String(raw?.appId || '').trim();
+    const nativeId = String(raw?.nativeId || raw?.chid || '').trim().slice(0, 120);
     if (!serviceId || !name || !chatKey) continue;
     if (isJunkChatName(name)) continue;
     const id = String(raw?.id || makePinId(serviceId, chatKey));
     if (seen.has(id)) continue;
     seen.add(id);
-    out.push({ id, serviceId, chatKey, name, appId });
+    const pin = { id, serviceId, chatKey, name, appId };
+    if (nativeId) pin.nativeId = nativeId;
+    out.push(pin);
     if (out.length >= 10) break;
   }
   return out;
@@ -306,13 +309,28 @@ export function inspectChatListTargetJs(x, y) {
     if (cell) {
       const name = rowName(cell);
       if (name) {
+        const dataId = String(
+          cell.getAttribute?.('data-id')
+          || cell.closest?.('[data-id]')?.getAttribute?.('data-id')
+          || '',
+        ).trim();
+        // WA rows: "true_123@c.us" / "123@g.us" — strip true_/false_ prefix.
+        let nativeId = String(
+          cell.getAttribute?.('chid')
+          || cell.getAttribute?.('data-chid')
+          || '',
+        ).trim();
+        if (!nativeId && dataId) {
+          nativeId = dataId.replace(/^(true|false)_/, '');
+        }
         return {
           ok: true,
           name,
           chatKey: name.toLowerCase(),
           unread: rowUnread(cell),
           via: 'list-row',
-          chid: String(cell.getAttribute?.('chid') || cell.getAttribute?.('data-chid') || ''),
+          chid: nativeId,
+          nativeId,
         };
       }
     }
@@ -538,11 +556,22 @@ export function findMessagingLeftSearchJs() {
     const pt = pointOf(el);
     if (!pt) return { ok: false };
     let hasText = false;
+    let text = '';
     try {
-      if ('value' in el && String(el.value || '').trim()) hasText = true;
-      else if (String(el.textContent || el.innerText || '').trim()) hasText = true;
+      if ('value' in el) text = String(el.value || '').trim();
+      else text = String(el.textContent || el.innerText || '').trim();
+      hasText = text.length > 0;
     } catch (e) {}
-    return { ok: true, x: pt.x, y: pt.y, hasText, isButton: false };
+    let clearHint = null;
+    let backHint = null;
+    try {
+      const r = el.getBoundingClientRect();
+      clearHint = { x: Math.round(r.right - 16), y: Math.round(r.top + r.height / 2) };
+      backHint = { x: Math.round(Math.max(8, r.left - 26)), y: Math.round(r.top + r.height / 2) };
+    } catch (e) {}
+    return {
+      ok: true, x: pt.x, y: pt.y, hasText, text, isButton: false, clearHint, backHint,
+    };
   })()`;
 }
 
@@ -560,10 +589,17 @@ export function findMessagingSearchChromeJs() {
     };
     const searchEl = leftSearchEls()[0] || null;
     let hasText = false;
+    let text = '';
+    let clearHint = null;
+    let backHint = null;
     if (searchEl) {
       try {
-        if ('value' in searchEl && String(searchEl.value || '').trim()) hasText = true;
-        else if (String(searchEl.textContent || searchEl.innerText || '').trim()) hasText = true;
+        if ('value' in searchEl) text = String(searchEl.value || '').trim();
+        else text = String(searchEl.textContent || searchEl.innerText || '').trim();
+        hasText = text.length > 0;
+        const r = searchEl.getBoundingClientRect();
+        clearHint = { x: Math.round(r.right - 16), y: Math.round(r.top + r.height / 2) };
+        backHint = { x: Math.round(Math.max(8, r.left - 26)), y: Math.round(r.top + r.height / 2) };
       } catch (e) {}
     }
     let clearEl = null;
@@ -575,7 +611,9 @@ export function findMessagingSearchChromeJs() {
         'button[aria-label="Cancel"]',
         'button[aria-label*="Cancel" i]',
         '[data-icon="x"]',
+        '[data-icon="x-alt"]',
         'span[data-icon="x"]',
+        'span[data-icon="x-alt"]',
       ].join(','),
     )) {
       if (!visible(btn) || !inLeftPane(btn)) continue;
@@ -606,10 +644,13 @@ export function findMessagingSearchChromeJs() {
     })();
     return {
       ok: true,
-      search: searchEl ? { ...pack(searchEl), hasText } : null,
+      search: searchEl ? { ...pack(searchEl), hasText, text } : null,
       clear: clearEl ? pack(clearEl) : null,
       back: backEl ? pack(backEl) : null,
+      clearHint,
+      backHint,
       hasText,
+      text,
       searchFocused,
     };
   })()`;

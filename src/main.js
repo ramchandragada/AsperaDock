@@ -69,6 +69,12 @@ import {
   searchMessagingChatsJs,
 } from './guestInbox.js';
 import {
+  findWhatsAppPaneResetJs,
+  nuclearWipeMessagingSearchJs,
+  readMessagingSearchTextJs,
+  tryOpenWhatsAppStoreChatJs,
+} from './whatsappPinOpen.js';
+import {
   PRIOR_MESSAGE_COUNT,
   sanitizePriorMessages,
   scrapeNearbyMessagesJs,
@@ -3943,58 +3949,87 @@ async function replaceGuestSearchText(webContents, text) {
   return pasted;
 }
 
+async function readGuestSearchText(webContents) {
+  if (!webContents || webContents.isDestroyed()) return '';
+  try {
+    const got = await webContents.executeJavaScript(readMessagingSearchTextJs(), true);
+    return String(got?.text || '').trim();
+  } catch {
+    return '';
+  }
+}
+
 /**
- * Clear WhatsApp/Arattai left search with trusted clicks + keys.
- * Synthetic DOM clear leaves the prior pin name in the box, so the next pin fails.
+ * Nuclear WhatsApp search wipe — verified empty before return.
+ * Prior pins left "Kumar Gardas…" in the box because synthetic/Ctrl+A clear no-oped.
  */
-async function trustedClearMessagingSearch(webContents) {
-  if (!webContents || webContents.isDestroyed()) return;
-  for (let pass = 0; pass < 2; pass += 1) {
+async function trustedClearMessagingSearch(webContents, { resetPane = true } = {}) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  for (let pass = 0; pass < 5; pass += 1) {
     let chrome = null;
+    let reset = null;
     try {
       chrome = await webContents.executeJavaScript(findMessagingSearchChromeJs(), true);
+      reset = await webContents.executeJavaScript(findWhatsAppPaneResetJs(), true);
     } catch {
       chrome = null;
     }
-    if (chrome?.clear && Number.isFinite(chrome.clear.x)) {
-      clickWebContentsAt(webContents, chrome.clear.x, chrome.clear.y);
-      await sleepMs(120);
+
+    // 1) Explicit clear / geometric X on the search field.
+    const clearPt = chrome?.clear || chrome?.clearHint || reset?.clearHint;
+    if (clearPt && Number.isFinite(clearPt.x)) {
+      clickWebContentsAt(webContents, clearPt.x, clearPt.y);
+      await sleepMs(100);
     }
-    if (chrome?.search && Number.isFinite(chrome.search.x) && (chrome.hasText || chrome.search.hasText)) {
-      clickWebContentsAt(webContents, chrome.search.x, chrome.search.y);
-      await sleepMs(80);
-      await replaceGuestSearchText(webContents, '');
-      await sleepMs(80);
+
+    // 2) Focus search, Selection API wipe, then smash Backspace/Delete.
+    const searchPt = chrome?.search || reset?.search;
+    if (searchPt && Number.isFinite(searchPt.x)) {
+      clickWebContentsAt(webContents, searchPt.x, searchPt.y);
+      await sleepMs(90);
+      try {
+        await webContents.executeJavaScript(nuclearWipeMessagingSearchJs(), true);
+      } catch {
+        /* ignore */
+      }
+      sendGuestKey(webContents, 'A', ['control']);
+      await sleepMs(30);
+      for (let i = 0; i < 50; i += 1) sendGuestKey(webContents, 'Backspace');
+      for (let i = 0; i < 20; i += 1) sendGuestKey(webContents, 'Delete');
+      await sleepMs(60);
     }
-    try {
-      chrome = await webContents.executeJavaScript(findMessagingSearchChromeJs(), true);
-    } catch {
-      chrome = null;
+
+    // 3) Exit search UI (back) and/or reset Chats / All filter.
+    const backPt = chrome?.back || chrome?.backHint || reset?.backHint;
+    if (backPt && Number.isFinite(backPt.x)) {
+      clickWebContentsAt(webContents, backPt.x, backPt.y);
+      await sleepMs(110);
     }
-    if (chrome?.back && Number.isFinite(chrome.back.x) && (chrome.hasText || chrome.searchFocused)) {
-      // Exit search results UI so the full chat list returns.
-      clickWebContentsAt(webContents, chrome.back.x, chrome.back.y);
+    if (resetPane && reset?.chats && Number.isFinite(reset.chats.x) && pass === 0) {
+      clickWebContentsAt(webContents, reset.chats.x, reset.chats.y);
       await sleepMs(140);
     }
-    try {
-      const left = await webContents.executeJavaScript(findMessagingLeftSearchJs(), true);
-      if (!left?.hasText) break;
-    } catch {
-      break;
+    if (resetPane && reset?.allFilter && Number.isFinite(reset.allFilter.x) && pass <= 1) {
+      clickWebContentsAt(webContents, reset.allFilter.x, reset.allFilter.y);
+      await sleepMs(100);
     }
+
+    try {
+      await webContents.executeJavaScript(clearMessagingLeftSearchJs(), true);
+    } catch {
+      /* ignore */
+    }
+
+    const left = await readGuestSearchText(webContents);
+    if (!left) return true;
   }
-  // Best-effort synthetic clear for Arattai (harmless on WA if already clean).
-  try {
-    await webContents.executeJavaScript(clearMessagingLeftSearchJs(), true);
-  } catch {
-    /* ignore */
-  }
+  return !(await readGuestSearchText(webContents));
 }
 
 /** Focus left-pane search (not the compose box) via trusted clicks. */
 async function focusGuestLeftSearch(webContents) {
   if (!webContents || webContents.isDestroyed()) return false;
-  for (let i = 0; i < 3; i += 1) {
+  for (let i = 0; i < 4; i += 1) {
     const box = await webContents.executeJavaScript(findMessagingLeftSearchJs(), true);
     if (!box?.ok || !Number.isFinite(box.x)) return false;
     clickWebContentsAt(webContents, box.x, box.y);
@@ -4016,16 +4051,49 @@ async function focusGuestLeftSearch(webContents) {
   return false;
 }
 
-async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
+/** Clear then paste pin name; verify the search box actually shows that name. */
+async function fillGuestSearchVerified(webContents, text) {
+  const want = String(text || '').trim();
+  const wantN = want.toLowerCase().replace(/\s+/g, ' ');
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    await trustedClearMessagingSearch(webContents, { resetPane: attempt === 0 });
+    const focused = await focusGuestLeftSearch(webContents);
+    if (!focused) continue;
+    try {
+      await webContents.executeJavaScript(nuclearWipeMessagingSearchJs(), true);
+    } catch {
+      /* ignore */
+    }
+    for (let i = 0; i < 30; i += 1) sendGuestKey(webContents, 'Backspace');
+    await replaceGuestSearchText(webContents, want);
+    await sleepMs(280);
+    // Re-focus and paste again if first paste hit compose.
+    const got = (await readGuestSearchText(webContents)).toLowerCase().replace(/\s+/g, ' ');
+    if (got === wantN || (wantN && got.includes(wantN)) || (got && wantN.includes(got) && got.length >= 6)) {
+      return true;
+    }
+    // Second paste attempt after explicit search re-click.
+    await focusGuestLeftSearch(webContents);
+    await replaceGuestSearchText(webContents, want);
+    await sleepMs(280);
+    const got2 = (await readGuestSearchText(webContents)).toLowerCase().replace(/\s+/g, ' ');
+    if (got2 === wantN || (wantN && got2.includes(wantN))) return true;
+  }
+  return false;
+}
+
+async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId = '' } = {}) {
   const service = getService(serviceId);
   if (!service || !isInboxAppId(service.appId)) {
     return { ok: false, error: 'Open a WhatsApp or Arattai chat.' };
   }
   const chatName = String(name || '').trim();
   const key = chatKey || normalizeChatKey(chatName);
+  const waId = String(nativeId || '').trim();
   if (!chatName && !key) {
     return { ok: false, error: 'Missing contact name.' };
   }
+  const isWhatsApp = service.appId === 'whatsapp';
 
   raiseDockWindow();
   activateService(serviceId);
@@ -4081,9 +4149,8 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
   };
 
   const finishOpen = async (opened) => {
-    // Clear leftover search BEFORE focusing compose — otherwise the next pin
-    // still sees "shrikant" in the box and paste lands in the message field.
-    await trustedClearMessagingSearch(wc);
+    // Verified wipe so the next WhatsApp pin is not blocked by leftover search text.
+    await trustedClearMessagingSearch(wc, { resetPane: isWhatsApp });
     await markActiveComposeTarget(serviceId);
     return opened;
   };
@@ -4100,7 +4167,6 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
     await sleepMs(380);
     const opened = await headerOpen();
     if (opened) return { ...opened, via };
-    // Second click — some WA rows need the title hit twice.
     clickWebContentsAt(wc, hit.x, hit.y);
     await sleepMs(420);
     const again = await headerOpen();
@@ -4111,35 +4177,46 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     if (wc.isDestroyed()) break;
     try {
-      // Always wipe prior pin query first (first pin works; second fails if stale).
-      await trustedClearMessagingSearch(wc);
+      // WhatsApp: open via internal Store first — never depends on search UI state.
+      if (isWhatsApp) {
+        try {
+          const storeOpen = await wc.executeJavaScript(
+            tryOpenWhatsAppStoreChatJs(chatName, waId),
+            true,
+          );
+          if (storeOpen?.ok) {
+            await sleepMs(350);
+            const matched = await headerOpen();
+            if (matched) return finishOpen({ ...matched, via: 'wa-store' });
+          }
+        } catch {
+          /* fall through to UI path */
+        }
+      }
+
+      await trustedClearMessagingSearch(wc, { resetPane: isWhatsApp });
       await sleepMs(120);
 
-      // Already on this chat?
       const already = await headerOpen();
       if (already) return finishOpen({ ...already, via: 'already-open' });
 
       let opened = await trustedClickTarget(attempt === 0 ? 'list-click' : 'list-retry');
       if (opened) return finishOpen(opened);
 
-      // Focus left search (not compose), then paste the pin name.
-      const searchFocused = await focusGuestLeftSearch(wc);
-      if (searchFocused) {
-        await replaceGuestSearchText(wc, chatName);
-        await sleepMs(550);
-
+      // Verified search fill (refuses to proceed if the box still shows the prior pin).
+      const filled = await fillGuestSearchVerified(wc, chatName);
+      if (filled) {
+        await sleepMs(450);
         const searchStarted = Date.now();
-        while (Date.now() - searchStarted < 5200) {
+        while (Date.now() - searchStarted < 5600) {
           opened = await trustedClickTarget('search-click');
           if (opened) return finishOpen(opened);
-          // ArrowDown + Enter as a trusted fallback once a strong titled match exists.
           if (Date.now() - searchStarted > 900) {
             const hit = await wc.executeJavaScript(
               findMessagingChatTargetJs(chatName, key),
               true,
             );
             if (hit?.ok && hit.score >= 68) {
-              // Re-focus search so Down/Enter don't hit the compose box.
               await focusGuestLeftSearch(wc);
               sendGuestKey(wc, 'Down');
               await sleepMs(70);
@@ -4151,19 +4228,39 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
           }
           await sleepMs(180);
         }
+      } else {
+        lastError = 'search_fill_failed';
       }
 
       // Legacy JS path (helps Arattai when coords are odd).
-      const legacy = await wc.executeJavaScript(
-        openMessagingChatJs(chatName, key),
-        true,
-      );
-      if (legacy?.ok) {
-        const matched = await headerOpen();
-        if (matched) return finishOpen({ ...matched, via: legacy.via || 'legacy-js' });
-        lastError = `Could not confirm “${chatName}” opened.`;
+      if (!isWhatsApp) {
+        const legacy = await wc.executeJavaScript(
+          openMessagingChatJs(chatName, key),
+          true,
+        );
+        if (legacy?.ok) {
+          const matched = await headerOpen();
+          if (matched) return finishOpen({ ...matched, via: legacy.via || 'legacy-js' });
+          lastError = `Could not confirm “${chatName}” opened.`;
+        } else {
+          lastError = legacy?.reason || 'chat_not_found';
+        }
       } else {
-        lastError = legacy?.reason || 'chat_not_found';
+        // One more Store attempt after UI churn.
+        try {
+          const storeOpen = await wc.executeJavaScript(
+            tryOpenWhatsAppStoreChatJs(chatName, waId),
+            true,
+          );
+          if (storeOpen?.ok) {
+            await sleepMs(350);
+            const matched = await headerOpen();
+            if (matched) return finishOpen({ ...matched, via: 'wa-store-retry' });
+          }
+        } catch {
+          /* ignore */
+        }
+        lastError = lastError || 'chat_not_found';
       }
     } catch (error) {
       lastError = String(error?.message || error);
@@ -4172,7 +4269,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
   }
 
   try {
-    if (!wc.isDestroyed()) await trustedClearMessagingSearch(wc);
+    if (!wc.isDestroyed()) await trustedClearMessagingSearch(wc, { resetPane: isWhatsApp });
   } catch {
     /* ignore */
   }
@@ -4180,7 +4277,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
   return {
     ok: false,
     error:
-      lastError && lastError !== 'chat_not_found'
+      lastError && lastError !== 'chat_not_found' && lastError !== 'search_fill_failed'
         ? lastError
         : `Could not open “${chatName || 'chat'}”. Search that name once in the app, then pin again.`,
   };
@@ -4255,6 +4352,7 @@ function pinPerson(payload = {}) {
   }
   const name = String(payload.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
   const chatKey = normalizeChatKey(payload.chatKey || name);
+  const nativeId = String(payload.nativeId || payload.chid || '').trim().slice(0, 120);
   if (!name || !chatKey || isJunkChatName(name)) {
     return { ok: false, error: 'Could not read that chat name. Right-click the contact in the list.' };
   }
@@ -4275,6 +4373,7 @@ function pinPerson(payload = {}) {
       chatKey,
       name,
       appId: service.appId,
+      ...(nativeId ? { nativeId } : {}),
     },
     ...existing,
   ]);
@@ -4294,12 +4393,15 @@ async function pinChatFromGuestContext(webContents, service, params = {}, preHit
   }
   let name = '';
   let chatKey = '';
+  let nativeId = '';
   const applyHit = (hit) => {
     if (!hit?.ok) return;
     const n = String(hit.name || '').trim();
     if (!n || isJunkChatName(n)) return;
     name = n;
     chatKey = String(hit.chatKey || normalizeChatKey(n)).trim();
+    const nid = String(hit.nativeId || hit.chid || '').trim();
+    if (nid) nativeId = nid;
   };
   applyHit(preHit);
   if (!name) {
@@ -4341,6 +4443,7 @@ async function pinChatFromGuestContext(webContents, service, params = {}, preHit
     name,
     chatKey,
     appId: service.appId,
+    nativeId,
   });
   try {
     if (Notification.isSupported()) {
@@ -9390,12 +9493,23 @@ dockHandle('dock:toggle-chrome-menu', (_e, payload) => {
   openChromeMenuWindow(payload || {});
   return { ok: true, open: true };
 });
-dockHandle('dock:open-inbox-chat', async (_e, payload) =>
-  openMessagingChat(String(payload?.serviceId || ''), {
-    name: String(payload?.name || ''),
-    chatKey: String(payload?.chatKey || ''),
-  }),
-);
+dockHandle('dock:open-inbox-chat', async (_e, payload) => {
+  const serviceId = String(payload?.serviceId || '');
+  const name = String(payload?.name || '');
+  const chatKey = String(payload?.chatKey || '');
+  let nativeId = String(payload?.nativeId || payload?.chid || '').trim();
+  // Recover nativeId from saved pin when older UI clicks omit it.
+  if (!nativeId) {
+    const pin = sanitizePinnedPeople(settings.pinnedPeople || []).find(
+      (p) =>
+        p.serviceId === serviceId &&
+        (p.chatKey === normalizeChatKey(chatKey || name) ||
+          p.name === name),
+    );
+    if (pin?.nativeId) nativeId = pin.nativeId;
+  }
+  return openMessagingChat(serviceId, { name, chatKey, nativeId });
+});
 dockHandle('dock:pin-person', (_e, payload) => pinPerson(payload || {}));
 dockHandle('dock:unpin-person', (_e, pinId) => unpinPerson(pinId));
 dockHandle('dock:search-chats', async (_e, query) =>

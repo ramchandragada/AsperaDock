@@ -522,6 +522,7 @@ function renderHubRails() {
             serviceId: pin.serviceId,
             name: pin.name,
             chatKey: pin.chatKey,
+            nativeId: pin.nativeId || '',
           });
           if (result && result.ok === false && result.error) alert(result.error);
         },

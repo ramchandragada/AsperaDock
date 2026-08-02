@@ -111,6 +111,26 @@ test('trusted pin-open helpers return click targets without Escape', () => {
   assert.match(chromeJs, /searchFocused|hasText/);
   assert.match(chromeJs, /search-input-clear|data-icon="x"/);
   assert.match(chromeJs, /data-icon="back"/);
+  assert.match(chromeJs, /clearHint|backHint/);
+});
+
+test('inspectChatListTarget captures WhatsApp data-id as nativeId', () => {
+  const js = inspectChatListTargetJs(12, 40);
+  assert.match(js, /nativeId|data-id/);
+  assert.match(js, /true\|false/);
+});
+
+test('sanitizePinnedPeople keeps nativeId for WhatsApp Store open', () => {
+  const pins = sanitizePinnedPeople([
+    {
+      serviceId: 'wa1',
+      name: 'shrikant',
+      chatKey: 'shrikant',
+      appId: 'whatsapp',
+      nativeId: '919999999999@c.us',
+    },
+  ]);
+  assert.equal(pins[0].nativeId, '919999999999@c.us');
 });
 
 test('junk chat names reject Arattai chrome mistaken for contacts', () => {
