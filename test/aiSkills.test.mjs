@@ -27,6 +27,9 @@ import {
   buildSuggestReplyPrompt,
   buildSummarizePrompt,
 } from '../src/ai/skills.js';
+import { extractOpenAiCompatibleText } from '../src/ai/openaiText.js';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 test('AI skills allow only WhatsApp, Arattai, Gmail, Zoho Mail', () => {
   assert.deepEqual(AI_ALLOWED_APP_IDS, [
@@ -287,4 +290,54 @@ test('custom provider order and disables reshape failover', () => {
     }).map((p) => p.id).slice(0, 2),
     ['anthropic', 'gemini'],
   );
+});
+
+test('extractOpenAiCompatibleText reads string and part-array content', () => {
+  assert.equal(
+    extractOpenAiCompatibleText({
+      choices: [{ message: { content: '  Hello  ' } }],
+    }),
+    'Hello',
+  );
+  assert.equal(
+    extractOpenAiCompatibleText({
+      choices: [{
+        message: {
+          content: [
+            { type: 'text', text: 'Part ' },
+            { type: 'text', text: 'two' },
+          ],
+        },
+      }],
+    }),
+    'Part two',
+  );
+  assert.equal(
+    extractOpenAiCompatibleText({
+      choices: [{
+        message: {
+          content: '',
+          reasoning_content: 'thinking hard…',
+        },
+        finish_reason: 'length',
+      }],
+    }),
+    '',
+  );
+  assert.equal(
+    extractOpenAiCompatibleText({
+      choices: [{ message: { content: null, output_text: 'Fallback answer' } }],
+    }),
+    'Fallback answer',
+  );
+});
+
+test('Sarvam path disables reasoning and raises max_tokens', () => {
+  const src = readFileSync(
+    fileURLToPath(new URL('../src/ai/service.js', import.meta.url)),
+    'utf8',
+  );
+  assert.match(src, /provider\.id === 'sarvam'/);
+  assert.match(src, /reasoning_effort:\s*null/);
+  assert.match(src, /maxTokens:\s*4096/);
 });

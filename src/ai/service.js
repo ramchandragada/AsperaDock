@@ -26,6 +26,7 @@ import {
   buildSummarizePrompt,
 } from './skills.js';
 import { buildReviseReplyPrompt } from './replyEditor.js';
+import { extractOpenAiCompatibleText } from './openaiText.js';
 
 /** Last provider that answered successfully — reuse until it fails/exhausts. */
 let stickyProviderId = null;
@@ -72,6 +73,8 @@ async function callOpenAiCompatible({
   model,
   prompt,
   extraHeaders = {},
+  extraBody = {},
+  maxTokens = 1600,
 }) {
   const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',
@@ -83,7 +86,7 @@ async function callOpenAiCompatible({
     body: JSON.stringify({
       model,
       temperature: 0.3,
-      max_tokens: 1600,
+      max_tokens: maxTokens,
       messages: [
         {
           role: 'system',
@@ -91,6 +94,7 @@ async function callOpenAiCompatible({
         },
         { role: 'user', content: prompt },
       ],
+      ...extraBody,
     }),
   });
   const data = await res.json().catch(() => ({}));
@@ -103,9 +107,20 @@ async function callOpenAiCompatible({
       `Provider HTTP ${res.status}`;
     throw new Error(String(msg));
   }
-  const text = data?.choices?.[0]?.message?.content;
-  if (!text) throw new Error('Empty response from provider');
-  return String(text).trim();
+  const text = extractOpenAiCompatibleText(data);
+  if (!text) {
+    const finish = String(data?.choices?.[0]?.finish_reason || '');
+    const hadReasoning = Boolean(
+      String(data?.choices?.[0]?.message?.reasoning_content || '').trim(),
+    );
+    if (hadReasoning || finish === 'length') {
+      throw new Error(
+        'Empty response from provider (reasoning used up the token budget). Try again or pick another model.',
+      );
+    }
+    throw new Error('Empty response from provider');
+  }
+  return text;
 }
 
 async function callGemini({ apiKey, model, prompt }) {
@@ -254,13 +269,20 @@ async function callProviderWithModelChain(providerId, prompt, preferredOverride)
         });
       } else if (provider.id === 'sarvam') {
         // Prefer api-subscription-key (docs primary); Bearer also accepted.
+        // Sarvam thinking is ON by default and can consume max_tokens before any
+        // visible content (empty replies after a successful summarize). Disable
+        // reasoning for workplace skills and allow a larger completion budget.
         text = await callOpenAiCompatible({
           baseUrl: 'https://api.sarvam.ai/v1',
           apiKey,
           model,
           prompt,
+          maxTokens: 4096,
           extraHeaders: {
             'api-subscription-key': apiKey,
+          },
+          extraBody: {
+            reasoning_effort: null,
           },
         });
       } else if (provider.id === 'openrouter') {
