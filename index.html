@@ -25,7 +25,7 @@
             <button id="extensions-btn" type="button" class="icon-btn" title="Extensions" aria-label="Extensions"></button>
             <button id="check-updates-btn" type="button" class="icon-btn" title="Check for updates" aria-label="Check for updates"></button>
             <div class="menu-wrap">
-              <button id="notif-btn" type="button" class="icon-btn badge-host" title="Notifications">
+              <button id="notif-btn" type="button" class="icon-btn badge-host" title="Notifications & needs reply">
                 <span class="icon-slot"></span>
                 <span id="global-badge" class="global-badge hidden">0</span>
               </button>
@@ -95,14 +95,10 @@
             </div>
           </div>
         </div>
-        <div id="hub-rails" class="hub-rails hidden" aria-label="Pinned and unread chats">
-          <div class="hub-rail-section">
+        <div id="hub-rails" class="hub-rails hidden" aria-label="Pinned contacts">
+          <div class="hub-rail-section hub-rail-pins">
             <span class="hub-rail-label" title="Hub pins (up to 10) — separate from WhatsApp’s 3-pin limit">Pinned</span>
             <div id="pin-rail" class="hub-rail" role="list"></div>
-          </div>
-          <div class="hub-rail-section hub-rail-grow">
-            <span class="hub-rail-label">Needs reply</span>
-            <div id="inbox-rail" class="hub-rail" role="list"></div>
           </div>
         </div>
       </header>

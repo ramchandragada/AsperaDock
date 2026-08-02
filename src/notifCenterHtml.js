@@ -23,7 +23,7 @@ export function buildNotifCenterHtml(dark = false) {
 <style>
   html, body { margin:0; padding:0; background:transparent; overflow:hidden; font:500 13px/1.35 "Segoe UI","Ubuntu","Cantarell",sans-serif; color:${text}; user-select:none; }
   .card {
-    margin:4px; width:360px; max-height:560px; box-sizing:border-box;
+    margin:4px; width:380px; max-height:620px; box-sizing:border-box;
     background:${bg}; border:1px solid ${border}; border-radius:12px;
     box-shadow:0 12px 40px rgba(15,23,42,0.22); padding:10px; display:grid; gap:8px;
   }
@@ -31,8 +31,31 @@ export function buildNotifCenterHtml(dark = false) {
   .head strong { font-size:14px; }
   .links { display:flex; gap:8px; }
   .link { border:0; background:transparent; color:#2563eb; font:inherit; font-size:12px; font-weight:600; cursor:pointer; padding:0; }
-  .list { display:grid; gap:6px; max-height:420px; overflow:auto; }
-  .empty { margin:8px 0; color:${muted}; font-size:12px; }
+  .section-head {
+    display:flex; align-items:baseline; justify-content:space-between; gap:8px;
+    font-size:11px; font-weight:700; color:${muted}; text-transform:uppercase; letter-spacing:0.04em;
+    padding-top:2px;
+  }
+  .section-head .count {
+    text-transform:none; letter-spacing:0; font-weight:600; color:${muted};
+  }
+  .inbox-list { display:grid; gap:6px; max-height:180px; overflow:auto; }
+  .inbox-row {
+    display:grid; grid-template-columns:28px 1fr auto; gap:8px; align-items:center;
+    border:0; background:${card}; color:inherit; text-align:left; padding:8px; border-radius:10px; font:inherit;
+    cursor:pointer; width:100%;
+  }
+  .inbox-row:hover { filter:brightness(0.98); outline:1px solid ${border}; }
+  .inbox-badge {
+    min-width:18px; padding:0 6px; border-radius:999px; background:#dc2626; color:#fff;
+    font-size:10px; font-weight:700; line-height:18px; text-align:center;
+  }
+  .inbox-pin {
+    border:1px solid ${border}; background:${bg}; color:inherit; border-radius:8px;
+    font:600 11px/1 inherit; padding:5px 8px; cursor:pointer;
+  }
+  .list { display:grid; gap:6px; max-height:280px; overflow:auto; }
+  .empty { margin:4px 0 8px; color:${muted}; font-size:12px; }
   .row {
     display:grid; grid-template-columns:28px 1fr; gap:8px; align-items:start;
     border:0; background:${card}; color:inherit; text-align:left; padding:8px; border-radius:10px; font:inherit;
@@ -85,6 +108,12 @@ export function buildNotifCenterHtml(dark = false) {
         <button type="button" class="link" id="clear">Clear</button>
       </div>
     </header>
+    <div class="section-head">
+      <span>Needs reply</span>
+      <span class="count" id="inbox-count"></span>
+    </div>
+    <div class="inbox-list" id="inbox-list"></div>
+    <div class="section-head"><span>Recent</span></div>
     <div class="list" id="list"></div>
     <div class="monitor hidden" id="monitor">
       <div class="monitor-head">Memory per app</div>
@@ -105,7 +134,58 @@ export function buildNotifCenterHtml(dark = false) {
       if (hours < 24) return hours + 'h ago';
       return Math.floor(hours / 24) + 'd ago';
     }
+    function paintInbox(data) {
+      const inboxList = document.getElementById('inbox-list');
+      const countEl = document.getElementById('inbox-count');
+      const inbox = data?.inbox || [];
+      countEl.textContent = inbox.length ? inbox.length + ' chats' : 'All clear';
+      if (!inbox.length) {
+        inboxList.innerHTML = '<p class="empty">No unread WhatsApp / Arattai chats</p>';
+        return;
+      }
+      inboxList.innerHTML = inbox.map((item, index) => {
+        const initial = esc((item.name || '?').slice(0, 1).toUpperCase());
+        const unread = Math.min(99, Number(item.unread) || 1);
+        const preview = esc(item.preview || item.accountLabel || '');
+        const account = esc(item.accountLabel || '');
+        return '<div class="row" style="display:grid;gap:6px">' +
+          '<button type="button" class="inbox-row open-inbox" data-index="' + index + '">' +
+          '<span class="logo" style="background:' + esc(item.color || '#e2e8f0') + '">' + initial + '</span>' +
+          '<span class="text"><strong>' + esc(item.name) + '</strong>' +
+          '<span>' + (preview || account) + (account && preview ? ' · ' + account : '') + '</span></span>' +
+          '<span class="inbox-badge">' + unread + '</span></button>' +
+          '<div class="actions"><button type="button" class="inbox-pin" data-index="' + index + '">Pin</button></div>' +
+          '</div>';
+      }).join('');
+      inboxList.querySelectorAll('.open-inbox').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const item = inbox[Number(btn.dataset.index)];
+          if (!item) return;
+          api.action('open-inbox', {
+            serviceId: item.serviceId || '',
+            name: item.name || '',
+            chatKey: item.chatKey || '',
+          });
+        });
+      });
+      inboxList.querySelectorAll('.inbox-pin').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const item = inbox[Number(btn.dataset.index)];
+          if (!item) return;
+          api.action('pin-inbox', {
+            serviceId: item.serviceId || '',
+            name: item.name || '',
+            chatKey: item.chatKey || '',
+            appId: item.appId || '',
+          });
+          btn.textContent = 'Pinned';
+          btn.disabled = true;
+        });
+      });
+    }
     function paint(data) {
+      paintInbox(data);
       const list = document.getElementById('list');
       const items = data?.notifications || [];
       if (!items.length) {

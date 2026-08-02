@@ -50,7 +50,6 @@ const els = {
   topBar: document.getElementById('top-bar'),
   hubRails: document.getElementById('hub-rails'),
   pinRail: document.getElementById('pin-rail'),
-  inboxRail: document.getElementById('inbox-rail'),
   settingsModal: document.getElementById('settings-modal'),
   settingsSave: document.getElementById('settings-save'),
   settingsClose: document.getElementById('settings-close'),
@@ -493,12 +492,12 @@ function makeHubChip({
 }
 
 function renderHubRails() {
-  if (!els.hubRails || !els.pinRail || !els.inboxRail) return;
+  if (!els.hubRails || !els.pinRail) return;
   const pins = state.pinnedPeople || [];
-  const inbox = state.inbox || [];
   const hasMessaging = (state.services || []).some(
     (s) => s.appId === 'whatsapp' || s.appId === 'arattai',
   );
+  // Entire strip is for Hub pins only — unified “needs reply” lives in Notifications.
   els.hubRails.classList.toggle('hidden', !hasMessaging && !pins.length);
 
   els.pinRail.innerHTML = '';
@@ -509,71 +508,29 @@ function renderHubRails() {
     empty.title =
       'Hub pins are separate from WhatsApp (max 3) and Arattai pins. You can pin up to 10 here.';
     els.pinRail.appendChild(empty);
-  } else {
-    for (const pin of pins) {
-      els.pinRail.appendChild(
-        makeHubChip({
-          name: pin.name,
-          accountLabel: getServiceById(pin.serviceId)?.title || pin.appId,
-          color: getServiceById(pin.serviceId)?.color,
-          pinned: true,
-          onClick: async () => {
-            const result = await window.asperadock.openInboxChat?.({
-              serviceId: pin.serviceId,
-              name: pin.name,
-              chatKey: pin.chatKey,
-            });
-            if (result && result.ok === false && result.error) alert(result.error);
-          },
-          onUnpin: async () => {
-            await window.asperadock.unpinPerson?.(pin.id);
-          },
-          onContext: async (e) => {
-            e.preventDefault();
-            await window.asperadock.unpinPerson?.(pin.id);
-          },
-        }),
-      );
-    }
-  }
-
-  els.inboxRail.innerHTML = '';
-  if (!inbox.length) {
-    const empty = document.createElement('span');
-    empty.className = 'hub-chip-empty';
-    empty.textContent = hasMessaging ? 'All clear' : 'Add WhatsApp or Arattai';
-    els.inboxRail.appendChild(empty);
     return;
   }
-  for (const item of inbox) {
-    const pinPayload = {
-      serviceId: item.serviceId,
-      name: item.name,
-      chatKey: item.chatKey,
-      appId: item.appId,
-    };
-    els.inboxRail.appendChild(
+  for (const pin of pins) {
+    els.pinRail.appendChild(
       makeHubChip({
-        name: item.name,
-        accountLabel: item.accountLabel,
-        unread: item.unread,
-        color: item.color,
+        name: pin.name,
+        accountLabel: getServiceById(pin.serviceId)?.title || pin.appId,
+        color: getServiceById(pin.serviceId)?.color,
+        pinned: true,
         onClick: async () => {
           const result = await window.asperadock.openInboxChat?.({
-            serviceId: item.serviceId,
-            name: item.name,
-            chatKey: item.chatKey,
+            serviceId: pin.serviceId,
+            name: pin.name,
+            chatKey: pin.chatKey,
           });
           if (result && result.ok === false && result.error) alert(result.error);
         },
-        onPin: async () => {
-          const result = await window.asperadock.pinPerson?.(pinPayload);
-          if (result && result.ok === false && result.error) alert(result.error);
+        onUnpin: async () => {
+          await window.asperadock.unpinPerson?.(pin.id);
         },
         onContext: async (e) => {
           e.preventDefault();
-          const result = await window.asperadock.pinPerson?.(pinPayload);
-          if (result && result.ok === false && result.error) alert(result.error);
+          await window.asperadock.unpinPerson?.(pin.id);
         },
       }),
     );

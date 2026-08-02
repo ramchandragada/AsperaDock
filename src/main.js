@@ -405,7 +405,7 @@ const unreadCounts = new Map();
 /** @type {{ id: string, serviceId: string, title: string, body: string, at: number, chatName?: string, chatKey?: string }[]} */
 let notificationLog = [];
 const NOTIFICATION_LOG_MAX = 40;
-/** Per-service scraped unread chats for the unified inbox strip. */
+/** Per-service scraped unread chats for notification-center “Needs reply”. */
 /** @type {Map<string, { chats: { chatKey: string, name: string, preview: string, unread: number }[], at: number }>} */
 const inboxByService = new Map();
 let inboxPollTimer = null;
@@ -2695,6 +2695,17 @@ function buildNotifCenterData() {
       color: service?.color || '#e2e8f0',
     };
   });
+  const inbox = collectUnifiedInbox().map((item) => ({
+    id: item.id,
+    serviceId: item.serviceId,
+    name: item.name,
+    chatKey: item.chatKey,
+    preview: item.preview || '',
+    unread: item.unread || 1,
+    accountLabel: item.accountLabel || '',
+    appId: item.appId || '',
+    color: item.color || '#64748b',
+  }));
   const monitorOn = !!settings.consumptionMonitor;
   const memoryRows = monitorOn
     ? (settings.serviceInstances || [])
@@ -2705,7 +2716,7 @@ function buildNotifCenterData() {
         .filter((row) => row.mb > 0)
         .sort((a, b) => b.mb - a.mb)
     : [];
-  return { notifications, monitorOn, memoryRows };
+  return { notifications, inbox, monitorOn, memoryRows };
 }
 
 function pushNotifCenterData() {
@@ -2724,8 +2735,8 @@ function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } =
   closeChromeMenuWindow();
   closeNotifCenterWindow();
 
-  const menuW = 376;
-  const menuH = 580;
+  const menuW = 396;
+  const menuH = 640;
   const content = mainWindow.getContentBounds();
   const anchorX = content.x + (Number(x) || 0);
   const anchorY = content.y + (Number(y) || 0);
@@ -3771,6 +3782,22 @@ async function handleNotifCenterAction(type, value) {
     const chatName = String(value?.chatName || value?.title || '');
     const chatKey = String(value?.chatKey || '');
     return sendQuickReply(serviceId, { name: chatName, chatKey, text });
+  }
+  if (type === 'open-inbox') {
+    closeNotifCenterWindow();
+    const serviceId = String(value?.serviceId || '');
+    const chatName = String(value?.name || value?.chatName || '');
+    const chatKey = String(value?.chatKey || '');
+    if (!serviceId || (!chatName && !chatKey)) return { ok: false };
+    return openMessagingChat(serviceId, { name: chatName, chatKey });
+  }
+  if (type === 'pin-inbox') {
+    const serviceId = String(value?.serviceId || '');
+    const name = String(value?.name || '').trim();
+    const chatKey = String(value?.chatKey || normalizeChatKey(name));
+    const appId = String(value?.appId || getService(serviceId)?.appId || '');
+    if (!serviceId || !name) return { ok: false, error: 'Missing chat.' };
+    return pinPerson({ serviceId, name, chatKey, appId });
   }
   return { ok: false };
 }

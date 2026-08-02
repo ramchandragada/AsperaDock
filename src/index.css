@@ -186,7 +186,7 @@ body {
 .hub-rails {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   width: 100%;
   min-width: 0;
   padding: 0 2px 4px;
@@ -205,8 +205,9 @@ body {
   min-width: 0;
 }
 
-.hub-rail-grow {
+.hub-rail-pins {
   flex: 1 1 auto;
+  width: 100%;
 }
 
 .hub-rail-label {
