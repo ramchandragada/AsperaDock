@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  findExactWhatsAppContactTargetJs,
   findWhatsAppPaneResetJs,
   nuclearWipeMessagingSearchJs,
+  readActiveWhatsAppChatJs,
   readMessagingSearchTextJs,
   tryOpenWhatsAppStoreChatJs,
   waMutateSearchJs,
@@ -18,6 +20,16 @@ test('WhatsApp Store open script probes all webpackChunk* modules', () => {
   // Prefer DMs; match business/verified display names (AYUSH JAIN ABOP case).
   assert.match(js, /verifiedName|notifyName|chatTitles/);
   assert.match(js, /isGroup/);
+  assert.match(js, /Contact|openChatBottom\(\{ chat \}\)/);
+});
+
+test('exact WA contact target ignores Messages section and requires exact name', () => {
+  const js = findExactWhatsAppContactTargetJs('AYUSH JAIN ABOP', '9199@c.us');
+  assert.match(js, /exact_not_found|exact-text/);
+  assert.match(js, /inMessages|messages/);
+  assert.match(js, /AYUSH JAIN ABOP/);
+  assert.match(js, /9199@c\.us/);
+  assert.match(readActiveWhatsAppChatJs(), /getActive|nativeId/);
 });
 
 test('WA search mutate clears and inserts via execCommand/paste for CDP userGesture', () => {

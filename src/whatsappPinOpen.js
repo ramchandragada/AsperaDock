@@ -156,13 +156,36 @@ export function tryOpenWhatsAppStoreChatJs(name, nativeId = '') {
     } catch (e) {
       return { ok: false, reason: 'store_read_failed' };
     }
-    // Also try Contact → chat resolve when Chat collection is thin.
-    if ((!Array.isArray(models) || !models.length) && wantId && typeof bag.Chat?.get === 'function') {
+    if (wantId && typeof bag.Chat?.get === 'function') {
       try {
         const one = bag.Chat.get(wantId);
-        if (one) models = [one];
+        if (one && !models.includes(one)) models = [one, ...models];
       } catch (e) {}
     }
+    // Contact directory: AYUSH-style business names may be in Contact but cold in Chat list.
+    try {
+      const Contact = window.Store?.Contact || bag.Contact;
+      const contacts = typeof Contact?.getModelsArray === 'function'
+        ? Contact.getModelsArray()
+        : (Array.isArray(Contact?.models) ? Contact.models : []);
+      for (const c of contacts || []) {
+        const titles = [
+          c?.name, c?.pushname, c?.formattedName, c?.verifiedName, c?.notifyName,
+        ].map((x) => String(x || '').trim()).filter(Boolean);
+        let score = -1;
+        for (const t of titles) score = Math.max(score, scoreTitle(t));
+        const cid = String(c?.id?._serialized || c?.id || '');
+        if (wantId && cid && (cid === wantId || cid.includes(wantId))) score = 120;
+        if (score < 80 || !cid) continue;
+        let chat = null;
+        try { chat = typeof bag.Chat.get === 'function' ? bag.Chat.get(cid) : null; } catch (e) {}
+        if (!chat && typeof bag.Chat.find === 'function') {
+          try { chat = await bag.Chat.find(c.id || cid); } catch (e) {}
+        }
+        if (chat && !models.includes(chat)) models.push(chat);
+      }
+    } catch (e) {}
+
     if (!Array.isArray(models) || !models.length) {
       return { ok: false, reason: 'store_empty' };
     }
@@ -196,20 +219,167 @@ export function tryOpenWhatsAppStoreChatJs(name, nativeId = '') {
     }
     if (!best || bestScore < 60) return { ok: false, reason: 'store_no_match', bestScore };
 
+    const openChat = async (chat) => {
+      const attempts = [];
+      if (typeof bag.Cmd.openChatBottom === 'function') {
+        attempts.push(() => bag.Cmd.openChatBottom(chat));
+        attempts.push(() => bag.Cmd.openChatBottom({ chat }));
+      }
+      if (typeof bag.Cmd.openChatAt === 'function') {
+        attempts.push(() => bag.Cmd.openChatAt(chat));
+        attempts.push(() => bag.Cmd.openChatAt({ chat }));
+      }
+      if (typeof bag.Cmd.openChatFromUnread === 'function') {
+        attempts.push(() => bag.Cmd.openChatFromUnread(chat));
+      }
+      if (typeof bag.Cmd.openChat === 'function') {
+        attempts.push(() => bag.Cmd.openChat(chat));
+      }
+      if (!attempts.length) return { ok: false, reason: 'store_no_open_cmd' };
+      let lastErr = '';
+      for (const fn of attempts) {
+        try {
+          const ret = fn();
+          if (ret && typeof ret.then === 'function') await ret;
+          return { ok: true };
+        } catch (e) {
+          lastErr = String(e?.message || e);
+        }
+      }
+      return { ok: false, reason: 'store_open_failed', error: lastErr };
+    };
+
     try {
-      if (typeof bag.Cmd.openChatBottom === 'function') await bag.Cmd.openChatBottom(best);
-      else if (typeof bag.Cmd.openChatAt === 'function') await bag.Cmd.openChatAt(best);
-      else if (typeof bag.Cmd.openChatFromUnread === 'function') await bag.Cmd.openChatFromUnread(best);
-      else return { ok: false, reason: 'store_no_open_cmd' };
+      const opened = await openChat(best);
+      if (!opened?.ok) return opened;
       return {
         ok: true,
         via: 'wa-store',
         title: String(best.formattedTitle || best.name || wantName),
+        id: String(best?.id?._serialized || best?.id || ''),
         score: bestScore,
       };
     } catch (e) {
       return { ok: false, reason: 'store_open_failed', error: String(e?.message || e) };
     }
+  })()`;
+}
+
+/**
+ * Exact left-pane name hit for WhatsApp (Recent searches chip / Contacts row).
+ * Only exact (or nativeId) non-group matches — avoids AYUSH @mention collisions.
+ */
+export function findExactWhatsAppContactTargetJs(name, nativeId = '') {
+  const wantName = String(name || '').trim();
+  const wantId = String(nativeId || '').trim();
+  return `(() => {
+    const wantName = ${JSON.stringify(wantName)};
+    const wantId = ${JSON.stringify(wantId)};
+    const norm = (s) => String(s || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+    const wantN = norm(wantName);
+    const mid = (window.innerWidth || 1000) * 0.55;
+    const visible = (el) => {
+      if (!el) return false;
+      try {
+        const s = window.getComputedStyle(el);
+        const r = el.getBoundingClientRect();
+        return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 8 && r.height > 8 && r.left < mid;
+      } catch (e) { return false; }
+    };
+    const looksGroup = (el, title) => {
+      const t = norm(title);
+      if (/\\b(group|community|broadcast)\\b/.test(t)) return true;
+      if (el?.querySelector?.('[data-testid="default-group"], [data-icon="default-group"], [data-icon="group"]')) return true;
+      return false;
+    };
+    const inMessages = (el) => {
+      let cur = el;
+      for (let i = 0; i < 12 && cur; i += 1) {
+        let sib = cur.previousElementSibling;
+        while (sib) {
+          const t = String(sib.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+          if (t === 'messages') return true;
+          if (t === 'chats' || t === 'contacts' || t === 'groups' || t === 'recent searches') return false;
+          sib = sib.previousElementSibling;
+        }
+        cur = cur.parentElement;
+      }
+      return false;
+    };
+    const pointOf = (el) => {
+      try {
+        el.scrollIntoView({ block: 'center', inline: 'nearest' });
+        const r = el.getBoundingClientRect();
+        if (r.width < 8 || r.height < 8) return null;
+        return { x: Math.round(r.left + Math.min(40, Math.max(12, r.width * 0.3))), y: Math.round(r.top + r.height / 2) };
+      } catch (e) { return null; }
+    };
+    const cands = [];
+    // 1) Native id row.
+    if (wantId) {
+      for (const el of document.querySelectorAll('[data-id], [chid], [data-chid]')) {
+        if (!visible(el)) continue;
+        const id = String(
+          el.getAttribute('data-id') || el.getAttribute('chid') || el.getAttribute('data-chid') || '',
+        ).replace(/^(true|false)_/, '');
+        if (id === wantId || id.includes(wantId)) {
+          const pt = pointOf(el);
+          if (pt) return { ok: true, ...pt, title: wantName, via: 'native-id', score: 120 };
+        }
+      }
+    }
+    // 2) Exact text nodes in left pane (Recent searches labels, contact titles).
+    for (const el of document.querySelectorAll(
+      '#pane-side span, #pane-side div, #pane-side button, #pane-side [role="listitem"], #pane-side [role="button"], [data-testid="cell-frame-title"], [data-testid="cell-frame-title"] span',
+    )) {
+      if (!visible(el)) continue;
+      const raw = String(el.getAttribute?.('title') || el.textContent || '').replace(/\\s+/g, ' ').trim();
+      if (!raw || raw.length > 80) continue;
+      if (norm(raw) !== wantN) continue;
+      if (inMessages(el)) continue;
+      const clickEl =
+        el.closest?.('[data-testid="cell-frame-container"]')
+        || el.closest?.('[role="listitem"]')
+        || el.closest?.('[role="button"]')
+        || el.closest?.('div[tabindex]')
+        || el;
+      if (looksGroup(clickEl, raw)) continue;
+      const pt = pointOf(clickEl);
+      if (!pt) continue;
+      // Prefer smaller / more specific nodes (chip label over huge containers).
+      const area = (() => { try { const r = clickEl.getBoundingClientRect(); return r.width * r.height; } catch (e) { return 999999; } })();
+      cands.push({ ...pt, title: raw, area, score: 100, via: 'exact-text' });
+    }
+    cands.sort((a, b) => a.area - b.area);
+    if (cands[0]) return { ok: true, x: cands[0].x, y: cands[0].y, title: cands[0].title, via: cands[0].via, score: 100 };
+    return { ok: false, reason: 'exact_not_found' };
+  })()`;
+}
+
+/** Active WhatsApp chat id + title (for pinning with nativeId). */
+export function readActiveWhatsAppChatJs() {
+  return `(() => {
+    try {
+      const chat =
+        window.Store?.Chat?.getActive?.()
+        || window.Store?.Chat?.active
+        || null;
+      const id = String(chat?.id?._serialized || chat?.id || '').trim();
+      const title = String(
+        chat?.formattedTitle || chat?.name || chat?.contact?.formattedName || '',
+      ).trim();
+      if (id || title) return { ok: true, nativeId: id, title };
+    } catch (e) {}
+    try {
+      const header = document.querySelector(
+        '[data-testid="conversation-info-header-chat-title"], #main header span[title]',
+      );
+      const title = String(header?.getAttribute?.('title') || header?.textContent || '').trim();
+      const main = document.querySelector('#main');
+      const dataId = String(main?.getAttribute?.('data-id') || '').replace(/^(true|false)_/, '');
+      if (title || dataId) return { ok: true, nativeId: dataId, title };
+    } catch (e) {}
+    return { ok: false };
   })()`;
 }
 

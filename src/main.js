@@ -69,8 +69,10 @@ import {
   searchMessagingChatsJs,
 } from './guestInbox.js';
 import {
+  findExactWhatsAppContactTargetJs,
   findWhatsAppPaneResetJs,
   nuclearWipeMessagingSearchJs,
+  readActiveWhatsAppChatJs,
   readMessagingSearchTextJs,
   tryOpenWhatsAppStoreChatJs,
   waMutateSearchJs,
@@ -4295,12 +4297,38 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     return { ok: true, via: 'opened', chat: match.header || chatName };
   };
 
+  const persistResolvedNativeId = async () => {
+    if (!isWhatsApp) return;
+    try {
+      const active = await wc.executeJavaScript(readActiveWhatsAppChatJs(), true);
+      const nid = String(active?.nativeId || '').trim();
+      if (!nid) return;
+      const pins = sanitizePinnedPeople(settings.pinnedPeople || []);
+      const pinId = makePinId(serviceId, key);
+      let changed = false;
+      const next = pins.map((p) => {
+        if (p.id !== pinId && normalizeChatKey(p.name) !== key) return p;
+        if (p.nativeId === nid) return p;
+        changed = true;
+        return { ...p, nativeId: nid };
+      });
+      if (changed) {
+        settings = saveSettings({ pinnedPeople: next });
+        broadcastState();
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
   const finishOpenWhatsApp = async (opened) => {
     // Dismiss search chrome + clear any accidental message selection (Ctrl+A fallout).
     // Avoid full resetPane/Chats click here — chat is already open.
     await dismissMessagingSearchAfterOpen(wc);
     await markActiveComposeTarget(serviceId);
     await clearGuestPageSelection(wc);
+    // Learn WA chat id after a successful open so the next pin click is Store-direct.
+    await persistResolvedNativeId();
     return opened;
   };
 
@@ -4388,34 +4416,70 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
   }
 
   // ── WhatsApp hardened path ─────────────────────────────────────────
+  const confirmOpened = async (via, storeTitle = '') => {
+    for (let i = 0; i < 6; i += 1) {
+      const matched = await headerOpen();
+      if (matched) return { ...matched, via };
+      await sleepMs(220);
+    }
+    // Store/title already matched the pin — accept delayed header paint (business chats).
+    const titleN = String(storeTitle || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    const wantN = chatName.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (
+      titleN
+      && wantN
+      && (titleN === wantN || titleN.includes(wantN) || wantN.includes(titleN))
+    ) {
+      return { ok: true, via, chat: storeTitle || chatName };
+    }
+    return null;
+  };
+
   const tryStoreOpen = async (via) => {
+    let storeOpen = null;
     try {
-      const storeOpen = await cdpEvaluate(
+      storeOpen = await cdpEvaluate(
         wc,
         tryOpenWhatsAppStoreChatJs(chatName, waId),
         { awaitPromise: true },
       );
-      if (storeOpen?.ok) {
-        await sleepMs(400);
-        const matched = await headerOpen();
-        if (matched) return { ...matched, via };
-      }
     } catch {
       try {
-        const storeOpen = await wc.executeJavaScript(
+        storeOpen = await wc.executeJavaScript(
           tryOpenWhatsAppStoreChatJs(chatName, waId),
           true,
         );
-        if (storeOpen?.ok) {
-          await sleepMs(400);
-          const matched = await headerOpen();
-          if (matched) return { ...matched, via };
-        }
       } catch {
-        /* ignore */
+        storeOpen = null;
       }
     }
-    return null;
+    if (!storeOpen?.ok) return null;
+    await sleepMs(350);
+    return confirmOpened(via, storeOpen.title || chatName);
+  };
+
+  const tryExactContactClick = async (via) => {
+    let hit = null;
+    try {
+      hit = await cdpEvaluate(wc, findExactWhatsAppContactTargetJs(chatName, waId));
+    } catch {
+      try {
+        hit = await wc.executeJavaScript(
+          findExactWhatsAppContactTargetJs(chatName, waId),
+          true,
+        );
+      } catch {
+        hit = null;
+      }
+    }
+    if (!hit?.ok || !Number.isFinite(hit.x)) return null;
+    await cdpClickAt(wc, hit.x, hit.y);
+    await sleepMs(380);
+    const opened = await confirmOpened(via, hit.title || chatName);
+    if (opened) return opened;
+    await cdpClickAt(wc, hit.x, hit.y);
+    await sleepMs(420);
+    return confirmOpened(`${via}-retry`, hit.title || chatName);
   };
 
   let lastError = '';
@@ -4426,18 +4490,20 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
       const viaStore = await tryStoreOpen(attempt === 0 ? 'wa-store' : 'wa-store-retry');
       if (viaStore) return finishOpenWhatsApp(viaStore);
 
-      // IMPORTANT: try list / Recent-searches chips BEFORE nuclear clear.
-      // Video (AYUSH): chip was visible; wipe dismissed it, then search hit group @mentions.
+      // Exact Recent-searches / Contacts label BEFORE nuclear clear (AYUSH case).
       const alreadyPre = await headerOpen();
       if (alreadyPre) return finishOpenWhatsApp({ ...alreadyPre, via: 'already-open' });
-      // Focus empty search so WhatsApp shows "Recent searches" chips (AYUSH case).
       try {
         await focusGuestLeftSearch(wc);
-        await sleepMs(160);
+        await sleepMs(200);
       } catch {
         /* ignore */
       }
-      let opened = await trustedClickTarget(
+      let opened = await tryExactContactClick(
+        attempt === 0 ? 'exact-chip' : 'exact-chip-retry',
+      );
+      if (opened) return finishOpenWhatsApp(opened);
+      opened = await trustedClickTarget(
         attempt === 0 ? 'recent-or-list' : 'recent-or-list-retry',
       );
       if (opened) return finishOpenWhatsApp(opened);
@@ -4448,31 +4514,34 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
       const already = await headerOpen();
       if (already) return finishOpenWhatsApp({ ...already, via: 'already-open' });
 
+      opened = await tryExactContactClick('exact-after-clear');
+      if (opened) return finishOpenWhatsApp(opened);
       opened = await trustedClickTarget(attempt === 0 ? 'list-click' : 'list-retry');
       if (opened) return finishOpenWhatsApp(opened);
 
-      // Verified search fill (refuses to proceed if the box still shows the prior pin).
+      // Verified search fill, then ONLY exact Contacts hits (never Messages/@mentions).
       const filled = await fillGuestSearchVerified(wc, chatName);
       if (filled) {
-        await sleepMs(450);
+        await sleepMs(500);
         const searchStarted = Date.now();
-        while (Date.now() - searchStarted < 5600) {
+        while (Date.now() - searchStarted < 6500) {
+          opened = await tryExactContactClick('search-exact');
+          if (opened) return finishOpenWhatsApp(opened);
           opened = await trustedClickTarget('search-click');
           if (opened) return finishOpenWhatsApp(opened);
-          if (Date.now() - searchStarted > 900) {
+          if (Date.now() - searchStarted > 1100) {
             const hit = await wc.executeJavaScript(
-              findMessagingChatTargetJs(chatName, key, waId),
+              findExactWhatsAppContactTargetJs(chatName, waId),
               true,
             );
-            // Require a strong titled match (not Messages/@mention noise).
-            if (hit?.ok && hit.score >= 78 && !hit.group) {
+            if (hit?.ok && hit.score >= 100) {
               await focusGuestLeftSearch(wc);
               sendGuestKey(wc, 'Down');
               await sleepMs(70);
               sendGuestKey(wc, 'Enter');
-              await sleepMs(450);
-              opened = await headerOpen();
-              if (opened) return finishOpenWhatsApp({ ...opened, via: 'search-enter' });
+              await sleepMs(480);
+              opened = await confirmOpened('search-enter', chatName);
+              if (opened) return finishOpenWhatsApp(opened);
             }
           }
           await sleepMs(180);
@@ -4658,6 +4727,22 @@ async function pinChatFromGuestContext(webContents, service, params = {}, preHit
       }
     } catch {
       // ignore
+    }
+  }
+  // Capture WA chat id whenever possible — name-only pins fail for mention-heavy contacts.
+  if (!nativeId && service.appId === 'whatsapp') {
+    try {
+      const active = await webContents.executeJavaScript(readActiveWhatsAppChatJs(), true);
+      if (active?.ok) {
+        const nid = String(active.nativeId || '').trim();
+        if (nid) nativeId = nid;
+        if ((!name || isJunkChatName(name)) && active.title && !isJunkChatName(active.title)) {
+          name = String(active.title).trim();
+          chatKey = normalizeChatKey(name);
+        }
+      }
+    } catch {
+      /* ignore */
     }
   }
   const result = pinPerson({
