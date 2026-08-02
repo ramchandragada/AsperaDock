@@ -547,6 +547,75 @@ export function findMessagingLeftSearchJs() {
 }
 
 /**
+ * Coordinates for left-pane search chrome: input, clear (X), and back.
+ * Used by trusted (sendInputEvent) clear — synthetic .click() is ignored by WhatsApp.
+ */
+export function findMessagingSearchChromeJs() {
+  return `(() => {
+    ${guestChatListHelpersJs()}
+    ${messagingPinMatchHelpersJs('', '')}
+    const pack = (el) => {
+      const pt = pointOf(el);
+      return pt ? { x: pt.x, y: pt.y } : null;
+    };
+    const searchEl = leftSearchEls()[0] || null;
+    let hasText = false;
+    if (searchEl) {
+      try {
+        if ('value' in searchEl && String(searchEl.value || '').trim()) hasText = true;
+        else if (String(searchEl.textContent || searchEl.innerText || '').trim()) hasText = true;
+      } catch (e) {}
+    }
+    let clearEl = null;
+    for (const btn of document.querySelectorAll(
+      [
+        '[data-testid="search-input-clear"]',
+        '[aria-label="Clear search"]',
+        '[aria-label*="Clear search" i]',
+        'button[aria-label="Cancel"]',
+        'button[aria-label*="Cancel" i]',
+        '[data-icon="x"]',
+        'span[data-icon="x"]',
+      ].join(','),
+    )) {
+      if (!visible(btn) || !inLeftPane(btn)) continue;
+      clearEl = btn.closest?.('button,[role="button"]') || btn;
+      break;
+    }
+    let backEl = null;
+    for (const btn of document.querySelectorAll(
+      '[data-icon="back"], span[data-icon="back"], button[aria-label*="Back" i], [aria-label="Back"]',
+    )) {
+      if (!visible(btn) || !inLeftPane(btn)) continue;
+      backEl = btn.closest?.('button,[role="button"]') || btn;
+      break;
+    }
+    const searchFocused = (() => {
+      const el = document.activeElement;
+      if (!el) return false;
+      const ph = String(
+        el.getAttribute('placeholder')
+          || el.getAttribute('data-placeholder')
+          || el.getAttribute('aria-label')
+          || el.getAttribute('title')
+          || '',
+      ).toLowerCase();
+      return /search/.test(ph)
+        || el.getAttribute('data-tab') === '3'
+        || el.getAttribute('data-testid') === 'chat-list-search';
+    })();
+    return {
+      ok: true,
+      search: searchEl ? { ...pack(searchEl), hasText } : null,
+      clear: clearEl ? pack(clearEl) : null,
+      back: backEl ? pack(backEl) : null,
+      hasText,
+      searchFocused,
+    };
+  })()`;
+}
+
+/**
  * Clear left-pane search without Escape.
  * Escape on WhatsApp closes the open chat (Meta AI empty pane) — never use it here.
  */

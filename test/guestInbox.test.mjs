@@ -5,6 +5,7 @@ import {
   composeReplyJs,
   findMessagingChatTargetJs,
   findMessagingLeftSearchJs,
+  findMessagingSearchChromeJs,
   inspectChatListTargetJs,
   isInboxAppId,
   isJunkChatName,
@@ -105,6 +106,11 @@ test('trusted pin-open helpers return click targets without Escape', () => {
   assert.match(clearJs, /search-input-clear|data-icon="x"/);
   assert.doesNotMatch(clearJs, /key:\s*'Escape'|code:\s*'Escape'|keyCode:\s*27/);
   assert.match(messagingChatHeaderMatchJs('Parth Gada', 'parth gada'), /scoreName|openChatHeaderName/);
+  // Search chrome coords let main clear via sendInputEvent (fixes second-pin failures).
+  const chromeJs = findMessagingSearchChromeJs();
+  assert.match(chromeJs, /searchFocused|hasText/);
+  assert.match(chromeJs, /search-input-clear|data-icon="x"/);
+  assert.match(chromeJs, /data-icon="back"/);
 });
 
 test('junk chat names reject Arattai chrome mistaken for contacts', () => {
