@@ -120,6 +120,57 @@ async function urlReachable(url, { attempts = 10 } = {}) {
   return false;
 }
 
+/**
+ * Download the public .deb and confirm SHA-256 matches latest.json.
+ * Catches publish/CDN races that cause "Checksum mismatch" on clients.
+ */
+async function assertPublicArtifactChecksum(fileMeta, { attempts = 8 } = {}) {
+  const expected = String(fileMeta?.sha256 || '').toLowerCase();
+  const url = String(fileMeta?.url || '');
+  const expectedSize = Number(fileMeta?.size) || 0;
+  if (!expected || !url) {
+    console.error('Manifest missing sha256/url for artifact verify');
+    return false;
+  }
+  let lastError = '';
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const bust = `${url}${url.includes('?') ? '&' : '?'}verify=${Date.now()}`;
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch(bust, {
+        redirect: 'follow',
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/octet-stream,*/*',
+          'User-Agent': 'AsperaHub-Publish-Verify',
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        },
+      });
+      if (!res.ok) {
+        lastError = `HTTP ${res.status}`;
+      } else {
+        // eslint-disable-next-line no-await-in-loop
+        const buf = Buffer.from(await res.arrayBuffer());
+        const got = crypto.createHash('sha256').update(buf).digest('hex');
+        if (got === expected && (!expectedSize || buf.length === expectedSize)) {
+          console.log(
+            `✓ checksum ${got.slice(0, 12)}… (${buf.length} bytes) matches latest.json`,
+          );
+          return true;
+        }
+        lastError = `sha ${got.slice(0, 12)}… size ${buf.length} (expected ${expected.slice(0, 12)}… / ${expectedSize})`;
+      }
+    } catch (error) {
+      lastError = String(error?.message || error);
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, 800 * (i + 1)));
+  }
+  console.error(`Public artifact checksum verify failed for ${url}: ${lastError}`);
+  return false;
+}
+
 /** Draft releases are not publicly downloadable — confirm assets via API instead. */
 function assertDraftAssetsPresent(expectedNames) {
   const view = ghPipe([
@@ -315,6 +366,22 @@ for (const url of verifyUrls) {
     process.exit(1);
   }
   console.log(`✓ ${url}`);
+}
+
+console.log('Verifying public artifact checksums against latest.json…');
+for (const fileMeta of Object.values(files)) {
+  // eslint-disable-next-line no-await-in-loop
+  const ok = await assertPublicArtifactChecksum(fileMeta);
+  if (!ok) {
+    console.error(
+      'Published, but the live .deb SHA-256 does not match latest.json.',
+    );
+    console.error(
+      'Clients would show “Checksum mismatch — download rejected”. Fix assets and re-publish.',
+    );
+    console.error(`Release page: https://github.com/${GITHUB_SLUG}/releases/tag/${tag}`);
+    process.exit(1);
+  }
 }
 
 const latestUrl = `https://github.com/${GITHUB_SLUG}/releases/latest/download/${manifestName}`;

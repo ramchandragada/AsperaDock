@@ -569,19 +569,34 @@ async function resolveGithubAssetDownloadUrl(url) {
   return alt;
 }
 
-async function fetchUpdateArtifact(url, { attempts = 4 } = {}) {
+/** Bust CDN / proxy caches after a checksum mismatch or publish race. */
+function withCacheBust(url, nonce = Date.now()) {
+  try {
+    const u = new URL(String(url || ''));
+    u.searchParams.set('aspera_cb', String(nonce));
+    return u.toString();
+  } catch {
+    const base = String(url || '');
+    const join = base.includes('?') ? '&' : '?';
+    return `${base}${join}aspera_cb=${encodeURIComponent(String(nonce))}`;
+  }
+}
+
+async function fetchUpdateArtifact(url, { attempts = 4, cacheBust = false } = {}) {
   let lastError = null;
-  let activeUrl = url;
+  let activeUrl = cacheBust ? withCacheBust(url) : url;
   let triedApiFallback = false;
   for (let i = 0; i < attempts; i += 1) {
     try {
       // eslint-disable-next-line no-await-in-loop
       const res = await fetch(activeUrl, {
         redirect: 'follow',
+        cache: 'no-store',
         headers: {
           Accept: 'application/octet-stream,*/*',
           'User-Agent': 'AsperaHub-Updater',
           'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
         },
       });
       if (res.ok && res.body) return res;
@@ -595,7 +610,7 @@ async function fetchUpdateArtifact(url, { attempts = 4 } = {}) {
         triedApiFallback = true;
         // eslint-disable-next-line no-await-in-loop
         const alt = await resolveGithubAssetDownloadUrl(url);
-        if (alt) activeUrl = alt;
+        if (alt) activeUrl = cacheBust ? withCacheBust(alt) : alt;
       }
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
@@ -695,8 +710,12 @@ export async function downloadUpdate(opts = {}) {
         } catch {
           // ignore
         }
+        // After a checksum miss, bust CDN caches — publish races can serve a
+        // stale .deb against a newer latest.json (or the reverse).
         // eslint-disable-next-line no-await-in-loop
-        const res = await fetchUpdateArtifact(url);
+        const res = await fetchUpdateArtifact(url, {
+          cacheBust: attempt > 0,
+        });
         // eslint-disable-next-line no-await-in-loop
         const { hash } = await streamResponseToFile(res, tmp, {
           size,
@@ -720,7 +739,9 @@ export async function downloadUpdate(opts = {}) {
           } catch {
             // ignore
           }
-          throw new Error('Checksum mismatch — download rejected');
+          const err = new Error('Checksum mismatch — download rejected');
+          err.code = 'CHECKSUM_MISMATCH';
+          throw err;
         }
 
         fs.renameSync(tmp, dest);
@@ -739,11 +760,21 @@ export async function downloadUpdate(opts = {}) {
         } catch {
           // ignore
         }
-        // Checksum / policy failures are not worth retrying.
-        if (/Checksum mismatch|missing a SHA-256/i.test(lastError.message)) {
+        // Missing checksum is final; mismatch may be a CDN/publish race — retry.
+        if (/missing a SHA-256/i.test(lastError.message)) {
           throw lastError;
         }
-        if (!isRetryableDownloadError(lastError.message) || attempt >= streamAttempts - 1) {
+        const checksumMiss =
+          lastError.code === 'CHECKSUM_MISMATCH' ||
+          /Checksum mismatch/i.test(lastError.message);
+        if (
+          !checksumMiss &&
+          (!isRetryableDownloadError(lastError.message) ||
+            attempt >= streamAttempts - 1)
+        ) {
+          throw lastError;
+        }
+        if (checksumMiss && attempt >= streamAttempts - 1) {
           throw lastError;
         }
         broadcast('download-progress', {
@@ -752,6 +783,7 @@ export async function downloadUpdate(opts = {}) {
           total: size || 0,
           retrying: true,
           attempt: attempt + 1,
+          checksumRetry: checksumMiss,
         });
         // eslint-disable-next-line no-await-in-loop
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
