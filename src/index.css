@@ -1892,6 +1892,29 @@ body.theme-dark .shortcut-bind {
   font-size: 13px;
 }
 
+.ai-route-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 0 6px;
+  flex-wrap: wrap;
+}
+
+.ai-route-toolbar-text {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 0;
+  flex: 1 1 220px;
+}
+
+.ai-route-toolbar-text strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
 .ai-provider-keys {
   display: grid;
   gap: 10px;
@@ -1907,16 +1930,36 @@ body.theme-dark .shortcut-bind {
   gap: 8px;
 }
 
+.ai-provider-key-row.is-disabled {
+  opacity: 0.72;
+}
+
 body.theme-dark .ai-provider-key-row {
   background: var(--chrome-2);
 }
 
 .ai-provider-key-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
+}
+
+.ai-provider-key-title-wrap {
+  min-width: 0;
+}
+
+.ai-provider-enable {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.ai-provider-enable input {
+  margin: 0;
 }
 
 .ai-provider-key-title {
@@ -1924,9 +1967,24 @@ body.theme-dark .ai-provider-key-row {
   font-size: 13px;
 }
 
+.ai-provider-route-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ai-route-move {
+  min-width: 32px;
+  padding-left: 8px;
+  padding-right: 8px;
+  font-weight: 700;
+}
+
 .ai-provider-key-badge {
   font-size: 11px;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .ai-provider-key-status {

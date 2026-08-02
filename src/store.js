@@ -10,6 +10,10 @@ import {
 } from './services.js';
 import { defaultShortcutsMap, migrateShortcutsMap } from './shortcutsConfig.js';
 import { sanitizePinnedPeople } from './guestInbox.js';
+import {
+  sanitizeAiDisabledProviders,
+  sanitizeAiProviderOrder,
+} from './ai/catalog.js';
 
 export const PRIMARY_PROFILE_ID = 'primary';
 
@@ -144,6 +148,17 @@ export const DEFAULTS = {
    */
   aiProviderModels: {},
   aiLanguage: 'en', // en | hi | mr
+  /**
+   * Custom Aspera AI failover sequence (provider ids).
+   * Empty / omitted → built-in default (Gemini → … → Anthropic).
+   * @type {string[]}
+   */
+  aiProviderOrder: [],
+  /**
+   * Provider ids excluded from failover (keys may still be saved).
+   * @type {string[]}
+   */
+  aiDisabledProviders: [],
 
   /**
    * Unpacked Chrome extensions for guest apps (WhatsApp, Arattai, …).
@@ -478,6 +493,10 @@ export function loadSettings() {
           serviceInstances: parsed.serviceInstances || [],
           profiles: parsed.profiles,
           pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
+          aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
+          aiDisabledProviders: sanitizeAiDisabledProviders(
+            parsed.aiDisabledProviders,
+          ),
         }),
       ),
     );
@@ -498,6 +517,17 @@ export function saveSettings(patch) {
   cache = { ...loadSettings(), ...patch };
   if (patch && Object.prototype.hasOwnProperty.call(patch, 'shortcuts')) {
     cache.shortcuts = migrateShortcutsMap(patch.shortcuts || {});
+  }
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'aiProviderOrder')) {
+    cache.aiProviderOrder = sanitizeAiProviderOrder(patch.aiProviderOrder);
+  }
+  if (
+    patch &&
+    Object.prototype.hasOwnProperty.call(patch, 'aiDisabledProviders')
+  ) {
+    cache.aiDisabledProviders = sanitizeAiDisabledProviders(
+      patch.aiDisabledProviders,
+    );
   }
   try {
     fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   AI_ALLOWED_APP_IDS,
+  AI_PROVIDER_TRY_ORDER,
   isAiAllowedAppId,
   languageInstruction,
   getAiProvider,
@@ -11,8 +12,13 @@ import {
   normalizeSarvamModel,
   geminiModelFallbackChain,
   aiProviderRouteOrder,
+  aiProviderTryOrdinal,
   configuredProvidersInRouteOrder,
+  effectiveAiProviderOrder,
+  isDefaultAiProviderOrder,
   resolveAiAttemptOrder,
+  sanitizeAiDisabledProviders,
+  sanitizeAiProviderOrder,
 } from '../src/ai/catalog.js';
 import {
   buildCatchMeUpPrompt,
@@ -216,5 +222,69 @@ test('resolveAiAttemptOrder sticks to Gemini and only advances after exhaustion'
       exhaustedIds: ['gemini', 'grok'],
     }),
     ['openrouter', 'anthropic'],
+  );
+});
+
+test('sanitizeAiProviderOrder fills defaults and drops unknowns', () => {
+  assert.deepEqual(sanitizeAiProviderOrder([]), [...AI_PROVIDER_TRY_ORDER]);
+  assert.deepEqual(sanitizeAiProviderOrder(null), [...AI_PROVIDER_TRY_ORDER]);
+  assert.deepEqual(
+    sanitizeAiProviderOrder(['sarvam', 'gemini', 'nope', 'gemini']),
+    [
+      'sarvam',
+      'gemini',
+      ...AI_PROVIDER_TRY_ORDER.filter((id) => id !== 'sarvam' && id !== 'gemini'),
+    ],
+  );
+  assert.equal(isDefaultAiProviderOrder([]), true);
+  assert.equal(isDefaultAiProviderOrder(['sarvam', 'gemini']), false);
+  assert.deepEqual(sanitizeAiDisabledProviders(['sarvam', 'nope', 'sarvam']), [
+    'sarvam',
+  ]);
+  assert.equal(aiProviderTryOrdinal(0), '1st');
+  assert.equal(aiProviderTryOrdinal(1), '2nd');
+  assert.equal(aiProviderTryOrdinal(2), '3rd');
+  assert.equal(aiProviderTryOrdinal(3), '4th');
+});
+
+test('custom provider order and disables reshape failover', () => {
+  const custom = ['sarvam', 'deepseek', 'gemini'];
+  assert.deepEqual(
+    effectiveAiProviderOrder({
+      order: custom,
+      disabledIds: ['gemini'],
+      includeDisabled: false,
+    }).slice(0, 3),
+    ['sarvam', 'deepseek', 'grok'],
+  );
+  assert.deepEqual(
+    configuredProvidersInRouteOrder(
+      ['gemini', 'sarvam', 'deepseek', 'anthropic'],
+      { order: custom, disabledIds: ['gemini'] },
+    ).map((p) => p.id),
+    ['sarvam', 'deepseek', 'anthropic'],
+  );
+  assert.deepEqual(
+    resolveAiAttemptOrder({
+      configuredIds: ['gemini', 'sarvam', 'deepseek'],
+      order: ['deepseek', 'sarvam', 'gemini'],
+      disabledIds: ['gemini'],
+    }),
+    ['deepseek', 'sarvam'],
+  );
+  // Single-provider mode: only Sarvam enabled.
+  assert.deepEqual(
+    resolveAiAttemptOrder({
+      configuredIds: ['gemini', 'sarvam', 'anthropic'],
+      order: AI_PROVIDER_TRY_ORDER,
+      disabledIds: AI_PROVIDER_TRY_ORDER.filter((id) => id !== 'sarvam'),
+    }),
+    ['sarvam'],
+  );
+  assert.deepEqual(
+    aiProviderRouteOrder({
+      order: ['anthropic', 'gemini'],
+    }).map((p) => p.id).slice(0, 2),
+    ['anthropic', 'gemini'],
   );
 });

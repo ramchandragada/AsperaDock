@@ -81,14 +81,19 @@ import {
 import {
   AI_ALLOWED_APP_IDS,
   AI_LANGUAGES,
+  AI_PROVIDER_TRY_ORDER,
   AI_PROVIDERS,
+  aiProviderTryOrdinal,
   configuredProvidersInRouteOrder,
   getAiProvider,
   isAiAllowedAppId,
+  isDefaultAiProviderOrder,
   normalizeAnthropicModel,
   normalizeGeminiModel,
   normalizeGrokModel,
   normalizeSarvamModel,
+  sanitizeAiDisabledProviders,
+  sanitizeAiProviderOrder,
 } from './ai/catalog.js';
 import {
   clearAiProviderKey,
@@ -2865,18 +2870,71 @@ function attachAiResultContextMenu(webContents) {
   });
 }
 
+function aiRoutePrefs() {
+  return {
+    order: sanitizeAiProviderOrder(settings.aiProviderOrder),
+    disabledIds: sanitizeAiDisabledProviders(settings.aiDisabledProviders),
+  };
+}
+
+function aiConfiguredRouteOrderIds() {
+  const configured = listConfiguredAiProviders()
+    .filter((p) => p.configured)
+    .map((p) => p.id);
+  return configuredProvidersInRouteOrder(configured, aiRoutePrefs()).map(
+    (p) => p.id,
+  );
+}
+
 function aiProvidersForUi() {
-  return listConfiguredAiProviders().map((p) => {
-    const selectedModel = getProviderModelPreference(settings, p.id);
+  const { order, disabledIds } = aiRoutePrefs();
+  const disabled = new Set(disabledIds);
+  const byId = new Map(listConfiguredAiProviders().map((p) => [p.id, p]));
+  const enabledOrder = order.filter((id) => !disabled.has(id));
+  return order.map((id, index) => {
+    const base = byId.get(id) || getAiProvider(id);
+    const selectedModel = getProviderModelPreference(settings, id);
     const availableModels =
-      getCachedAiModels(p.id) || catalogModelsForProvider(p.id);
+      getCachedAiModels(id) || catalogModelsForProvider(id);
+    const enabled = !disabled.has(id);
+    const tryIndex = enabled ? enabledOrder.indexOf(id) : -1;
     return {
-      ...p,
+      ...base,
+      id,
       selectedModel,
       availableModels,
-      modelsLive: Boolean(getCachedAiModels(p.id)?.length),
+      modelsLive: Boolean(getCachedAiModels(id)?.length),
+      enabled,
+      routeIndex: index,
+      tryOrdinal: tryIndex >= 0 ? aiProviderTryOrdinal(tryIndex) : '',
     };
   });
+}
+
+function saveAiProviderRoute({ order, disabledIds } = {}) {
+  const nextOrder =
+    order === undefined
+      ? sanitizeAiProviderOrder(settings.aiProviderOrder)
+      : sanitizeAiProviderOrder(order);
+  const nextDisabled =
+    disabledIds === undefined
+      ? sanitizeAiDisabledProviders(settings.aiDisabledProviders)
+      : sanitizeAiDisabledProviders(disabledIds);
+  settings = saveSettings({
+    aiProviderOrder: nextOrder,
+    aiDisabledProviders: nextDisabled,
+  });
+  // Sticky session may point at a now-disabled provider — clear failover state.
+  resetAiProviderSession();
+  syncPreferredAiProvider();
+  broadcastState();
+  return {
+    ok: true,
+    order: nextOrder,
+    disabledIds: nextDisabled,
+    isDefault: isDefaultAiProviderOrder(nextOrder) && nextDisabled.length === 0,
+    routeOrder: aiConfiguredRouteOrderIds(),
+  };
 }
 
 async function refreshAiProviderModels(providerId, { force = true } = {}) {
@@ -2928,7 +2986,7 @@ function aiSettingsSnapshot() {
   const configured = listConfiguredAiProviders()
     .filter((p) => p.configured)
     .map((p) => p.id);
-  const order = configuredProvidersInRouteOrder(configured);
+  const order = configuredProvidersInRouteOrder(configured, aiRoutePrefs());
   const sticky = getStickyAiProviderId();
   const provider =
     (sticky && order.find((p) => p.id === sticky)) ||
@@ -2959,18 +3017,20 @@ function aiSettingsSnapshot() {
 }
 
 /**
- * Keep settings.aiProvider aligned with sticky / first available (Gemini first).
+ * Keep settings.aiProvider aligned with sticky / first available in the
+ * user's effective failover order (enabled + has key).
  */
 function syncPreferredAiProvider() {
   const configured = listConfiguredAiProviders()
     .filter((p) => p.configured)
     .map((p) => p.id);
-  const order = configuredProvidersInRouteOrder(configured);
+  const order = configuredProvidersInRouteOrder(configured, aiRoutePrefs());
   const sticky = getStickyAiProviderId();
-  const nextId =
-    (sticky && configured.includes(sticky) && sticky) ||
-    order[0]?.id ||
-    'gemini';
+  const stickyOk =
+    sticky &&
+    configured.includes(sticky) &&
+    order.some((p) => p.id === sticky);
+  const nextId = (stickyOk && sticky) || order[0]?.id || 'gemini';
   if (nextId !== settings.aiProvider) {
     settings = saveSettings({ aiProvider: nextId });
   }
@@ -8075,11 +8135,13 @@ function currentState() {
       allowedAppIds: AI_ALLOWED_APP_IDS,
       languages: AI_LANGUAGES,
       providers: aiProvidersForUi(),
-      routeOrder: configuredProvidersInRouteOrder(
-        listConfiguredAiProviders()
-          .filter((p) => p.configured)
-          .map((p) => p.id),
-      ).map((p) => p.id),
+      providerOrder: aiRoutePrefs().order,
+      disabledProviders: aiRoutePrefs().disabledIds,
+      routeOrder: aiConfiguredRouteOrderIds(),
+      routeIsDefault:
+        isDefaultAiProviderOrder(settings.aiProviderOrder) &&
+        sanitizeAiDisabledProviders(settings.aiDisabledProviders).length === 0,
+      defaultProviderOrder: [...AI_PROVIDER_TRY_ORDER],
     },
     settings: {
       ...settings,
@@ -9377,11 +9439,13 @@ dockHandle('dock:ai-status', () => ({
   allowedAppIds: AI_ALLOWED_APP_IDS,
   languages: AI_LANGUAGES,
   providers: aiProvidersForUi(),
-  routeOrder: configuredProvidersInRouteOrder(
-    listConfiguredAiProviders()
-      .filter((p) => p.configured)
-      .map((p) => p.id),
-  ).map((p) => p.id),
+  providerOrder: aiRoutePrefs().order,
+  disabledProviders: aiRoutePrefs().disabledIds,
+  routeOrder: aiConfiguredRouteOrderIds(),
+  routeIsDefault:
+    isDefaultAiProviderOrder(settings.aiProviderOrder) &&
+    sanitizeAiDisabledProviders(settings.aiDisabledProviders).length === 0,
+  defaultProviderOrder: [...AI_PROVIDER_TRY_ORDER],
 }));
 dockHandle('dock:ai-set-key', (_e, providerId, apiKey) => {
   const id = String(providerId || '').trim();
@@ -9423,11 +9487,24 @@ dockHandle('dock:ai-set-provider', (_e, providerId) => {
   if (!id || provider.id !== id) {
     return { ok: false, error: 'Unknown AI provider' };
   }
-  // Manual preference is stored but skills auto-route free-first → Anthropic last.
+  // Preference for display; failover uses custom/default order + enabled set.
   settings = saveSettings({ aiProvider: id });
   broadcastState();
   return { ok: true, provider: id };
 });
+dockHandle('dock:ai-set-route', (_e, payload) => {
+  const body = payload && typeof payload === 'object' ? payload : {};
+  return saveAiProviderRoute({
+    order: body.order,
+    disabledIds: body.disabledIds,
+  });
+});
+dockHandle('dock:ai-reset-route', () =>
+  saveAiProviderRoute({
+    order: [...AI_PROVIDER_TRY_ORDER],
+    disabledIds: [],
+  }),
+);
 dockHandle('dock:ai-catch-up', (_e, opts) =>
   runAsperaAiSkill('catch-up', opts || {}),
 );

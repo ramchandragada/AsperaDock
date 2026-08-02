@@ -50,6 +50,8 @@ contextBridge.exposeInMainWorld('asperadock', {
     ipcRenderer.invoke('dock:ai-set-model', providerId, modelId),
   aiSetProvider: (providerId) =>
     ipcRenderer.invoke('dock:ai-set-provider', providerId),
+  aiSetRoute: (payload) => ipcRenderer.invoke('dock:ai-set-route', payload),
+  aiResetRoute: () => ipcRenderer.invoke('dock:ai-reset-route'),
   aiCatchUp: (opts) => ipcRenderer.invoke('dock:ai-catch-up', opts),
   aiSummarize: (opts) => ipcRenderer.invoke('dock:ai-summarize', opts),
   aiRefine: (opts) => ipcRenderer.invoke('dock:ai-refine', opts),

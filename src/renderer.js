@@ -743,19 +743,59 @@ function refreshAiRouteHint() {
   if (!el) return;
   const order = state.ai?.routeOrder || [];
   const providers = state.ai?.providers || [];
+  const custom = state.ai?.routeIsDefault === false;
   if (!order.length) {
-    el.textContent =
-      'No API keys saved yet — add Gemini first for the fastest summarize.';
+    const anyEnabled = providers.some((p) => p.enabled !== false);
+    el.textContent = anyEnabled
+      ? 'No API keys on enabled providers — save a key, or enable a provider that already has one.'
+      : 'All providers are disabled — enable at least one in the failover order.';
     return;
   }
   const names = order.map((id) => {
     const p = providers.find((x) => x.id === id);
     return p?.name || id;
   });
+  const prefix = custom ? 'Your failover order' : 'Default failover';
   el.textContent =
     names.length === 1
-      ? `Active: ${names[0]} (used until it fails).`
-      : `Gemini first when saved — then backup only if exhausted: ${names.join(' → ')}.`;
+      ? `${prefix}: ${names[0]} only (used until it fails).`
+      : `${prefix}: ${names.join(' → ')}.`;
+}
+
+async function applyAiProviderRoute(next) {
+  const result = await window.asperadock.aiSetRoute?.(next);
+  if (!result?.ok) {
+    alert(result?.error || 'Could not update AI failover order');
+    return;
+  }
+  state = (await window.asperadock.getState?.()) || state;
+  renderAiProviderKeys();
+  refreshAiRouteHint();
+}
+
+async function moveAiProvider(providerId, delta) {
+  const order = [...(state.ai?.providerOrder || [])];
+  const idx = order.indexOf(providerId);
+  if (idx < 0) return;
+  const next = idx + delta;
+  if (next < 0 || next >= order.length) return;
+  const copy = [...order];
+  const [item] = copy.splice(idx, 1);
+  copy.splice(next, 0, item);
+  await applyAiProviderRoute({
+    order: copy,
+    disabledIds: state.ai?.disabledProviders || [],
+  });
+}
+
+async function setAiProviderEnabled(providerId, enabled) {
+  const disabled = new Set(state.ai?.disabledProviders || []);
+  if (enabled) disabled.delete(providerId);
+  else disabled.add(providerId);
+  await applyAiProviderRoute({
+    order: state.ai?.providerOrder || [],
+    disabledIds: [...disabled],
+  });
 }
 
 /** Providers currently showing the key input (new key or edit). */
@@ -771,29 +811,69 @@ function renderAiProviderKeys() {
     const row = document.createElement('div');
     row.className = 'ai-provider-key-row';
     row.dataset.providerId = provider.id;
+    if (provider.enabled === false) row.classList.add('is-disabled');
 
     const head = document.createElement('div');
     head.className = 'ai-provider-key-head';
+
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'ai-provider-key-title-wrap';
+    const enableLabel = document.createElement('label');
+    enableLabel.className = 'ai-provider-enable';
+    enableLabel.title = 'Use this provider in failover';
+    const enable = document.createElement('input');
+    enable.type = 'checkbox';
+    enable.checked = provider.enabled !== false;
+    enable.setAttribute('aria-label', `Enable ${provider.name} in failover`);
+    enable.addEventListener('change', () => {
+      setAiProviderEnabled(provider.id, enable.checked).catch(() => {});
+    });
     const title = document.createElement('div');
     title.className = 'ai-provider-key-title';
     title.textContent = provider.name;
+    enableLabel.append(enable, title);
+    titleWrap.append(enableLabel);
+
+    const controls = document.createElement('div');
+    controls.className = 'ai-provider-route-controls';
+    const upBtn = document.createElement('button');
+    upBtn.type = 'button';
+    upBtn.className = 'ghost-btn ai-route-move';
+    upBtn.textContent = '↑';
+    upBtn.title = 'Try earlier';
+    upBtn.setAttribute('aria-label', `Move ${provider.name} earlier`);
+    upBtn.disabled = provider.routeIndex === 0;
+    upBtn.addEventListener('click', () => {
+      moveAiProvider(provider.id, -1).catch(() => {});
+    });
+    const downBtn = document.createElement('button');
+    downBtn.type = 'button';
+    downBtn.className = 'ghost-btn ai-route-move';
+    downBtn.textContent = '↓';
+    downBtn.title = 'Try later';
+    downBtn.setAttribute('aria-label', `Move ${provider.name} later`);
+    downBtn.disabled = provider.routeIndex >= providers.length - 1;
+    downBtn.addEventListener('click', () => {
+      moveAiProvider(provider.id, 1).catch(() => {});
+    });
     const badge = document.createElement('div');
     badge.className = 'ai-provider-key-badge';
-    badge.textContent =
-      provider.id === 'gemini'
-        ? 'Tried 1st · fastest'
-        : provider.id === 'grok'
-          ? 'Tried 2nd'
-          : provider.id === 'sambanova'
-            ? 'Tried 3rd'
-            : provider.id === 'deepseek'
-              ? 'Tried 4th'
-              : provider.id === 'sarvam'
-                ? 'Tried 5th · Indic'
-                : provider.id === 'openrouter'
-                  ? 'Tried 6th'
-                  : 'Tried last · paid';
-    head.append(title, badge);
+    if (provider.enabled === false) {
+      badge.textContent = 'Disabled';
+    } else if (!provider.configured) {
+      badge.textContent = provider.tryOrdinal
+        ? `Tried ${provider.tryOrdinal} · needs key`
+        : 'Needs key';
+    } else if (provider.tryOrdinal) {
+      badge.textContent =
+        provider.tryOrdinal === '1st'
+          ? `Tried ${provider.tryOrdinal} · first`
+          : `Tried ${provider.tryOrdinal}`;
+    } else {
+      badge.textContent = 'In order';
+    }
+    controls.append(upBtn, downBtn, badge);
+    head.append(titleWrap, controls);
 
     const status = document.createElement('p');
     status.className = 'ai-provider-key-status';
@@ -956,6 +1036,28 @@ function renderAiProviderKeys() {
       row.append(head, status, hint, actions);
     }
     root.appendChild(row);
+  }
+
+  const resetBtn = document.getElementById('ai-reset-route-btn');
+  if (resetBtn && !resetBtn.dataset.bound) {
+    resetBtn.dataset.bound = '1';
+    resetBtn.addEventListener('click', async () => {
+      const result = await window.asperadock.aiResetRoute?.();
+      if (!result?.ok) {
+        alert(result?.error || 'Could not reset failover order');
+        return;
+      }
+      state = (await window.asperadock.getState?.()) || state;
+      renderAiProviderKeys();
+      refreshAiRouteHint();
+    });
+  }
+  if (resetBtn) {
+    resetBtn.disabled = state.ai?.routeIsDefault !== false;
+    resetBtn.title =
+      state.ai?.routeIsDefault === false
+        ? 'Restore built-in Gemini → … → Anthropic order and re-enable all'
+        : 'Already using the default failover order';
   }
 
   refreshAiRouteHint();

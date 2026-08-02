@@ -186,54 +186,149 @@ export function normalizeAnthropicModel(model) {
   return map[raw] || raw || 'claude-haiku-4-5';
 }
 
-/** Providers in fixed try order (Gemini first … Anthropic last). */
-export function aiProviderRouteOrder() {
-  return AI_PROVIDER_TRY_ORDER.map((id) =>
-    AI_PROVIDERS.find((p) => p.id === id),
-  ).filter(Boolean);
+/** Known provider ids from the catalog. */
+export function knownAiProviderIds() {
+  return AI_PROVIDERS.map((p) => p.id);
 }
 
 /**
- * Filter route order to providers that have a saved key.
- * Always Gemini → Grok → SambaNova → DeepSeek → Sarvam → OpenRouter → Anthropic among configured keys.
+ * Sanitize a user/custom provider order.
+ * Keeps known ids (deduped), then appends any missing defaults so the list is complete.
+ * Empty/invalid input → default `AI_PROVIDER_TRY_ORDER`.
  */
-export function configuredProvidersInRouteOrder(configuredIds) {
+export function sanitizeAiProviderOrder(raw) {
+  const known = new Set(knownAiProviderIds());
+  const seen = new Set();
+  const out = [];
+  for (const id of Array.isArray(raw) ? raw : []) {
+    const s = String(id || '').trim();
+    if (!known.has(s) || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  for (const id of AI_PROVIDER_TRY_ORDER) {
+    if (!seen.has(id)) out.push(id);
+  }
+  return out;
+}
+
+/** Sanitize disabled-provider ids (opt-out list). Unknown ids dropped. */
+export function sanitizeAiDisabledProviders(raw) {
+  const known = new Set(knownAiProviderIds());
+  const seen = new Set();
+  const out = [];
+  for (const id of Array.isArray(raw) ? raw : []) {
+    const s = String(id || '').trim();
+    if (!known.has(s) || seen.has(s)) continue;
+    seen.add(s);
+    out.push(s);
+  }
+  return out;
+}
+
+/** True when order matches the built-in default sequence. */
+export function isDefaultAiProviderOrder(order) {
+  const normalized = sanitizeAiProviderOrder(order);
+  if (normalized.length !== AI_PROVIDER_TRY_ORDER.length) return false;
+  return normalized.every((id, i) => id === AI_PROVIDER_TRY_ORDER[i]);
+}
+
+/**
+ * Full provider list in effective try order (custom or default),
+ * optionally omitting disabled ids when `includeDisabled` is false.
+ */
+export function effectiveAiProviderOrder({
+  order = null,
+  disabledIds = [],
+  includeDisabled = true,
+} = {}) {
+  const sequence = sanitizeAiProviderOrder(order);
+  const disabled = new Set(sanitizeAiDisabledProviders(disabledIds));
+  if (includeDisabled) return sequence;
+  return sequence.filter((id) => !disabled.has(id));
+}
+
+/** Providers in effective try order (objects). Defaults to built-in order. */
+export function aiProviderRouteOrder({ order = null, disabledIds = [] } = {}) {
+  return effectiveAiProviderOrder({ order, disabledIds, includeDisabled: true })
+    .map((id) => AI_PROVIDERS.find((p) => p.id === id))
+    .filter(Boolean);
+}
+
+/**
+ * Filter route order to providers that have a saved key and are not disabled.
+ * Respects custom `order` / `disabledIds` from settings when provided.
+ */
+export function configuredProvidersInRouteOrder(
+  configuredIds,
+  { order = null, disabledIds = [] } = {},
+) {
   const have = new Set(
     (configuredIds || []).map((id) => String(id || '').trim()).filter(Boolean),
   );
-  return aiProviderRouteOrder().filter((p) => have.has(p.id));
+  return effectiveAiProviderOrder({
+    order,
+    disabledIds,
+    includeDisabled: false,
+  })
+    .filter((id) => have.has(id))
+    .map((id) => AI_PROVIDERS.find((p) => p.id === id))
+    .filter(Boolean);
 }
 
 /**
  * Decide which providers to attempt this request (ids only — no API calls).
- * Sticky provider is tried first when still configured and not exhausted;
- * otherwise start at Gemini (or first available in fixed order).
+ * Sticky provider is tried first when still configured/enabled and not exhausted;
+ * otherwise start at the first available in the effective order.
  * Later providers are only used after the active one fails.
  */
 export function resolveAiAttemptOrder({
   configuredIds,
   stickyId = null,
   exhaustedIds = [],
+  order = null,
+  disabledIds = [],
 } = {}) {
-  const order = configuredProvidersInRouteOrder(configuredIds).map((p) => p.id);
+  const route = configuredProvidersInRouteOrder(configuredIds, {
+    order,
+    disabledIds,
+  }).map((p) => p.id);
   const exhausted = new Set(
     (exhaustedIds || []).map((id) => String(id || '').trim()).filter(Boolean),
   );
-  const available = order.filter((id) => !exhausted.has(id));
+  const available = route.filter((id) => !exhausted.has(id));
   if (!available.length) return [];
 
   const sticky = String(stickyId || '').trim();
   if (sticky && available.includes(sticky)) {
-    const stickyIndex = order.indexOf(sticky);
+    const stickyIndex = route.indexOf(sticky);
     return [
       sticky,
       ...available.filter(
-        (id) => id !== sticky && order.indexOf(id) > stickyIndex,
+        (id) => id !== sticky && route.indexOf(id) > stickyIndex,
       ),
     ];
   }
 
   return available;
+}
+
+/** Ordinal label for UI badges (1st, 2nd, …). */
+export function aiProviderTryOrdinal(index) {
+  const n = Number(index) + 1;
+  if (!Number.isFinite(n) || n < 1) return '';
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 13) return `${n}th`;
+  switch (n % 10) {
+    case 1:
+      return `${n}st`;
+    case 2:
+      return `${n}nd`;
+    case 3:
+      return `${n}rd`;
+    default:
+      return `${n}th`;
+  }
 }
 
 export function getAiProvider(id) {

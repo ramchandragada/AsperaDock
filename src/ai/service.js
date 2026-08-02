@@ -311,30 +311,30 @@ export async function runAiCompletion({
 /**
  * Call providers one at a time — never probe/scan other APIs first.
  *
- * Behavior (manual-like):
- * 1. If Gemini has a key and is not exhausted this session → call Gemini only.
- * 2. On success, stick to that provider for all later requests.
- * 3. On failure/exhaustion, try next provider; within a provider, walk all
- *    live/catalog models until one works.
+ * Behavior:
+ * 1. Effective order = custom settings order (or default) minus disabled.
+ * 2. Sticky last-success is tried first when still enabled/configured.
+ * 3. On failure/exhaustion, try the next provider in order; within a provider,
+ *    walk live/catalog models until one works.
  */
 export async function runAiCompletionWithFailover(prompt) {
-  if (
-    hasAiProviderKey('gemini') &&
-    !exhaustedProviderIds.has('gemini') &&
-    stickyProviderId !== 'gemini'
-  ) {
-    stickyProviderId = 'gemini';
-  }
-
+  const settings = readAiSettings() || {};
+  const providerOrder = settings.aiProviderOrder;
+  const disabledIds = settings.aiDisabledProviders;
   const configured = listConfiguredAiProviderIds();
   const attemptIds = resolveAiAttemptOrder({
     configuredIds: configured,
     stickyId: stickyProviderId,
     exhaustedIds: [...exhaustedProviderIds],
+    order: providerOrder,
+    disabledIds,
   });
   if (!attemptIds.length) {
+    const hasAnyKey = configured.length > 0;
     throw new Error(
-      'Add at least one AI API key in Settings → Aspera AI (Gemini recommended for speed).',
+      hasAnyKey
+        ? 'All AI providers with saved keys are disabled. Enable at least one in Settings → Aspera AI → Failover order.'
+        : 'Add at least one AI API key in Settings → Aspera AI (Gemini recommended for speed).',
     );
   }
 
