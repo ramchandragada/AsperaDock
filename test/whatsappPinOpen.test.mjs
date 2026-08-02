@@ -25,10 +25,12 @@ test('WhatsApp Store open script probes all webpackChunk* modules', () => {
 
 test('exact WA contact target ignores Messages section and requires exact name', () => {
   const js = findExactWhatsAppContactTargetJs('AYUSH JAIN ABOP', '9199@c.us');
-  assert.match(js, /exact_not_found|exact-text/);
+  assert.match(js, /exact_not_found|exact-text|exact-title/);
   assert.match(js, /inMessages|messages/);
   assert.match(js, /AYUSH JAIN ABOP/);
   assert.match(js, /9199@c\.us/);
+  // Reject giant wrappers that caused wrong-contact clicks.
+  assert.match(js, /120000|area >/);
   assert.match(readActiveWhatsAppChatJs(), /getActive|nativeId/);
 });
 

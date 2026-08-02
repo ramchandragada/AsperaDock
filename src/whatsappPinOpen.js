@@ -347,11 +347,38 @@ export function findExactWhatsAppContactTargetJs(name, nativeId = '') {
       const pt = pointOf(clickEl);
       if (!pt) continue;
       // Prefer smaller / more specific nodes (chip label over huge containers).
-      const area = (() => { try { const r = clickEl.getBoundingClientRect(); return r.width * r.height; } catch (e) { return 999999; } })();
-      cands.push({ ...pt, title: raw, area, score: 100, via: 'exact-text' });
+      const area = (() => {
+        try {
+          const r = clickEl.getBoundingClientRect();
+          return r.width * r.height;
+        } catch (e) { return 999999; }
+      })();
+      // Skip giant wrappers (whole pane) — those caused wrong-contact clicks.
+      if (area > 120000) continue;
+      const isTitle = !!(
+        el.closest?.('[data-testid="cell-frame-title"]')
+        || el.getAttribute?.('data-testid') === 'cell-frame-title'
+      );
+      cands.push({
+        ...pt,
+        title: raw,
+        area,
+        score: 100,
+        via: isTitle ? 'exact-title' : 'exact-text',
+        prefer: isTitle ? 0 : 1,
+      });
     }
-    cands.sort((a, b) => a.area - b.area);
-    if (cands[0]) return { ok: true, x: cands[0].x, y: cands[0].y, title: cands[0].title, via: cands[0].via, score: 100 };
+    cands.sort((a, b) => (a.prefer - b.prefer) || (a.area - b.area));
+    if (cands[0]) {
+      return {
+        ok: true,
+        x: cands[0].x,
+        y: cands[0].y,
+        title: cands[0].title,
+        via: cands[0].via,
+        score: 100,
+      };
+    }
     return { ok: false, reason: 'exact_not_found' };
   })()`;
 }

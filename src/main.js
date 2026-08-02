@@ -3992,19 +3992,17 @@ async function clearGuestPageSelection(webContents) {
 }
 
 /**
- * After a successful pin open: wipe leftover search UI without Ctrl+A,
- * exit search mode, and clear message-text selection.
+ * After a successful pin open: clear leftover search text ONLY.
+ * Never click Back / re-focus search / Chats — those close the open chat
+ * (Meta AI empty pane) and caused the 0.4.27 pin chaos.
  */
 async function dismissMessagingSearchAfterOpen(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
   try {
     const node = await cdpEvaluate(webContents, waSearchNodeJs());
+    // Prefer the clear (X) control only — do not click the search field or Back.
     if (node?.clearX != null) {
       await cdpClickAt(webContents, node.clearX, node.clearY);
-      await sleepMs(60);
-    }
-    if (node?.x != null) {
-      await cdpClickAt(webContents, node.x, node.y);
       await sleepMs(50);
     }
   } catch {
@@ -4014,27 +4012,37 @@ async function dismissMessagingSearchAfterOpen(webContents) {
     await cdpEvaluate(webContents, waMutateSearchJs(''));
   } catch {
     try {
-      await webContents.executeJavaScript(nuclearWipeMessagingSearchJs(), true);
+      await webContents.executeJavaScript(
+        `(() => {
+          const els = document.querySelectorAll(
+            '[contenteditable="true"][data-tab="3"], [data-testid="chat-list-search"]',
+          );
+          for (const el of els) {
+            try {
+              if (document.activeElement === el) {
+                document.execCommand('selectAll', false, null);
+                document.execCommand('delete', false, null);
+              }
+              if ('value' in el) el.value = '';
+              else el.textContent = '';
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+            } catch (e) {}
+          }
+          try { window.getSelection()?.removeAllRanges(); } catch (e) {}
+          try { document.activeElement?.blur?.(); } catch (e) {}
+          return true;
+        })()`,
+        true,
+      );
     } catch {
       /* ignore */
     }
   }
-  try {
-    const node = await cdpEvaluate(webContents, waSearchNodeJs());
-    if (node?.backX != null) {
-      await cdpClickAt(webContents, node.backX, node.backY);
-      await sleepMs(80);
-    }
-  } catch {
-    /* ignore */
-  }
-  try {
-    await webContents.executeJavaScript(clearMessagingLeftSearchJs(), true);
-  } catch {
-    /* ignore */
-  }
   await clearGuestPageSelection(webContents);
 }
+
+/** Monotonic token — a newer pin click cancels in-flight automation. */
+let pinOpenGeneration = 0;
 
 /** CDP evaluate with userGesture — required for WhatsApp React contenteditable. */
 async function cdpEvaluate(webContents, expression, { awaitPromise = false } = {}) {
@@ -4241,6 +4249,9 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     return { ok: false, error: 'Missing contact name.' };
   }
   const isWhatsApp = service.appId === 'whatsapp';
+  // Cancel any previous pin-open automation (video: late AYUSH click stole later UI).
+  const myGen = (pinOpenGeneration += 1);
+  const alive = () => myGen === pinOpenGeneration;
 
   raiseDockWindow();
   activateService(serviceId);
@@ -4249,6 +4260,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
   let wc = null;
   const readyDeadline = Date.now() + 8_000;
   while (Date.now() < readyDeadline) {
+    if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
     const entry = views.get(serviceId);
     wc = entry?.view?.webContents || null;
     if (wc && !wc.isDestroyed() && !wc.isLoading()) break;
@@ -4262,7 +4274,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
   // Arattai: shorter wait — frequent contacts / recent search often enough.
   const listDeadline = Date.now() + (isWhatsApp ? 5_000 : 2_000);
   while (Date.now() < listDeadline) {
-    if (wc.isDestroyed()) break;
+    if (!alive() || wc.isDestroyed()) break;
     try {
       const listReady = await wc.executeJavaScript(
         `(() => {
@@ -4288,6 +4300,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     }
     await sleepMs(isWhatsApp ? 200 : 100);
   }
+  if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
   await sleepMs(isWhatsApp ? 280 : 80);
 
   // Header match only — do not focus compose yet (that steals the next search paste).
@@ -4322,18 +4335,24 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
   };
 
   const finishOpenWhatsApp = async (opened) => {
-    // Dismiss search chrome + clear any accidental message selection (Ctrl+A fallout).
-    // Avoid full resetPane/Chats click here — chat is already open.
+    if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
+    // Clear search text only — never Back (closes chat → Meta AI empty pane).
     await dismissMessagingSearchAfterOpen(wc);
+    if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
+    // Re-confirm header after dismiss — false "success" was the 0.4.27 chaos.
+    const still = await headerOpen();
+    if (!still) {
+      return { ok: false, error: `Could not keep “${chatName}” open.` };
+    }
     await markActiveComposeTarget(serviceId);
     await clearGuestPageSelection(wc);
-    // Learn WA chat id after a successful open so the next pin click is Store-direct.
     await persistResolvedNativeId();
-    return opened;
+    return { ...opened, chat: still.chat || opened.chat };
   };
 
   /** Arattai: light cleanup only — never WA nuclear wipe / CDP search smash. */
   const finishOpenArattai = async (opened) => {
+    if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
     try {
       await wc.executeJavaScript(clearMessagingLeftSearchJs(), true);
     } catch {
@@ -4346,6 +4365,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
   };
 
   const trustedClickTarget = async (via) => {
+    if (!alive()) return null;
     const hit = await wc.executeJavaScript(
       findMessagingChatTargetJs(chatName, key, waId),
       true,
@@ -4353,30 +4373,33 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     if (!hit?.ok || !Number.isFinite(hit.x) || !Number.isFinite(hit.y)) {
       return null;
     }
+    // Refuse weak / group matches for WhatsApp person pins.
+    if (isWhatsApp && (hit.group || hit.score < 78)) return null;
     if (isWhatsApp) await cdpClickAt(wc, hit.x, hit.y);
     else clickWebContentsAt(wc, hit.x, hit.y);
     await sleepMs(isWhatsApp ? 380 : 220);
+    if (!alive()) return null;
     const opened = await headerOpen();
     if (opened) return { ...opened, via };
     if (isWhatsApp) await cdpClickAt(wc, hit.x, hit.y);
     else clickWebContentsAt(wc, hit.x, hit.y);
     await sleepMs(isWhatsApp ? 420 : 260);
+    if (!alive()) return null;
     const again = await headerOpen();
     return again ? { ...again, via: `${via}-retry` } : null;
   };
 
   // ── Arattai fast path ──────────────────────────────────────────────
-  // Video (0.4.23): Arattai pins used to be instant; WA nuclear clear/search
-  // made them laggy (search fill → splash → spinner → late chat switch).
   if (!isWhatsApp) {
     let lastError = '';
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      if (wc.isDestroyed()) break;
+      if (!alive() || wc.isDestroyed()) {
+        return { ok: false, error: 'cancelled', cancelled: true };
+      }
       try {
         const already = await headerOpen();
         if (already) return finishOpenArattai({ ...already, via: 'already-open' });
 
-        // Prefer chid / visible list row — no search UI.
         let opened = await trustedClickTarget(
           waId && attempt === 0 ? 'arattai-chid' : attempt === 0 ? 'list-click' : 'list-retry',
         );
@@ -4400,6 +4423,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
       }
       await sleepMs(220 + attempt * 120);
     }
+    if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
     try {
       if (!wc.isDestroyed()) await wc.executeJavaScript(clearMessagingLeftSearchJs(), true);
     } catch {
@@ -4416,26 +4440,19 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
   }
 
   // ── WhatsApp hardened path ─────────────────────────────────────────
-  const confirmOpened = async (via, storeTitle = '') => {
-    for (let i = 0; i < 6; i += 1) {
+  // ONLY header match counts as success (never trust Store title alone).
+  const confirmOpened = async (via) => {
+    for (let i = 0; i < 5; i += 1) {
+      if (!alive()) return null;
       const matched = await headerOpen();
       if (matched) return { ...matched, via };
-      await sleepMs(220);
-    }
-    // Store/title already matched the pin — accept delayed header paint (business chats).
-    const titleN = String(storeTitle || '').toLowerCase().replace(/\s+/g, ' ').trim();
-    const wantN = chatName.toLowerCase().replace(/\s+/g, ' ').trim();
-    if (
-      titleN
-      && wantN
-      && (titleN === wantN || titleN.includes(wantN) || wantN.includes(titleN))
-    ) {
-      return { ok: true, via, chat: storeTitle || chatName };
+      await sleepMs(200);
     }
     return null;
   };
 
   const tryStoreOpen = async (via) => {
+    if (!alive()) return null;
     let storeOpen = null;
     try {
       storeOpen = await cdpEvaluate(
@@ -4455,10 +4472,11 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     }
     if (!storeOpen?.ok) return null;
     await sleepMs(350);
-    return confirmOpened(via, storeOpen.title || chatName);
+    return confirmOpened(via);
   };
 
   const tryExactContactClick = async (via) => {
+    if (!alive()) return null;
     let hit = null;
     try {
       hit = await cdpEvaluate(wc, findExactWhatsAppContactTargetJs(chatName, waId));
@@ -4475,76 +4493,59 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     if (!hit?.ok || !Number.isFinite(hit.x)) return null;
     await cdpClickAt(wc, hit.x, hit.y);
     await sleepMs(380);
-    const opened = await confirmOpened(via, hit.title || chatName);
+    if (!alive()) return null;
+    const opened = await confirmOpened(via);
     if (opened) return opened;
     await cdpClickAt(wc, hit.x, hit.y);
     await sleepMs(420);
-    return confirmOpened(`${via}-retry`, hit.title || chatName);
+    if (!alive()) return null;
+    return confirmOpened(`${via}-retry`);
   };
 
   let lastError = '';
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    if (wc.isDestroyed()) break;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!alive() || wc.isDestroyed()) {
+      return { ok: false, error: 'cancelled', cancelled: true };
+    }
     try {
-      // WhatsApp: open via internal Store first — never depends on search UI state.
       const viaStore = await tryStoreOpen(attempt === 0 ? 'wa-store' : 'wa-store-retry');
       if (viaStore) return finishOpenWhatsApp(viaStore);
 
-      // Exact Recent-searches / Contacts label BEFORE nuclear clear (AYUSH case).
       const alreadyPre = await headerOpen();
       if (alreadyPre) return finishOpenWhatsApp({ ...alreadyPre, via: 'already-open' });
-      try {
-        await focusGuestLeftSearch(wc);
-        await sleepMs(200);
-      } catch {
-        /* ignore */
-      }
+
+      // Exact chip/list only — do not focus search first (that steals the UI).
       let opened = await tryExactContactClick(
         attempt === 0 ? 'exact-chip' : 'exact-chip-retry',
       );
       if (opened) return finishOpenWhatsApp(opened);
       opened = await trustedClickTarget(
-        attempt === 0 ? 'recent-or-list' : 'recent-or-list-retry',
+        attempt === 0 ? 'list-click' : 'list-retry',
       );
       if (opened) return finishOpenWhatsApp(opened);
 
-      await trustedClearMessagingSearch(wc, { resetPane: true });
-      await sleepMs(120);
+      // Light clear (no Chats reset) then exact again.
+      await trustedClearMessagingSearch(wc, { resetPane: false });
+      await sleepMs(100);
+      if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
 
       const already = await headerOpen();
       if (already) return finishOpenWhatsApp({ ...already, via: 'already-open' });
 
       opened = await tryExactContactClick('exact-after-clear');
       if (opened) return finishOpenWhatsApp(opened);
-      opened = await trustedClickTarget(attempt === 0 ? 'list-click' : 'list-retry');
-      if (opened) return finishOpenWhatsApp(opened);
 
-      // Verified search fill, then ONLY exact Contacts hits (never Messages/@mentions).
+      // Short search fill — click exact Contacts hit only. Never ArrowDown/Enter
+      // (opens wrong chat / races with the user's next click).
       const filled = await fillGuestSearchVerified(wc, chatName);
       if (filled) {
-        await sleepMs(500);
+        await sleepMs(400);
         const searchStarted = Date.now();
-        while (Date.now() - searchStarted < 6500) {
+        while (Date.now() - searchStarted < 2800) {
+          if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
           opened = await tryExactContactClick('search-exact');
           if (opened) return finishOpenWhatsApp(opened);
-          opened = await trustedClickTarget('search-click');
-          if (opened) return finishOpenWhatsApp(opened);
-          if (Date.now() - searchStarted > 1100) {
-            const hit = await wc.executeJavaScript(
-              findExactWhatsAppContactTargetJs(chatName, waId),
-              true,
-            );
-            if (hit?.ok && hit.score >= 100) {
-              await focusGuestLeftSearch(wc);
-              sendGuestKey(wc, 'Down');
-              await sleepMs(70);
-              sendGuestKey(wc, 'Enter');
-              await sleepMs(480);
-              opened = await confirmOpened('search-enter', chatName);
-              if (opened) return finishOpenWhatsApp(opened);
-            }
-          }
-          await sleepMs(180);
+          await sleepMs(200);
         }
       } else {
         lastError = 'search_fill_failed';
@@ -4556,11 +4557,13 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     } catch (error) {
       lastError = String(error?.message || error);
     }
-    await sleepMs(450 + attempt * 200);
+    await sleepMs(280 + attempt * 120);
   }
 
+  if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
+  // Failed: clear leftover search gently so the next pin is not poisoned.
   try {
-    if (!wc.isDestroyed()) await trustedClearMessagingSearch(wc, { resetPane: true });
+    if (!wc.isDestroyed()) await dismissMessagingSearchAfterOpen(wc);
   } catch {
     /* ignore */
   }
@@ -9815,7 +9818,10 @@ dockHandle('dock:open-inbox-chat', async (_e, payload) => {
     );
     if (pin?.nativeId) nativeId = pin.nativeId;
   }
-  return openMessagingChat(serviceId, { name, chatKey, nativeId });
+  const result = await openMessagingChat(serviceId, { name, chatKey, nativeId });
+  // Superseded by a newer pin click — do not toast "Could not open".
+  if (result?.cancelled) return { ok: true, cancelled: true };
+  return result;
 });
 dockHandle('dock:pin-person', (_e, payload) => pinPerson(payload || {}));
 dockHandle('dock:unpin-person', (_e, pinId) => unpinPerson(pinId));
