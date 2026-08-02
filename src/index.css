@@ -299,22 +299,36 @@ body {
   padding: 2px 0;
 }
 
-.hub-chip-pin-btn {
+.hub-chip-pin-btn,
+.hub-chip-unpin-btn {
   flex: 0 0 auto;
   margin-left: 2px;
   padding: 1px 6px;
   border-radius: 999px;
-  border: 1px solid rgba(250, 204, 21, 0.45);
-  background: rgba(250, 204, 21, 0.16);
-  color: #fde68a;
   font-size: 10px;
   font-weight: 700;
   line-height: 14px;
   cursor: pointer;
 }
 
+.hub-chip-pin-btn {
+  border: 1px solid rgba(250, 204, 21, 0.45);
+  background: rgba(250, 204, 21, 0.16);
+  color: #fde68a;
+}
+
 .hub-chip-pin-btn:hover {
   background: rgba(250, 204, 21, 0.28);
+}
+
+.hub-chip-unpin-btn {
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  background: rgba(248, 113, 113, 0.14);
+  color: #fecaca;
+}
+
+.hub-chip-unpin-btn:hover {
+  background: rgba(248, 113, 113, 0.28);
 }
 
 body.theme-dark .app-bar-top,
