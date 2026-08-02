@@ -144,13 +144,13 @@ test('Anthropic normalizes retired haiku model ids', () => {
   );
 });
 
-test('AI provider try order is Gemini → Grok → SambaNova → DeepSeek → Sarvam → OpenRouter → Anthropic', () => {
+test('AI provider try order is Gemini → Sarvam → Grok → DeepSeek → SambaNova → OpenRouter → Anthropic', () => {
   assert.deepEqual(aiProviderRouteOrder().map((p) => p.id), [
     'gemini',
-    'grok',
-    'sambanova',
-    'deepseek',
     'sarvam',
+    'grok',
+    'deepseek',
+    'sambanova',
     'openrouter',
     'anthropic',
   ]);
@@ -163,7 +163,7 @@ test('AI provider try order is Gemini → Grok → SambaNova → DeepSeek → Sa
       'gemini',
       'grok',
     ]).map((p) => p.id),
-    ['gemini', 'grok', 'deepseek', 'sarvam', 'openrouter', 'anthropic'],
+    ['gemini', 'sarvam', 'grok', 'deepseek', 'openrouter', 'anthropic'],
   );
   assert.deepEqual(
     configuredProvidersInRouteOrder(['openrouter', 'anthropic']).map((p) => p.id),
@@ -231,6 +231,19 @@ test('resolveAiAttemptOrder sticks to Gemini and only advances after exhaustion'
 test('sanitizeAiProviderOrder fills defaults and drops unknowns', () => {
   assert.deepEqual(sanitizeAiProviderOrder([]), [...AI_PROVIDER_TRY_ORDER]);
   assert.deepEqual(sanitizeAiProviderOrder(null), [...AI_PROVIDER_TRY_ORDER]);
+  // Prior shipped default upgrades to the current product default.
+  assert.deepEqual(
+    sanitizeAiProviderOrder([
+      'gemini',
+      'grok',
+      'sambanova',
+      'deepseek',
+      'sarvam',
+      'openrouter',
+      'anthropic',
+    ]),
+    [...AI_PROVIDER_TRY_ORDER],
+  );
   assert.deepEqual(
     sanitizeAiProviderOrder(['sarvam', 'gemini', 'nope', 'gemini']),
     [

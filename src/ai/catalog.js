@@ -14,17 +14,30 @@ export const AI_LANGUAGES = Object.freeze([
 
 /**
  * Fixed try order for speed (also UI order):
- * Gemini → Grok → SambaNova → DeepSeek → Sarvam → OpenRouter → Anthropic.
+ * Gemini → Sarvam → Grok → DeepSeek → SambaNova → OpenRouter → Anthropic.
  * Only providers with a saved key are tried; stop at the first success.
  */
 export const AI_PROVIDER_TRY_ORDER = Object.freeze([
   'gemini',
-  'grok',
-  'sambanova',
-  'deepseek',
   'sarvam',
+  'grok',
+  'deepseek',
+  'sambanova',
   'openrouter',
   'anthropic',
+]);
+
+/** Prior shipped defaults — upgraded to current default when still on these. */
+export const AI_PROVIDER_TRY_ORDER_LEGACY = Object.freeze([
+  Object.freeze([
+    'gemini',
+    'grok',
+    'sambanova',
+    'deepseek',
+    'sarvam',
+    'openrouter',
+    'anthropic',
+  ]),
 ]);
 
 /**
@@ -195,6 +208,8 @@ export function knownAiProviderIds() {
  * Sanitize a user/custom provider order.
  * Keeps known ids (deduped), then appends any missing defaults so the list is complete.
  * Empty/invalid input → default `AI_PROVIDER_TRY_ORDER`.
+ * Exact matches of a prior shipped default are upgraded to the current default
+ * so product order changes apply unless the user customized the sequence.
  */
 export function sanitizeAiProviderOrder(raw) {
   const known = new Set(knownAiProviderIds());
@@ -208,6 +223,14 @@ export function sanitizeAiProviderOrder(raw) {
   }
   for (const id of AI_PROVIDER_TRY_ORDER) {
     if (!seen.has(id)) out.push(id);
+  }
+  for (const prior of AI_PROVIDER_TRY_ORDER_LEGACY) {
+    if (
+      out.length === prior.length &&
+      out.every((id, i) => id === prior[i])
+    ) {
+      return [...AI_PROVIDER_TRY_ORDER];
+    }
   }
   return out;
 }
