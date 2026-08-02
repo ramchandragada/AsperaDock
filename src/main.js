@@ -272,26 +272,70 @@ if (
 // (including the single-instance lock).
 app.setPath('userData', path.join(app.getPath('appData'), 'Aspera Dock'));
 
-// Clear stale singleton files left by GPU FATAL crashes so the next launch
-// is not a silent no-op (second-instance lock held by a dead session).
-try {
-  const ud = app.getPath('userData');
-  for (const name of ['SingletonLock', 'SingletonCookie']) {
-    const p = path.join(ud, name);
+// Only clear Chromium singleton files left by a *dead* session (crash).
+// Never delete a live lock — that would allow a second Hub window on the
+// same profile and can sign WhatsApp / Arattai out.
+function clearStaleChromiumSingleton(userDataPath) {
+  const lockPath = path.join(userDataPath, 'SingletonLock');
+  const cookiePath = path.join(userDataPath, 'SingletonCookie');
+  const socketPath = path.join(userDataPath, 'SingletonSocket');
+  let stale = false;
+
+  try {
+    if (fs.lstatSync(socketPath).isSymbolicLink()) {
+      try {
+        fs.statSync(socketPath);
+      } catch {
+        // Dangling SingletonSocket → previous crash.
+        stale = true;
+      }
+    }
+  } catch {
+    // no socket
+  }
+
+  try {
+    if (fs.lstatSync(lockPath).isSymbolicLink()) {
+      const target = fs.readlinkSync(lockPath);
+      const m = String(target).match(/-(\d+)$/);
+      if (m) {
+        const pid = Number(m[1], 10);
+        if (Number.isFinite(pid) && pid > 0) {
+          try {
+            process.kill(pid, 0);
+            // Owner process is alive — keep the lock.
+          } catch {
+            stale = true;
+          }
+        }
+      }
+    }
+  } catch {
+    // no lock
+  }
+
+  if (!stale) return;
+  for (const p of [lockPath, cookiePath, socketPath]) {
     try {
-      if (fs.existsSync(p)) fs.unlinkSync(p);
+      fs.unlinkSync(p);
     } catch {
       // ignore
     }
   }
+}
+
+try {
+  clearStaleChromiumSingleton(app.getPath('userData'));
 } catch {
   // ignore
 }
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
-  // Another live instance owns the dock — quit quietly so the first raises.
+  // Another live instance owns the dock — exit immediately so this process
+  // never reaches createWindow() / whenReady (app.quit alone is not enough).
   app.quit();
+  process.exit(0);
 }
 
 // GNOME Wayland ignores BrowserWindow.setIcon for the dock/taskbar.
@@ -9419,6 +9463,20 @@ function afterDialogSafe() {
 }
 
 function createWindow() {
+  // Hard guarantee: never open a second main Hub window on this profile.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    raiseDockWindow();
+    return;
+  }
+  const existing = BrowserWindow.getAllWindows().find(
+    (w) => w && !w.isDestroyed() && !w.getParentWindow()
+  );
+  if (existing) {
+    mainWindow = existing;
+    raiseDockWindow();
+    return;
+  }
+
   const icon = electronNativeIcon();
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -10594,7 +10652,16 @@ app.whenReady().then(async () => {
 });
 
 app.on('second-instance', () => {
-  raiseDockWindow();
+  // User launched Hub again (menu / .desktop / CLI). Focus the one window —
+  // never create another; a second process sharing the profile can sign out
+  // WhatsApp / Arattai.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    raiseDockWindow();
+    return;
+  }
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
 });
 
 app.on('before-quit', () => {

@@ -12,10 +12,38 @@ if [ ! -x "$BIN" ]; then
 fi
 
 mkdir -p "$UD" 2>/dev/null || true
-rm -f "$UD/SingletonLock" "$UD/SingletonCookie" 2>/dev/null || true
-if [ -L "$UD/SingletonSocket" ] && [ ! -e "$UD/SingletonSocket" ]; then
-  rm -f "$UD/SingletonSocket" 2>/dev/null || true
-fi
+
+# Only clear Chromium singleton files left by a crashed/dead session.
+# Never delete a live lock — that allows a second Hub window on the same
+# profile and can sign WhatsApp / Arattai out.
+clear_stale_singleton() {
+  lock="$UD/SingletonLock"
+  cookie="$UD/SingletonCookie"
+  socket="$UD/SingletonSocket"
+  stale=0
+
+  if [ -L "$socket" ] && [ ! -e "$socket" ]; then
+    stale=1
+  fi
+
+  if [ -L "$lock" ]; then
+    target=$(readlink "$lock" 2>/dev/null || true)
+    pid=${target##*-}
+    case "$pid" in
+      ''|*[!0-9]*) ;;
+      *)
+        if ! kill -0 "$pid" 2>/dev/null; then
+          stale=1
+        fi
+        ;;
+    esac
+  fi
+
+  if [ "$stale" -eq 1 ]; then
+    rm -f "$lock" "$cookie" "$socket" 2>/dev/null || true
+  fi
+}
+clear_stale_singleton
 
 {
   echo "==== $(date -Is) starting Aspera Hub ===="
