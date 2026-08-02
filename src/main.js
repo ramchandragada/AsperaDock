@@ -3847,30 +3847,77 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '' } = {}) {
   if (!service || !isInboxAppId(service.appId)) {
     return { ok: false, error: 'Open a WhatsApp or Arattai chat.' };
   }
+  const chatName = String(name || '').trim();
+  const key = chatKey || normalizeChatKey(chatName);
+  if (!chatName && !key) {
+    return { ok: false, error: 'Missing contact name.' };
+  }
+
   raiseDockWindow();
   activateService(serviceId);
-  await sleepMs(450);
-  const entry = views.get(serviceId);
-  const wc = entry?.view?.webContents;
+
+  // Wait for the guest to be interactive (cold/warm wake).
+  let wc = null;
+  const readyDeadline = Date.now() + 8_000;
+  while (Date.now() < readyDeadline) {
+    const entry = views.get(serviceId);
+    wc = entry?.view?.webContents || null;
+    if (wc && !wc.isDestroyed() && !wc.isLoading()) break;
+    await sleepMs(200);
+  }
   if (!wc || wc.isDestroyed()) {
     return { ok: false, error: 'Chat view is not ready.' };
   }
-  try {
-    const result = await wc.executeJavaScript(
-      openMessagingChatJs(name, chatKey || normalizeChatKey(name)),
-      true,
-    );
-    if (result?.ok) {
-      await sleepMs(280);
-      return { ok: true, via: result.via || 'opened' };
+  await sleepMs(350);
+
+  let lastError = '';
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (wc.isDestroyed()) break;
+    try {
+      const result = await wc.executeJavaScript(
+        openMessagingChatJs(chatName, key),
+        true,
+      );
+      if (result?.ok) {
+        await sleepMs(220);
+        await markActiveComposeTarget(serviceId);
+        // Confirm header / compose actually belongs to this contact.
+        const opened = await getGuestChatKey(wc);
+        const openedTitle = String(opened?.title || '').trim();
+        const openedKey = normalizeChatKey(openedTitle);
+        const want = normalizeChatKey(chatName || key);
+        const matched =
+          !want ||
+          !openedKey ||
+          openedKey === want ||
+          openedKey.includes(want) ||
+          want.includes(openedKey) ||
+          (want.split(' ').some((t) => t.length >= 4 && openedKey.includes(t)) &&
+            opened?.compose);
+        if (matched || opened?.compose) {
+          return {
+            ok: true,
+            via: result.via || 'opened',
+            chat: openedTitle || chatName,
+          };
+        }
+        lastError = `Opened “${openedTitle || 'chat'}” instead of “${chatName}”.`;
+      } else {
+        lastError = result?.reason || 'chat_not_found';
+      }
+    } catch (error) {
+      lastError = String(error?.message || error);
     }
-    return {
-      ok: false,
-      error: `Could not find “${name || 'chat'}”. Open it once in the app, then try again.`,
-    };
-  } catch (error) {
-    return { ok: false, error: String(error?.message || error) };
+    await sleepMs(450 + attempt * 200);
   }
+
+  return {
+    ok: false,
+    error:
+      lastError && lastError !== 'chat_not_found'
+        ? lastError
+        : `Could not open “${chatName || 'chat'}”. Search that name once in the app, then pin again.`,
+  };
 }
 
 async function sendQuickReply(serviceId, { name = '', chatKey = '', text = '' } = {}) {

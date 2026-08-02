@@ -42,7 +42,10 @@ test('scrape / open / search / reply scripts mention WhatsApp list hooks', () =>
   assert.match(scrapeMessagingInboxJs(), /icon-unread-count/);
   assert.match(scrapeMessagingInboxJs(), /isJunkName/);
   assert.match(inspectChatListTargetJs(12, 40), /elementFromPoint/);
-  assert.match(openMessagingChatJs('Ada', 'ada'), /chat-list-search|Search/);
+  const openJs = openMessagingChatJs('LFCHS REUNION 22nd Dec 2029', 'lfchs reunion 22nd dec 2029');
+  assert.match(openJs, /chat-list-search|Search/);
+  assert.match(openJs, /confirmedOpen|conversation-info-header/);
+  assert.match(openJs, /pointerdown|mousedown/);
   assert.match(searchMessagingChatsJs('parth'), /parth/);
   assert.match(composeReplyJs('Thanks', { send: true }), /compose-btn-send|Enter/);
 });

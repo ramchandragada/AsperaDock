@@ -505,11 +505,12 @@ function renderHubRails() {
           color: getServiceById(pin.serviceId)?.color,
           pinned: true,
           onClick: async () => {
-            await window.asperadock.openInboxChat?.({
+            const result = await window.asperadock.openInboxChat?.({
               serviceId: pin.serviceId,
               name: pin.name,
               chatKey: pin.chatKey,
             });
+            if (result && result.ok === false && result.error) alert(result.error);
           },
           onContext: async (e) => {
             e.preventDefault();
@@ -544,11 +545,12 @@ function renderHubRails() {
         unread: item.unread,
         color: item.color,
         onClick: async () => {
-          await window.asperadock.openInboxChat?.({
+          const result = await window.asperadock.openInboxChat?.({
             serviceId: item.serviceId,
             name: item.name,
             chatKey: item.chatKey,
           });
+          if (result && result.ok === false && result.error) alert(result.error);
         },
         onPin: async () => {
           const result = await window.asperadock.pinPerson?.(pinPayload);

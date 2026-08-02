@@ -200,85 +200,152 @@ export function openMessagingChatJs(name, chatKey = '') {
   const targetName = String(name || '').trim();
   const targetKey = normalizeChatKey(chatKey || targetName);
   return `(async () => {
+    ${guestChatListHelpersJs()}
     const wantName = ${JSON.stringify(targetName)};
     const wantKey = ${JSON.stringify(targetKey)};
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-    const visible = (el) => {
-      if (!el) return false;
-      try {
-        const s = window.getComputedStyle(el);
-        const r = el.getBoundingClientRect();
-        return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 4 && r.height > 4;
-      } catch (e) { return false; }
-    };
     const norm = (s) => String(s || '').toLowerCase().replace(/\\s+/g, ' ').trim();
-    const rowTitle = (cell) => {
-      const titleEl =
-        cell.querySelector('[data-testid="cell-frame-title"]')
-        || cell.querySelector('[title]')
-        || cell.querySelector('span[dir="auto"]')
-        || cell.querySelector('[class*="title" i]')
-        || cell.querySelector('strong, h3, h4');
-      return String(titleEl?.getAttribute?.('title') || titleEl?.textContent || '').replace(/\\s+/g, ' ').trim();
-    };
+    const wantN = norm(wantName);
     const click = (el) => {
       if (!el || !visible(el)) return false;
-      try { el.scrollIntoView({ block: 'nearest' }); } catch (e) {}
-      try { el.click(); return true; } catch (e) { return false; }
+      try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
+      try {
+        const r = el.getBoundingClientRect();
+        const x = r.left + Math.min(40, r.width / 2);
+        const y = r.top + r.height / 2;
+        for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click']) {
+          el.dispatchEvent(new MouseEvent(type, {
+            bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, buttons: 1,
+          }));
+        }
+        return true;
+      } catch (e) {
+        try { el.click(); return true; } catch (e2) { return false; }
+      }
     };
-    const listSel = [
-      '[data-testid="cell-frame-container"]',
-      '[data-testid="list-item"]',
-      '[data-testid="chat"]',
-      '[role="listitem"]',
-      '[class*="ChatListItem"]',
-      '[class*="chat-list-item"]',
-      '[class*="ChatList"] [tabindex]',
-      '[class*="chat-list"] [tabindex]',
-    ].join(',');
-
+    const scoreName = (title) => {
+      const key = norm(title);
+      if (!key || isJunkName(key)) return -1;
+      if (key === wantKey || key === wantN) return 100;
+      if (wantKey && key.includes(wantKey)) return 80;
+      if (wantN && key.includes(wantN)) return 70;
+      if (wantN && wantN.includes(key) && key.length >= 5) return 50;
+      // Match first significant token (e.g. "LFCHS REUNION…" vs full pin name).
+      const token = wantN.split(' ').find((t) => t.length >= 4) || '';
+      if (token && key.includes(token)) return 45;
+      return -1;
+    };
     const findRow = () => {
       const cells = Array.from(document.querySelectorAll(listSel));
       let best = null;
       let bestScore = -1;
       for (const cell of cells) {
         if (!visible(cell)) continue;
-        const title = rowTitle(cell);
-        const key = norm(title);
-        if (!key) continue;
-        let score = 0;
-        if (key === wantKey || key === norm(wantName)) score = 100;
-        else if (wantKey && key.includes(wantKey)) score = 70;
-        else if (wantName && key.includes(norm(wantName))) score = 60;
-        else if (wantName && norm(wantName).includes(key) && key.length >= 4) score = 40;
+        const title = rowName(cell);
+        const score = scoreName(title);
         if (score > bestScore) { bestScore = score; best = cell; }
       }
-      return bestScore >= 40 ? best : null;
+      return bestScore >= 45 ? best : null;
+    };
+    const openHeaderName = () => {
+      const header =
+        document.querySelector('[data-testid="conversation-info-header"]')
+        || document.querySelector('#main header')
+        || document.querySelector('[class*="chat-header" i]')
+        || document.querySelector('header');
+      const title = String(
+        header?.querySelector?.('[data-testid="conversation-info-header-chat-title"]')?.textContent
+        || header?.querySelector?.('span[title]')?.getAttribute?.('title')
+        || header?.querySelector?.('[dir="auto"]')?.textContent
+        || header?.querySelector?.('h1,h2,h3,[role="heading"]')?.textContent
+        || '',
+      ).replace(/\\s+/g, ' ').trim();
+      return title;
+    };
+    const composeOpen = () => {
+      if (document.querySelector('[data-testid="conversation-compose-box-input"]')) return true;
+      if (document.querySelector('footer [contenteditable="true"]')) return true;
+      const nodes = document.querySelectorAll('[contenteditable="true"], textarea, [role="textbox"]');
+      const vh = window.innerHeight || 800;
+      for (const n of nodes) {
+        const ph = String(n.getAttribute('placeholder') || n.getAttribute('data-placeholder') || '').toLowerCase();
+        if (/search/.test(ph)) continue;
+        if (/type your message|message here|type a message/.test(ph)) return true;
+        try {
+          const r = n.getBoundingClientRect();
+          if (r.width >= 120 && r.top > vh * 0.55) return true;
+        } catch (e) {}
+      }
+      return false;
+    };
+    const confirmedOpen = () => {
+      const header = norm(openHeaderName());
+      if (!header) return composeOpen() && !!wantN;
+      if (scoreName(header) >= 45) return true;
+      return false;
     };
 
-    let row = findRow();
-    if (row && click(row)) return { ok: true, via: 'list-click' };
+    // Already on this chat.
+    if (confirmedOpen()) return { ok: true, via: 'already-open' };
 
-    // WhatsApp / Arattai search box in the chat list column.
-    const search =
+    let row = findRow();
+    if (row && click(row)) {
+      await wait(350);
+      if (confirmedOpen()) return { ok: true, via: 'list-click' };
+    }
+
+    // Open search: WhatsApp filter / chat-list search / Arattai search.
+    const searchBtn =
+      document.querySelector('[data-testid="chat-list-search"]')
+      || document.querySelector('button[aria-label*="Search" i]')
+      || document.querySelector('[aria-label*="Search or start" i]')
+      || document.querySelector('[data-icon="search"]')?.closest('button,[role="button"],div');
+    if (searchBtn) {
+      click(searchBtn);
+      await wait(180);
+    }
+    let search =
       document.querySelector('[data-testid="chat-list-search"]')
       || document.querySelector('div[contenteditable="true"][data-tab="3"]')
       || document.querySelector('[contenteditable="true"][data-tab="3"]')
-      || document.querySelector('input[placeholder*="Search" i]')
       || document.querySelector('[contenteditable="true"][aria-label*="Search" i]')
+      || document.querySelector('input[placeholder*="Search" i]')
       || document.querySelector('[placeholder*="Search" i]')
-      || document.querySelector('[data-placeholder*="Search" i]');
-    if (search) {
+      || document.querySelector('[data-placeholder*="Search" i]')
+      || document.querySelector('[placeholder*="Search chats" i]');
+    // Prefer a search field in the left pane (not the in-chat message search).
+    if (!search || !visible(search)) {
+      const candidates = Array.from(document.querySelectorAll(
+        '[contenteditable="true"], input[type="text"], input[type="search"]',
+      ));
+      search = candidates.find((el) => {
+        if (!visible(el)) return false;
+        const ph = String(
+          el.getAttribute('placeholder')
+            || el.getAttribute('data-placeholder')
+            || el.getAttribute('aria-label')
+            || '',
+        ).toLowerCase();
+        return /search/.test(ph);
+      }) || search;
+    }
+    if (search && visible(search)) {
       try { search.focus(); } catch (e) {}
-      try { search.click(); } catch (e) {}
-      await wait(120);
+      click(search);
+      await wait(100);
       try {
-        if ('value' in search) {
+        document.execCommand('selectAll', false, null);
+        document.execCommand('delete', false, null);
+      } catch (e) {}
+      try {
+        if ('value' in search && search.tagName === 'INPUT') {
           search.value = wantName;
           search.dispatchEvent(new Event('input', { bubbles: true }));
+          search.dispatchEvent(new Event('change', { bubbles: true }));
         } else {
           document.execCommand('selectAll', false, null);
           document.execCommand('insertText', false, wantName);
+          search.dispatchEvent(new InputEvent('input', { bubbles: true, data: wantName, inputType: 'insertText' }));
         }
       } catch (e) {
         try {
@@ -286,14 +353,31 @@ export function openMessagingChatJs(name, chatKey = '') {
           search.dispatchEvent(new Event('input', { bubbles: true }));
         } catch (e2) {}
       }
-      const deadline = Date.now() + 2500;
+      const deadline = Date.now() + 3500;
       while (Date.now() < deadline) {
-        await wait(120);
+        await wait(140);
         row = findRow();
-        if (row && click(row)) return { ok: true, via: 'search-click' };
+        if (row && click(row)) {
+          await wait(400);
+          if (confirmedOpen()) return { ok: true, via: 'search-click' };
+        }
       }
     }
-    return { ok: false, reason: 'chat_not_found' };
+
+    // Last pass: click any visible matching row again.
+    row = findRow();
+    if (row && click(row)) {
+      await wait(450);
+      if (confirmedOpen()) return { ok: true, via: 'list-retry' };
+      // Some WA builds open compose a beat later.
+      if (composeOpen()) return { ok: true, via: 'list-compose' };
+    }
+    return {
+      ok: false,
+      reason: 'chat_not_found',
+      header: openHeaderName(),
+      compose: composeOpen(),
+    };
   })()`;
 }
 
