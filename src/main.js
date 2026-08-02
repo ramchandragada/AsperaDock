@@ -5134,8 +5134,11 @@ function handleGuestNotificationBridge(service, rawMessage) {
 
 /**
  * Guest PDF bridge messages (console-message).
- * - action "summarize": run Summarize PDF (from injected WhatsApp/Arattai item)
- * Never pop a second Electron menu on top of WhatsApp's in-page menu.
+ * - action "menu": show Hub Summarize PDF + Forward beside WhatsApp's menu
+ * - action "summarize": run Summarize PDF immediately
+ *
+ * WhatsApp preventDefault()s contextmenu so Electron's menu often never
+ * appears — this bridge restores Hub actions without covering WA's menu.
  */
 function handleGuestPdfContextBridge(service, webContents, rawMessage) {
   const text = String(rawMessage || '');
@@ -5148,11 +5151,109 @@ function handleGuestPdfContextBridge(service, webContents, rawMessage) {
   } catch {
     return true;
   }
-  if (String(payload?.action || '') !== 'summarize') return true;
   if (!webContents || webContents.isDestroyed()) return true;
   const x = Number(payload?.x) || 0;
   const y = Number(payload?.y) || 0;
-  runSummarizePdfFromGuest(webContents, {
+  const action = String(payload?.action || 'menu');
+
+  if (action === 'summarize') {
+    runSummarizePdfFromGuest(webContents, {
+      x,
+      y,
+      selectionText: '',
+      linkURL: '',
+      srcURL: '',
+      titleText: '',
+      altText: '',
+      hasImageContents: true,
+      mediaType: 'image',
+    }).catch(() => {});
+    return true;
+  }
+
+  // Electron's full guest menu already opened (e.g. Arattai) — do not double.
+  if (Date.now() - lastGuestHubMenuAt < 450) return true;
+  popupGuestPdfActionsMenu(webContents, { x, y });
+  return true;
+}
+
+/**
+ * Map guest click coords → main-window coords, then place the Hub menu
+ * beside WhatsApp's in-page menu (not on top of it).
+ */
+function guestHubMenuScreenPoint(webContents, x = 0, y = 0) {
+  let popupWindow =
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  let popupX = Number(x) || 0;
+  let popupY = Number(y) || 0;
+  try {
+    const owner = BrowserWindow.fromWebContents(webContents);
+    if (owner && !owner.isDestroyed()) {
+      popupWindow = owner;
+    }
+  } catch {
+    // ignore
+  }
+  if (popupWindow === mainWindow || !popupWindow) {
+    try {
+      for (const entry of views.values()) {
+        if (entry?.view?.webContents === webContents) {
+          const bounds = entry.view.getBounds?.() || entry.__lastBounds;
+          if (bounds) {
+            popupX += bounds.x || 0;
+            popupY += bounds.y || 0;
+          }
+          break;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    popupWindow =
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow : popupWindow;
+  }
+
+  const hubW = 280;
+  const waMenuW = 236;
+  let contentW = 1200;
+  let contentH = 800;
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const b = mainWindow.getContentBounds();
+      contentW = b.width;
+      contentH = b.height;
+    }
+  } catch {
+    // ignore
+  }
+
+  // Prefer to the RIGHT of WhatsApp's menu; flip left if it would clip.
+  let ax = popupX + waMenuW + 10;
+  let ay = Math.max(8, popupY - 28);
+  if (ax + hubW > contentW - 8) {
+    ax = Math.max(8, popupX - hubW - 10);
+  }
+  if (ay + 120 > contentH - 8) {
+    ay = Math.max(8, contentH - 130);
+  }
+  return {
+    window: popupWindow,
+    x: Math.round(ax),
+    y: Math.round(ay),
+  };
+}
+
+/** Compact Hub menu: Summarize PDF + Forward — parked beside WhatsApp's menu. */
+function popupGuestPdfActionsMenu(webContents, { x = 0, y = 0 } = {}) {
+  if (!webContents || webContents.isDestroyed()) return;
+  if (Date.now() - lastGuestHubMenuAt < 400) return;
+  lastGuestHubMenuAt = Date.now();
+
+  const sourceServiceId = serviceIdForWebContents(webContents);
+  const service = getService(sourceServiceId) || getService(activeServiceId);
+  if (!service || !isAiAllowedAppId(service.appId)) return;
+
+  const params = {
     x,
     y,
     selectionText: '',
@@ -5162,8 +5263,44 @@ function handleGuestPdfContextBridge(service, webContents, rawMessage) {
     altText: '',
     hasImageContents: true,
     mediaType: 'image',
-  }).catch(() => {});
-  return true;
+  };
+
+  /** @type {Electron.MenuItemConstructorOptions[]} */
+  const template = [];
+  if (settings.aiEnabled !== false) {
+    template.push({
+      label: 'Summarize PDF with Aspera AI',
+      click: () => {
+        runSummarizePdfFromGuest(webContents, params).catch(() => {});
+      },
+    });
+  }
+
+  const forwardTargets = listForwardTargets(service.id);
+  if (
+    canOfferForward({
+      appId: service.appId,
+      hasSelection: false,
+      hasImage: true,
+      targetCount: forwardTargets.length,
+      alwaysOnMessaging: true,
+    })
+  ) {
+    template.push({
+      label: 'Forward with Aspera Hub',
+      click: () => {
+        beginForwardFromGuest(webContents, params).catch(() => {});
+      },
+    });
+  }
+
+  if (!template.length) return;
+  const pos = guestHubMenuScreenPoint(webContents, x, y);
+  Menu.buildFromTemplate(template).popup({
+    window: pos.window,
+    x: pos.x,
+    y: pos.y,
+  });
 }
 
 /**
@@ -5250,15 +5387,17 @@ async function runSummarizePdfFromGuest(webContents, params = {}) {
 }
 
 /**
- * Inject Summarize PDF into WhatsApp/Arattai's own right-click menu.
- * Do not open a separate Electron popup (that overlapped the WA menu).
+ * PDF right-click bridge for WhatsApp / Arattai.
+ * Asks Hub to open Summarize PDF + Forward beside the page's own menu
+ * (WhatsApp often blocks Electron's native context-menu event).
  */
 function injectGuestPdfContextBridge(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
+  // Allow re-inject after updates (versioned flag).
   const prefix = ASPERA_PDF_CTX_PREFIX;
   const script = `(() => {
-    if (window.__asperaPdfCtxBridge) return true;
-    window.__asperaPdfCtxBridge = true;
+    if (window.__asperaPdfCtxBridgeV2) return true;
+    window.__asperaPdfCtxBridgeV2 = true;
     const PREFIX = ${JSON.stringify(prefix)};
 
     function nearbyLooksPdf(el) {
@@ -5286,12 +5425,12 @@ function injectGuestPdfContextBridge(webContents) {
       return false;
     }
 
-    function requestSummarize(x, y) {
+    function report(action, x, y) {
       try {
         console.log(
           PREFIX +
             JSON.stringify({
-              action: 'summarize',
+              action: action || 'menu',
               x: x || 0,
               y: y || 0,
               t: Date.now(),
@@ -5305,85 +5444,11 @@ function injectGuestPdfContextBridge(webContents) {
       (e) => {
         if (!nearbyLooksPdf(e.target)) return;
         window.__asperaLastPdfCtx = { x: e.clientX, y: e.clientY, at: Date.now() };
-        // Only remember coords — inject into the page menu. Never open a
-        // second floating Hub menu on top of WhatsApp's menu.
+        // Ask Hub to show Summarize PDF + Forward beside WhatsApp's menu.
+        setTimeout(() => report('menu', e.clientX, e.clientY), 40);
       },
       true,
     );
-
-    const injectInPageItem = () => {
-      const last = window.__asperaLastPdfCtx;
-      if (!last || Date.now() - last.at > 5000) return;
-      if (document.querySelector('[data-aspera-summarize-pdf]')) return;
-      const nodes = Array.from(
-        document.querySelectorAll(
-          'div[role="application"] li, div[role="menu"] li, span[role="menuitem"], div[role="menuitem"], button[role="menuitem"], div[role="button"]',
-        ),
-      );
-      const anchor = nodes.find((n) => {
-        const t = String(n.textContent || '').trim();
-        return (
-          /^Reply$/i.test(t) ||
-          /^Download$/i.test(t) ||
-          /^Forward$/i.test(t) ||
-          /^React$/i.test(t) ||
-          /^Ask Meta AI$/i.test(t)
-        );
-      });
-      if (!anchor) return;
-      const parent = anchor.parentElement;
-      if (!parent) return;
-
-      // Clone a real menu row when possible so fonts/spacing match WhatsApp.
-      const row = anchor.cloneNode(true);
-      row.setAttribute('data-aspera-summarize-pdf', '1');
-      const labelEls = row.querySelectorAll('span, div');
-      let labeled = false;
-      for (const el of labelEls) {
-        const t = String(el.textContent || '').trim();
-        if (
-          t &&
-          t.length < 40 &&
-          el.childElementCount === 0 &&
-          /^(Reply|Download|Forward|React|Ask Meta AI|Pin|Star)$/i.test(t)
-        ) {
-          el.textContent = 'Summarize PDF with Aspera AI';
-          labeled = true;
-          break;
-        }
-      }
-      if (!labeled) {
-        row.textContent = 'Summarize PDF with Aspera AI';
-        row.style.cssText =
-          'padding:9px 16px;cursor:pointer;font-size:14.5px;line-height:21px;color:inherit;user-select:none;display:flex;align-items:center;';
-      }
-      row.addEventListener(
-        'click',
-        (ev) => {
-          ev.preventDefault();
-          ev.stopPropagation();
-          requestSummarize(last.x, last.y);
-          try {
-            // Dismiss WhatsApp's menu by clicking the backdrop / Escape.
-            document.dispatchEvent(
-              new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }),
-            );
-          } catch (e) {}
-        },
-        true,
-      );
-      // Place as the first action in the menu (above Download / Forward).
-      parent.insertBefore(row, parent.firstChild);
-    };
-
-    const mo = new MutationObserver(() => {
-      try {
-        injectInPageItem();
-      } catch (e) {}
-    });
-    try {
-      mo.observe(document.documentElement, { childList: true, subtree: true });
-    } catch (e) {}
     return true;
   })()`;
   webContents.executeJavaScript(script, true).catch(() => {});
@@ -8121,13 +8186,12 @@ function attachGuestContextMenu(webContents) {
     );
     // Always offer on AI-allowed apps — PDF bubbles are often image/blob
     // previews with no ".pdf" in Electron context-menu params (Arattai/WA).
-    // WhatsApp: use the in-page injected item only (a second Electron menu
-    // stacked on WhatsApp's menu and looked broken).
-    const canSummarizePdf =
-      shouldOfferPdfSummarizeMenu({
-        aiEnabled: settings.aiEnabled !== false,
-        aiAllowed: !!(service && isAiAllowedAppId(service.appId)),
-      }) && service?.appId !== 'whatsapp';
+    // WhatsApp also gets a beside-menu via injectGuestPdfContextBridge when
+    // the page blocks Electron's context-menu event.
+    const canSummarizePdf = shouldOfferPdfSummarizeMenu({
+      aiEnabled: settings.aiEnabled !== false,
+      aiAllowed: !!(service && isAiAllowedAppId(service.appId)),
+    });
 
     // With selected message text: Summarize → Forward (Pin does not apply to a selection).
     // On chat-list rows (no selection): Pin → Forward.
