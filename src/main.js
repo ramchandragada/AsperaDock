@@ -84,6 +84,7 @@ import {
   scrapeNearbyMessagesJs,
 } from './guestChatContext.js';
 import { guestContextMenuActionOrder } from './guestContextMenu.js';
+import { isHubComposePollution } from './composeSafety.js';
 import { aboutDetailText } from './aboutCopy.js';
 import { spawnSync } from 'node:child_process';
 import {
@@ -517,6 +518,12 @@ let pendingForwardDownload = null;
  * first fills pendingForwardDownload — extras used to pop "Save download".
  */
 let forwardCaptureSilentUntil = 0;
+/** Bumped to cancel in-flight Forward Ctrl+V waits (prevents paste into later chats). */
+let forwardPasteGeneration = 0;
+/** Text Hub last wrote to the system clipboard for Forward (for restore + sanitize). */
+let hubStagedClipboardText = '';
+/** Clipboard text before Hub staged a Forward payload. */
+let hubClipboardBeforeStage = null;
 /** Recent guest downloads (user tapped Download) — reused by Forward. */
 const recentGuestDownloads = [];
 const RECENT_DOWNLOAD_MAX = 40;
@@ -2509,9 +2516,14 @@ function closeExtensionsWindow() {
   }
 }
 
-function closeForwardPickerWindow() {
+function closeForwardPickerWindow({ clearPayload = false } = {}) {
   if (!forwardPickerWindow || forwardPickerWindow.isDestroyed()) {
     forwardPickerWindow = null;
+    if (clearPayload) {
+      cancelPendingForwardPaste();
+      forwardPayload = null;
+      restoreHubClipboardAfterForward();
+    }
     return;
   }
   const win = forwardPickerWindow;
@@ -2521,6 +2533,40 @@ function closeForwardPickerWindow() {
   } catch {
     // ignore
   }
+  if (clearPayload) {
+    cancelPendingForwardPaste();
+    forwardPayload = null;
+    restoreHubClipboardAfterForward();
+  }
+}
+
+function cancelPendingForwardPaste() {
+  forwardPasteGeneration += 1;
+}
+
+function restoreHubClipboardAfterForward() {
+  try {
+    if (hubClipboardBeforeStage) {
+      clipboard.writeText(String(hubClipboardBeforeStage.text || ''));
+    } else if (hubStagedClipboardText) {
+      const cur = clipboard.readText() || '';
+      if (cur === hubStagedClipboardText) clipboard.clear();
+    }
+  } catch {
+    // ignore
+  }
+  hubClipboardBeforeStage = null;
+  hubStagedClipboardText = '';
+}
+
+function stageHubForwardClipboard(write) {
+  try {
+    hubClipboardBeforeStage = { text: clipboard.readText() || '' };
+  } catch {
+    hubClipboardBeforeStage = { text: '' };
+  }
+  hubStagedClipboardText = String(write?.text || '');
+  clipboard.write(write);
 }
 
 function closeAllFloatMenus() {
@@ -4304,6 +4350,8 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     return { ok: false, error: 'Missing contact name.' };
   }
   const isWhatsApp = service.appId === 'whatsapp';
+  // Never let a leftover Forward Ctrl+V land in the chat we are about to open.
+  cancelPendingForwardPaste();
   // Cancel any previous pin-open automation (video: late AYUSH click stole later UI).
   const myGen = (pinOpenGeneration += 1);
   const alive = () => myGen === pinOpenGeneration;
@@ -4401,6 +4449,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     }
     await markActiveComposeTarget(serviceId);
     await clearGuestPageSelection(wc);
+    await sanitizeComposeAfterHubChatOpen(wc);
     await persistResolvedNativeId();
     return { ...opened, chat: still.chat || opened.chat };
   };
@@ -4416,6 +4465,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     await clearGuestPageSelection(wc);
     await markActiveComposeTarget(serviceId);
     await clearGuestPageSelection(wc);
+    await sanitizeComposeAfterHubChatOpen(wc);
     return opened;
   };
 
@@ -6654,6 +6704,118 @@ function openForwardPickerWindow({
   return { ok: true };
 }
 
+
+async function readGuestComposeText(webContents) {
+  if (!webContents || webContents.isDestroyed()) return '';
+  try {
+    return String(
+      (await webContents.executeJavaScript(
+        `(() => {
+          const nodes = [
+            document.querySelector('[data-testid="conversation-compose-box-input"]'),
+            document.querySelector('[data-aspera-ai-compose="1"]'),
+            ...document.querySelectorAll(${JSON.stringify(guestComposeSelector())}),
+          ].filter(Boolean);
+          for (const el of nodes) {
+            const tag = String(el.tagName || '');
+            if (tag === 'TEXTAREA' || tag === 'INPUT') {
+              const v = String(el.value || '').trim();
+              if (v) return v;
+            }
+            const t = String(el.innerText || el.textContent || '').trim();
+            if (t) return t;
+          }
+          return '';
+        })()`,
+        true,
+      )) || '',
+    );
+  } catch {
+    return '';
+  }
+}
+
+async function clearGuestComposeBox(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    return !!(await webContents.executeJavaScript(
+      `(() => {
+        const clearOne = (el) => {
+          if (!el) return false;
+          try { el.focus(); } catch (e) {}
+          const tag = String(el.tagName || '');
+          if (tag === 'TEXTAREA' || tag === 'INPUT') {
+            el.value = '';
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+          }
+          if (el.isContentEditable) {
+            try {
+              const sel = window.getSelection?.();
+              const range = document.createRange();
+              range.selectNodeContents(el);
+              sel?.removeAllRanges?.();
+              sel?.addRange?.(range);
+              document.execCommand('delete', false, null);
+              document.execCommand('selectAll', false, null);
+              document.execCommand('delete', false, null);
+            } catch (e) {}
+            try {
+              el.textContent = '';
+              while (el.firstChild) el.removeChild(el.firstChild);
+            } catch (e) {}
+            el.dispatchEvent(new InputEvent('input', {
+              bubbles: true, inputType: 'deleteContentBackward', data: null,
+            }));
+            return true;
+          }
+          return false;
+        };
+        const marked = document.querySelector('[data-aspera-ai-compose="1"]');
+        if (clearOne(marked)) return true;
+        const wa = document.querySelector('[data-testid="conversation-compose-box-input"]');
+        if (clearOne(wa)) return true;
+        for (const node of document.querySelectorAll(${JSON.stringify(guestComposeSelector())})) {
+          if (clearOne(node)) return true;
+        }
+        return false;
+      })()`,
+      true,
+    ));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * After Hub opens a chat (pin / Forward), wipe send-box text that was clearly
+ * an accidental clipboard paste or a leftover AI/Forward error — WhatsApp
+ * persists drafts, so this otherwise looks like Hub "typed" into the chat.
+ */
+async function sanitizeComposeAfterHubChatOpen(
+  webContents,
+  { allowClipboardMatch = true } = {},
+) {
+  if (!webContents || webContents.isDestroyed()) return { cleared: false };
+  const text = await readGuestComposeText(webContents);
+  if (!String(text || '').trim()) return { cleared: false };
+  let systemClipboard = '';
+  try {
+    systemClipboard = clipboard.readText() || '';
+  } catch {
+    systemClipboard = '';
+  }
+  const polluted = isHubComposePollution(text, {
+    stagedClipboard: hubStagedClipboardText,
+    systemClipboard,
+    allowClipboardMatch,
+  });
+  if (!polluted) return { cleared: false, text };
+  const ok = await clearGuestComposeBox(webContents);
+  return { cleared: !!ok, text };
+}
+
 async function focusGuestCompose(webContents) {
   if (!webContents || webContents.isDestroyed()) return false;
   try {
@@ -6745,14 +6907,16 @@ async function stageForwardPaste(serviceId) {
 /**
  * Wait for an open compose box, then paste the staged image/text (like doc attach).
  */
-async function waitForChatAndPasteForward(serviceId) {
+async function waitForChatAndPasteForward(serviceId, pasteGen = forwardPasteGeneration) {
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
+    if (pasteGen !== forwardPasteGeneration) return false;
     const entry = views.get(serviceId);
     const wc = entry?.view?.webContents;
     if (!wc || wc.isDestroyed()) return false;
     if (await guestHasOpenCompose(wc)) {
       await sleepMs(280);
+      if (pasteGen !== forwardPasteGeneration) return false;
       await markActiveComposeTarget(serviceId);
       return stageForwardPaste(serviceId);
     }
@@ -7491,13 +7655,22 @@ async function deliverForwardToTarget(targetId) {
     }
     if (Object.keys(write).length) {
       try {
-        clipboard.write(write);
+        stageHubForwardClipboard(write);
       } catch {
-        if (clipText) clipboard.writeText(clipText);
+        if (clipText) {
+          try {
+            hubClipboardBeforeStage = { text: clipboard.readText() || '' };
+          } catch {
+            hubClipboardBeforeStage = { text: '' };
+          }
+          hubStagedClipboardText = clipText;
+          clipboard.writeText(clipText);
+        }
       }
     }
   }
 
+  const pasteGen = forwardPasteGeneration;
   closeForwardPickerWindow();
   activateService(targetId);
   await sleepMs(520);
@@ -7552,7 +7725,10 @@ async function deliverForwardToTarget(targetId) {
       } catch {
         // ignore
       }
+    } else {
+      restoreHubClipboardAfterForward();
     }
+    cancelPendingForwardPaste();
     return { ok: false, needRecipient: true, isDocument, kind, detail };
   }
 
@@ -7606,7 +7782,7 @@ async function deliverForwardToTarget(targetId) {
       pasted = await stageForwardPaste(targetId);
     }
     if (!pasted) {
-      pasted = await waitForChatAndPasteForward(targetId);
+      pasted = await waitForChatAndPasteForward(targetId, pasteGen);
     }
     detail = forwardReadyMessage(kind, targetName, { ok: pasted });
   }
@@ -7624,6 +7800,8 @@ async function deliverForwardToTarget(targetId) {
     // ignore
   }
 
+  // Do not leave Forward text sitting on the system clipboard for the next chat open.
+  restoreHubClipboardAfterForward();
   return {
     ok: true,
     pasted,
@@ -8777,6 +8955,20 @@ function activateService(id) {
     setTimeout(() => layoutActiveView(), 100);
     setTimeout(() => layoutActiveView(), 300);
     focusActiveContents();
+  }
+
+  // Clear Hub/AI error drafts that WhatsApp may have persisted in the send box.
+  // Clipboard-match clearing is only for pin-open (too aggressive on every tab switch).
+  if (isInboxAppId(service.appId)) {
+    const sanitizeId = id;
+    setTimeout(() => {
+      if (activeServiceId !== sanitizeId) return;
+      const live = views.get(sanitizeId)?.view?.webContents;
+      if (!live || live.isDestroyed()) return;
+      sanitizeComposeAfterHubChatOpen(live, { allowClipboardMatch: false }).catch(
+        () => {},
+      );
+    }, 450);
   }
 
   syncAllGuestPerfModes();
@@ -10079,7 +10271,7 @@ forwardPickerHandle('forward-picker:pick', (_e, serviceId) =>
   deliverForwardToTarget(String(serviceId || '')),
 );
 forwardPickerHandle('forward-picker:close', () => {
-  closeForwardPickerWindow();
+  closeForwardPickerWindow({ clearPayload: true });
   return { ok: true };
 });
 async function commitInstalledExtension(installed) {
