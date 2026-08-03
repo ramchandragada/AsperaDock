@@ -179,7 +179,12 @@ export function buildCrmLookupHtml(dark = false) {
         btn.addEventListener('click', async () => {
           const deal = deals[Number(btn.dataset.index)];
           if (!deal) return;
-          await copyText(btn, formatDealWhatsAppMessage(deal), 'Copy message');
+          try {
+            await copyText(btn, formatDealWhatsAppMessage(deal), 'Copy message');
+          } catch (err) {
+            btn.textContent = 'Copy failed';
+            setTimeout(() => { btn.textContent = 'Copy message'; }, 1500);
+          }
         });
       });
       body.querySelectorAll('.copy-stage').forEach((btn) => {
