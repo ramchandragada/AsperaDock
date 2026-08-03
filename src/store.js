@@ -173,6 +173,13 @@ export const DEFAULTS = {
   zohoCrmEnabled: true,
   /** Data center: in | com | eu | com.au | jp | ca */
   zohoCrmDc: 'in',
+  /**
+   * Vercel fleet API base URL (HTTPS). Zoho secrets are pulled with a Bearer
+   * token stored encrypted in zoho-crm-fleet.json — never in this file.
+   */
+  zohoCrmFleetUrl: '',
+  /** ISO timestamp of last successful fleet pull (informational). */
+  zohoCrmFleetSyncedAt: '',
 
   /**
    * Unpacked Chrome extensions for guest apps (WhatsApp, Arattai, …).

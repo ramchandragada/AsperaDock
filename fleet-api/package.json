@@ -1,0 +1,10 @@
+{
+  "name": "aspera-hub-fleet-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Vercel API that serves Zoho CRM OAuth secrets to Aspera Hub fleet PCs",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  }
+}

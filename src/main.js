@@ -57,6 +57,16 @@ import {
   zohoCrmAuthStatus,
 } from './zohoCrm/keys.js';
 import {
+  getZohoCrmFleetToken,
+  setZohoCrmFleetToken,
+  zohoCrmFleetStatus,
+} from './zohoCrm/fleet.js';
+import {
+  buildFleetCredentialsUrl,
+  normalizeFleetApiUrl,
+  parseFleetCredentialsBody,
+} from './zohoCrm/fleetPull.js';
+import {
   arattaiFullFileUrlFromAny,
   buildForwardClipboardText,
   canOfferForward,
@@ -9968,12 +9978,17 @@ function currentState() {
       hasErrorReportGithubToken: Boolean(settings.errorReportGithubToken),
       hasSentryDsnOverride: Boolean(settings.sentryDsn),
       zohoCrmDc: sanitizeZohoCrmDc(settings.zohoCrmDc),
+      zohoCrmFleetUrl: String(settings.zohoCrmFleetUrl || ''),
+      zohoCrmFleetSyncedAt: String(settings.zohoCrmFleetSyncedAt || ''),
       zohoCrm: {
         enabled: settings.zohoCrmEnabled !== false,
         dc: sanitizeZohoCrmDc(settings.zohoCrmDc),
+        fleetUrl: String(settings.zohoCrmFleetUrl || ''),
+        fleetSyncedAt: String(settings.zohoCrmFleetSyncedAt || ''),
         scopes: ZOHO_CRM_OAUTH_SCOPES,
         dataCenters: ZOHO_CRM_DCS.map((d) => ({ id: d.id, label: d.label })),
         ...zohoCrmAuthStatus(),
+        ...zohoCrmFleetStatus(),
       },
     },
     locked,
@@ -11385,18 +11400,29 @@ dockHandle('dock:zoho-crm-status', () => ({
   ok: true,
   enabled: settings.zohoCrmEnabled !== false,
   dc: sanitizeZohoCrmDc(settings.zohoCrmDc),
+  fleetUrl: String(settings.zohoCrmFleetUrl || ''),
+  fleetSyncedAt: String(settings.zohoCrmFleetSyncedAt || ''),
   scopes: ZOHO_CRM_OAUTH_SCOPES,
   dataCenters: ZOHO_CRM_DCS.map((d) => ({ id: d.id, label: d.label })),
   ...zohoCrmAuthStatus(),
+  ...zohoCrmFleetStatus(),
 }));
 dockHandle('dock:zoho-crm-save', (_e, payload) => {
   const body = payload && typeof payload === 'object' ? payload : {};
   const dcId = sanitizeZohoCrmDc(body.dc || body.zohoCrmDc || settings.zohoCrmDc);
   const dc = resolveZohoCrmDc(dcId);
+  const patch = { zohoCrmDc: dcId };
   if (typeof body.enabled === 'boolean') {
-    settings = saveSettings({ zohoCrmEnabled: body.enabled, zohoCrmDc: dcId });
-  } else {
-    settings = saveSettings({ zohoCrmDc: dcId });
+    patch.zohoCrmEnabled = body.enabled;
+  }
+  if (body.fleetUrl != null || body.zohoCrmFleetUrl != null) {
+    patch.zohoCrmFleetUrl = normalizeFleetApiUrl(
+      body.fleetUrl ?? body.zohoCrmFleetUrl,
+    );
+  }
+  settings = saveSettings(patch);
+  if (body.fleetToken != null) {
+    setZohoCrmFleetToken(body.fleetToken);
   }
   const result = setZohoCrmAuth({
     clientId: body.clientId,
@@ -11408,7 +11434,92 @@ dockHandle('dock:zoho-crm-save', (_e, payload) => {
   });
   clearZohoCrmAccessCache();
   broadcastState();
-  return { ok: true, ...result, dc: dcId };
+  return {
+    ok: true,
+    ...result,
+    ...zohoCrmFleetStatus(),
+    dc: dcId,
+    fleetUrl: String(settings.zohoCrmFleetUrl || ''),
+  };
+});
+dockHandle('dock:zoho-crm-fleet-pull', async (_e, payload) => {
+  const body = payload && typeof payload === 'object' ? payload : {};
+  const urlFromBody = normalizeFleetApiUrl(
+    body.fleetUrl ?? body.zohoCrmFleetUrl ?? '',
+  );
+  const fleetUrl = urlFromBody || normalizeFleetApiUrl(settings.zohoCrmFleetUrl);
+  if (urlFromBody) {
+    settings = saveSettings({ zohoCrmFleetUrl: fleetUrl });
+  }
+  if (body.fleetToken != null) {
+    setZohoCrmFleetToken(body.fleetToken);
+  }
+  const token = getZohoCrmFleetToken();
+  const credentialsUrl = buildFleetCredentialsUrl(fleetUrl);
+  if (!credentialsUrl) {
+    return {
+      ok: false,
+      error: 'Set a valid HTTPS Fleet API URL (your Vercel project URL).',
+    };
+  }
+  if (!token) {
+    return { ok: false, error: 'Set the Fleet token before fetching.' };
+  }
+  try {
+    const response = await fetch(credentialsUrl, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    let json = null;
+    try {
+      json = await response.json();
+    } catch {
+      json = null;
+    }
+    if (!response.ok) {
+      const errMsg =
+        (json && json.error) ||
+        `Fleet API returned HTTP ${response.status}.`;
+      return { ok: false, error: String(errMsg) };
+    }
+    const parsed = parseFleetCredentialsBody(json);
+    if (!parsed.ok) return parsed;
+    const dcId = sanitizeZohoCrmDc(parsed.dc);
+    const dc = resolveZohoCrmDc(dcId);
+    const auth = setZohoCrmAuth({
+      clientId: parsed.clientId,
+      clientSecret: parsed.clientSecret,
+      refreshToken: parsed.refreshToken,
+      apiDomain: dc.apiDomain,
+      accountsUrl: dc.accountsUrl,
+      dcId: dc.id,
+    });
+    const syncedAt = new Date().toISOString();
+    settings = saveSettings({
+      zohoCrmEnabled: true,
+      zohoCrmDc: dcId,
+      zohoCrmFleetUrl: fleetUrl,
+      zohoCrmFleetSyncedAt: syncedAt,
+    });
+    clearZohoCrmAccessCache();
+    broadcastState();
+    return {
+      ok: true,
+      ...auth,
+      ...zohoCrmFleetStatus(),
+      dc: dcId,
+      fleetUrl,
+      fleetSyncedAt: syncedAt,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: String(error?.message || error || 'Fleet fetch failed.'),
+    };
+  }
 });
 dockHandle('dock:zoho-crm-clear', () => {
   const result = clearZohoCrmAuth();
@@ -11679,6 +11790,9 @@ dockHandle('dock:save-settings', (_e, patch) => {
   }
   if (next.zohoCrmDc != null) {
     next.zohoCrmDc = sanitizeZohoCrmDc(next.zohoCrmDc);
+  }
+  if (next.zohoCrmFleetUrl != null) {
+    next.zohoCrmFleetUrl = normalizeFleetApiUrl(next.zohoCrmFleetUrl);
   }
   if (next.errorReportUrl != null) {
     const reportUrl = String(next.errorReportUrl || '').trim();

@@ -381,16 +381,31 @@
             </label>
             <p id="zoho-crm-status" class="hint-text">Status: Not configured</p>
             <label class="field">
+              <span>Fleet API URL (Vercel)</span>
+              <input id="set-zoho-crm-fleet-url" type="url" autocomplete="off" placeholder="https://your-fleet.vercel.app" />
+            </label>
+            <label class="field">
+              <span>Fleet token</span>
+              <input id="set-zoho-crm-fleet-token" type="password" autocomplete="off" placeholder="FLEET_BEARER_TOKEN from Vercel" />
+            </label>
+            <div class="settings-inline-actions">
+              <button type="button" class="secondary" id="zoho-crm-fleet-pull-btn">Fetch from cloud</button>
+            </div>
+            <p class="hint-text">
+              Office Mint PCs: set the Vercel URL + fleet token once, then Fetch.
+              Zoho Client ID / Secret / refresh token stay in Vercel env — not pasted here.
+            </p>
+            <label class="field">
               <span>Client ID</span>
-              <input id="set-zoho-crm-client-id" type="password" autocomplete="off" placeholder="From Zoho API Console" />
+              <input id="set-zoho-crm-client-id" type="password" autocomplete="off" placeholder="From Zoho API Console (manual fallback)" />
             </label>
             <label class="field">
               <span>Client Secret</span>
-              <input id="set-zoho-crm-client-secret" type="password" autocomplete="off" placeholder="From Zoho API Console" />
+              <input id="set-zoho-crm-client-secret" type="password" autocomplete="off" placeholder="Manual fallback" />
             </label>
             <label class="field">
               <span>Refresh Token</span>
-              <input id="set-zoho-crm-refresh" type="password" autocomplete="off" placeholder="Paste refresh token, or use Grant code below" />
+              <input id="set-zoho-crm-refresh" type="password" autocomplete="off" placeholder="Paste refresh token, or use Grant code / Fetch from cloud" />
             </label>
             <label class="field">
               <span>Grant code (one-time)</span>
@@ -411,6 +426,8 @@
                 <code>ZohoSearch.securesearch.READ</code>,
                 and generate a token with <code>access_type=offline</code>.
                 Secrets stay encrypted on this PC — never paste them into chat or git.
+                Preferred fleet path: store Zoho secrets in a Vercel project env and use
+                <strong>Fetch from cloud</strong> above.
               </p>
             </details>
           </section>

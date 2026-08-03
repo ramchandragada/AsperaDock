@@ -61,6 +61,8 @@ contextBridge.exposeInMainWorld('asperadock', {
   zohoCrmTest: () => ipcRenderer.invoke('dock:zoho-crm-test'),
   zohoCrmConnect: (payload) =>
     ipcRenderer.invoke('dock:zoho-crm-connect', payload),
+  zohoCrmFleetPull: (payload) =>
+    ipcRenderer.invoke('dock:zoho-crm-fleet-pull', payload),
   zohoCrmLookup: (payload) =>
     ipcRenderer.invoke('dock:zoho-crm-lookup', payload),
   setOverlay: (open) => ipcRenderer.invoke('dock:set-overlay', open),
