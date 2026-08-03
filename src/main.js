@@ -221,6 +221,12 @@ import {
   shouldOpenInSystemBrowser,
 } from './guestNav.js';
 import {
+  resolveLinkHandling,
+  shouldOpenUnknownExternally,
+  shouldOpenInternalAsHubTab,
+  normalizeLinkHandling,
+} from './linkHandling.js';
+import {
   isGoogleService,
   isGoogleMailAppUrl,
   attachGoogleChromeSpoof,
@@ -1477,6 +1483,19 @@ function addService(appId, profileId = null, { startUrl = null } = {}) {
     serviceInstances: instances,
     serviceOrder,
     ...(initialUrl ? { lastServiceUrls } : {}),
+    ...(canShareProfileAcrossInstances(appId)
+      ? {
+          serviceConfigs: {
+            ...(settings.serviceConfigs || {}),
+            [id]: {
+              ...mergeAppConfig((settings.serviceConfigs || {})[id]),
+              // New Zoho workspace tabs default to Hub-tab link handling.
+              linkHandling:
+                (settings.serviceConfigs || {})[id]?.linkHandling ?? 'hub-tab',
+            },
+          },
+        }
+      : {}),
   });
   broadcastState();
   activateService(id);
@@ -1501,6 +1520,19 @@ function openInternalLinkAsHubTab(sourceService, url) {
     startUrl: url,
   });
   return !!result?.ok;
+}
+
+/** Effective link-handling mode for a guest app (per-app override or global). */
+function effectiveLinkHandling(service) {
+  const cfg = service?.config || getAppConfig(service?.id);
+  return resolveLinkHandling(cfg, settings.linkHandling || 'block');
+}
+
+/** Open a third-party URL in the OS browser only when the mode allows it. */
+function openUnknownExternalIfAllowed(service, url) {
+  if (!shouldOpenUnknownExternally(effectiveLinkHandling(service))) return false;
+  if (!shouldOpenInSystemBrowser(url)) return false;
+  return openExternalSafe(url);
 }
 
 /** Custom URLs are disabled — Aspera Hub only exposes the company catalog. */
@@ -7917,17 +7949,18 @@ function attachGuestContextMenu(webContents) {
             webContents.loadURL(safeLink).catch(() => {});
             return;
           }
-          // Zoho workspace links → new Hub tab (same login), not Chrome.
-          if (
-            service &&
-            canShareProfileAcrossInstances(service.appId) &&
-            isInternalUrl(safeLink, service)
-          ) {
-            if (openInternalLinkAsHubTab(service, safeLink)) return;
+          if (service && isInternalUrl(safeLink, service)) {
+            const mode = effectiveLinkHandling(service);
+            if (
+              shouldOpenInternalAsHubTab(mode) &&
+              openInternalLinkAsHubTab(service, safeLink)
+            ) {
+              return;
+            }
             webContents.loadURL(safeLink).catch(() => {});
             return;
           }
-          if (shouldOpenInSystemBrowser(safeLink)) openExternalSafe(safeLink);
+          openUnknownExternalIfAllowed(service, safeLink);
         },
       });
       template.push({
@@ -8149,13 +8182,13 @@ function attachGuestContextMenu(webContents) {
 
 /**
  * Window-open policy shared by a service view and any popup it spawns.
- * Genuine external links go to the OS browser; internal popups (Zoho CRM
- * child windows, SSO handshakes, about:blank targets) open as real windows
- * that share the service session — denying them makes embedded apps like
- * Zoho CRM hang forever waiting for the window handle.
+ * Genuine external links go to the OS browser when linkHandling allows it;
+ * internal popups (Zoho CRM child windows, SSO, about:blank) stay in Hub.
  *
- * IMPORTANT: linkHandling "external" must NOT deny about:blank / internal Zoho
- * popups. That setting only forces true third-party links into the OS browser.
+ * Per-app / global linkHandling:
+ * - block:    known hosts in Hub; unknown blocked
+ * - external: known in Hub; unknown → system browser
+ * - hub-tab:  known → new Hub tab when possible; unknown → system browser
  *
  * Gmail: never load google.com/url?q=… or third-party sites into the Gmail tab.
  */
@@ -8174,6 +8207,7 @@ function configureGuestWindowOpen(wc, service) {
 
   wc.setWindowOpenHandler(({ url }) => {
     const raw = String(url || '');
+    const mode = effectiveLinkHandling(service);
     // Zoho One CRM / SPA portals boot child frames via about:blank first.
     if (!raw || raw === 'about:blank' || raw.startsWith('about:blank')) {
       return allowPopup();
@@ -8183,31 +8217,25 @@ function configureGuestWindowOpen(wc, service) {
       if (googleish) {
         const outbound = extractGoogleOutboundUrl(raw);
         if (outbound) {
-          // Never open Google SSO/handoff targets in Chrome — they 400 there.
           if (mustKeepGoogleUrlInApp(outbound) || isGoogleOwnedUrl(outbound)) {
             wc.loadURL(outbound).catch(() => {});
             return { action: 'deny' };
           }
-          if (shouldOpenInSystemBrowser(outbound)) openExternalSafe(outbound);
+          openUnknownExternalIfAllowed(service, outbound);
           return { action: 'deny' };
         }
         if (isGoogleOwnedUrl(raw) && !isAllowedGmailTabUrl(raw)) {
-          // Malformed internal Google handoff URLs (drive/accounts continue=...)
-          // should not spawn external error tabs. Reset to Gmail home.
           wc.loadURL(startUrlForService(service) || service.url).catch(() => {});
           return { action: 'deny' };
         }
         if (!isAllowedGmailTabUrl(raw)) {
-          if (shouldOpenInSystemBrowser(raw)) openExternalSafe(raw);
+          openUnknownExternalIfAllowed(service, raw);
           return { action: 'deny' };
         }
-        // Keep Gmail / accounts navigations inside the dock tab.
         wc.loadURL(raw).catch(() => {});
         return { action: 'deny' };
       }
 
-      // Google OAuth / SSO popups must stay in-app for all services
-      // (ChatGPT, Claude, etc. use "Sign in with Google").
       if (isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) {
         return allowPopup();
       }
@@ -8217,19 +8245,14 @@ function configureGuestWindowOpen(wc, service) {
 
       const internal = isInternalUrl(raw, service);
       if (!internal) {
-        // Never open broken Google consent/handoff URLs externally —
-        // they produce 400 error tabs in the default browser.
-        if (isGoogleOwnedUrl(raw) || !shouldOpenInSystemBrowser(raw)) {
-          return { action: 'deny' };
-        }
-        openExternalSafe(raw);
+        if (isGoogleOwnedUrl(raw)) return { action: 'deny' };
+        openUnknownExternalIfAllowed(service, raw);
         return { action: 'deny' };
       }
 
-      // Zoho CRM/One: open workspace links as Hub app-bar tabs (shared login),
-      // not floating windows or Chrome.
+      // Known/internal host: Hub tab when configured (Zoho CRM multi-screen).
       if (
-        canShareProfileAcrossInstances(service.appId) &&
+        shouldOpenInternalAsHubTab(mode) &&
         openInternalLinkAsHubTab(service, raw)
       ) {
         return { action: 'deny' };
@@ -8238,7 +8261,6 @@ function configureGuestWindowOpen(wc, service) {
       return allowPopup();
     }
 
-    // blob:/data: targets used by some in-app viewers
     if (raw.startsWith('blob:') || raw.startsWith('data:')) {
       return allowPopup();
     }
@@ -8266,7 +8288,7 @@ function attachGuestNavigationGate(webContents, service) {
           webContents.loadURL(outbound).catch(() => {});
           return;
         }
-        if (shouldOpenInSystemBrowser(outbound)) openExternalSafe(outbound);
+        openUnknownExternalIfAllowed(service, outbound);
         return;
       }
       if (isGoogleOwnedUrl(url) && !isAllowedGmailTabUrl(url)) {
@@ -8276,31 +8298,25 @@ function attachGuestNavigationGate(webContents, service) {
       }
       if (!isAllowedGmailTabUrl(url)) {
         event.preventDefault();
-        if (shouldOpenInSystemBrowser(url)) openExternalSafe(url);
+        openUnknownExternalIfAllowed(service, url);
         return;
       }
       return;
     }
 
-    // Allow Google OAuth/SSO flows for any app (ChatGPT, Claude, etc.).
     if (isAuthOrLoginUrl(url) && isGoogleOwnedUrl(url)) return;
     if (mustKeepGoogleUrlInApp(url)) return;
 
     if (isInternalUrl(url, service)) return;
-    // Suppress broken Google consent URLs — they 400 in external browsers.
-    if (isGoogleOwnedUrl(url) || !shouldOpenInSystemBrowser(url)) {
-      event.preventDefault();
-      return;
-    }
+    // Unknown host: leave Hub only when linkHandling allows it.
     event.preventDefault();
-    openExternalSafe(url);
+    if (isGoogleOwnedUrl(url)) return;
+    openUnknownExternalIfAllowed(service, url);
   };
 
   webContents.on('will-navigate', gate);
-  // Gmail /url → cybercrime.gov.in happens as a redirect after google.com loads.
   webContents.on('will-redirect', gate);
 
-  // Safety net: if something still lands outside Gmail, open it externally + go home.
   webContents.on('did-navigate', (_event, url) => {
     if (!isGoogleService(service)) return;
     if (!url || !String(url).startsWith('http')) return;
@@ -8308,12 +8324,12 @@ function attachGuestNavigationGate(webContents, service) {
     const outbound = extractGoogleOutboundUrl(url);
     if (outbound) {
       if (mustKeepGoogleUrlInApp(outbound) || isGoogleOwnedUrl(outbound)) {
-        // Keep Google handoffs inside Hub — never Chrome 400 tabs.
-      } else if (shouldOpenInSystemBrowser(outbound)) {
-        openExternalSafe(outbound);
+        // keep in Hub
+      } else {
+        openUnknownExternalIfAllowed(service, outbound);
       }
-    } else if (shouldOpenInSystemBrowser(url)) {
-      openExternalSafe(url);
+    } else if (!isGoogleOwnedUrl(url)) {
+      openUnknownExternalIfAllowed(service, url);
     }
     const home = startUrlForService(service);
     webContents.loadURL(home).catch(() => {});
@@ -8366,6 +8382,8 @@ function attachPopupSessionAdopt(parentWc, childWindow, service) {
  */
 function attachZohoPopupAdoptToHubTab(childWindow, service) {
   if (!canShareProfileAcrossInstances(service?.appId)) return;
+  // Only fold popups into Hub tabs when linkHandling is hub-tab.
+  if (!shouldOpenInternalAsHubTab(effectiveLinkHandling(service))) return;
 
   const childWc = childWindow.webContents;
   let adopting = false;
@@ -10690,6 +10708,12 @@ dockHandle('dock:save-app-config', (_e, id, incoming) => {
     delete patch.profileId;
   }
 
+  if ('linkHandling' in patch) {
+    const raw = patch.linkHandling;
+    if (raw == null || raw === '' || raw === 'default') patch.linkHandling = null;
+    else patch.linkHandling = normalizeLinkHandling(raw, 'block');
+  }
+
   const labels = { ...(settings.serviceLabels || {}) };
   if (patch.name != null || patch.title != null) {
     const service = getService(id);
@@ -10866,6 +10890,9 @@ dockHandle('dock:save-settings', (_e, patch) => {
   }
   if (next.lockEnabled === false) {
     next.lockPasswordHash = '';
+  }
+  if (next.linkHandling != null) {
+    next.linkHandling = normalizeLinkHandling(next.linkHandling, 'block');
   }
   // Low-memory mode clamps warm/hibernate and turns GPU off (relaunch needed).
   // Keep at least 2 warm slots so multi-WhatsApp switching still works.

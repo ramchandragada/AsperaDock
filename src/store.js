@@ -176,7 +176,8 @@ export const DEFAULTS = {
   lowMemoryMode: false,
 
   // Defaults for apps (overridden per-app via right-click Edit)
-  linkHandling: 'block', // block | external
+  // block | external | hub-tab — see src/linkHandling.js
+  linkHandling: 'block',
   spellChecker: ['en-US'],
   /** Hibernate idle background apps (keepWarm apps like WhatsApp are skipped). */
   hibernateMinutes: 45,
