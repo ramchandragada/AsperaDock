@@ -6,7 +6,7 @@ name: Deploy Aspera Hub
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, 'cursor/**']
   workflow_dispatch:
     inputs:
       notes:
@@ -46,35 +46,18 @@ jobs:
       - name: Install npm deps
         run: npm ci
 
-      - name: Compute next version & stamp package.json
+      - name: Read release version from package.json
         id: ver
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          LATEST=$(gh release list --limit 100 --json tagName -q '.[].tagName' 2>/dev/null \
-            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -V | tail -1 || true)
-          if [ -n "${LATEST}" ]; then
-            MAJOR=$(echo "$LATEST" | cut -d. -f1)
-            MINOR=$(echo "$LATEST" | cut -d. -f2)
-            PATCH=$(echo "$LATEST" | cut -d. -f3)
-            NEXT="${MAJOR}.${MINOR}.$((PATCH + 1))"
-          else
-            NEXT=$(node -p "require('./package.json').version")
+          VERSION=$(node -p "require('./package.json').version")
+          if ! echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "package.json version must be strict semver (x.y.z), got: $VERSION"
+            exit 1
           fi
-          while gh release view "v${NEXT}" >/dev/null 2>&1; do
-            PATCH=$(echo "$NEXT" | cut -d. -f3)
-            NEXT="$(echo "$NEXT" | cut -d. -f1-2).$((PATCH + 1))"
-          done
-          node -e "
-            const fs=require('fs');
-            const p=JSON.parse(fs.readFileSync('package.json','utf8'));
-            p.version=process.argv[1];
-            fs.writeFileSync('package.json', JSON.stringify(p,null,2)+'\n');
-          " "$NEXT"
-          echo "version=${NEXT}" >> "$GITHUB_OUTPUT"
-          echo "tag=v${NEXT}" >> "$GITHUB_OUTPUT"
-          echo "Next release: v${NEXT}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Release from package.json: v${VERSION}"
 
       - name: Build .deb
         run: npm run make -- --targets @electron-forge/maker-deb

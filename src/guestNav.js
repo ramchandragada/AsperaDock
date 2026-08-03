@@ -32,7 +32,14 @@ export function isInternalUrl(url, service, hosts = INTERNAL_HOSTS) {
 export function isForbiddenGuestNavigation(url) {
   try {
     const protocol = new URL(String(url || '')).protocol.toLowerCase();
-    return !['http:', 'https:', 'about:', 'blob:', 'data:'].includes(protocol);
+    return ![
+      'http:',
+      'https:',
+      'about:',
+      'blob:',
+      'data:',
+      'chrome-extension:',
+    ].includes(protocol);
   } catch {
     return true;
   }
@@ -80,6 +87,23 @@ export function extractGoogleOutboundUrl(url) {
   }
 }
 
+/** Any first-party Google URL (google.com / googleusercontent.com / gstatic.com). */
+export function isGoogleOwnedUrl(url) {
+  try {
+    const host = new URL(String(url || '')).hostname.toLowerCase();
+    return (
+      host === 'google.com' ||
+      host.endsWith('.google.com') ||
+      host === 'googleusercontent.com' ||
+      host.endsWith('.googleusercontent.com') ||
+      host === 'gstatic.com' ||
+      host.endsWith('.gstatic.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * URLs allowed to load inside a Gmail Hub tab (inbox / auth only).
  * Everything else (news sites, gov portals, google.com/url wrappers) must leave.
@@ -99,6 +123,10 @@ export function isAllowedGmailTabUrl(url) {
     if (host === 'accounts.youtube.com') return true;
     if (host === 'contacts.google.com') return true;
     if (host === 'ogs.google.com') return true;
+    // Attachment previews / downloads
+    if (host.endsWith('.googleusercontent.com') || host === 'googleusercontent.com') return true;
+    // Google Drive viewer (linked files in emails)
+    if (host === 'drive.google.com' || host === 'docs.google.com') return true;
     // Rare Gmail chrome frames
     if (host === 'workspace.google.com') return true;
     return false;

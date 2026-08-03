@@ -12,40 +12,51 @@
   <body class="theme-light layout-top density-normal icon-size-normal">
     <div class="shell">
       <header id="top-bar" class="app-bar app-bar-top">
-        <nav id="apps-top" class="apps-track" aria-label="Apps"></nav>
-        <div class="chrome-brand" title="Aspera">
-          <img id="chrome-wordmark" class="chrome-wordmark" alt="Aspera" draggable="false" />
-        </div>
-        <div class="chrome-actions">
-          <button id="add-app-btn" type="button" class="icon-btn add-app-btn" title="Add app"></button>
-          <span class="chrome-divider" aria-hidden="true"></span>
-          <button id="downloads-btn" type="button" class="icon-btn" title="Open Downloads folder" aria-label="Open Downloads folder"></button>
-          <button id="search-btn" type="button" class="icon-btn" title="Quick search (Ctrl+/)"></button>
-          <button id="focus-btn" type="button" class="icon-btn" title="Focus mode — Ctrl+Shift+D"></button>
-          <button id="mute-btn" type="button" class="icon-btn" title="Mute — Ctrl+Shift+M"></button>
-          <div class="menu-wrap">
-            <button id="notif-btn" type="button" class="icon-btn badge-host" title="Notifications">
-              <span class="icon-slot"></span>
-              <span id="global-badge" class="global-badge hidden">0</span>
-            </button>
-            <div id="notif-center" class="chrome-menu notif-center hidden" role="menu">
-              <header class="notif-head">
-                <strong>Notifications</strong>
-                <div class="notif-head-actions">
-                  <button id="notif-read-all" type="button" class="link-btn">Mark all read</button>
-                  <button id="notif-clear" type="button" class="link-btn">Clear</button>
+        <div class="app-bar-main">
+          <nav id="apps-top" class="apps-track" aria-label="Apps"></nav>
+          <div class="chrome-brand" title="Aspera">
+            <img id="chrome-wordmark" class="chrome-wordmark" alt="Aspera" draggable="false" />
+          </div>
+          <div class="chrome-actions">
+            <button id="lock-btn" type="button" class="icon-btn lock-btn" title="Lock Aspera Hub (Ctrl+Shift+L)" aria-label="Lock Aspera Hub"></button>
+            <button id="add-app-btn" type="button" class="icon-btn add-app-btn" title="Add app"></button>
+            <span class="chrome-divider" aria-hidden="true"></span>
+            <button id="downloads-btn" type="button" class="icon-btn" title="Open Downloads folder" aria-label="Open Downloads folder"></button>
+            <button id="extensions-btn" type="button" class="icon-btn" title="Extensions" aria-label="Extensions"></button>
+            <button id="check-updates-btn" type="button" class="icon-btn" title="Check for updates" aria-label="Check for updates"></button>
+            <div class="menu-wrap">
+              <button id="notif-btn" type="button" class="icon-btn badge-host" title="Notifications">
+                <span class="icon-slot"></span>
+                <span id="global-badge" class="global-badge hidden">0</span>
+              </button>
+              <div id="notif-center" class="chrome-menu notif-center hidden" role="menu">
+                <header class="notif-head">
+                  <strong>Notifications</strong>
+                  <div class="notif-head-actions">
+                    <button id="notif-read-all" type="button" class="link-btn">Mark all read</button>
+                    <button id="notif-clear" type="button" class="link-btn">Clear</button>
+                  </div>
+                </header>
+                <div id="notif-list" class="notif-list"></div>
+                <div id="monitor-block" class="monitor-block hidden">
+                  <div class="monitor-head">Memory per app</div>
+                  <div id="monitor-list" class="monitor-list"></div>
                 </div>
-              </header>
-              <div id="notif-list" class="notif-list"></div>
-              <div id="monitor-block" class="monitor-block hidden">
-                <div class="monitor-head">Memory per app</div>
-                <div id="monitor-list" class="monitor-list"></div>
               </div>
             </div>
-          </div>
-          <div class="menu-wrap">
-            <button id="menu-btn" type="button" class="icon-btn brand-avatar" title="Menu" aria-label="Menu"></button>
-            <div id="app-chrome-menu" class="chrome-menu hidden" role="menu">
+            <div class="menu-wrap">
+              <button id="menu-btn" type="button" class="icon-btn brand-avatar" title="Menu" aria-label="Menu"></button>
+              <div id="app-chrome-menu" class="chrome-menu hidden" role="menu">
+                <button type="button" data-action="search" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="search"></span> Quick search
+                </button>
+              <button type="button" data-action="focus" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="focus"></span> Focus mode
+              </button>
+              <button type="button" data-action="mute" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="unmute"></span> Mute
+              </button>
+              <hr />
               <button type="button" data-action="settings" class="chrome-menu-item">
                 <span class="chrome-menu-ico" data-ico="settings"></span> Settings
               </button>
@@ -54,6 +65,9 @@
               </button>
               <button type="button" data-action="shortcuts" class="chrome-menu-item">
                 <span class="chrome-menu-ico" data-ico="keyboard"></span> Shortcuts
+              </button>
+              <button type="button" data-action="about" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="info"></span> About Aspera Hub
               </button>
               <hr />
               <button type="button" data-action="reload" class="chrome-menu-item">
@@ -66,6 +80,9 @@
                 <span class="chrome-menu-ico" data-ico="ram"></span> Free RAM
               </button>
               <hr />
+              <button type="button" data-action="lock" class="chrome-menu-item">
+                <span class="chrome-menu-ico" data-ico="lock"></span> Lock Aspera Hub
+              </button>
               <button type="button" data-action="add-app" class="chrome-menu-item">
                 <span class="chrome-menu-ico" data-ico="plus"></span> Add app
               </button>
@@ -73,11 +90,15 @@
               <button type="button" data-action="check-updates" class="chrome-menu-item">
                 <span class="chrome-menu-ico" data-ico="sync"></span> Check for updates
               </button>
-              <button type="button" data-action="about" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="info"></span> About
-              </button>
               <div id="chrome-menu-version" class="chrome-menu-version">Aspera Hub</div>
+              </div>
             </div>
+          </div>
+        </div>
+        <div id="hub-rails" class="hub-rails hidden" aria-label="Pinned contacts">
+          <div class="hub-rail-section hub-rail-pins">
+            <span class="hub-rail-label" title="Hub pins (up to 10) — separate from WhatsApp’s 3-pin limit">Pinned</span>
+            <div id="pin-rail" class="hub-rail" role="list"></div>
           </div>
         </div>
       </header>
@@ -100,7 +121,7 @@
     <!-- Quick search -->
     <div id="search-modal" class="modal hidden" role="dialog">
       <div class="modal-card search-card">
-        <input id="search-input" type="search" placeholder="Jump to app…" autocomplete="off" />
+        <input id="search-input" type="search" placeholder="Search apps, chats, or message text…" autocomplete="off" />
         <ul id="search-results"></ul>
       </div>
     </div>
@@ -116,13 +137,29 @@
             <button id="settings-close" type="button" class="icon-btn">✕</button>
           </div>
         </header>
-        <div class="settings-body">
+        <div class="settings-layout">
+          <nav class="settings-nav" aria-label="Settings categories">
+            <p class="settings-nav-label">Categories</p>
+            <button type="button" class="settings-nav-btn active" data-settings-panel="general">General</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="downloads">Downloads</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="startup">Startup &amp; window</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="security">Security</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="ai">Aspera AI</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="proxy">Proxy</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="performance">Performance</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="errors">Error reporting</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="updates">Updates</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="compatibility">Compatibility</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="apps">Add apps</button>
+          </nav>
+          <div class="settings-body">
           <p class="settings-banner">
             These are <strong>global</strong> dock settings. To change one app (sound, name, hibernate…),
             <strong>right-click</strong> that app’s icon.
           </p>
 
-          <div class="section-rule"><span>General</span></div>
+          <section class="settings-panel active" data-panel="general" aria-label="General">
+          <h3 class="settings-panel-title">General</h3>
 
           <label class="field">
             <span>Theme</span>
@@ -178,8 +215,10 @@
             <input id="set-focus-clear-badges" type="checkbox" />
             <span>Remove all badges when Focus mode is active</span>
           </label>
+          </section>
 
-          <div class="section-rule"><span>Downloads</span></div>
+          <section class="settings-panel" data-panel="downloads" aria-label="Downloads" hidden>
+          <h3 class="settings-panel-title">Downloads</h3>
           <label class="field">
             <span>Download directory</span>
             <div class="row">
@@ -190,8 +229,10 @@
           </label>
           <label class="check"><input id="set-open-folder" type="checkbox" /> Open folder on finish</label>
           <label class="check"><input id="set-open-file" type="checkbox" /> Open file on finish</label>
+          </section>
 
-          <div class="section-rule"><span>Startup and window</span></div>
+          <section class="settings-panel" data-panel="startup" aria-label="Startup and window" hidden>
+          <h3 class="settings-panel-title">Startup and window</h3>
           <label class="field">
             <span>Open Aspera Hub automatically on system startup</span>
             <select id="set-autostart">
@@ -218,8 +259,10 @@
           <label class="switch-row"><input id="set-tray-unread" type="checkbox" /><span>Show System Tray indicator on unread messages</span></label>
           <label class="switch-row"><input id="set-flash" type="checkbox" /><span>Flash Taskbar on new message</span></label>
           <label class="switch-row"><input id="set-confirm-quit" type="checkbox" /><span>Confirm dialog on quitting with Ctrl+Q</span></label>
+          </section>
 
-          <div class="section-rule"><span>Security</span></div>
+          <section class="settings-panel" data-panel="security" aria-label="Security" hidden>
+          <h3 class="settings-panel-title">Security</h3>
           <label class="field">
             <span>Lock app</span>
             <select id="set-lock-enabled">
@@ -235,8 +278,52 @@
             <input id="set-lock-idle" type="checkbox" />
             <span>Lock when the system locks or sleeps</span>
           </label>
+          </section>
 
-          <div class="section-rule"><span>Proxy</span></div>
+          <section class="settings-panel" data-panel="ai" id="ai-settings-section" aria-label="Aspera AI" hidden>
+          <h3 class="settings-panel-title">Aspera AI</h3>
+          <p class="hint-text">
+            Employee skills for <strong>WhatsApp, Arattai, Gmail, Zoho Mail</strong> only.
+            Save an API key for each provider you use. Aspera Hub loads
+            <strong>all models available to your key</strong> from each provider
+            (Gemini, Grok, SambaNova, DeepSeek, Sarvam AI, OpenRouter, Anthropic). Leave model on
+            <strong>Auto</strong> to pick a fast workplace model and automatically
+            try others if one is retired or blocked — or choose any listed model.
+            Default failover is
+            <strong>Gemini → Sarvam → Grok → DeepSeek → SambaNova → OpenRouter → Anthropic</strong>
+            — reorder or disable providers below for full control.
+            <strong>Summarize</strong> returns English + Hindi + Marathi, with optional reply drafts.
+          </p>
+          <label class="switch-row">
+            <input id="set-ai-enabled" type="checkbox" />
+            <span>Enable Aspera AI</span>
+          </label>
+          <label class="field">
+            <span>Catch me up language</span>
+            <select id="set-ai-language">
+              <option value="en">English</option>
+              <option value="hi">Hindi (हिन्दी)</option>
+              <option value="mr">Marathi (मराठी)</option>
+            </select>
+          </label>
+          <div class="ai-route-toolbar">
+            <div class="ai-route-toolbar-text">
+              <strong>Failover order</strong>
+              <span>Drag priority with ↑ ↓. Uncheck to skip a provider (keys stay saved).</span>
+            </div>
+            <button type="button" class="ghost-btn" id="ai-reset-route-btn">
+              Reset to default
+            </button>
+          </div>
+          <div class="ai-provider-keys" id="ai-provider-keys" aria-live="polite"></div>
+          <p class="hint-text" id="ai-route-hint"></p>
+          <div class="row-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px;">
+            <button id="ai-catch-up-btn" type="button" class="ghost-btn">Catch me up</button>
+          </div>
+          </section>
+
+          <section class="settings-panel" data-panel="proxy" aria-label="Proxy" hidden>
+          <h3 class="settings-panel-title">Proxy</h3>
           <label class="field">
             <span>Proxy mode</span>
             <select id="set-proxy-mode">
@@ -254,8 +341,10 @@
             <span>Bypass list</span>
             <input id="set-proxy-bypass" type="text" placeholder="&lt;local&gt;" />
           </label>
+          </section>
 
-          <div class="section-rule"><span>Performance</span></div>
+          <section class="settings-panel" data-panel="performance" aria-label="Performance" hidden>
+          <h3 class="settings-panel-title">Performance</h3>
           <label class="switch-row">
             <input id="set-low-memory" type="checkbox" />
             <span>
@@ -270,8 +359,8 @@
           </label>
           <label class="field">
             <span>Max warm apps in RAM</span>
-            <input id="set-max-warm" type="number" min="1" max="5" />
-            <p class="hint-text">Warm apps stay fully loaded for instant switching (includes the active tab). Maximum is 5 — mark up to 4 background apps with the flame. Non-warm apps load only when you click them.</p>
+            <input id="set-max-warm" type="number" min="1" max="7" />
+            <p class="hint-text">Warm apps stay fully loaded for instant switching (includes the active tab). Default is 5; you can raise up to 7 in Settings. Flame-mark background apps within that limit. Non-warm apps load only when you click them.</p>
           </label>
           <label class="switch-row">
             <input id="set-consumption" type="checkbox" />
@@ -280,8 +369,10 @@
               <small>Shows memory per app in the notifications panel</small>
             </span>
           </label>
+          </section>
 
-          <div class="section-rule"><span>Error reporting</span></div>
+          <section class="settings-panel" data-panel="errors" aria-label="Error reporting" hidden>
+          <h3 class="settings-panel-title">Error reporting</h3>
           <label class="switch-row">
             <input id="set-error-reporting" type="checkbox" />
             <span>
@@ -330,8 +421,10 @@
             <input id="set-error-url" type="url" placeholder="https://…" />
           </label>
           <button id="open-error-reports" type="button" class="ghost-btn">Open error reports folder</button>
+          </section>
 
-          <div class="section-rule"><span>Updates</span></div>
+          <section class="settings-panel" data-panel="updates" aria-label="Updates" hidden>
+          <h3 class="settings-panel-title">Updates</h3>
           <p class="settings-banner" id="settings-version-banner">
             You are running <strong id="settings-running-version">Aspera Hub</strong>.
           </p>
@@ -375,11 +468,22 @@
             <span id="update-status-text" class="hint-text">Checking…</span>
             <button id="check-updates" type="button" class="ghost-btn">Check for updates</button>
           </div>
+          </section>
 
-          <div class="section-rule"><span>Compatibility</span></div>
+          <section class="settings-panel" data-panel="compatibility" aria-label="Compatibility" hidden>
+          <h3 class="settings-panel-title">Compatibility</h3>
+          <p class="hint-text">
+            Tuned for <strong>Linux Mint</strong> (<strong>XFCE</strong> and <strong>Cinnamon</strong>).
+            Default show-in-taskbar works on both. For tray icons on XFCE, add a
+            <em>Status Notifier Plugin</em> / notification area to the panel.
+            If menus look blank on XFCE, enable the compositor in Window Manager Tweaks.
+          </p>
           <label class="switch-row">
             <input id="set-hw-accel" type="checkbox" />
-            <span>Enable hardware acceleration <em class="relaunch">(needs relaunch)</em></span>
+            <span>
+              Enable hardware acceleration <em class="relaunch">(needs relaunch)</em>
+              <small>Leave off if Aspera Hub will not start (common on Linux Mint). Off is the safe default.</small>
+            </span>
           </label>
           <label class="switch-row">
             <input id="set-hidpi" type="checkbox" />
@@ -412,11 +516,15 @@
             </label>
             <label class="check"><input id="set-hide-notif-body" type="checkbox" /> Hide notification content</label>
           </details>
+          </section>
 
-          <div class="section-rule"><span>Add apps</span></div>
+          <section class="settings-panel" data-panel="apps" aria-label="Add apps" hidden>
+          <h3 class="settings-panel-title">Add apps</h3>
           <p class="hint-text">Aspera catalog only. Naming, sound, and advanced options are per app (right-click).</p>
           <div id="catalog-list" class="catalog-list"></div>
           <div id="instance-list" class="instance-list"></div>
+          </section>
+        </div>
         </div>
       </div>
     </div>

@@ -2,6 +2,14 @@ import './index.css';
 import { logoHtml } from './logos.js';
 import { icon } from './icons.js';
 import { BRAND, asperaAppIconSvg } from './brand.js';
+import {
+  accelFromKeyEvent,
+  findShortcutConflicts,
+  formatAccel,
+  groupedShortcutCatalog,
+  migrateShortcutsMap,
+  normalizeShortcutEntry,
+} from './shortcutsConfig.js';
 // Renderer errors route through main → Sentry when DSN is configured.
 import('@sentry/electron/renderer')
   .then((SentryRenderer) => {
@@ -17,6 +25,7 @@ import('@sentry/electron/renderer')
 
 const els = {
   appsTop: document.getElementById('apps-top'),
+  lockBtn: document.getElementById('lock-btn'),
   addAppBtn: document.getElementById('add-app-btn'),
   emptyState: document.getElementById('empty-state'),
   emptyAddBtn: document.getElementById('empty-add-btn'),
@@ -27,6 +36,8 @@ const els = {
   menuBtn: document.getElementById('menu-btn'),
   chromeMenu: document.getElementById('app-chrome-menu'),
   downloadsBtn: document.getElementById('downloads-btn'),
+  extensionsBtn: document.getElementById('extensions-btn'),
+  checkUpdatesBtn: document.getElementById('check-updates-btn'),
   searchBtn: document.getElementById('search-btn'),
   globalBadge: document.getElementById('global-badge'),
   notifBtn: document.getElementById('notif-btn'),
@@ -37,6 +48,8 @@ const els = {
   monitorBlock: document.getElementById('monitor-block'),
   monitorList: document.getElementById('monitor-list'),
   topBar: document.getElementById('top-bar'),
+  hubRails: document.getElementById('hub-rails'),
+  pinRail: document.getElementById('pin-rail'),
   settingsModal: document.getElementById('settings-modal'),
   settingsSave: document.getElementById('settings-save'),
   settingsClose: document.getElementById('settings-close'),
@@ -98,29 +111,10 @@ const els = {
   findClose: document.getElementById('find-close'),
 };
 
-const SHORTCUT_DEFS = [
-  {
-    group: 'App navigation',
-    items: [
-      { id: 'switchTab', label: 'Go to specific tab', keys: 'Ctrl + 1–9' },
-      { id: 'nextTab', label: 'Switch tabs', keys: 'Ctrl + Tab / Ctrl + Shift + Tab' },
-      { id: 'backForward', label: 'Back / Forward in apps', keys: 'Alt + Left / Right' },
-    ],
-  },
-  {
-    group: 'Sections and features',
-    items: [
-      { id: 'search', label: 'Quick search', keys: 'Ctrl + /' },
-      { id: 'find', label: 'Find in page', keys: 'Ctrl + F' },
-      { id: 'print', label: 'Print page', keys: 'Ctrl + P' },
-      { id: 'settings', label: 'Settings', keys: 'Ctrl + ,' },
-      { id: 'focusMode', label: 'Focus mode', keys: 'Ctrl + Shift + D' },
-      { id: 'mute', label: 'Mute', keys: 'Ctrl + Shift + M' },
-      { id: 'hibernate', label: 'Hibernate background', keys: 'Ctrl + Shift + H' },
-      { id: 'lock', label: 'Lock Aspera Hub', keys: 'Ctrl + Shift + L' },
-    ],
-  },
-];
+const SHORTCUT_DEFS = groupedShortcutCatalog();
+
+let shortcutCaptureId = null;
+let shortcutCaptureHandler = null;
 
 let menuServiceId = null;
 let editServiceId = null;
@@ -202,15 +196,16 @@ function bindAppTabDrag(btn, service) {
 }
 
 function paintToolbarIcons() {
-  els.downloadsBtn.innerHTML = icon('download');
-  els.searchBtn.innerHTML = icon('search');
-  els.focusBtn.innerHTML = icon('focus');
-  els.menuBtn.innerHTML = asperaAppIconSvg(24);
-  els.addAppBtn.innerHTML = icon('plus');
+  if (els.downloadsBtn) els.downloadsBtn.innerHTML = icon('download');
+  if (els.extensionsBtn) els.extensionsBtn.innerHTML = icon('puzzle');
+  if (els.checkUpdatesBtn) els.checkUpdatesBtn.innerHTML = icon('sync');
+  if (els.menuBtn) els.menuBtn.innerHTML = asperaAppIconSvg(24);
+  if (els.lockBtn) els.lockBtn.innerHTML = icon('lock');
+  if (els.addAppBtn) els.addAppBtn.innerHTML = icon('plus');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
-  els.appMenuEdit.innerHTML = icon('settings');
+  if (els.appMenuEdit) els.appMenuEdit.innerHTML = icon('settings');
   if (els.appMenuHome) els.appMenuHome.innerHTML = icon('home');
-  els.appMenuReload.innerHTML = icon('sync');
+  if (els.appMenuReload) els.appMenuReload.innerHTML = icon('sync');
 
   // Brand surfaces
   const chromeWordmark = document.getElementById('chrome-wordmark');
@@ -419,16 +414,11 @@ function paintAppVersion() {
 function renderChromeActions() {
   const s = state.settings || {};
   const folder = String(s.downloadPath || '').trim();
-  els.downloadsBtn.title = folder
-    ? `Open Downloads folder\n${folder}`
-    : 'Open Downloads folder';
-  els.focusBtn.classList.toggle('on', !!s.focusMode);
-  els.focusBtn.title = s.focusMode
-    ? 'Focus on — Ctrl+Shift+D'
-    : 'Focus mode — Ctrl+Shift+D';
-  els.muteBtn.classList.toggle('on', !!s.muted);
-  els.muteBtn.innerHTML = icon(s.muted ? 'mute' : 'unmute');
-  els.muteBtn.title = s.muted ? 'Unmute — Ctrl+Shift+M' : 'Mute — Ctrl+Shift+M';
+  if (els.downloadsBtn) {
+    els.downloadsBtn.title = folder
+      ? `Open Downloads folder\n${folder}`
+      : 'Open Downloads folder';
+  }
 
   const total = state.totalUnread || 0;
   if (total > 0) {
@@ -436,6 +426,115 @@ function renderChromeActions() {
     els.globalBadge.textContent = total > 99 ? '99+' : String(total);
   } else {
     els.globalBadge.classList.add('hidden');
+  }
+  renderHubRails();
+}
+
+function makeHubChip({
+  name,
+  accountLabel,
+  unread,
+  color,
+  pinned = false,
+  onClick,
+  onContext,
+  onPin,
+  onUnpin,
+}) {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = `hub-chip${pinned ? ' hub-chip-pin' : ''}`;
+  const tip = accountLabel ? `${name} · ${accountLabel}` : name;
+  btn.title = pinned
+    ? `${tip}\nClick name to open · click Unpin to remove`
+    : `${tip}\nClick to open · Pin to keep in Hub (up to 10 — not WhatsApp’s 3)`;
+  const dot = document.createElement('span');
+  dot.className = 'hub-chip-dot';
+  dot.style.background = color || '#94a3b8';
+  dot.textContent = String(name || '?').slice(0, 1).toUpperCase();
+  const text = document.createElement('span');
+  text.className = 'hub-chip-text';
+  text.textContent = name || 'Chat';
+  btn.append(dot, text);
+  if (unread > 0) {
+    const badge = document.createElement('span');
+    badge.className = 'hub-chip-badge';
+    badge.textContent = unread > 99 ? '99+' : String(unread);
+    btn.appendChild(badge);
+  }
+  if (onPin && !pinned) {
+    const pinBtn = document.createElement('span');
+    pinBtn.className = 'hub-chip-pin-btn';
+    pinBtn.title = 'Pin in Aspera Hub (up to 10)';
+    pinBtn.textContent = 'Pin';
+    pinBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onPin();
+    });
+    btn.appendChild(pinBtn);
+  }
+  if (onUnpin && pinned) {
+    const unpinBtn = document.createElement('span');
+    unpinBtn.className = 'hub-chip-unpin-btn';
+    unpinBtn.title = 'Unpin from Aspera Hub';
+    unpinBtn.textContent = 'Unpin';
+    unpinBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onUnpin();
+    });
+    btn.appendChild(unpinBtn);
+  }
+  btn.addEventListener('click', onClick);
+  if (onContext) btn.addEventListener('contextmenu', onContext);
+  return btn;
+}
+
+function renderHubRails() {
+  if (!els.hubRails || !els.pinRail) return;
+  const pins = state.pinnedPeople || [];
+  const hasMessaging = (state.services || []).some(
+    (s) => s.appId === 'whatsapp' || s.appId === 'arattai',
+  );
+  // Hub pin strip — up to 10 important WhatsApp / Arattai chats.
+  els.hubRails.classList.toggle('hidden', !hasMessaging && !pins.length);
+
+  els.pinRail.innerHTML = '';
+  if (!pins.length) {
+    const empty = document.createElement('span');
+    empty.className = 'hub-chip-empty';
+    empty.textContent = 'Right-click a chat in WhatsApp/Arattai → Pin with Aspera Hub';
+    empty.title =
+      'Hub pins are separate from WhatsApp (max 3) and Arattai pins. You can pin up to 10 here.';
+    els.pinRail.appendChild(empty);
+    return;
+  }
+  for (const pin of pins) {
+    els.pinRail.appendChild(
+      makeHubChip({
+        name: pin.name,
+        accountLabel: getServiceById(pin.serviceId)?.title || pin.appId,
+        color: getServiceById(pin.serviceId)?.color,
+        pinned: true,
+        onClick: async () => {
+          const result = await window.asperadock.openInboxChat?.({
+            serviceId: pin.serviceId,
+            name: pin.name,
+            chatKey: pin.chatKey,
+            nativeId: pin.nativeId || '',
+          });
+          if (result && result.ok === false && result.error) alert(result.error);
+        },
+        onUnpin: async () => {
+          await window.asperadock.unpinPerson?.(pin.id);
+        },
+        onContext: async (e) => {
+          e.preventDefault();
+          await window.asperadock.unpinPerson?.(pin.id);
+        },
+      }),
+    );
   }
 }
 
@@ -597,6 +696,353 @@ function renderInstances() {
   }
 }
 
+function refreshAiRouteHint() {
+  const el = document.getElementById('ai-route-hint');
+  if (!el) return;
+  const order = state.ai?.routeOrder || [];
+  const providers = state.ai?.providers || [];
+  const custom = state.ai?.routeIsDefault === false;
+  if (!order.length) {
+    const anyEnabled = providers.some((p) => p.enabled !== false);
+    el.textContent = anyEnabled
+      ? 'No API keys on enabled providers — save a key, or enable a provider that already has one.'
+      : 'All providers are disabled — enable at least one in the failover order.';
+    return;
+  }
+  const names = order.map((id) => {
+    const p = providers.find((x) => x.id === id);
+    return p?.name || id;
+  });
+  const prefix = custom ? 'Your failover order' : 'Default failover';
+  el.textContent =
+    names.length === 1
+      ? `${prefix}: ${names[0]} only (used until it fails).`
+      : `${prefix}: ${names.join(' → ')}.`;
+}
+
+async function applyAiProviderRoute(next) {
+  const result = await window.asperadock.aiSetRoute?.(next);
+  if (!result?.ok) {
+    alert(result?.error || 'Could not update AI failover order');
+    return;
+  }
+  state = (await window.asperadock.getState?.()) || state;
+  renderAiProviderKeys();
+  refreshAiRouteHint();
+}
+
+async function moveAiProvider(providerId, delta) {
+  const order = [...(state.ai?.providerOrder || [])];
+  const idx = order.indexOf(providerId);
+  if (idx < 0) return;
+  const next = idx + delta;
+  if (next < 0 || next >= order.length) return;
+  const copy = [...order];
+  const [item] = copy.splice(idx, 1);
+  copy.splice(next, 0, item);
+  await applyAiProviderRoute({
+    order: copy,
+    disabledIds: state.ai?.disabledProviders || [],
+  });
+}
+
+async function setAiProviderEnabled(providerId, enabled) {
+  const disabled = new Set(state.ai?.disabledProviders || []);
+  if (enabled) disabled.delete(providerId);
+  else disabled.add(providerId);
+  await applyAiProviderRoute({
+    order: state.ai?.providerOrder || [],
+    disabledIds: [...disabled],
+  });
+}
+
+/** Providers currently showing the key input (new key or edit). */
+const aiKeyEditMode = new Set();
+
+function renderAiProviderKeys() {
+  const root = document.getElementById('ai-provider-keys');
+  if (!root) return;
+  const providers = state.ai?.providers || [];
+  root.replaceChildren();
+
+  for (const provider of providers) {
+    const row = document.createElement('div');
+    row.className = 'ai-provider-key-row';
+    row.dataset.providerId = provider.id;
+    if (provider.enabled === false) row.classList.add('is-disabled');
+
+    const head = document.createElement('div');
+    head.className = 'ai-provider-key-head';
+
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'ai-provider-key-title-wrap';
+    const enableLabel = document.createElement('label');
+    enableLabel.className = 'ai-provider-enable';
+    enableLabel.title = 'Use this provider in failover';
+    const enable = document.createElement('input');
+    enable.type = 'checkbox';
+    enable.checked = provider.enabled !== false;
+    enable.setAttribute('aria-label', `Enable ${provider.name} in failover`);
+    enable.addEventListener('change', () => {
+      setAiProviderEnabled(provider.id, enable.checked).catch(() => {});
+    });
+    const title = document.createElement('div');
+    title.className = 'ai-provider-key-title';
+    title.textContent = provider.name;
+    enableLabel.append(enable, title);
+    titleWrap.append(enableLabel);
+
+    const controls = document.createElement('div');
+    controls.className = 'ai-provider-route-controls';
+    const upBtn = document.createElement('button');
+    upBtn.type = 'button';
+    upBtn.className = 'ghost-btn ai-route-move';
+    upBtn.textContent = '↑';
+    upBtn.title = 'Try earlier';
+    upBtn.setAttribute('aria-label', `Move ${provider.name} earlier`);
+    upBtn.disabled = provider.routeIndex === 0;
+    upBtn.addEventListener('click', () => {
+      moveAiProvider(provider.id, -1).catch(() => {});
+    });
+    const downBtn = document.createElement('button');
+    downBtn.type = 'button';
+    downBtn.className = 'ghost-btn ai-route-move';
+    downBtn.textContent = '↓';
+    downBtn.title = 'Try later';
+    downBtn.setAttribute('aria-label', `Move ${provider.name} later`);
+    downBtn.disabled = provider.routeIndex >= providers.length - 1;
+    downBtn.addEventListener('click', () => {
+      moveAiProvider(provider.id, 1).catch(() => {});
+    });
+    const badge = document.createElement('div');
+    badge.className = 'ai-provider-key-badge';
+    if (provider.enabled === false) {
+      badge.textContent = 'Disabled';
+    } else if (!provider.configured) {
+      badge.textContent = provider.tryOrdinal
+        ? `Tried ${provider.tryOrdinal} · needs key`
+        : 'Needs key';
+    } else if (provider.tryOrdinal) {
+      badge.textContent =
+        provider.tryOrdinal === '1st'
+          ? `Tried ${provider.tryOrdinal} · first`
+          : `Tried ${provider.tryOrdinal}`;
+    } else {
+      badge.textContent = 'In order';
+    }
+    controls.append(upBtn, downBtn, badge);
+    head.append(titleWrap, controls);
+
+    const status = document.createElement('p');
+    status.className = 'ai-provider-key-status';
+    const editing = aiKeyEditMode.has(provider.id);
+    if (provider.configured && !editing) {
+      status.classList.add('is-saved');
+      status.textContent = 'API key saved';
+    } else if (provider.configured && editing) {
+      status.textContent = 'Enter a new key to replace the saved one.';
+    } else {
+      status.textContent = 'No API key saved';
+    }
+
+    const hint = document.createElement('p');
+    hint.className = 'ai-provider-key-hint';
+    hint.textContent = provider.keyHint || '';
+
+    const actions = document.createElement('div');
+    actions.className = 'ai-provider-key-actions';
+
+    if (provider.configured && !editing) {
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'ghost-btn';
+      editBtn.textContent = 'Edit';
+      editBtn.addEventListener('click', () => {
+        aiKeyEditMode.add(provider.id);
+        renderAiProviderKeys();
+      });
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'ghost-btn';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.addEventListener('click', async () => {
+        if (!confirm(`Delete the saved API key for ${provider.name}?`)) return;
+        await window.asperadock.aiClearKey?.(provider.id);
+        aiKeyEditMode.delete(provider.id);
+        state = (await window.asperadock.getState?.()) || state;
+        renderAiProviderKeys();
+        refreshAiRouteHint();
+      });
+      actions.append(editBtn, deleteBtn);
+    } else {
+      const input = document.createElement('input');
+      input.type = 'password';
+      input.autocomplete = 'off';
+      input.placeholder = provider.configured
+        ? 'Paste new API key'
+        : 'Paste API key';
+      input.setAttribute('aria-label', `${provider.name} API key`);
+
+      const saveBtn = document.createElement('button');
+      saveBtn.type = 'button';
+      saveBtn.className = 'ghost-btn';
+      saveBtn.textContent = 'Save';
+      saveBtn.addEventListener('click', async () => {
+        const apiKey = input.value || '';
+        if (!apiKey.trim()) {
+          alert('Paste an API key first.');
+          return;
+        }
+        const result = await window.asperadock.aiSetKey?.(provider.id, apiKey);
+        if (!result?.ok) {
+          alert(result?.error || 'Could not save API key');
+          return;
+        }
+        aiKeyEditMode.delete(provider.id);
+        input.value = '';
+        state = (await window.asperadock.getState?.()) || state;
+        renderAiProviderKeys();
+        refreshAiRouteHint();
+      });
+
+      actions.append(input, saveBtn);
+
+      if (provider.configured && editing) {
+        const cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'ghost-btn';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.addEventListener('click', () => {
+          aiKeyEditMode.delete(provider.id);
+          renderAiProviderKeys();
+        });
+        actions.append(cancelBtn);
+      }
+    }
+
+    if (provider.configured) {
+      const modelWrap = document.createElement('div');
+      modelWrap.className = 'ai-provider-model';
+      const modelLabel = document.createElement('label');
+      modelLabel.className = 'ai-provider-model-label';
+      modelLabel.textContent = 'Model';
+      const modelRow = document.createElement('div');
+      modelRow.className = 'ai-provider-model-row';
+      const select = document.createElement('select');
+      select.setAttribute('aria-label', `${provider.name} model`);
+      const autoOpt = document.createElement('option');
+      autoOpt.value = 'auto';
+      autoOpt.textContent = 'Auto (best available for this key)';
+      select.appendChild(autoOpt);
+      const selected = provider.selectedModel || 'auto';
+      const models = Array.isArray(provider.availableModels)
+        ? provider.availableModels
+        : [];
+      let hasSelected = selected === 'auto';
+      for (const m of models) {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.name && m.name !== m.id ? `${m.name} (${m.id})` : m.id;
+        select.appendChild(opt);
+        if (m.id === selected) hasSelected = true;
+      }
+      if (selected !== 'auto' && !hasSelected) {
+        const opt = document.createElement('option');
+        opt.value = selected;
+        opt.textContent = selected;
+        select.appendChild(opt);
+      }
+      select.value = selected || 'auto';
+      select.addEventListener('change', async () => {
+        const result = await window.asperadock.aiSetModel?.(
+          provider.id,
+          select.value,
+        );
+        if (!result?.ok) {
+          alert(result?.error || 'Could not save model');
+          return;
+        }
+        state = (await window.asperadock.getState?.()) || state;
+        renderAiProviderKeys();
+      });
+      const refreshBtn = document.createElement('button');
+      refreshBtn.type = 'button';
+      refreshBtn.className = 'ghost-btn';
+      refreshBtn.textContent = provider.modelsLive ? 'Refresh models' : 'Load models';
+      refreshBtn.addEventListener('click', async () => {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = 'Loading…';
+        try {
+          const result = await window.asperadock.aiListModels?.(provider.id);
+          if (result && result.ok === false && result.error) {
+            alert(
+              `Could not load live models for ${provider.name}.\n${result.error}\n\nShowing catalog fallback.`,
+            );
+          }
+          state = (await window.asperadock.getState?.()) || state;
+          renderAiProviderKeys();
+        } catch (error) {
+          alert(String(error?.message || error));
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = 'Load models';
+        }
+      });
+      modelRow.append(select, refreshBtn);
+      modelWrap.append(modelLabel, modelRow);
+      row.append(head, status, hint, actions, modelWrap);
+    } else {
+      row.append(head, status, hint, actions);
+    }
+    root.appendChild(row);
+  }
+
+  const resetBtn = document.getElementById('ai-reset-route-btn');
+  if (resetBtn && !resetBtn.dataset.bound) {
+    resetBtn.dataset.bound = '1';
+    resetBtn.addEventListener('click', async () => {
+      const result = await window.asperadock.aiResetRoute?.();
+      if (!result?.ok) {
+        alert(result?.error || 'Could not reset failover order');
+        return;
+      }
+      state = (await window.asperadock.getState?.()) || state;
+      renderAiProviderKeys();
+      refreshAiRouteHint();
+    });
+  }
+  if (resetBtn) {
+    resetBtn.disabled = state.ai?.routeIsDefault !== false;
+    resetBtn.title =
+      state.ai?.routeIsDefault === false
+        ? 'Restore built-in Gemini → … → Anthropic order and re-enable all'
+        : 'Already using the default failover order';
+  }
+
+  refreshAiRouteHint();
+}
+
+const SETTINGS_DRAWER_WIDTH = 720;
+const EDIT_DRAWER_WIDTH = 440;
+
+function showSettingsPanel(panelId = 'general') {
+  const id = panelId || 'general';
+  document.querySelectorAll('.settings-nav-btn').forEach((btn) => {
+    btn.classList.toggle('active', btn.dataset.settingsPanel === id);
+  });
+  document.querySelectorAll('.settings-panel').forEach((panel) => {
+    const on = panel.dataset.panel === id;
+    panel.classList.toggle('active', on);
+    if (on) panel.removeAttribute('hidden');
+    else panel.setAttribute('hidden', '');
+  });
+  const body = document.querySelector('#settings-modal .settings-body');
+  if (body) body.scrollTop = 0;
+}
+
+function openAiSettings() {
+  openSettings('ai');
+}
+
 function fillSettingsForm() {
   const s = state.settings || {};
   draft = { ...s };
@@ -628,11 +1074,15 @@ function fillSettingsForm() {
   set('set-lock-enabled', String(!!s.lockEnabled));
   set('set-lock-password', '');
   set('set-lock-idle', s.lockOnSystemIdle);
+  set('set-ai-enabled', s.aiEnabled !== false);
+  set('set-ai-language', s.aiLanguage || 'en');
+  aiKeyEditMode.clear();
+  renderAiProviderKeys();
   set('set-proxy-mode', s.proxyMode || 'none');
   set('set-proxy-rules', s.proxyRules || '');
   set('set-proxy-bypass', s.proxyBypass ?? '<local>');
   set('set-hibernate', s.hibernateMinutes ?? 30);
-  set('set-max-warm', Math.min(5, s.maxWarmViews ?? 5));
+  set('set-max-warm', Math.min(7, s.maxWarmViews ?? 5));
   set('set-low-memory', s.lowMemoryMode === true);
   set('set-consumption', s.consumptionMonitor);
   set('set-error-reporting', s.errorReportingEnabled !== false);
@@ -685,11 +1135,13 @@ function readSettingsForm() {
     confirmQuit: checked('set-confirm-quit'),
     lockEnabled: val('set-lock-enabled') === 'true',
     lockOnSystemIdle: checked('set-lock-idle'),
+    aiEnabled: checked('set-ai-enabled'),
+    aiLanguage: val('set-ai-language'),
     proxyMode: val('set-proxy-mode'),
     proxyRules: val('set-proxy-rules').trim(),
     proxyBypass: val('set-proxy-bypass').trim() || '<local>',
     hibernateMinutes: Number(val('set-hibernate')) || 2,
-    maxWarmViews: Math.min(5, Math.max(1, Number(val('set-max-warm')) || 5)),
+    maxWarmViews: Math.min(7, Math.max(1, Number(val('set-max-warm')) || 5)),
     lowMemoryMode: checked('set-low-memory'),
     consumptionMonitor: checked('set-consumption'),
     errorReportingEnabled: checked('set-error-reporting'),
@@ -715,9 +1167,112 @@ function readSettingsForm() {
   return patch;
 }
 
+function stopShortcutCapture({ restore = true } = {}) {
+  if (shortcutCaptureHandler) {
+    window.removeEventListener('keydown', shortcutCaptureHandler, true);
+    shortcutCaptureHandler = null;
+  }
+  const activeId = shortcutCaptureId;
+  shortcutCaptureId = null;
+  if (restore && activeId) {
+    const btn = els.shortcutsList?.querySelector(`[data-bind="${activeId}"]`);
+    if (btn) {
+      btn.classList.remove('recording');
+      const entry = normalizeShortcutEntry(
+        activeId,
+        readShortcutsForm().shortcuts[activeId],
+      );
+      btn.textContent = formatAccel(entry.accel, { kind: entry.kind });
+      btn.title = 'Click to set a new shortcut';
+    }
+  }
+}
+
+function startShortcutCapture(id, button) {
+  stopShortcutCapture({ restore: true });
+  shortcutCaptureId = id;
+  button.classList.add('recording');
+  button.textContent = 'Press keys…';
+  button.title = 'Press the new shortcut (Esc to cancel)';
+
+  shortcutCaptureHandler = (event) => {
+    if (shortcutCaptureId !== id) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      stopShortcutCapture({ restore: true });
+      return;
+    }
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      // Reset this shortcut to its default accel.
+      const defaults = migrateShortcutsMap({});
+      button.dataset.accel = defaults[id].accel;
+      button.classList.remove('recording');
+      button.textContent = formatAccel(defaults[id].accel, {
+        kind: defaults[id].kind,
+      });
+      stopShortcutCapture({ restore: false });
+      validateShortcutsForm();
+      return;
+    }
+    const accel = accelFromKeyEvent(event);
+    if (!accel) return;
+    button.dataset.accel = accel;
+    button.classList.remove('recording');
+    const kind = normalizeShortcutEntry(id, { enabled: true, accel }).kind;
+    button.textContent = formatAccel(accel, { kind });
+    button.title = 'Click to set a new shortcut';
+    stopShortcutCapture({ restore: false });
+    validateShortcutsForm();
+  };
+  window.addEventListener('keydown', shortcutCaptureHandler, true);
+}
+
+function validateShortcutsForm() {
+  const { shortcuts } = readShortcutsForm();
+  const conflicts = findShortcutConflicts(shortcuts);
+  const err = document.getElementById('shortcuts-error');
+  els.shortcutsList?.querySelectorAll('.shortcut-row').forEach((row) => {
+    row.classList.remove('conflict');
+  });
+  if (!conflicts.length) {
+    if (err) err.textContent = '';
+    if (els.shortcutsSave) els.shortcutsSave.disabled = false;
+    return true;
+  }
+  for (const c of conflicts) {
+    for (const id of [c.a, c.b]) {
+      if (!id || id === 'reserved') continue;
+      const row = els.shortcutsList?.querySelector(`[data-shortcut-row="${id}"]`);
+      row?.classList.add('conflict');
+    }
+  }
+  if (err) {
+    const first = conflicts[0];
+    err.textContent = first.reserved
+      ? `“${formatAccel(first.accel)}” is reserved by the system. Choose another.`
+      : `Conflict: two actions share the same keys. Change one of them.`;
+  }
+  if (els.shortcutsSave) els.shortcutsSave.disabled = true;
+  return false;
+}
+
 function fillShortcutsForm() {
-  const enabled = state.settings?.shortcuts || {};
+  stopShortcutCapture({ restore: false });
+  const map = migrateShortcutsMap(state.settings?.shortcuts || {});
   els.shortcutsList.innerHTML = '';
+
+  const hint = document.createElement('p');
+  hint.className = 'hint-text shortcuts-hint';
+  hint.textContent =
+    'Click a key combo to change it. Use Ctrl/Alt/Shift + a key. Esc cancels, Backspace resets to default.';
+  els.shortcutsList.appendChild(hint);
+
+  const err = document.createElement('p');
+  err.id = 'shortcuts-error';
+  err.className = 'error shortcuts-error';
+  els.shortcutsList.appendChild(err);
+
   for (const group of SHORTCUT_DEFS) {
     const rule = document.createElement('div');
     rule.className = 'section-rule';
@@ -727,24 +1282,45 @@ function fillShortcutsForm() {
     const grid = document.createElement('div');
     grid.className = 'shortcut-grid';
     for (const item of group.items) {
-      const row = document.createElement('label');
+      const entry = map[item.id] || normalizeShortcutEntry(item.id, true);
+      const row = document.createElement('div');
       row.className = 'shortcut-row';
+      row.dataset.shortcutRow = item.id;
       row.innerHTML = `
-        <input type="checkbox" data-shortcut="${item.id}" ${enabled[item.id] !== false ? 'checked' : ''} />
-        <span class="shortcut-label">${item.label}</span>
-        <kbd>${item.keys}</kbd>`;
+        <input type="checkbox" data-shortcut="${item.id}" ${entry.enabled ? 'checked' : ''} />
+        <span class="shortcut-label">
+          <span class="shortcut-label-text">${item.label}</span>
+          ${item.hint ? `<span class="shortcut-hint">${item.hint}</span>` : ''}
+        </span>
+        <button type="button" class="shortcut-bind" data-bind="${item.id}" data-accel="${entry.accel}" title="Click to set a new shortcut">${formatAccel(entry.accel, { kind: entry.kind })}</button>`;
       grid.appendChild(row);
     }
     els.shortcutsList.appendChild(grid);
   }
+
+  els.shortcutsList.querySelectorAll('[data-bind]').forEach((btn) => {
+    btn.addEventListener('click', (event) => {
+      event.preventDefault();
+      startShortcutCapture(btn.dataset.bind, btn);
+    });
+  });
+  els.shortcutsList.querySelectorAll('input[data-shortcut]').forEach((input) => {
+    input.addEventListener('change', () => validateShortcutsForm());
+  });
+  validateShortcutsForm();
 }
 
 function readShortcutsForm() {
-  const shortcuts = { ...(state.settings?.shortcuts || {}) };
+  const base = migrateShortcutsMap(state.settings?.shortcuts || {});
   for (const input of els.shortcutsList.querySelectorAll('input[data-shortcut]')) {
-    shortcuts[input.dataset.shortcut] = input.checked;
+    const id = input.dataset.shortcut;
+    const btn = els.shortcutsList.querySelector(`[data-bind="${id}"]`);
+    base[id] = {
+      enabled: !!input.checked,
+      accel: btn?.dataset.accel || base[id].accel,
+    };
   }
-  return { shortcuts };
+  return { shortcuts: migrateShortcutsMap(base) };
 }
 
 function anyOverlayOpen() {
@@ -755,54 +1331,59 @@ function anyOverlayOpen() {
     !els.profilesModal?.classList.contains('hidden') ||
     !els.profileNameModal?.classList.contains('hidden') ||
     !els.customAppModal?.classList.contains('hidden') ||
-    !els.appMenu.classList.contains('hidden') ||
     !els.shortcutsModal.classList.contains('hidden') ||
-    !els.chromeMenu.classList.contains('hidden') ||
-    !els.notifCenter.classList.contains('hidden') ||
     state.locked
   );
 }
 
+/** Rambox-style overlays: keep guest app visible whenever possible. */
 function syncOverlayFromModals() {
-  window.asperadock.setOverlay(anyOverlayOpen());
+  const lockedOpen = !!state.locked;
+  const fullOpen =
+    lockedOpen ||
+    !els.searchModal.classList.contains('hidden') ||
+    !els.shortcutsModal.classList.contains('hidden') ||
+    !els.profileNameModal?.classList.contains('hidden') ||
+    !els.customAppModal?.classList.contains('hidden');
+  const drawerOpen =
+    !els.settingsModal.classList.contains('hidden') ||
+    !els.editAppModal.classList.contains('hidden') ||
+    !els.profilesModal?.classList.contains('hidden');
+
+  if (fullOpen) {
+    window.asperadock.setOverlay({ open: true, mode: 'full' });
+    return;
+  }
+  if (drawerOpen) {
+    const settingsOpen = !els.settingsModal.classList.contains('hidden');
+    const drawerWidth = settingsOpen ? SETTINGS_DRAWER_WIDTH : EDIT_DRAWER_WIDTH;
+    window.asperadock.setOverlay({
+      open: true,
+      mode: 'drawer',
+      rightInset: Math.min(drawerWidth, Math.round(window.innerWidth * 0.94)),
+    });
+    return;
+  }
+  window.asperadock.setOverlay({ open: false });
 }
 
 function closeAppMenu() {
-  els.appMenu.classList.add('hidden');
   menuServiceId = null;
-  syncOverlayFromModals();
+  // Keep legacy in-page node hidden; real menu is a floating child window.
+  els.appMenu?.classList.add('hidden');
+  window.asperadock.closeAppMenu?.();
 }
 
 function openAppMenu(service, x, y) {
   menuServiceId = service.id;
-  const cfg = service.config || {};
-  els.appMenuTitle.textContent = service.name;
-  els.appMenuEnabled.checked = cfg.enabled !== false;
-  els.appMenuSound.checked = cfg.allowSounds !== false;
-  els.appMenuNotifications.checked = cfg.allowNotifications !== false;
-  if (els.appMenuWarm) {
-    els.appMenuWarm.checked = cfg.keepWarm === true;
-    els.appMenuWarm.disabled = false;
-  }
-
-  els.appMenu.classList.remove('hidden');
-  els.appMenu.style.left = '0px';
-  els.appMenu.style.top = '0px';
-  window.asperadock.setOverlay(true);
-
-  requestAnimationFrame(() => {
-    const pad = 8;
-    const rect = els.appMenu.getBoundingClientRect();
-    let left = x;
-    let top = y;
-    if (left + rect.width > window.innerWidth - pad) {
-      left = window.innerWidth - rect.width - pad;
-    }
-    if (top + rect.height > window.innerHeight - pad) {
-      top = window.innerHeight - rect.height - pad;
-    }
-    els.appMenu.style.left = `${Math.max(pad, left)}px`;
-    els.appMenu.style.top = `${Math.max(pad, top)}px`;
+  els.appMenu?.classList.add('hidden');
+  // Guest WebContentsView always paints above dock HTML — float a child window
+  // so the menu sits on top without shifting/resizing the running app (Rambox).
+  window.asperadock.openAppMenu?.({
+    serviceId: service.id,
+    x,
+    y,
+    dark: document.body.classList.contains('theme-dark'),
   });
 }
 
@@ -868,7 +1449,7 @@ function openEditApp(id) {
 
   fillProfileSelect(service.profileId);
   els.editAppModal.classList.remove('hidden');
-  window.asperadock.setOverlay(true);
+  syncOverlayFromModals();
 }
 
 function fillProfileSelect(selectedId) {
@@ -999,7 +1580,7 @@ function openProfiles() {
   closeEditApp();
   renderProfiles();
   els.profilesModal.classList.remove('hidden');
-  window.asperadock.setOverlay(true);
+  syncOverlayFromModals();
 }
 
 function closeProfiles() {
@@ -1028,7 +1609,7 @@ function askProfileName({ title = 'New profile', initial = '' } = {}) {
     els.profileNameInput.value = initial || '';
     els.profileNameInput.placeholder = "Profile's name";
     els.profileNameModal.classList.remove('hidden');
-    window.asperadock.setOverlay(true);
+    syncOverlayFromModals();
     requestAnimationFrame(() => {
       els.profileNameInput.focus();
       els.profileNameInput.select();
@@ -1050,22 +1631,17 @@ async function createProfilePrompt(defaultName = '') {
   return result.profile;
 }
 
-function openSettings() {
+function openSettings(panelId = 'general') {
   closeAppMenu();
   closeChromeMenu();
   fillSettingsForm();
+  showSettingsPanel(panelId);
   els.settingsModal.classList.remove('hidden');
-  window.asperadock.setOverlay(true);
+  syncOverlayFromModals();
 }
 
 function openAppsSettings() {
-  openSettings();
-  requestAnimationFrame(() => {
-    document.getElementById('catalog-list')?.scrollIntoView({
-      behavior: 'smooth',
-      block: 'start',
-    });
-  });
+  openSettings('apps');
 }
 
 function openShortcuts() {
@@ -1073,54 +1649,144 @@ function openShortcuts() {
   closeChromeMenu();
   fillShortcutsForm();
   els.shortcutsModal.classList.remove('hidden');
-  window.asperadock.setOverlay(true);
+  syncOverlayFromModals();
 }
 
 function closeShortcuts() {
+  stopShortcutCapture({ restore: false });
   els.shortcutsModal.classList.add('hidden');
   syncOverlayFromModals();
 }
 
 function closeNotificationCenter() {
-  els.notifCenter.classList.add('hidden');
-  syncOverlayFromModals();
+  els.notifCenter?.classList.add('hidden');
+  window.asperadock.closeNotifCenter?.();
 }
 
 function openNotificationCenter() {
   closeAppMenu();
-  closeChromeMenu();
-  renderNotificationCenter();
-  els.notifCenter.classList.remove('hidden');
-  window.asperadock.setOverlay(true);
+  els.notifCenter?.classList.add('hidden');
+  const btn = els.notifBtn?.getBoundingClientRect?.();
+  window.asperadock.openNotifCenter?.({
+    x: btn ? btn.right : window.innerWidth - 16,
+    y: btn ? btn.bottom + 6 : 64,
+    align: 'right',
+    dark: document.body.classList.contains('theme-dark'),
+  });
 }
 
 function toggleNotificationCenter() {
-  if (els.notifCenter.classList.contains('hidden')) openNotificationCenter();
-  else closeNotificationCenter();
+  closeAppMenu();
+  els.notifCenter?.classList.add('hidden');
+  const btn = els.notifBtn?.getBoundingClientRect?.();
+  window.asperadock.toggleNotifCenter?.({
+    x: btn ? btn.right : window.innerWidth - 16,
+    y: btn ? btn.bottom + 6 : 64,
+    align: 'right',
+    dark: document.body.classList.contains('theme-dark'),
+  });
 }
 
 function closeChromeMenu() {
-  els.chromeMenu.classList.add('hidden');
-  syncOverlayFromModals();
+  els.chromeMenu?.classList.add('hidden');
+  window.asperadock.closeChromeMenu?.();
 }
 
 function openChromeMenu() {
   closeAppMenu();
-  closeNotificationCenter();
-  els.chromeMenu.classList.remove('hidden');
-  // BrowserView paints above HTML — hide it while the ⋮ menu is open.
-  window.asperadock.setOverlay(true);
+  els.chromeMenu?.classList.add('hidden');
+  const btn = els.menuBtn?.getBoundingClientRect?.();
+  window.asperadock.openChromeMenu?.({
+    x: btn ? btn.right : window.innerWidth - 16,
+    y: btn ? btn.bottom + 6 : 64,
+    align: 'right',
+    dark: document.body.classList.contains('theme-dark'),
+  });
 }
 
 function toggleChromeMenu() {
-  if (els.chromeMenu.classList.contains('hidden')) openChromeMenu();
-  else closeChromeMenu();
+  closeAppMenu();
+  els.chromeMenu?.classList.add('hidden');
+  const btn = els.menuBtn?.getBoundingClientRect?.();
+  window.asperadock.toggleChromeMenu?.({
+    x: btn ? btn.right : window.innerWidth - 16,
+    y: btn ? btn.bottom + 6 : 64,
+    align: 'right',
+    dark: document.body.classList.contains('theme-dark'),
+  });
+}
+
+async function ensureLockPasswordConfigured() {
+  if (state.settings?.lockEnabled && state.settings?.hasLockPassword) {
+    return true;
+  }
+
+  const password = window.prompt(
+    'Set a password to lock Aspera Hub when you step away.\n\nEnter a new password:',
+  );
+  if (password == null) return false;
+  if (!String(password).trim()) {
+    alert('Password cannot be empty.');
+    return false;
+  }
+  const confirm = window.prompt('Confirm password:');
+  if (confirm == null) return false;
+  if (password !== confirm) {
+    alert('Passwords do not match.');
+    return false;
+  }
+  await window.asperadock.saveSettings({
+    lockEnabled: true,
+    lockPassword: password,
+  });
+  return true;
+}
+
+async function lockHubFromUi() {
+  if (state.locked) return;
+  const ready = await ensureLockPasswordConfigured();
+  if (!ready) return;
+  const result = await window.asperadock.lock();
+  if (!result?.ok) {
+    if (result?.needSetup) {
+      alert('Set a lock password in Settings → Security, then try again.');
+      openSettings('security');
+      return;
+    }
+    alert(result?.error || 'Could not lock Aspera Hub.');
+  }
+}
+
+function handleChromeAction(action) {
+  if (action === 'search') openSearch();
+  if (action === 'settings') openSettings();
+  if (action === 'ai-settings') openAiSettings();
+  if (action === 'profiles') openProfiles();
+  if (action === 'shortcuts') openShortcuts();
+  if (action === 'lock') lockHubFromUi();
+  if (action === 'add-app') openAppsSettings();
+  if (action === 'catch-up') {
+    window.asperadock.aiCatchUp?.({
+      dark: document.body.classList.contains('theme-dark'),
+    });
+  }
+  if (action === 'summarize') {
+    window.asperadock.aiSummarize?.({
+      dark: document.body.classList.contains('theme-dark'),
+    });
+  }
+  if (action === 'check-updates') {
+    runUpdateCheck();
+  }
 }
 
 function closeSettings() {
   els.settingsModal.classList.add('hidden');
   syncOverlayFromModals();
 }
+
+let searchChatTimer = null;
+let searchChatToken = 0;
 
 function openSearch() {
   closeAppMenu();
@@ -1129,12 +1795,23 @@ function openSearch() {
   els.searchInput.value = '';
   renderSearch('');
   els.searchInput.focus();
-  window.asperadock.setOverlay(true);
+  syncOverlayFromModals();
 }
 
 function closeSearch() {
   els.searchModal.classList.add('hidden');
+  if (searchChatTimer) {
+    clearTimeout(searchChatTimer);
+    searchChatTimer = null;
+  }
   syncOverlayFromModals();
+}
+
+function appendSearchSection(label) {
+  const li = document.createElement('li');
+  li.className = 'search-section';
+  li.textContent = label;
+  els.searchResults.appendChild(li);
 }
 
 function renderSearch(query) {
@@ -1144,25 +1821,104 @@ function renderSearch(query) {
     return !q || hay.includes(q);
   });
   els.searchResults.innerHTML = '';
+  appendSearchSection('Apps');
   if (!matches.length) {
-    els.searchResults.innerHTML =
-      '<li class="search-empty">No apps yet — click + to add one</li>';
-    return;
-  }
-  matches.forEach((service, index) => {
-    const li = document.createElement('li');
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    if (index === 0) btn.classList.add('active');
-    btn.innerHTML = `${logoHtml(service.logo, (service.name || '?').slice(0, 1), service.color)}<span>${service.title || service.name}</span>`;
-    btn.querySelector('svg')?.classList.add('search-logo');
-    btn.addEventListener('click', async () => {
-      await window.asperadock.activate(service.id);
-      closeSearch();
+    const empty = document.createElement('li');
+    empty.className = 'search-empty';
+    empty.textContent = 'No matching apps';
+    els.searchResults.appendChild(empty);
+  } else {
+    matches.forEach((service, index) => {
+      const li = document.createElement('li');
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      if (index === 0 && !q) btn.classList.add('active');
+      btn.innerHTML = `${logoHtml(service.logo, (service.name || '?').slice(0, 1), service.color)}<span>${service.title || service.name}</span>`;
+      btn.querySelector('svg')?.classList.add('search-logo');
+      btn.addEventListener('click', async () => {
+        await window.asperadock.activate(service.id);
+        closeSearch();
+      });
+      li.appendChild(btn);
+      els.searchResults.appendChild(li);
     });
-    li.appendChild(btn);
-    els.searchResults.appendChild(li);
-  });
+  }
+
+  appendSearchSection('Chats');
+  const chatPlaceholder = document.createElement('li');
+  chatPlaceholder.className = 'search-empty';
+  chatPlaceholder.dataset.role = 'chat-results';
+  chatPlaceholder.textContent = q
+    ? 'Searching names & message text across open accounts…'
+    : 'Search chat names or recent message text in WhatsApp & Arattai';
+  els.searchResults.appendChild(chatPlaceholder);
+
+  if (searchChatTimer) clearTimeout(searchChatTimer);
+  const token = ++searchChatToken;
+  if (!q) return;
+  searchChatTimer = setTimeout(async () => {
+    try {
+      const result = await window.asperadock.searchChats?.(query.trim());
+      if (token !== searchChatToken) return;
+      const chats = result?.chats || [];
+      const host = els.searchResults.querySelector('[data-role="chat-results"]');
+      if (!host) return;
+      if (!chats.length) {
+        host.textContent =
+          'No matching chats or recent message text in open accounts. Open the chat (or keep it in the list) and try a shorter phrase.';
+        return;
+      }
+      host.remove();
+      for (const chat of chats) {
+        const li = document.createElement('li');
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        const matchLabel =
+          chat.match === 'message'
+            ? 'Message'
+            : chat.match === 'preview'
+              ? 'Recent message'
+              : 'Chat';
+        btn.innerHTML = logoHtml(
+          chat.logo,
+          (chat.name || '?').slice(0, 1),
+          chat.color,
+        );
+        const span = document.createElement('span');
+        const title = document.createElement('strong');
+        title.style.fontWeight = '700';
+        title.textContent = chat.name || 'Chat';
+        const meta = document.createElement('small');
+        meta.style.cssText = 'display:block;opacity:.65;font-weight:500';
+        meta.textContent = [chat.accountLabel, matchLabel].filter(Boolean).join(' · ');
+        span.append(title, meta);
+        if (chat.snippet) {
+          const snip = document.createElement('small');
+          snip.style.cssText =
+            'display:block;opacity:.75;font-weight:500;margin-top:2px';
+          snip.textContent = chat.snippet;
+          span.appendChild(snip);
+        }
+        btn.appendChild(span);
+        btn.querySelector('svg')?.classList.add('search-logo');
+        btn.addEventListener('click', async () => {
+          await window.asperadock.openInboxChat?.({
+            serviceId: chat.serviceId,
+            name: chat.name,
+            chatKey: chat.chatKey,
+          });
+          closeSearch();
+        });
+        li.appendChild(btn);
+        els.searchResults.appendChild(li);
+      }
+    } catch {
+      const host = els.searchResults.querySelector('[data-role="chat-results"]');
+      if (host && token === searchChatToken) {
+        host.textContent = 'Chat search unavailable';
+      }
+    }
+  }, 220);
 }
 
 function renderLock() {
@@ -1171,7 +1927,7 @@ function renderLock() {
     els.lockPassword.value = '';
     els.lockError.textContent = '';
     els.lockPassword.focus();
-    window.asperadock.setOverlay(true);
+    syncOverlayFromModals();
   } else {
     els.lockScreen.classList.add('hidden');
     syncOverlayFromModals();
@@ -1190,36 +1946,54 @@ function render() {
     renderInstances();
   }
   if (!els.profilesModal?.classList.contains('hidden')) renderProfiles();
-  if (!els.notifCenter.classList.contains('hidden')) renderNotificationCenter();
   requestAnimationFrame(reportChromeSize);
 }
 
-els.focusBtn.addEventListener('click', () => window.asperadock.toggleFocus());
-els.muteBtn.addEventListener('click', () => window.asperadock.toggleMute());
-els.downloadsBtn.addEventListener('click', async () => {
+function runUpdateCheck() {
+  setUpdateStatus('Checking for updates…');
+  return Promise.resolve(window.asperadock.updateCheck?.())
+    .catch((err) => setUpdateStatus(`Update error: ${err?.message || err}`))
+    .finally(() => refreshUpdateStatus());
+}
+
+els.downloadsBtn?.addEventListener('click', async () => {
   const result = await window.asperadock.openDownloads?.();
   if (result && !result.ok) {
     alert(`Could not open Downloads folder.\n${result.error || result.path || ''}`);
   }
+});
+els.extensionsBtn?.addEventListener('click', () => {
+  window.asperadock.openExtensions?.({
+    dark: document.body.classList.contains('theme-dark'),
+  });
+});
+els.checkUpdatesBtn?.addEventListener('click', () => {
+  runUpdateCheck();
 });
 els.menuBtn.addEventListener('click', (event) => {
   event.stopPropagation();
   toggleChromeMenu();
 });
 els.settingsClose.addEventListener('click', closeSettings);
-els.searchBtn.addEventListener('click', openSearch);
+els.settingsModal?.querySelector('.settings-nav')?.addEventListener('click', (event) => {
+  const btn = event.target.closest('[data-settings-panel]');
+  if (!btn) return;
+  showSettingsPanel(btn.dataset.settingsPanel);
+});
+els.lockBtn?.addEventListener('click', () => {
+  lockHubFromUi();
+});
 els.addAppBtn.addEventListener('click', openAppsSettings);
 els.emptyAddBtn.addEventListener('click', openAppsSettings);
 
-els.chromeMenu.addEventListener('click', (event) => {
+els.chromeMenu?.addEventListener('click', (event) => {
   const btn = event.target.closest('[data-action]');
   if (!btn) return;
   const action = btn.dataset.action;
   closeChromeMenu();
-  if (action === 'settings') openSettings();
-  if (action === 'profiles') openProfiles();
-  if (action === 'shortcuts') openShortcuts();
-  if (action === 'add-app') openAppsSettings();
+  handleChromeAction(action);
+  if (action === 'focus') window.asperadock.toggleFocus?.();
+  if (action === 'mute') window.asperadock.toggleMute?.();
   if (action === 'reload') window.asperadock.reloadActive();
   if (action === 'home') {
     const id = state?.activeServiceId;
@@ -1227,13 +2001,6 @@ els.chromeMenu.addEventListener('click', (event) => {
   }
   if (action === 'free-ram') window.asperadock.hibernateBackground();
   if (action === 'about') window.asperadock.showAbout?.();
-  if (action === 'check-updates') {
-    setUpdateStatus('Checking for updates…');
-    // Native dialogs come from the main process; await so errors surface in status.
-    Promise.resolve(window.asperadock.updateCheck?.())
-      .catch((err) => setUpdateStatus(`Update error: ${err?.message || err}`))
-      .finally(() => refreshUpdateStatus());
-  }
 });
 
 els.settingsSave.addEventListener('click', async () => {
@@ -1250,12 +2017,20 @@ els.settingsSave.addEventListener('click', async () => {
 });
 
 els.shortcutsSave.addEventListener('click', async () => {
+  stopShortcutCapture({ restore: true });
+  if (!validateShortcutsForm()) return;
   await window.asperadock.saveSettings(readShortcutsForm());
   closeShortcuts();
 });
-els.shortcutsClose.addEventListener('click', closeShortcuts);
+els.shortcutsClose.addEventListener('click', () => {
+  stopShortcutCapture({ restore: false });
+  closeShortcuts();
+});
 els.shortcutsModal.addEventListener('click', (event) => {
-  if (event.target === els.shortcutsModal) closeShortcuts();
+  if (event.target === els.shortcutsModal) {
+    stopShortcutCapture({ restore: false });
+    closeShortcuts();
+  }
 });
 
 els.browseDownload.addEventListener('click', async () => {
@@ -1318,13 +2093,25 @@ window.asperadock.onFindResult?.((data) => {
   els.findStatus.textContent = `${data.activeMatchOrdinal || 0}/${data.matches}`;
 });
 window.asperadock.onSyncOverlay?.(syncOverlayFromModals);
+window.asperadock.onOpenEditApp?.((id) => {
+  if (id) openEditApp(id);
+});
+window.asperadock.onChromeAction?.(handleChromeAction);
+window.asperadock.onOpenAiSettings?.(openAiSettings);
+window.asperadock.onRequestLock?.(lockHubFromUi);
+
+document.getElementById('ai-catch-up-btn')?.addEventListener('click', () => {
+  window.asperadock.aiCatchUp?.({
+    dark: document.body.classList.contains('theme-dark'),
+  });
+});
 
 async function patchMenuFlag(key, checked) {
   if (!menuServiceId) return;
   await window.asperadock.saveAppConfig(menuServiceId, { [key]: checked });
 }
 
-els.appMenuEdit.addEventListener('click', () => {
+els.appMenuEdit?.addEventListener('click', () => {
   if (menuServiceId) openEditApp(menuServiceId);
 });
 els.appMenuHome?.addEventListener('click', async () => {
@@ -1332,17 +2119,17 @@ els.appMenuHome?.addEventListener('click', async () => {
   await window.asperadock.appNavigate(menuServiceId, 'home');
   closeAppMenu();
 });
-els.appMenuReload.addEventListener('click', async () => {
+els.appMenuReload?.addEventListener('click', async () => {
   if (!menuServiceId) return;
   await window.asperadock.appNavigate(menuServiceId, 'reload');
 });
-els.appMenuEnabled.addEventListener('change', () =>
+els.appMenuEnabled?.addEventListener('change', () =>
   patchMenuFlag('enabled', els.appMenuEnabled.checked),
 );
-els.appMenuSound.addEventListener('change', () =>
+els.appMenuSound?.addEventListener('change', () =>
   patchMenuFlag('allowSounds', els.appMenuSound.checked),
 );
-els.appMenuNotifications.addEventListener('change', () =>
+els.appMenuNotifications?.addEventListener('change', () =>
   patchMenuFlag('allowNotifications', els.appMenuNotifications.checked),
 );
 els.appMenuWarm?.addEventListener('change', async () => {
@@ -1512,30 +2299,21 @@ els.editAppModal.addEventListener('click', (event) => {
   if (event.target === els.editAppModal) closeEditApp();
 });
 
-document.addEventListener('click', (event) => {
-  if (!els.chromeMenu.classList.contains('hidden')) {
-    if (!event.target.closest('.menu-wrap')) closeChromeMenu();
-  }
-  if (!els.notifCenter.classList.contains('hidden')) {
-    if (!event.target.closest('.menu-wrap')) closeNotificationCenter();
-  }
-  if (els.appMenu.classList.contains('hidden')) return;
-  if (els.appMenu.contains(event.target)) return;
-  if (event.target.closest?.('.app-tab')) return;
-  closeAppMenu();
-});
-
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
     if (!els.findBar?.classList.contains('hidden')) closeFindBar();
     else if (!els.customAppModal?.classList.contains('hidden')) closeCustomAppModal();
     else if (!els.profileNameModal?.classList.contains('hidden')) closeProfileNameModal(null);
-    else if (!els.chromeMenu.classList.contains('hidden')) closeChromeMenu();
-    else if (!els.notifCenter.classList.contains('hidden')) closeNotificationCenter();
-    else if (!els.appMenu.classList.contains('hidden')) closeAppMenu();
     else if (!els.profilesModal?.classList.contains('hidden')) closeProfiles();
     else if (!els.editAppModal.classList.contains('hidden')) closeEditApp();
     else if (!els.shortcutsModal.classList.contains('hidden')) closeShortcuts();
+    else if (!els.settingsModal.classList.contains('hidden')) closeSettings();
+    else if (!els.searchModal.classList.contains('hidden')) closeSearch();
+    else {
+      closeChromeMenu();
+      closeNotificationCenter();
+      closeAppMenu();
+    }
   }
 });
 
@@ -1613,11 +2391,15 @@ async function refreshUpdateStatus() {
     const status = await window.asperadock.updateStatus?.();
     if (!status) return;
     if (status.pending) {
-      setUpdateStatus(
-        status.pending.downloaded
-          ? `Update ${status.pending.version} ready — restart to apply`
-          : `Update ${status.pending.version} available`,
-      );
+      const notes = String(status.pending.notes || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const shortNotes =
+        notes.length > 110 ? `${notes.slice(0, 107).trim()}…` : notes;
+      const head = status.pending.downloaded
+        ? `Update ${status.pending.version} ready — restart to apply`
+        : `Update ${status.pending.version} available`;
+      setUpdateStatus(shortNotes ? `${head} · ${shortNotes}` : head);
     } else {
       setUpdateStatus(`Up to date · v${status.currentVersion} (${status.channel})`);
     }
@@ -1626,10 +2408,8 @@ async function refreshUpdateStatus() {
   }
 }
 
-document.getElementById('check-updates')?.addEventListener('click', async () => {
-  setUpdateStatus('Checking for updates…');
-  await window.asperadock.updateCheck?.();
-  refreshUpdateStatus();
+document.getElementById('check-updates')?.addEventListener('click', () => {
+  runUpdateCheck();
 });
 
 window.asperadock.onUpdateEvent?.((data) => {
@@ -1641,9 +2421,19 @@ window.asperadock.onUpdateEvent?.((data) => {
     case 'up-to-date':
       setUpdateStatus(`Up to date · v${data.version || ''}`);
       break;
-    case 'available':
-      setUpdateStatus(`Update ${data.version} available — downloading…`);
+    case 'available': {
+      const notes = String(data.notes || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const shortNotes =
+        notes.length > 90 ? `${notes.slice(0, 87).trim()}…` : notes;
+      setUpdateStatus(
+        shortNotes
+          ? `Update ${data.version} available · ${shortNotes}`
+          : `Update ${data.version} available — downloading…`,
+      );
       break;
+    }
     case 'download-progress':
       setUpdateStatus(`Downloading update… ${data.percent || 0}%`);
       break;
@@ -1670,19 +2460,6 @@ async function boot() {
   window.asperadock.onState((next) => {
     state = next;
     render();
-    if (menuServiceId && !els.appMenu.classList.contains('hidden')) {
-      const service = getServiceById(menuServiceId);
-      if (service) {
-        els.appMenuTitle.textContent = service.name;
-        const cfg = service.config || {};
-        els.appMenuEnabled.checked = cfg.enabled !== false;
-        els.appMenuSound.checked = cfg.allowSounds !== false;
-        els.appMenuNotifications.checked = cfg.allowNotifications !== false;
-        if (els.appMenuWarm && document.activeElement !== els.appMenuWarm) {
-          els.appMenuWarm.checked = cfg.keepWarm === true;
-        }
-      }
-    }
   });
 }
 

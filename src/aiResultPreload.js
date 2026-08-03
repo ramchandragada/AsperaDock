@@ -1,0 +1,17 @@
+import { contextBridge, ipcRenderer } from 'electron';
+
+contextBridge.exposeInMainWorld('aiResultApi', {
+  onInit: (callback) => {
+    const listener = (_event, data) => callback(data);
+    ipcRenderer.on('ai-result:init', listener);
+    return () => ipcRenderer.removeListener('ai-result:init', listener);
+  },
+  copy: (text) => ipcRenderer.invoke('ai-result:copy', text),
+  close: () => ipcRenderer.invoke('ai-result:close'),
+  suggestReply: () => ipcRenderer.invoke('ai-result:suggest-reply'),
+  syncReplies: (text) => ipcRenderer.invoke('ai-result:sync-replies', text),
+  reviseReply: (payload) => ipcRenderer.invoke('ai-result:revise-reply', payload),
+  refineAgain: (payload) => ipcRenderer.invoke('ai-result:refine-again', payload),
+  useInCompose: (payload) => ipcRenderer.invoke('ai-result:use-in-compose', payload),
+  syncRefine: (text) => ipcRenderer.invoke('ai-result:sync-refine', text),
+});
