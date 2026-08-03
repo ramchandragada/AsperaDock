@@ -13,7 +13,7 @@ export function formatDealWhatsAppMessage(deal = {}) {
     return v ? `*${label}:* ${v}` : '';
   };
   const parts = [
-    `*Deal update*`,
+    `*Work Update*`,
     '',
     `*${name}*`,
     row('Stage', deal.stage),
@@ -112,6 +112,7 @@ export function buildDealWhatsAppPrepPrompt(deal = {}) {
     'Rules:',
     '- Use ONLY the facts provided. Do not invent amounts, dates, stages, codes, or names.',
     '- Keep every provided fact that is relevant (name, stage, state, premise).',
+    '- Lead with *Work Update* as the title (exact casing). Do not say "Deal update".',
     '- Sound like a helpful colleague — not a CRM export or corporate robot.',
     '- WhatsApp formatting: short lines, *bold* sparingly for names/labels. No markdown fences.',
     '- Light emoji only if natural (0–2). No emoji walls.',

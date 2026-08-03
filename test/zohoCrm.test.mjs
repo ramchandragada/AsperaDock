@@ -110,7 +110,7 @@ test('WhatsApp deal message includes name stage state', () => {
     state: 'TELANGANA',
     premise: 'TS-3-CHANDRALOK',
   });
-  assert.match(msg, /\*Deal update\*/);
+  assert.match(msg, /\*Work Update\*/);
   assert.match(msg, /\*FERNWEH\*/);
   assert.match(msg, /\*Stage:\* Renewal Done/);
   assert.match(msg, /\*State:\* TELANGANA/);
@@ -142,6 +142,7 @@ test('deal prep prompt keeps facts and forbids invention', () => {
   });
   assert.match(prompt, /FERNWEH/);
   assert.match(prompt, /Renewal Done/);
+  assert.match(prompt, /\*Work Update\*/);
   assert.match(prompt, /Do not invent/);
   assert.match(prompt, /paste-ready/i);
 });
