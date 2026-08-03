@@ -9,6 +9,10 @@ import {
 } from '../src/zohoCrm/deals.js';
 import { resolveZohoCrmDc, sanitizeZohoCrmDc } from '../src/zohoCrm/dc.js';
 import { buildCrmLookupHtml } from '../src/crmLookupHtml.js';
+import {
+  formatDealWhatsAppMessage,
+  formatDealsWhatsAppDigest,
+} from '../src/zohoCrm/waDealMessage.js';
 
 test('sanitizeDealQuery trims and caps length', () => {
   assert.equal(sanitizeDealQuery('  Acme Corp  '), 'Acme Corp');
@@ -86,9 +90,41 @@ test('CRM lookup popup renders deal stage UI hooks', () => {
   const html = buildCrmLookupHtml(false);
   assert.match(html, /Zoho CRM Deals/);
   assert.match(html, /Open deal/);
+  assert.match(html, /Copy message/);
+  assert.match(html, /Copy all for WhatsApp/);
   assert.match(html, /Copy stage/);
   assert.match(html, /crmLookupApi/);
   assert.match(html, /Created:/);
   assert.match(html, /State:/);
   assert.match(html, /Premise:/);
+});
+
+test('WhatsApp deal message includes name stage state', () => {
+  const msg = formatDealWhatsAppMessage({
+    name: 'FERNWEH',
+    stage: 'Renewal Done',
+    state: 'TELANGANA',
+    premise: 'TS-3-CHANDRALOK',
+  });
+  assert.match(msg, /\*Deal update\*/);
+  assert.match(msg, /\*FERNWEH\*/);
+  assert.match(msg, /\*Stage:\* Renewal Done/);
+  assert.match(msg, /\*State:\* TELANGANA/);
+  assert.match(msg, /\*Premise:\* TS-3-CHANDRALOK/);
+});
+
+test('WhatsApp digest lists name stage state for all deals', () => {
+  const msg = formatDealsWhatsAppDigest(
+    [
+      { name: 'FERNWEH', stage: 'Renewal Done', state: 'TELANGANA' },
+      { name: 'Other', stage: 'APOB Pending', state: 'Karnataka' },
+    ],
+    'FERNWEH',
+  );
+  assert.match(msg, /\*Deal status — FERNWEH\*/);
+  assert.match(msg, /_2 deals_/);
+  assert.match(msg, /1\. \*FERNWEH\*/);
+  assert.match(msg, /Stage: Renewal Done/);
+  assert.match(msg, /State: TELANGANA/);
+  assert.match(msg, /2\. \*Other\*/);
 });

@@ -1,5 +1,10 @@
 /** Floating Zoho CRM Deals lookup panel. */
 
+import {
+  formatDealWhatsAppMessage,
+  formatDealsWhatsAppDigest,
+} from './zohoCrm/waDealMessage.js';
+
 export function buildCrmLookupHtml(dark = false) {
   const bg = dark ? '#111827' : '#fff';
   const text = dark ? '#e5e7eb' : '#0f172a';
@@ -8,6 +13,10 @@ export function buildCrmLookupHtml(dark = false) {
   const card = dark ? '#1f2937' : '#f8fafc';
   const accent = '#ea580c';
   const soft = dark ? 'rgba(148,163,184,0.12)' : 'rgba(15,23,42,0.05)';
+
+  // Inject pure formatters into the float window (no module loader there).
+  const fmtDealSrc = formatDealWhatsAppMessage.toString();
+  const fmtDigestSrc = formatDealsWhatsAppDigest.toString();
 
   return `<!doctype html>
 <html>
@@ -28,14 +37,20 @@ export function buildCrmLookupHtml(dark = false) {
     display:flex; flex-direction:column; gap:10px; min-height:0;
   }
   .head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex:0 0 auto; }
+  .head-copy { min-width:0; flex:1 1 auto; }
   .head strong { font-size:16px; font-weight:700; letter-spacing:-0.01em; }
   .meta { color:${muted}; font-size:12px; font-weight:500; margin-top:2px; }
+  .head-actions { display:flex; gap:6px; flex:0 0 auto; flex-wrap:wrap; justify-content:flex-end; }
   .btn {
     border:0; border-radius:8px; padding:7px 11px; font:inherit; font-size:12px; font-weight:700;
     cursor:pointer; background:${card}; color:inherit;
   }
   .btn.primary { background:${accent}; color:#fff; }
   .btn:disabled { opacity:0.55; cursor:default; }
+  .toolbar {
+    display:none; flex:0 0 auto; gap:6px; flex-wrap:wrap;
+  }
+  .toolbar.show { display:flex; }
   .body { flex:1 1 auto; min-height:0; overflow:auto; display:grid; gap:8px; padding-right:2px; }
   .empty, .error, .loading {
     margin:0; padding:24px 14px; border-radius:10px; background:${soft};
@@ -61,18 +76,28 @@ export function buildCrmLookupHtml(dark = false) {
 <body>
   <div class="shell">
     <header class="head">
-      <div>
+      <div class="head-copy">
         <strong>Zoho CRM Deals</strong>
         <div class="meta" id="meta">Looking up…</div>
       </div>
-      <button type="button" class="btn" id="close">Close</button>
+      <div class="head-actions">
+        <button type="button" class="btn" id="close">Close</button>
+      </div>
     </header>
+    <div class="toolbar" id="toolbar">
+      <button type="button" class="btn primary" id="copy-all">Copy all for WhatsApp</button>
+    </div>
     <div class="body" id="body">
       <p class="loading">Searching Deals…</p>
     </div>
   </div>
   <script>
     const api = window.crmLookupApi;
+    const formatDealWhatsAppMessage = ${fmtDealSrc};
+    const formatDealsWhatsAppDigest = ${fmtDigestSrc};
+    let latestDeals = [];
+    let latestQuery = '';
+
     function esc(s) {
       return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
@@ -81,10 +106,24 @@ export function buildCrmLookupHtml(dark = false) {
       try { return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Number(n)); }
       catch (e) { return String(n); }
     }
+    async function copyText(btn, text, label) {
+      const value = String(text || '').trim();
+      if (!value) return;
+      await api.copy(value);
+      if (!btn) return;
+      const prev = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.textContent = label || prev; }, 1200);
+    }
     function paint(data) {
       const body = document.getElementById('body');
       const meta = document.getElementById('meta');
+      const toolbar = document.getElementById('toolbar');
       const q = data?.query ? '"' + data.query + '"' : 'selection';
+      latestDeals = [];
+      latestQuery = String(data?.query || '');
+      toolbar.classList.remove('show');
+
       if (data?.loading) {
         meta.textContent = 'Looking up ' + q + '…';
         body.innerHTML = '<p class="loading">Searching Deals…</p>';
@@ -96,6 +135,7 @@ export function buildCrmLookupHtml(dark = false) {
         return;
       }
       const deals = data?.deals || [];
+      latestDeals = deals;
       meta.textContent = deals.length
         ? deals.length + ' deal' + (deals.length === 1 ? '' : 's') + ' for ' + q
         : 'No deals for ' + q;
@@ -103,6 +143,7 @@ export function buildCrmLookupHtml(dark = false) {
         body.innerHTML = '<p class="empty">No matching Deals. Try a deal name or account name.</p>';
         return;
       }
+      toolbar.classList.add('show');
       body.innerHTML = deals.map((deal, index) => {
         const fields = [];
         if (deal.stage) fields.push('<div>Stage: <b>' + esc(deal.stage) + '</b></div>');
@@ -123,6 +164,7 @@ export function buildCrmLookupHtml(dark = false) {
           (fields.length ? '<div class="fields">' + fields.join('') + '</div>' : '') +
           '<div class="actions">' +
           '<button type="button" class="btn primary open-deal" data-index="' + index + '">Open deal</button>' +
+          '<button type="button" class="btn copy-message" data-index="' + index + '">Copy message</button>' +
           '<button type="button" class="btn copy-stage" data-index="' + index + '">Copy stage</button>' +
           '</div></article>';
       }).join('');
@@ -133,19 +175,32 @@ export function buildCrmLookupHtml(dark = false) {
           if (deal?.webUrl) api.openDeal(deal.webUrl);
         });
       });
+      body.querySelectorAll('.copy-message').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const deal = deals[Number(btn.dataset.index)];
+          if (!deal) return;
+          await copyText(btn, formatDealWhatsAppMessage(deal), 'Copy message');
+        });
+      });
       body.querySelectorAll('.copy-stage').forEach((btn) => {
         btn.addEventListener('click', async () => {
           const deal = deals[Number(btn.dataset.index)];
           const text = deal?.stage || '';
           if (!text) return;
-          await api.copy(text);
-          btn.textContent = 'Copied';
-          setTimeout(() => { btn.textContent = 'Copy stage'; }, 1200);
+          await copyText(btn, text, 'Copy stage');
         });
       });
     }
     api.onInit(paint);
     document.getElementById('close').onclick = () => api.close();
+    document.getElementById('copy-all').onclick = async (e) => {
+      const btn = e.currentTarget;
+      await copyText(
+        btn,
+        formatDealsWhatsAppDigest(latestDeals, latestQuery),
+        'Copy all for WhatsApp',
+      );
+    };
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') api.close(); });
   </script>
 </body>
