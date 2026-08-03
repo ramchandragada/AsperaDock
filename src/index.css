@@ -1783,10 +1783,15 @@ body.theme-dark .chrome-menu {
 
 .notif-text span {
   font-size: 11.5px;
-  color: var(--muted);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  max-height: calc(1.4em * 3);
 }
 
 .notif-time {

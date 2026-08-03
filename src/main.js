@@ -67,8 +67,13 @@ import {
   normalizeChatKey,
   openMessagingChatJs,
   sanitizePinnedPeople,
+  scrapeMessagingInboxJs,
   searchMessagingChatsJs,
 } from './guestInbox.js';
+import {
+  formatMessagePreview,
+  mergeNotificationFeed,
+} from './notifFeed.js';
 import {
   findExactWhatsAppContactTargetJs,
   findWhatsAppPaneResetJs,
@@ -3160,23 +3165,30 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
   return { ok: true };
 }
 
-function buildNotifCenterData() {
-  const notifications = (notificationLog || []).slice(0, 40).map((item) => {
+function buildNotifCenterDataSync(scrapedChats = []) {
+  const hideContent = !!settings.hideNotificationContent;
+  const logItems = (notificationLog || []).slice(0, 40).map((item) => {
     const service = getService(item.serviceId);
-    const canReply = isInboxAppId(service?.appId || item.appId);
     return {
       id: item.id,
       serviceId: item.serviceId,
+      appId: service?.appId || item.appId || '',
       title: item.title,
       body: item.body,
       at: item.at,
       chatName: item.chatName || '',
       chatKey: item.chatKey || '',
-      canReply,
+      unread: Number(item.unread) || 0,
+      canReply: isInboxAppId(service?.appId || item.appId),
       accountLabel: item.accountLabel || service?.title || service?.name || '',
       logo: service?.logo || null,
       color: service?.color || '#e2e8f0',
     };
+  });
+  const notifications = mergeNotificationFeed({
+    logItems,
+    scrapedChats,
+    hideContent,
   });
   const monitorOn = !!settings.consumptionMonitor;
   const memoryRows = monitorOn
@@ -3191,13 +3203,79 @@ function buildNotifCenterData() {
   return { notifications, monitorOn, memoryRows };
 }
 
+function buildNotifCenterData() {
+  return buildNotifCenterDataSync([]);
+}
+
+async function scrapeUnreadChatsForService(service) {
+  if (!service || !isInboxAppId(service.appId)) return [];
+  const wc = views.get(service.id)?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return [];
+  try {
+    const result = await wc.executeJavaScript(scrapeMessagingInboxJs(), true);
+    const at = Date.now();
+    return (result?.chats || [])
+      .map((chat) => {
+        const name = String(chat?.name || '').replace(/\s+/g, ' ').trim();
+        if (!name || isJunkChatName(name)) return null;
+        const preview = String(chat?.preview || '').replace(/\s+/g, ' ').trim();
+        return {
+          id: `${service.id}-${normalizeChatKey(name)}-${at}`,
+          serviceId: service.id,
+          appId: service.appId,
+          name,
+          chatKey: normalizeChatKey(chat?.chatKey || name),
+          preview,
+          unread: Number(chat?.unread) || 1,
+          accountLabel: service.title || service.name || 'App',
+          logo: service.logo || null,
+          color: service.color || '#e2e8f0',
+          at,
+          canReply: true,
+        };
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function scrapeAllUnreadChats() {
+  const services = orderedServices().filter(
+    (s) => isInboxAppId(s.appId) && views.has(s.id),
+  );
+  const batches = await Promise.all(
+    services.map((service) => scrapeUnreadChatsForService(service)),
+  );
+  return batches.flat();
+}
+
+async function buildNotifCenterDataAsync() {
+  const scraped = await scrapeAllUnreadChats();
+  return buildNotifCenterDataSync(scraped);
+}
+
 function pushNotifCenterData() {
   if (!notifCenterWindow || notifCenterWindow.isDestroyed()) return;
-  try {
-    notifCenterWindow.webContents.send('notif-center:init', buildNotifCenterData());
-  } catch {
-    // ignore
-  }
+  buildNotifCenterDataAsync()
+    .then((data) => {
+      if (!notifCenterWindow || notifCenterWindow.isDestroyed()) return;
+      try {
+        notifCenterWindow.webContents.send('notif-center:init', data);
+      } catch {
+        // ignore
+      }
+    })
+    .catch(() => {
+      try {
+        notifCenterWindow?.webContents.send(
+          'notif-center:init',
+          buildNotifCenterData(),
+        );
+      } catch {
+        // ignore
+      }
+    });
 }
 
 function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } = {}) {
@@ -3230,9 +3308,16 @@ function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } =
   );
 
   win.webContents.once('did-finish-load', () => {
-    if (!win.isDestroyed()) {
-      win.webContents.send('notif-center:init', buildNotifCenterData());
-    }
+    if (win.isDestroyed()) return;
+    buildNotifCenterDataAsync()
+      .then((data) => {
+        if (!win.isDestroyed()) win.webContents.send('notif-center:init', data);
+      })
+      .catch(() => {
+        if (!win.isDestroyed()) {
+          win.webContents.send('notif-center:init', buildNotifCenterData());
+        }
+      });
   });
   win.once('ready-to-show', () => {
     if (!win.isDestroyed()) {
@@ -4332,18 +4417,7 @@ function applyFocusMode(webContents, serviceId) {
 }
 
 function firstTwoMessageLines(text) {
-  const raw = String(text || '').replace(/\r\n/g, '\n').trim();
-  if (!raw) return '';
-  const lines = raw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length >= 2) {
-    return `${lines[0].slice(0, 160)}\n${lines[1].slice(0, 160)}`;
-  }
-  const single = lines[0] || raw;
-  if (single.length <= 160) return single;
-  return `${single.slice(0, 160)}\n${single.slice(160, 320)}`;
+  return formatMessagePreview(text, { maxLines: 3, maxChars: 280, lineChars: 96 });
 }
 
 function notificationFingerprint(serviceId, title, body) {
@@ -5287,7 +5361,10 @@ function unpinPerson(pinId) {
  * Show a rich desktop + in-app notification for a guest app.
  * Prefer intercepted page Notification payloads (sender + message).
  */
-function emitServiceNotification(service, { title, body, fromTitleCount = false } = {}) {
+function emitServiceNotification(
+  service,
+  { title, body, fromTitleCount = false, showOs = true } = {},
+) {
   if (!service || settings.focusMode) return false;
   const liveCfg = getAppConfig(service.id);
   if (!liveCfg.allowNotifications) return false;
@@ -5315,7 +5392,7 @@ function emitServiceNotification(service, { title, body, fromTitleCount = false 
 
   logNotification(service, displayBody, displayTitle);
 
-  if (!Notification.isSupported()) return true;
+  if (!showOs || !Notification.isSupported()) return true;
   const n = new Notification({
     title: displayTitle,
     body: displayBody,
@@ -8768,11 +8845,38 @@ function createViewForService(service) {
     const baseline = Number(entry?.__titleCountBaseline) || 0;
     if (next > previous && next > baseline) {
       if (entry) entry.__titleCountBaseline = next;
-      emitServiceNotification(service, {
-        title: service.title || service.name,
-        body: `${next} unread`,
-        fromTitleCount: true,
-      });
+      // Prefer per-chat cards with last-message preview over a bare "N unread".
+      scrapeUnreadChatsForService(service)
+        .then((chats) => {
+          if (chats.length) {
+            chats.slice(0, 8).forEach((chat, index) => {
+              emitServiceNotification(service, {
+                title: chat.name,
+                body:
+                  chat.preview ||
+                  (chat.unread > 1
+                    ? `${chat.unread} unread messages`
+                    : 'New message'),
+                fromTitleCount: false,
+                // One desktop toast; the rest fill the in-app center.
+                showOs: index === 0,
+              });
+            });
+            return;
+          }
+          emitServiceNotification(service, {
+            title: service.title || service.name,
+            body: `${next} unread`,
+            fromTitleCount: true,
+          });
+        })
+        .catch(() => {
+          emitServiceNotification(service, {
+            title: service.title || service.name,
+            body: `${next} unread`,
+            fromTitleCount: true,
+          });
+        });
     }
   });
 
