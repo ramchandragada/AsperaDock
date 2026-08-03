@@ -46,51 +46,76 @@
             </div>
             <div class="menu-wrap">
               <button id="menu-btn" type="button" class="icon-btn brand-avatar" title="Menu" aria-label="Menu"></button>
-              <div id="app-chrome-menu" class="chrome-menu hidden" role="menu">
-                <button type="button" data-action="search" class="chrome-menu-item">
-                  <span class="chrome-menu-ico" data-ico="search"></span> Quick search
+              <div id="app-chrome-menu" class="chrome-menu hidden" role="menu" aria-label="Aspera Hub menu">
+                <div class="chrome-menu-section" role="group" aria-label="Presence">
+                  <div class="chrome-menu-section-title">Presence</div>
+                  <button type="button" data-action="search" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="search"></span> Quick search
+                  </button>
+                  <button type="button" data-action="focus" class="chrome-menu-item" id="focus-item">
+                    <span class="chrome-menu-ico" data-ico="focus"></span> Focus mode
+                  </button>
+                  <button type="button" data-action="mute" class="chrome-menu-item" id="mute-item">
+                    <span class="chrome-menu-ico" data-ico="unmute"></span> Mute
+                  </button>
+                </div>
+                <hr />
+                <div class="chrome-menu-section" role="group" aria-label="Aspera AI">
+                  <div class="chrome-menu-section-title">Aspera AI</div>
+                  <button type="button" data-action="catch-up" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="list"></span> Catch me up
+                  </button>
+                  <button type="button" data-action="summarize" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="spark"></span> Summarize selection
+                  </button>
+                  <button type="button" data-action="ai-settings" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="aiSettings"></span> AI settings
+                  </button>
+                </div>
+                <hr />
+                <div class="chrome-menu-section" role="group" aria-label="Current app">
+                  <div class="chrome-menu-section-title">Current app</div>
+                  <button type="button" data-action="reload" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="reload"></span> Reload
+                  </button>
+                  <button type="button" data-action="home" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="home"></span> Go to home
+                  </button>
+                  <button type="button" data-action="free-ram" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="ram"></span> Free RAM
+                  </button>
+                </div>
+                <hr />
+                <div class="chrome-menu-section" role="group" aria-label="Workspace">
+                  <div class="chrome-menu-section-title">Workspace</div>
+                  <button type="button" data-action="add-app" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="plus"></span> Add app
+                  </button>
+                  <button type="button" data-action="profiles" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="users"></span> Profiles
+                  </button>
+                  <button type="button" data-action="extensions" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="puzzle"></span> Extensions
+                  </button>
+                </div>
+                <hr />
+                <button type="button" data-action="lock" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="lock"></span> Lock Hub
                 </button>
-              <button type="button" data-action="focus" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="focus"></span> Focus mode
-              </button>
-              <button type="button" data-action="mute" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="unmute"></span> Mute
-              </button>
-              <hr />
-              <button type="button" data-action="settings" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="settings"></span> Settings
-              </button>
-              <button type="button" data-action="profiles" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="users"></span> Profiles
-              </button>
-              <button type="button" data-action="shortcuts" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="keyboard"></span> Shortcuts
-              </button>
-              <button type="button" data-action="about" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="info"></span> About Aspera Hub
-              </button>
-              <hr />
-              <button type="button" data-action="reload" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="reload"></span> Reload app
-              </button>
-              <button type="button" data-action="home" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="home"></span> Go to app home
-              </button>
-              <button type="button" data-action="free-ram" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="ram"></span> Free RAM
-              </button>
-              <hr />
-              <button type="button" data-action="lock" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="lock"></span> Lock Aspera Hub
-              </button>
-              <button type="button" data-action="add-app" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="plus"></span> Add app
-              </button>
-              <hr />
-              <button type="button" data-action="check-updates" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="sync"></span> Check for updates
-              </button>
-              <div id="chrome-menu-version" class="chrome-menu-version">Aspera Hub</div>
+                <hr />
+                <button type="button" data-action="settings" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="settings"></span> Settings
+                </button>
+                <button type="button" data-action="shortcuts" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="keyboard"></span> Keyboard shortcuts
+                </button>
+                <button type="button" data-action="check-updates" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="download"></span> Check for updates
+                </button>
+                <button type="button" data-action="about" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="info"></span> About Aspera Hub
+                </button>
+                <div id="chrome-menu-version" class="chrome-menu-version">Aspera Hub</div>
               </div>
             </div>
           </div>
