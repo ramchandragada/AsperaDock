@@ -10,6 +10,8 @@ import {
   extractGoogleOutboundUrl,
   isAllowedGmailTabUrl,
   isGoogleOwnedUrl,
+  mustKeepGoogleUrlInApp,
+  shouldOpenInSystemBrowser,
 } from '../src/guestNav.js';
 
 test('isForbiddenGuestNavigation blocks file and javascript', () => {
@@ -90,4 +92,26 @@ test('isGoogleOwnedUrl recognizes first-party Google domains', () => {
   assert.equal(isGoogleOwnedUrl('https://accounts.google.com/signin/v2'), true);
   assert.equal(isGoogleOwnedUrl('https://mail.google.com/mail/u/0/#inbox'), true);
   assert.equal(isGoogleOwnedUrl('https://example.com/'), false);
+});
+
+test('Google SSO/consent URLs must stay in Hub (not Chrome)', () => {
+  assert.equal(
+    mustKeepGoogleUrlInApp(
+      'https://accounts.google.com/o/oauth2/v2/auth?client_id=x&redirect_uri=y',
+    ),
+    true,
+  );
+  assert.equal(
+    mustKeepGoogleUrlInApp(
+      'https://accounts.google.com/signin/oauth/legacy/consent?authuser=0',
+    ),
+    true,
+  );
+  assert.equal(
+    mustKeepGoogleUrlInApp('https://www.google.com/url?q=https%3A%2F%2Fexample.com'),
+    true,
+  );
+  assert.equal(shouldOpenInSystemBrowser('https://accounts.google.com/o/oauth2/v2/auth'), false);
+  assert.equal(shouldOpenInSystemBrowser('https://cybercrime.gov.in/'), true);
+  assert.equal(shouldOpenInSystemBrowser('https://mail.google.com/mail/u/0/#inbox'), true);
 });

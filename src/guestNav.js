@@ -105,6 +105,58 @@ export function isGoogleOwnedUrl(url) {
 }
 
 /**
+ * Google URLs that must stay inside Hub's Chromium session.
+ * Opening them in Chrome (no Hub cookies / incomplete SSO handoff) produces
+ * the familiar "400. That’s an error." Google robot page.
+ */
+export function mustKeepGoogleUrlInApp(url) {
+  if (!url || !isGoogleOwnedUrl(url)) return false;
+  try {
+    const u = new URL(String(url));
+    const host = u.hostname.toLowerCase();
+    const path = u.pathname.toLowerCase();
+    if (host === 'accounts.google.com' || host.endsWith('.accounts.google.com')) {
+      return true;
+    }
+    if (host === 'accounts.youtube.com') return true;
+    if (path === '/url' || path.endsWith('/url')) return true;
+    if (
+      /\/(oauth|consent|signin|login|logout|accountchooser|setosid|servicelogin|continue|gsi)\b/i.test(
+        path,
+      )
+    ) {
+      return true;
+    }
+    if (/[?&](continue|rapt|oauth|client_id|scope)=/i.test(u.search)) {
+      return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * True only for http(s) links that are safe to hand to the OS browser.
+ * Blocks Google session/SSO URLs that 400 outside Hub.
+ */
+export function shouldOpenInSystemBrowser(url) {
+  if (!url || isForbiddenGuestNavigation(url)) return false;
+  try {
+    const protocol = new URL(String(url)).protocol.toLowerCase();
+    if (protocol !== 'http:' && protocol !== 'https:') return false;
+  } catch {
+    return false;
+  }
+  if (mustKeepGoogleUrlInApp(url)) return false;
+  if (extractGoogleOutboundUrl(url)) {
+    // Never open the wrapper itself; caller should unwrap first.
+    return false;
+  }
+  return true;
+}
+
+/**
  * URLs allowed to load inside a Gmail Hub tab (inbox / auth only).
  * Everything else (news sites, gov portals, google.com/url wrappers) must leave.
  */

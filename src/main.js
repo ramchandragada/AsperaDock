@@ -216,6 +216,8 @@ import {
   extractGoogleOutboundUrl,
   isAllowedGmailTabUrl,
   isGoogleOwnedUrl,
+  mustKeepGoogleUrlInApp,
+  shouldOpenInSystemBrowser,
 } from './guestNav.js';
 import {
   isGoogleService,
@@ -7861,7 +7863,14 @@ function attachGuestContextMenu(webContents) {
     if (safeLink) {
       template.push({
         label: 'Open link',
-        click: () => openExternalSafe(safeLink),
+        click: () => {
+          // Google SSO/consent URLs 400 in Chrome — keep them in Hub.
+          if (mustKeepGoogleUrlInApp(safeLink) || isGoogleOwnedUrl(safeLink)) {
+            webContents.loadURL(safeLink).catch(() => {});
+            return;
+          }
+          if (shouldOpenInSystemBrowser(safeLink)) openExternalSafe(safeLink);
+        },
       });
       template.push({
         label: 'Copy link address',
@@ -8112,7 +8121,12 @@ function configureGuestWindowOpen(wc, service) {
       if (googleish) {
         const outbound = extractGoogleOutboundUrl(raw);
         if (outbound) {
-          openExternalSafe(outbound);
+          // Never open Google SSO/handoff targets in Chrome — they 400 there.
+          if (mustKeepGoogleUrlInApp(outbound) || isGoogleOwnedUrl(outbound)) {
+            wc.loadURL(outbound).catch(() => {});
+            return { action: 'deny' };
+          }
+          if (shouldOpenInSystemBrowser(outbound)) openExternalSafe(outbound);
           return { action: 'deny' };
         }
         if (isGoogleOwnedUrl(raw) && !isAllowedGmailTabUrl(raw)) {
@@ -8122,7 +8136,7 @@ function configureGuestWindowOpen(wc, service) {
           return { action: 'deny' };
         }
         if (!isAllowedGmailTabUrl(raw)) {
-          openExternalSafe(raw);
+          if (shouldOpenInSystemBrowser(raw)) openExternalSafe(raw);
           return { action: 'deny' };
         }
         // Keep Gmail / accounts navigations inside the dock tab.
@@ -8135,12 +8149,17 @@ function configureGuestWindowOpen(wc, service) {
       if (isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) {
         return allowPopup();
       }
+      if (mustKeepGoogleUrlInApp(raw)) {
+        return allowPopup();
+      }
 
       const internal = isInternalUrl(raw, service);
       if (!internal) {
         // Never open broken Google consent/handoff URLs externally —
         // they produce 400 error tabs in the default browser.
-        if (isGoogleOwnedUrl(raw)) return { action: 'deny' };
+        if (isGoogleOwnedUrl(raw) || !shouldOpenInSystemBrowser(raw)) {
+          return { action: 'deny' };
+        }
         openExternalSafe(raw);
         return { action: 'deny' };
       }
@@ -8172,7 +8191,11 @@ function attachGuestNavigationGate(webContents, service) {
       const outbound = extractGoogleOutboundUrl(url);
       if (outbound) {
         event.preventDefault();
-        openExternalSafe(outbound);
+        if (mustKeepGoogleUrlInApp(outbound) || isGoogleOwnedUrl(outbound)) {
+          webContents.loadURL(outbound).catch(() => {});
+          return;
+        }
+        if (shouldOpenInSystemBrowser(outbound)) openExternalSafe(outbound);
         return;
       }
       if (isGoogleOwnedUrl(url) && !isAllowedGmailTabUrl(url)) {
@@ -8182,7 +8205,7 @@ function attachGuestNavigationGate(webContents, service) {
       }
       if (!isAllowedGmailTabUrl(url)) {
         event.preventDefault();
-        openExternalSafe(url);
+        if (shouldOpenInSystemBrowser(url)) openExternalSafe(url);
         return;
       }
       return;
@@ -8190,10 +8213,11 @@ function attachGuestNavigationGate(webContents, service) {
 
     // Allow Google OAuth/SSO flows for any app (ChatGPT, Claude, etc.).
     if (isAuthOrLoginUrl(url) && isGoogleOwnedUrl(url)) return;
+    if (mustKeepGoogleUrlInApp(url)) return;
 
     if (isInternalUrl(url, service)) return;
     // Suppress broken Google consent URLs — they 400 in external browsers.
-    if (isGoogleOwnedUrl(url)) {
+    if (isGoogleOwnedUrl(url) || !shouldOpenInSystemBrowser(url)) {
       event.preventDefault();
       return;
     }
@@ -8211,8 +8235,15 @@ function attachGuestNavigationGate(webContents, service) {
     if (!url || !String(url).startsWith('http')) return;
     if (isAllowedGmailTabUrl(url)) return;
     const outbound = extractGoogleOutboundUrl(url);
-    if (outbound) openExternalSafe(outbound);
-    else if (!isGoogleOwnedUrl(url)) openExternalSafe(url);
+    if (outbound) {
+      if (mustKeepGoogleUrlInApp(outbound) || isGoogleOwnedUrl(outbound)) {
+        // Keep Google handoffs inside Hub — never Chrome 400 tabs.
+      } else if (shouldOpenInSystemBrowser(outbound)) {
+        openExternalSafe(outbound);
+      }
+    } else if (shouldOpenInSystemBrowser(url)) {
+      openExternalSafe(url);
+    }
     const home = startUrlForService(service);
     webContents.loadURL(home).catch(() => {});
   });
