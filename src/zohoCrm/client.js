@@ -7,6 +7,7 @@ import {
 } from './dc.js';
 import {
   buildDealsSearchCriteria,
+  mapDealRecord,
   mapDealRecords,
   sanitizeDealQuery,
 } from './deals.js';
@@ -161,6 +162,56 @@ async function fetchDealsSearch(apiDomain, token, searchParams) {
   return { res, json };
 }
 
+async function fetchDealById(apiDomain, token, id) {
+  const url = `${apiDomain.replace(/\/$/, '')}/crm/v8/Deals/${encodeURIComponent(id)}`;
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Zoho-oauthtoken ${token}`,
+    },
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) return null;
+  return Array.isArray(json?.data) ? json.data[0] : json?.data || null;
+}
+
+/**
+ * Search often returns a thin field set. Pull full records when Stage metadata
+ * (Created_Time / State / Premise) is missing so the popup can show them.
+ */
+async function hydrateDealDetails(deals, { apiDomain, token, crmHost }) {
+  const need = (d) => d && (!d.createdTime || !d.state || !d.premise);
+  const targets = deals.filter(need).slice(0, 8);
+  if (!targets.length) return deals;
+
+  const extras = await Promise.all(
+    targets.map(async (deal) => {
+      try {
+        const raw = await fetchDealById(apiDomain, token, deal.id);
+        if (!raw) return deal;
+        const full = mapDealRecord(raw, { crmHost });
+        return {
+          ...deal,
+          stage: deal.stage || full.stage,
+          createdTime: deal.createdTime || full.createdTime,
+          state: deal.state || full.state,
+          premise: deal.premise || full.premise,
+          accountName: deal.accountName || full.accountName,
+          amount: deal.amount ?? full.amount,
+          closingDate: deal.closingDate || full.closingDate,
+          ownerName: deal.ownerName || full.ownerName,
+          probability: deal.probability ?? full.probability,
+          webUrl: deal.webUrl || full.webUrl,
+        };
+      } catch {
+        return deal;
+      }
+    }),
+  );
+  const byId = new Map(extras.map((d) => [d.id, d]));
+  return deals.map((d) => byId.get(d.id) || d);
+}
+
 /**
  * Search Deals by keyword (Deal_Name / Account_Name contains, then word search).
  */
@@ -174,6 +225,7 @@ export async function searchDeals(query, { dcId = 'in', limit = 15 } = {}) {
   const access = await getAccessToken({ dcId });
   const criteria = buildDealsSearchCriteria(q);
 
+  // Omit `fields` so Zoho returns custom columns (State, Premise, …) too.
   let { res, json } = await fetchDealsSearch(access.apiDomain, access.token, {
     criteria,
     per_page: String(Math.min(200, Math.max(1, limit))),
@@ -203,7 +255,12 @@ export async function searchDeals(query, { dcId = 'in', limit = 15 } = {}) {
     }
   }
 
-  const deals = mapDealRecords(json, { crmHost: auth.crmHost }).slice(0, limit);
+  let deals = mapDealRecords(json, { crmHost: auth.crmHost }).slice(0, limit);
+  deals = await hydrateDealDetails(deals, {
+    apiDomain: access.apiDomain,
+    token: access.token,
+    crmHost: auth.crmHost,
+  });
   return { ok: true, deals, query: q };
 }
 

@@ -105,6 +105,10 @@ export function buildCrmLookupHtml(dark = false) {
       }
       body.innerHTML = deals.map((deal, index) => {
         const fields = [];
+        if (deal.stage) fields.push('<div>Stage: <b>' + esc(deal.stage) + '</b></div>');
+        if (deal.createdTime) fields.push('<div>Created: <b>' + esc(deal.createdTime) + '</b></div>');
+        if (deal.state) fields.push('<div>State: <b>' + esc(deal.state) + '</b></div>');
+        if (deal.premise) fields.push('<div>Premise: <b>' + esc(deal.premise) + '</b></div>');
         if (deal.accountName) fields.push('<div>Account: <b>' + esc(deal.accountName) + '</b></div>');
         if (deal.amount != null) fields.push('<div>Amount: <b>' + esc(money(deal.amount)) + '</b></div>');
         if (deal.closingDate) fields.push('<div>Close: <b>' + esc(deal.closingDate) + '</b></div>');

@@ -37,6 +37,9 @@ test('mapDealRecord extracts stage and builds web URL', () => {
       Account_Name: { name: 'Acme' },
       Owner: { name: 'Priya' },
       Probability: 40,
+      Created_Time: '2025-11-02T10:15:30+05:30',
+      State: 'Maharashtra',
+      Premise: 'Premise Compliance Code 42',
     },
     { crmHost: 'https://crm.zoho.in' },
   );
@@ -45,8 +48,24 @@ test('mapDealRecord extracts stage and builds web URL', () => {
   assert.equal(deal.accountName, 'Acme');
   assert.equal(deal.ownerName, 'Priya');
   assert.equal(deal.amount, 50000);
+  assert.equal(deal.state, 'Maharashtra');
+  assert.equal(deal.premise, 'Premise Compliance Code 42');
+  assert.ok(deal.createdTime);
   assert.match(deal.webUrl, /module=Deals/);
   assert.match(deal.webUrl, /id=123/);
+});
+
+test('mapDealRecord finds premise-like custom API names', () => {
+  const deal = mapDealRecord({
+    id: '9',
+    Deal_Name: 'WHIXIQO',
+    Stage: 'APOB Pending',
+    Premise_Compliance: 'Premise Compliance Code',
+    Billing_State: 'Karnataka',
+  });
+  assert.equal(deal.premise, 'Premise Compliance Code');
+  assert.equal(deal.state, 'Karnataka');
+  assert.equal(deal.stage, 'APOB Pending');
 });
 
 test('mapDealRecords filters incomplete rows', () => {
@@ -69,4 +88,7 @@ test('CRM lookup popup renders deal stage UI hooks', () => {
   assert.match(html, /Open deal/);
   assert.match(html, /Copy stage/);
   assert.match(html, /crmLookupApi/);
+  assert.match(html, /Created:/);
+  assert.match(html, /State:/);
+  assert.match(html, /Premise:/);
 });

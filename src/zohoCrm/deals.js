@@ -4,6 +4,22 @@
 
 const MAX_QUERY_LEN = 80;
 
+/**
+ * Prefer asking Zoho for these standard fields. Custom fields (Premise, State, …)
+ * are still mapped if the API returns them; listing unknown API names breaks search.
+ */
+export const DEAL_LOOKUP_FIELDS = [
+  'Deal_Name',
+  'Stage',
+  'Amount',
+  'Closing_Date',
+  'Account_Name',
+  'Owner',
+  'Probability',
+  'Created_Time',
+  'Modified_Time',
+].join(',');
+
 export function sanitizeDealQuery(raw) {
   return String(raw || '')
     .replace(/\s+/g, ' ')
@@ -31,9 +47,75 @@ function nameOf(field) {
   if (!field) return '';
   if (typeof field === 'string') return field.trim();
   if (typeof field === 'object') {
-    return String(field.name || field.Name || '').trim();
+    return String(field.name || field.Name || field.display_value || '').trim();
   }
   return '';
+}
+
+function scalarOf(field) {
+  if (field == null || field === '') return '';
+  if (
+    typeof field === 'string' ||
+    typeof field === 'number' ||
+    typeof field === 'boolean'
+  ) {
+    return String(field).trim();
+  }
+  if (typeof field === 'object') {
+    return String(
+      field.name ||
+        field.Name ||
+        field.display_value ||
+        field.value ||
+        '',
+    ).trim();
+  }
+  return '';
+}
+
+/** First matching field by exact API name (case-insensitive). */
+export function pickField(raw, names = []) {
+  if (!raw || typeof raw !== 'object') return '';
+  const entries = Object.entries(raw);
+  for (const want of names) {
+    const target = String(want || '').toLowerCase();
+    for (const [key, value] of entries) {
+      if (String(key).toLowerCase() === target) {
+        const text = scalarOf(value);
+        if (text) return text;
+      }
+    }
+  }
+  return '';
+}
+
+/** First field whose API name matches a regex (e.g. /premise/i). */
+export function pickFieldByPattern(raw, pattern) {
+  if (!raw || typeof raw !== 'object' || !pattern) return '';
+  for (const [key, value] of Object.entries(raw)) {
+    if (!pattern.test(String(key))) continue;
+    const text = scalarOf(value);
+    if (text) return text;
+  }
+  return '';
+}
+
+export function formatZohoDateTime(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const ms = Date.parse(raw);
+  if (Number.isNaN(ms)) return raw;
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(ms));
+  } catch {
+    return raw;
+  }
 }
 
 export function mapDealRecord(raw, { crmHost = 'https://crm.zoho.in' } = {}) {
@@ -49,6 +131,19 @@ export function mapDealRecord(raw, { crmHost = 'https://crm.zoho.in' } = {}) {
   const ownerName = nameOf(raw?.Owner || raw?.owner);
   const probability =
     raw?.Probability ?? raw?.probability ?? raw?.$probability ?? null;
+  const createdTimeRaw = pickField(raw, ['Created_Time', 'created_time']);
+  const createdTime = formatZohoDateTime(createdTimeRaw) || createdTimeRaw;
+  const state =
+    pickField(raw, ['State', 'Billing_State', 'Shipping_State']) ||
+    pickFieldByPattern(raw, /^state$/i);
+  const premise =
+    pickField(raw, [
+      'Premise',
+      'Premises',
+      'Premise_Name',
+      'Premise_Compliance',
+      'Premise_Compliance_Code',
+    ]) || pickFieldByPattern(raw, /premise/i);
   const webUrl =
     String(raw?.$web_url || raw?.web_url || '').trim() ||
     (id
@@ -65,6 +160,9 @@ export function mapDealRecord(raw, { crmHost = 'https://crm.zoho.in' } = {}) {
     ownerName,
     probability:
       probability == null || probability === '' ? null : Number(probability),
+    createdTime,
+    state,
+    premise,
     webUrl,
   };
 }
