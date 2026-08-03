@@ -31,10 +31,39 @@ contextBridge.exposeInMainWorld('asperadock', {
   reorder: (order) => ipcRenderer.invoke('dock:reorder', order),
   pickDownloadDir: () => ipcRenderer.invoke('dock:pick-download-dir'),
   openDownloads: () => ipcRenderer.invoke('dock:open-downloads'),
+  openExtensions: (payload) => ipcRenderer.invoke('dock:open-extensions', payload),
+  openAppMenu: (payload) => ipcRenderer.invoke('dock:open-app-menu', payload),
+  closeAppMenu: () => ipcRenderer.invoke('dock:close-app-menu'),
+  openChromeMenu: (payload) => ipcRenderer.invoke('dock:open-chrome-menu', payload),
+  closeChromeMenu: () => ipcRenderer.invoke('dock:close-chrome-menu'),
+  toggleChromeMenu: (payload) => ipcRenderer.invoke('dock:toggle-chrome-menu', payload),
+  openNotifCenter: (payload) => ipcRenderer.invoke('dock:open-notif-center', payload),
+  closeNotifCenter: () => ipcRenderer.invoke('dock:close-notif-center'),
+  toggleNotifCenter: (payload) => ipcRenderer.invoke('dock:toggle-notif-center', payload),
+  aiStatus: () => ipcRenderer.invoke('dock:ai-status'),
+  aiSetKey: (providerId, apiKey) =>
+    ipcRenderer.invoke('dock:ai-set-key', providerId, apiKey),
+  aiClearKey: (providerId) => ipcRenderer.invoke('dock:ai-clear-key', providerId),
+  aiListModels: (providerId) =>
+    ipcRenderer.invoke('dock:ai-list-models', providerId),
+  aiSetModel: (providerId, modelId) =>
+    ipcRenderer.invoke('dock:ai-set-model', providerId, modelId),
+  aiSetProvider: (providerId) =>
+    ipcRenderer.invoke('dock:ai-set-provider', providerId),
+  aiSetRoute: (payload) => ipcRenderer.invoke('dock:ai-set-route', payload),
+  aiResetRoute: () => ipcRenderer.invoke('dock:ai-reset-route'),
+  aiCatchUp: (opts) => ipcRenderer.invoke('dock:ai-catch-up', opts),
+  aiSummarize: (opts) => ipcRenderer.invoke('dock:ai-summarize', opts),
+  aiRefine: (opts) => ipcRenderer.invoke('dock:ai-refine', opts),
   setOverlay: (open) => ipcRenderer.invoke('dock:set-overlay', open),
   setChromeSize: (size) => ipcRenderer.invoke('dock:set-chrome-size', size),
   clearNotifications: () => ipcRenderer.invoke('dock:clear-notifications'),
   markAllRead: () => ipcRenderer.invoke('dock:mark-all-read'),
+  openInboxChat: (payload) => ipcRenderer.invoke('dock:open-inbox-chat', payload),
+  pinPerson: (payload) => ipcRenderer.invoke('dock:pin-person', payload),
+  unpinPerson: (pinId) => ipcRenderer.invoke('dock:unpin-person', pinId),
+  searchChats: (query) => ipcRenderer.invoke('dock:search-chats', query),
+  quickReply: (payload) => ipcRenderer.invoke('dock:quick-reply', payload),
   heartbeat: () => ipcRenderer.invoke('dock:heartbeat'),
   reportError: (payload) => ipcRenderer.invoke('dock:report-error', payload),
   listErrorReports: () => ipcRenderer.invoke('dock:list-error-reports'),
@@ -74,6 +103,21 @@ contextBridge.exposeInMainWorld('asperadock', {
     ipcRenderer.on('dock:open-search', listener);
     return () => ipcRenderer.removeListener('dock:open-search', listener);
   },
+  onOpenEditApp: (callback) => {
+    const listener = (_event, id) => callback(id);
+    ipcRenderer.on('dock:open-edit-app', listener);
+    return () => ipcRenderer.removeListener('dock:open-edit-app', listener);
+  },
+  onChromeAction: (callback) => {
+    const listener = (_event, action) => callback(action);
+    ipcRenderer.on('dock:chrome-action', listener);
+    return () => ipcRenderer.removeListener('dock:chrome-action', listener);
+  },
+  onOpenAiSettings: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('dock:open-ai-settings', listener);
+    return () => ipcRenderer.removeListener('dock:open-ai-settings', listener);
+  },
   onOpenFind: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('dock:open-find', listener);
@@ -88,5 +132,10 @@ contextBridge.exposeInMainWorld('asperadock', {
     const listener = () => callback();
     ipcRenderer.on('dock:sync-overlay', listener);
     return () => ipcRenderer.removeListener('dock:sync-overlay', listener);
+  },
+  onRequestLock: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('dock:request-lock', listener);
+    return () => ipcRenderer.removeListener('dock:request-lock', listener);
   },
 });

@@ -19,6 +19,7 @@ module.exports = {
       './assets/icon-128.png',
       './assets/icon-256.png',
       './assets/icon-512.png',
+      './packaging/asperadock-wrapper.sh',
     ],
   },
   rebuildConfig: {},
@@ -36,9 +37,19 @@ module.exports = {
           section: 'utils',
           maintainer: 'Aspera <support@aspera.local>',
           icon: './assets/icon.png',
-          // Matches app.setName('asperadock') / --class=asperadock for GNOME dock icons.
+          // Matches app.setName('asperadock') / --class=asperadock for Mint Cinnamon + XFCE panels.
+          desktopTemplate: './packaging/asperadock.desktop.ejs',
+          // Install safe /usr/bin wrapper (always passes --disable-gpu*).
+          scripts: {
+            postinst: './packaging/debian-scripts/postinst',
+          },
+          // XFCE often needs an AppIndicator / StatusNotifier host for the tray icon.
+          recommends: [
+            'libayatana-appindicator3-1',
+            'libnotify4',
+          ],
           productDescription:
-            'Aspera Hub — free Linux company workspace for WhatsApp, Arattai, Google Workspace, and Zoho',
+            'Aspera Hub — free Linux company workspace for WhatsApp, Arattai, Google Workspace, and Zoho. Tuned for Linux Mint (Cinnamon & XFCE).',
         },
       },
     },
@@ -59,6 +70,36 @@ module.exports = {
           },
           {
             entry: 'src/preload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/appMenuPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/chromeMenuPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/notifCenterPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/aiResultPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/forwardPickerPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/extensionsPreload.js',
             config: 'vite.preload.config.mjs',
             target: 'preload',
           },

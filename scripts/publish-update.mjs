@@ -12,6 +12,9 @@
  *
  * Clients fetch:
  *   https://github.com/ramchandragada/AsperaDock/releases/latest/download/latest.json
+ *
+ * Publish flow (avoids update 404 races):
+ *   draft release → upload .deb → upload latest.json → verify downloads → publish
  */
 
 import fs from 'node:fs';
@@ -26,11 +29,19 @@ const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'))
 const GITHUB_SLUG = process.env.GITHUB_REPOSITORY || 'ramchandragada/AsperaDock';
 
 function arg(name, fallback = '') {
+  const eq = process.argv.find((a) => a.startsWith(`--${name}=`));
+  if (eq) return eq.slice(name.length + 3);
   const i = process.argv.indexOf(`--${name}`);
   if (i === -1) return fallback;
   const next = process.argv[i + 1];
   if (!next || next.startsWith('--')) return true;
-  return next;
+  // npm often strips shell quotes — join tokens until the next flag.
+  const parts = [];
+  for (let j = i + 1; j < process.argv.length; j += 1) {
+    if (String(process.argv[j]).startsWith('--')) break;
+    parts.push(process.argv[j]);
+  }
+  return parts.length ? parts.join(' ') : next;
 }
 
 const channel = String(arg('channel', 'stable'));
@@ -77,6 +88,121 @@ function hasGhAuth() {
   if (process.env.GH_TOKEN || process.env.GITHUB_TOKEN) return true;
   const ghCheck = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8' });
   return ghCheck.status === 0;
+}
+
+function ghPipe(args) {
+  return spawnSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+async function urlReachable(url, { attempts = 10 } = {}) {
+  let lastStatus = 0;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch(url, {
+        method: 'HEAD',
+        redirect: 'follow',
+        headers: {
+          Accept: 'application/octet-stream,*/*',
+          'User-Agent': 'AsperaHub-Publish-Verify',
+          'Cache-Control': 'no-cache',
+        },
+      });
+      lastStatus = res.status;
+      if (res.ok) return true;
+    } catch {
+      lastStatus = 0;
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, 700 * (i + 1)));
+  }
+  console.error(`Verify failed for ${url} (last HTTP ${lastStatus || 'error'})`);
+  return false;
+}
+
+/**
+ * Download the public .deb and confirm SHA-256 matches latest.json.
+ * Catches publish/CDN races that cause "Checksum mismatch" on clients.
+ */
+async function assertPublicArtifactChecksum(fileMeta, { attempts = 8 } = {}) {
+  const expected = String(fileMeta?.sha256 || '').toLowerCase();
+  const url = String(fileMeta?.url || '');
+  const expectedSize = Number(fileMeta?.size) || 0;
+  if (!expected || !url) {
+    console.error('Manifest missing sha256/url for artifact verify');
+    return false;
+  }
+  let lastError = '';
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const bust = `${url}${url.includes('?') ? '&' : '?'}verify=${Date.now()}`;
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch(bust, {
+        redirect: 'follow',
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/octet-stream,*/*',
+          'User-Agent': 'AsperaHub-Publish-Verify',
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        },
+      });
+      if (!res.ok) {
+        lastError = `HTTP ${res.status}`;
+      } else {
+        // eslint-disable-next-line no-await-in-loop
+        const buf = Buffer.from(await res.arrayBuffer());
+        const got = crypto.createHash('sha256').update(buf).digest('hex');
+        if (got === expected && (!expectedSize || buf.length === expectedSize)) {
+          console.log(
+            `✓ checksum ${got.slice(0, 12)}… (${buf.length} bytes) matches latest.json`,
+          );
+          return true;
+        }
+        lastError = `sha ${got.slice(0, 12)}… size ${buf.length} (expected ${expected.slice(0, 12)}… / ${expectedSize})`;
+      }
+    } catch (error) {
+      lastError = String(error?.message || error);
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, 800 * (i + 1)));
+  }
+  console.error(`Public artifact checksum verify failed for ${url}: ${lastError}`);
+  return false;
+}
+
+/** Draft releases are not publicly downloadable — confirm assets via API instead. */
+function assertDraftAssetsPresent(expectedNames) {
+  const view = ghPipe([
+    'release',
+    'view',
+    tag,
+    '--repo',
+    GITHUB_SLUG,
+    '--json',
+    'isDraft,assets',
+  ]);
+  if (view.status !== 0) {
+    console.error(view.stderr || 'Could not read draft release assets');
+    return false;
+  }
+  let data;
+  try {
+    data = JSON.parse(view.stdout || '{}');
+  } catch {
+    console.error('Could not parse release view JSON');
+    return false;
+  }
+  const have = new Set(
+    (Array.isArray(data.assets) ? data.assets : []).map((a) => String(a?.name || '')),
+  );
+  const missing = expectedNames.filter((n) => !have.has(n));
+  if (missing.length) {
+    console.error(`Draft release missing assets: ${missing.join(', ')}`);
+    return false;
+  }
+  console.log(`✓ draft assets present: ${expectedNames.join(', ')}`);
+  return true;
 }
 
 const artifacts = walk(makeDir).filter((f) => /\.(AppImage|deb|rpm)$/i.test(f));
@@ -140,8 +266,10 @@ if (!hasGhAuth()) {
 }
 
 const title = `Aspera Hub ${version}`;
+const notesBlock = String(notes || '').trim() || `Aspera Hub ${version}`;
 const body = [
-  notes,
+  "## What's new",
+  notesBlock,
   '',
   '## Install',
   '- **Debian / Ubuntu / Mint:** download the `.deb` and install (or let Aspera Hub auto-update).',
@@ -149,39 +277,111 @@ const body = [
   '_Electron runtime is bundled — users never update Electron separately._',
 ].join('\n');
 
-const existing = spawnSync('gh', ['release', 'view', tag, '--repo', GITHUB_SLUG], {
-  encoding: 'utf8',
-  stdio: 'pipe',
-});
+const existing = ghPipe(['release', 'view', tag, '--repo', GITHUB_SLUG]);
 
-if (existing.status === 0) {
-  console.log(`Release ${tag} already exists — uploading / replacing assets…`);
+// Upload the .deb/.AppImage first, then latest.json last so clients that
+// race a publish never see a new manifest pointing at a missing artifact.
+const manifestUploads = uploadPaths.filter((p) => /\.json$/i.test(p));
+const artifactUploads = uploadPaths.filter((p) => !/\.json$/i.test(p));
+
+function uploadClobber(paths) {
+  if (!paths.length) return;
   run('gh', [
     'release',
     'upload',
     tag,
-    ...uploadPaths,
+    ...paths,
     '--repo',
     GITHUB_SLUG,
     '--clobber',
   ]);
+}
+
+if (existing.status === 0) {
+  console.log(`Release ${tag} already exists — uploading / replacing assets…`);
+  // Keep it draft while replacing so /releases/latest cannot serve a half-ready set.
+  run('gh', ['release', 'edit', tag, '--repo', GITHUB_SLUG, '--draft']);
+  uploadClobber(artifactUploads);
+  uploadClobber(manifestUploads);
 } else {
-  console.log(`Creating GitHub release ${tag}…`);
+  console.log(`Creating draft GitHub release ${tag}…`);
+  // Create as draft with artifacts only; attach manifest after, then publish.
   const createArgs = [
     'release',
     'create',
     tag,
-    ...uploadPaths,
+    ...artifactUploads,
     '--repo',
     GITHUB_SLUG,
     '--title',
     title,
     '--notes',
     body,
+    '--draft',
   ];
   if (isPrerelease) createArgs.push('--prerelease');
   if (channel !== 'stable') createArgs.push('--target', 'HEAD');
   run('gh', createArgs);
+  uploadClobber(manifestUploads);
+}
+
+const expectedAssetNames = [
+  ...artifactUploads.map((p) => path.basename(p)),
+  ...manifestUploads.map((p) => path.basename(p)),
+];
+if (!assertDraftAssetsPresent(expectedAssetNames)) {
+  console.error('Leaving the release as a draft.');
+  console.error(`Fix uploads, then: gh release edit ${tag} --draft=false --latest`);
+  process.exit(1);
+}
+
+console.log(`Publishing release ${tag}…`);
+run('gh', [
+  'release',
+  'edit',
+  tag,
+  '--repo',
+  GITHUB_SLUG,
+  '--draft=false',
+  '--latest',
+  '--title',
+  title,
+  '--notes',
+  body,
+]);
+
+console.log('Verifying public download URLs…');
+const verifyUrls = [
+  ...Object.values(files).map((f) => f.url),
+  `${releaseBase}/${encodeURIComponent(manifestName)}`,
+];
+for (const url of verifyUrls) {
+  // eslint-disable-next-line no-await-in-loop
+  const ok = await urlReachable(url);
+  if (!ok) {
+    console.error(
+      'Published, but public download verify failed — check GitHub CDN lag / assets.',
+    );
+    console.error(`Release page: https://github.com/${GITHUB_SLUG}/releases/tag/${tag}`);
+    process.exit(1);
+  }
+  console.log(`✓ ${url}`);
+}
+
+console.log('Verifying public artifact checksums against latest.json…');
+for (const fileMeta of Object.values(files)) {
+  // eslint-disable-next-line no-await-in-loop
+  const ok = await assertPublicArtifactChecksum(fileMeta);
+  if (!ok) {
+    console.error(
+      'Published, but the live .deb SHA-256 does not match latest.json.',
+    );
+    console.error(
+      'Clients would show “Checksum mismatch — download rejected”. Fix assets and re-publish.',
+    );
+    console.error(`Release page: https://github.com/${GITHUB_SLUG}/releases/tag/${tag}`);
+    process.exit(1);
+  }
 }
 
 const latestUrl = `https://github.com/${GITHUB_SLUG}/releases/latest/download/${manifestName}`;

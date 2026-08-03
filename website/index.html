@@ -1,251 +1,811 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Aspera Hub — Free Linux workspace for WhatsApp, Gmail &amp; Zoho</title>
-    <meta
-      name="description"
-      content="Aspera Hub is a free Linux desktop app that keeps WhatsApp, Arattai, Gmail, and Zoho in one light workspace. Lower RAM than Rambox. Instant tab switching. 100% free."
-    />
-    <meta property="og:title" content="Aspera Hub" />
-    <meta
-      property="og:description"
-      content="Free Linux workspace for WhatsApp, Gmail, Zoho and more — built to stay light."
-    />
-    <meta property="og:type" content="website" />
-    <link rel="icon" href="assets/icon.png" type="image/png" />
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <div class="atmosphere" aria-hidden="true"></div>
-    <div class="grain" aria-hidden="true"></div>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Aspera Hub — free forever Linux workspace from the makers of TuxGenie. WhatsApp, Arattai, Gmail & Zoho in one window with warm/cold RAM control, Hub pins, Forward, Aspera AI (EN·HI·MR), lock, tray, and SHA-256 updates. Debian/Ubuntu/Mint.">
+<meta name="author" content="Aspera Technologies">
+<meta property="og:title" content="Aspera Hub — one workspace for WhatsApp, Gmail & Zoho on Linux">
+<meta property="og:description" content="Free forever Linux workspace: warm/cold apps, isolated logins, Hub pins, Forward, Aspera AI, lock & tray. From the makers of TuxGenie.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://asperahub.com/">
+<meta property="og:image" content="https://opengraph.githubassets.com/1/ramchandragada/AsperaDock">
+<meta name="theme-color" content="#f8f7ff">
+<link rel="icon" type="image/svg+xml" href="tuxgenie.svg">
+<link rel="icon" type="image/png" sizes="64x64" href="favicon-64.png">
+<link rel="canonical" href="https://asperahub.com/">
+<title>Aspera Hub — a TuxGenie app for Linux</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* ── TuxGenie shared design system (same tokens as the main site) ── */
+:root{
+  --bg:#f8f7ff;--surface:#ffffff;--card:#fafaff;--border:#e4e2f5;--bh:#c7c3e8;
+  --green:#6366f1;--green-2:#4f46e5;--blue:#3b82f6;--orange:#f59e0b;
+  --purple:#a855f7;--yellow:#eab308;--red:#ef4444;
+  --t1:#0f172a;--t2:#475569;--t3:#94a3b8;
+  --r:12px;--r-lg:18px;--fd:'Space Grotesk',sans-serif;--fb:'Inter',sans-serif;--fm:'JetBrains Mono',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:var(--fb);background:var(--bg);color:var(--t1);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+h1,h2,h3{font-family:var(--fd);font-weight:700;letter-spacing:-.02em}
+.mono{font-family:var(--fm)}
+a{color:inherit}
+img{max-width:100%}
+.container{max-width:1140px;margin:0 auto;padding:0 24px}
+.sec{padding:88px 0}
+.grad{background:linear-gradient(135deg,var(--green),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.fade{opacity:0;transform:translateY(20px);transition:opacity .55s ease,transform .55s ease}
+.fade.vis{opacity:1;transform:translateY(0)}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;border-radius:10px;font-weight:600;font-size:14px;text-decoration:none;border:none;cursor:pointer;transition:all .2s}
+.btn svg{width:17px;height:17px}
+.btn-p{background:var(--green);color:#fff;box-shadow:0 4px 14px -4px rgba(99,102,241,.45)}
+.btn-p:hover{background:var(--green-2);transform:translateY(-2px);box-shadow:0 12px 30px -8px rgba(99,102,241,.55)}
+.btn-s{background:#fff;color:var(--t1);border:1px solid var(--border)}
+.btn-s:hover{border-color:var(--green);background:#f5f4ff;color:var(--green-2);transform:translateY(-2px)}
+.pill{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--border);border-radius:20px;padding:5px 12px;font-size:12px;font-weight:500;color:var(--t2);transition:all .2s}
+.pill-g{background:rgba(99,102,241,.08);border-color:rgba(99,102,241,.25);color:var(--green-2)}
+/* NAV (identical to main site) */
+.nav{position:sticky;top:0;z-index:100;background:rgba(248,247,255,.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
+.nav-in{max-width:1140px;margin:0 auto;padding:0 24px;height:60px;display:flex;align-items:center;justify-content:space-between;gap:24px}
+.nav-logo{display:flex;align-items:center;gap:10px;text-decoration:none;flex-shrink:0}
+.nav-links{display:flex;align-items:center;gap:24px;flex:1;justify-content:center}
+.nav-links a{color:var(--t2);text-decoration:none;font-size:14px;font-weight:500;transition:color .15s}
+.nav-links a:hover{color:var(--t1)}
+.nav-links a.active{color:var(--green-2);font-weight:600}
+.nav-btns{display:flex;gap:10px;flex-shrink:0}
+.hb{display:none;flex-direction:column;gap:5px;cursor:pointer;padding:8px;border:none;background:none}
+.hb span{display:block;width:20px;height:2px;background:var(--t2);border-radius:2px;transition:all .25s}
+.mob{display:none;position:absolute;top:60px;left:0;right:0;background:var(--surface);border-bottom:1px solid var(--border);padding:14px 24px;flex-direction:column;gap:2px;z-index:99}
+.mob.open{display:flex}
+.mob a{color:var(--t2);text-decoration:none;font-size:15px;font-weight:500;padding:12px 0;border-bottom:1px solid var(--border)}
+.mob a:last-child{border-bottom:none}
+/* HERO (same treatment as main site) */
+.hero{padding:74px 0 84px;position:relative;overflow:hidden;background:radial-gradient(ellipse 70% 55% at 12% -10%,rgba(99,102,241,.18) 0%,transparent 55%),radial-gradient(ellipse 55% 45% at 88% 110%,rgba(245,158,11,.12) 0%,transparent 55%),var(--bg)}
+.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:60px;align-items:center}
+.hero-tag{display:inline-flex;align-items:center;gap:8px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.22);border-radius:20px;padding:5px 14px;font-size:12px;font-weight:600;color:var(--green-2);margin-bottom:22px}
+.hero-h1{font-size:clamp(38px,5.2vw,60px);font-weight:800;line-height:1.06;letter-spacing:-1.5px;margin-bottom:20px}
+.hero-sub{font-size:17px;color:var(--t2);line-height:1.7;margin-bottom:26px;max-width:520px}
+.hero-sub b{color:var(--t1);font-weight:600}
+.hero-ctas{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:26px}
+.stats{display:flex;gap:30px;flex-wrap:wrap}
+.stats > div{display:flex;flex-direction:column;gap:2px}
+.stats span:first-child{font-family:var(--fd);font-size:24px;font-weight:800}
+.stats span:last-child{font-size:11px;color:var(--t3);font-weight:500;text-transform:uppercase;letter-spacing:.07em}
+/* SECTION TITLES (same as main site) */
+.sh{font-size:clamp(28px,3.8vw,40px);font-weight:800;letter-spacing:-1px;margin-bottom:10px}
+.sh-sub{font-size:16px;color:var(--t2);max-width:600px;margin:0 auto}
+.sec-head{text-align:center;margin-bottom:48px}
+.sec-alt{background:#fff;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
 
-    <header class="site-header">
-      <a class="logo" href="#top" aria-label="Aspera Hub home">
-        <img src="assets/mark.png" alt="" width="36" height="36" />
-        <span>Aspera Hub</span>
-      </a>
-      <nav class="nav">
-        <a href="#why">Why Hub</a>
-        <a href="#features">Features</a>
-        <a href="#install">Install</a>
-        <a href="#faq">FAQ</a>
-      </nav>
-      <a class="btn btn-small btn-primary" href="#download">Download</a>
-    </header>
+/* ── App window mockup — dark, floated on the light page like the TuxGenie terminal ── */
+.tw-wrap{position:relative}
+.win{background:#1a1d2e;border:1px solid #2d3046;border-radius:var(--r-lg);overflow:hidden;box-shadow:0 30px 80px -20px rgba(99,102,241,.35),0 0 0 1px rgba(99,102,241,.08)}
+.win-hdr{background:#13162a;padding:10px 14px;display:flex;align-items:center;gap:7px;border-bottom:1px solid #2d3046}
+.dot{width:11px;height:11px;border-radius:50%;flex-shrink:0}
+.win-hdr .t{margin:0 auto;font-family:var(--fb);font-size:12px;color:#8b90b5}
+.rail{display:flex;align-items:center;gap:8px;padding:10px 12px;background:#151831;border-bottom:1px solid #2d3046;overflow:hidden}
+.app{position:relative;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;flex-shrink:0;box-shadow:inset 0 1px 0 rgba(255,255,255,.22)}
+.app svg{width:18px;height:18px;color:#fff}
+.app.on{outline:2px solid rgba(165,180,252,.9);outline-offset:2px}
+.app .fl{position:absolute;top:-7px;left:-6px;width:14px;height:14px;color:var(--orange);filter:drop-shadow(0 0 4px rgba(245,158,11,.9))}
+.app .bdg{position:absolute;top:-6px;right:-6px;min-width:16px;height:16px;padding:0 4px;border-radius:9px;background:var(--red);color:#fff;font-family:var(--fb);font-size:9.5px;font-weight:700;display:grid;place-items:center;border:2px solid #151831}
+.rail .word{margin-left:auto;font-family:var(--fd);font-weight:800;letter-spacing:.1em;font-size:11px;color:rgba(165,180,252,.55)}
+.rail .utils{display:flex;gap:10px;margin-left:12px;color:#6b7099}
+.rail .utils svg{width:15px;height:15px}
+.wbody{display:grid;grid-template-columns:190px 1fr;height:296px}
+.side{border-right:1px solid #2d3046;padding:10px;background:#171a30;display:flex;flex-direction:column;gap:3px}
+.conv{display:flex;gap:9px;align-items:center;padding:8px;border-radius:9px}
+.conv.sel{background:rgba(99,102,241,.16)}
+.ava{width:30px;height:30px;border-radius:50%;flex-shrink:0;background:linear-gradient(135deg,var(--green),var(--purple))}
+.conv:nth-child(2) .ava{background:linear-gradient(135deg,#22c55e,#86efac)}
+.conv:nth-child(3) .ava{background:linear-gradient(135deg,#f59e0b,#fcd34d)}
+.conv:nth-child(4) .ava{background:linear-gradient(135deg,#ef4444,#fca5a5)}
+.conv:nth-child(5) .ava{background:linear-gradient(135deg,#3b82f6,#93c5fd)}
+.stk{flex:1;display:flex;flex-direction:column;gap:5px}
+.bar{height:7px;border-radius:4px;background:rgba(165,180,252,.22)}
+.bar.s{background:rgba(139,144,181,.18)}
+.upill{margin-left:auto;min-width:17px;height:17px;padding:0 5px;border-radius:9px;background:#22c55e;color:#04331f;font-family:var(--fb);font-weight:700;font-size:10px;display:grid;place-items:center}
+.chat{display:flex;flex-direction:column;background:#1a1d2e}
+.chat-hd{display:flex;align-items:center;gap:9px;padding:10px 14px;border-bottom:1px solid #2d3046}
+.on-dot{width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 7px 1px rgba(34,197,94,.8)}
+.msgs{flex:1;padding:15px;display:flex;flex-direction:column;gap:9px}
+.msg{max-width:66%;padding:9px 12px;border-radius:13px;display:flex;flex-direction:column;gap:5px}
+.msg.in{background:#262a45;border-bottom-left-radius:4px}
+.msg.out{align-self:flex-end;background:rgba(99,102,241,.32);border-bottom-right-radius:4px}
+.winput{margin:0 14px 14px;height:36px;border-radius:18px;background:#22263f;border:1px solid #2d3046;display:flex;align-items:center;padding:0 6px 0 15px}
+.winput .send{margin-left:auto;width:26px;height:26px;border-radius:50%;background:var(--green);display:grid;place-items:center}
+.winput .send svg{width:13px;height:13px;color:#fff}
+.chip-float{position:absolute;z-index:2;display:flex;align-items:center;gap:7px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:8px 13px;font-size:13px;font-weight:600;color:var(--t1);box-shadow:0 14px 34px -14px rgba(15,23,42,.3)}
+.chip-float svg{width:15px;height:15px}
+.chip-warm{top:-16px;right:-8px;color:var(--orange)}
+.chip-cold{bottom:-16px;left:-12px;color:var(--blue)}
+@media(max-width:520px){.wbody{grid-template-columns:110px 1fr;height:264px}.chip-float{display:none}}
 
-    <main id="top">
-      <section class="hero">
-        <p class="eyebrow">100% free · Linux · Open for everyone</p>
-        <h1 class="brand-hero">Aspera Hub</h1>
-        <p class="lede">
-          Your WhatsApp, Arattai, Gmail, and Zoho apps — together in one light
-          Linux workspace. Built for daily work, not for eating your RAM.
-        </p>
-        <div class="cta-row" id="download">
-          <a class="btn btn-primary btn-lg" id="download-deb" href="https://github.com/ramchandragada/AsperaDock/releases/latest">
-            Download .deb for Linux
-          </a>
-          <a class="btn btn-ghost btn-lg" href="https://github.com/ramchandragada/AsperaDock">
-            View on GitHub
-          </a>
+/* runs-with strip */
+.runs{margin-top:48px;padding-top:30px;border-top:1px solid var(--border)}
+.runs-lab{text-align:center;font-size:11px;font-weight:600;color:var(--t3);letter-spacing:.12em;text-transform:uppercase;margin-bottom:20px}
+.runs-row{display:flex;flex-wrap:wrap;justify-content:center;gap:10px}
+.tag{display:inline-flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--border);border-radius:11px;padding:8px 14px 8px 8px;font-weight:500;font-size:14px;color:var(--t1)}
+.ib{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;flex-shrink:0;box-shadow:inset 0 1px 0 rgba(255,255,255,.25)}
+.ib svg{width:15px;height:15px;color:#fff}
+
+/* warm/cold cards (TuxGenie cat-card pattern) */
+.temp{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:720px){.temp{grid-template-columns:1fr}}
+.tcard{background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);padding:28px;position:relative;overflow:hidden;box-shadow:0 1px 3px rgba(15,23,42,.04),0 8px 24px -12px rgba(99,102,241,.12)}
+.tcard::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.tcard.warm::before{background:linear-gradient(90deg,var(--orange),#fbbf24)}
+.tcard.cold::before{background:linear-gradient(90deg,var(--blue),#60a5fa)}
+.tcard h3{font-size:20px;margin-bottom:10px;color:var(--t1);display:flex;align-items:center;gap:11px}
+.tcard p{font-size:15px;color:var(--t2);line-height:1.7}
+.tcard b{color:var(--t1);font-weight:600}
+.ti{width:38px;height:38px;border-radius:10px;display:grid;place-items:center}
+.ti svg{width:20px;height:20px;color:#fff}
+.warm .ti{background:linear-gradient(135deg,var(--orange),#fbbf24)}
+.cold .ti{background:linear-gradient(135deg,var(--blue),#60a5fa)}
+.tcap{margin-top:16px;font-family:var(--fm);font-size:12px;color:var(--t3)}
+
+/* feature grid */
+.fgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+@media(max-width:880px){.fgrid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px){.fgrid{grid-template-columns:1fr}}
+.feat{background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);padding:22px;transition:all .22s;box-shadow:0 1px 3px rgba(15,23,42,.03)}
+.feat:hover{transform:translateY(-3px);border-color:var(--green);box-shadow:0 12px 34px -14px rgba(99,102,241,.22)}
+.feat .fi{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.2);margin-bottom:15px}
+.feat .fi svg{width:20px;height:20px;color:var(--green-2)}
+.feat h3{font-size:17px;margin-bottom:6px;color:var(--t1)}
+.feat p{font-size:14px;color:var(--t2);line-height:1.65}
+.feat b{color:var(--t1);font-weight:600}
+.feat code{font-family:var(--fm);background:#eef0ff;color:#4338ca;padding:1px 6px;border-radius:4px;font-size:12px;font-weight:600}
+
+/* apps chips */
+.apps{display:flex;flex-wrap:wrap;gap:11px;justify-content:center}
+.achip{display:inline-flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:10px 16px 10px 10px;font-weight:500;font-size:15px;color:var(--t1);transition:all .18s}
+.achip:hover{transform:translateY(-2px);border-color:var(--green)}
+.more{text-align:center;margin-top:20px;font-family:var(--fm);font-size:13px;color:var(--t3)}
+
+/* install terminal */
+.inst{max-width:760px;margin:0 auto}
+.distro{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:22px}
+.distro span{font-family:var(--fm);font-size:13px;color:var(--t2);background:#fff;border:1px solid var(--border);border-radius:9px;padding:7px 13px}
+.term{background:#1a1d2e;border:1px solid #2d3046;border-radius:var(--r-lg);overflow:hidden;box-shadow:0 24px 60px -26px rgba(99,102,241,.4)}
+.term-hd{display:flex;align-items:center;gap:7px;padding:11px 15px;border-bottom:1px solid #2d3046;background:#13162a}
+.term-hd .t{font-family:var(--fm);font-size:12px;color:#8b90b5;margin-left:6px}
+.copy{margin-left:auto;font-family:var(--fb);font-size:12.5px;font-weight:600;color:#c7cbef;background:rgba(99,102,241,.16);border:1px solid rgba(99,102,241,.3);border-radius:8px;padding:5px 12px;cursor:pointer;transition:.15s}
+.copy:hover{background:rgba(99,102,241,.28);color:#fff}
+.term pre{margin:0;padding:18px 20px;font-family:var(--fm);font-size:13px;line-height:1.9;color:#e6e8ff;overflow-x:auto;white-space:pre}
+.term .c{color:#6b7099}.term .g{color:#a5b4fc;font-weight:600}.term .v{color:#fbbf24}
+.note{max-width:760px;margin:18px auto 0;font-size:14px;color:var(--t2);text-align:center}
+.note b{color:var(--t1);font-weight:600}
+
+/* faq */
+.faq{max-width:780px;margin:0 auto}
+.faq details{background:#fff;border:1px solid var(--border);border-radius:var(--r);margin-bottom:11px;overflow:hidden;transition:border-color .15s}
+.faq details[open]{border-color:var(--bh)}
+.faq summary{cursor:pointer;list-style:none;padding:17px 20px;font-family:var(--fd);font-weight:700;font-size:16px;color:var(--t1);display:flex;justify-content:space-between;align-items:center;gap:14px}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary::after{content:'+';color:var(--green-2);font-size:22px;font-weight:700;line-height:1}
+.faq details[open] summary::after{content:'\2212'}
+.faq .ans{padding:0 20px 18px;color:var(--t2);font-size:15px}
+/* download cta */
+.cta{max-width:900px;margin:0 auto;text-align:center;background:linear-gradient(135deg,rgba(99,102,241,.1),rgba(168,85,247,.08));border:1px solid rgba(99,102,241,.22);border-radius:22px;padding:56px 28px}
+.cta h2{font-size:clamp(26px,4vw,40px);font-weight:800;letter-spacing:-1px;margin-bottom:12px}
+.cta p{color:var(--t2);font-size:17px;max-width:46ch;margin:0 auto 26px}
+.cta .hero-ctas{justify-content:center;margin-bottom:14px}
+.cta .fine{font-family:var(--fm);font-size:12px;color:var(--t3)}
+/* footer (identical to main site) */
+footer{background:var(--surface);border-top:1px solid var(--border)}
+.foot-grid{display:grid;grid-template-columns:1.8fr 1fr 1fr 1fr;gap:32px;padding:48px 0 32px}
+.foot-col h5{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--t3);margin-bottom:14px}
+.foot-col a{display:block;color:var(--t2);text-decoration:none;font-size:13px;margin-bottom:9px;transition:color .15s}
+.foot-col a:hover{color:var(--green-2)}
+.foot-col p{font-size:13px;color:var(--t2);line-height:1.6;margin-bottom:12px}
+.foot-divider{height:1px;background:var(--border)}
+.foot-bottom{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;padding:18px 0;font-size:12px;color:var(--t3)}
+.foot-bottom a{color:var(--t3);text-decoration:none;transition:color .15s}
+.foot-bottom a:hover{color:var(--green-2)}
+@media(max-width:860px){.foot-grid{grid-template-columns:1fr 1fr;gap:24px}}
+@media(max-width:500px){.foot-grid{grid-template-columns:1fr}}
+/* responsive (mirror main site) */
+@media(max-width:900px){
+  .nav-links{display:none}
+  .hb{display:flex}
+  .hero-grid{grid-template-columns:1fr;gap:44px}
+  .hero-sub{max-width:none}
+}
+
+/* ── Expanded content components (same design tokens) ── */
+.toc{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;margin:0 auto 8px;max-width:900px}
+.toc a{font-size:13px;font-weight:600;color:var(--green-2);text-decoration:none;background:#fff;border:1px solid var(--border);border-radius:999px;padding:7px 14px}
+.toc a:hover{border-color:var(--green);background:#f5f4ff}
+.who{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+@media(max-width:800px){.who{grid-template-columns:1fr}}
+.who-card{background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);padding:24px;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+.who-card h3{font-size:18px;margin-bottom:8px}
+.who-card p{font-size:14px;color:var(--t2);line-height:1.65}
+.who-card .num{font-family:var(--fd);font-size:13px;font-weight:700;color:var(--green-2);letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px}
+.flow{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:28px}
+@media(max-width:800px){.flow{grid-template-columns:1fr}}
+.flow-step{background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);padding:22px;position:relative}
+.flow-step .n{font-family:var(--fd);font-weight:800;font-size:28px;background:linear-gradient(135deg,var(--green),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;line-height:1;margin-bottom:10px}
+.flow-step h3{font-size:17px;margin-bottom:6px}
+.flow-step p{font-size:14px;color:var(--t2);line-height:1.65}
+.msg-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+@media(max-width:900px){.msg-grid{grid-template-columns:1fr}}
+.msg-card{background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);padding:26px;box-shadow:0 1px 3px rgba(15,23,42,.03)}
+.msg-card .fi{width:40px;height:40px;border-radius:11px;display:grid;place-items:center;background:rgba(99,102,241,.1);border:1px solid rgba(99,102,241,.2);margin-bottom:14px}
+.msg-card .fi svg{width:20px;height:20px;color:var(--green-2)}
+.msg-card h3{font-size:18px;margin-bottom:8px}
+.msg-card p{font-size:14px;color:var(--t2);line-height:1.7}
+.msg-card ul{margin:12px 0 0;padding-left:18px;color:var(--t2);font-size:13.5px;line-height:1.7}
+.msg-card li{margin-bottom:4px}
+.msg-card b{color:var(--t1)}
+.prov{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.prov span{font-family:var(--fm);font-size:11px;font-weight:600;color:var(--t2);background:#eef0ff;border-radius:7px;padding:5px 9px}
+.keys{display:grid;grid-template-columns:repeat(2,1fr);gap:10px 28px;max-width:820px;margin:0 auto}
+@media(max-width:640px){.keys{grid-template-columns:1fr}}
+.key-row{display:grid;grid-template-columns:minmax(140px,auto) 1fr;gap:12px;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--border)}
+.key-row kbd{font-family:var(--fm);font-size:12px;font-weight:700;color:#4338ca;background:#eef0ff;border:1px solid #d8daf5;border-radius:7px;padding:4px 8px;white-space:nowrap}
+.key-row span{font-size:14px;color:var(--t2)}
+.cmp{width:100%;border-collapse:separate;border-spacing:0;background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;font-size:14px}
+.cmp th,.cmp td{padding:14px 16px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+.cmp th{font-family:var(--fd);font-size:13px;font-weight:700;background:#f5f4ff;color:var(--t1)}
+.cmp tr:last-child td{border-bottom:none}
+.cmp td:first-child{font-weight:600;color:var(--t1);width:28%}
+.cmp .yes{color:#047857;font-weight:700}
+.cmp .no{color:var(--t3)}
+.cmp .partial{color:#b45309;font-weight:600}
+.sec-band{background:linear-gradient(135deg,rgba(99,102,241,.08),rgba(168,85,247,.06));border-top:1px solid rgba(99,102,241,.18);border-bottom:1px solid rgba(99,102,241,.18)}
+.sec-list{display:grid;grid-template-columns:1fr 1fr;gap:12px 28px;max-width:900px;margin:0 auto}
+@media(max-width:700px){.sec-list{grid-template-columns:1fr}}
+.sec-list li{list-style:none;padding:14px 16px;background:#fff;border:1px solid var(--border);border-radius:var(--r);font-size:14px;color:var(--t2);line-height:1.6}
+.sec-list li b{color:var(--t1);display:block;margin-bottom:4px;font-family:var(--fd);font-size:15px}
+.mission{max-width:760px;margin:0 auto;text-align:center}
+.mission p{font-size:17px;color:var(--t2);line-height:1.75;margin-bottom:16px}
+.mission .quote{font-family:var(--fd);font-weight:700;font-size:clamp(20px,3vw,28px);color:var(--t1);line-height:1.35;margin:22px 0}
+.lim{max-width:780px;margin:0 auto;background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);padding:24px 26px}
+.lim h3{font-size:18px;margin-bottom:10px}
+.lim ul{margin:0;padding-left:18px;color:var(--t2);font-size:14px;line-height:1.75}
+.app-desc{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:28px}
+@media(max-width:720px){.app-desc{grid-template-columns:1fr}}
+.app-desc article{background:#fff;border:1px solid var(--border);border-radius:var(--r);padding:16px 18px}
+.app-desc h4{font-size:15px;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+.app-desc p{font-size:13.5px;color:var(--t2);margin:0;line-height:1.55}
+.note-warn{max-width:760px;margin:16px auto 0;font-size:13px;color:var(--t3);text-align:center;font-family:var(--fm)}
+
+</style>
+<noscript><style>.fade{opacity:1!important;transform:none!important}</style></noscript>
+</head>
+<body>
+<a href="#main" style="position:absolute;top:-40px;left:8px;padding:8px 14px;background:var(--green);color:#fff;border-radius:0 0 8px 8px;font-size:13px;font-weight:600;text-decoration:none;z-index:999;transition:top .2s" onfocus="this.style.top='0'" onblur="this.style.top='-40px'">Skip to main content</a>
+
+<!-- icon defs -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <symbol id="g-chat" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z"/></symbol>
+  <symbol id="g-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M4 7l8 6 8-6"/></symbol>
+  <symbol id="g-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.2"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0M16 6.2a3 3 0 0 1 0 5.6M17 19a5 5 0 0 0-2.5-4.3"/></symbol>
+  <symbol id="g-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/><path d="M18 16H7a2 2 0 0 0-2 2"/></symbol>
+  <symbol id="g-grid" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="g-link" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l6-6M8.5 12L7 13.5a3.5 3.5 0 0 0 5 5L13.5 17M15.5 12L17 10.5a3.5 3.5 0 0 0-5-5L10.5 7"/></symbol>
+  <symbol id="g-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="g-dl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11m0 0l-4-4m4 4l4-4M5 19h14"/></symbol>
+  <symbol id="g-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4-4"/></symbol>
+  <symbol id="g-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 1 1 12 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 0 0 4 0"/></symbol>
+  <symbol id="g-menu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+  <symbol id="g-flame" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2s5 4.5 5 9.5A5 5 0 0 1 7 12c0-1.6.7-2.8 1.4-3.7C8.9 9.4 10 10 10 10s-.6-3.2 2-8z"/></symbol>
+  <symbol id="g-snow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M12 3v18M3 12h18M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="g-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+  <symbol id="g-id" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="8.5" cy="11" r="2.2"/><path d="M13 9h5M13 13h5M5 16a3.5 3.5 0 0 1 7 0"/></symbol>
+  <symbol id="g-focus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></symbol>
+  <symbol id="g-bolt" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3L5 13h6l-1 8 8-10h-6z"/></symbol>
+  <symbol id="g-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.5 0 2-1 2-2s-.6-1.4-.6-2.2c0-.8.6-1.3 1.4-1.3H17a4 4 0 0 0 4-4c0-4.4-4-8.5-9-8.5z"/><circle cx="7.5" cy="12" r="1"/><circle cx="10" cy="8" r="1"/><circle cx="14.5" cy="8" r="1"/></symbol>
+  <symbol id="g-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4"/></symbol>
+  <symbol id="g-keys" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2.5"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></symbol>
+</defs></svg>
+
+<!-- NAV (TuxGenie chrome — this is a page of the TuxGenie site) -->
+<div id="top"></div>
+<nav class="nav">
+  <div class="nav-in">
+    <a href="https://www.tuxgenie.com/" class="nav-logo" aria-label="TuxGenie home">
+      <img src="tuxgenie.svg" alt="TuxGenie" width="30" height="30" style="display:block;border-radius:7px">
+      <span style="font-family:var(--fd);font-size:18px;font-weight:800" class="grad">TuxGenie</span>
+      <span class="pill pill-g" style="font-size:10px;padding:2px 8px">Apps</span>
+    </a>
+    <div class="nav-links">
+      <a href="#idea">The idea</a>
+      <a href="#features">Shell</a>
+      <a href="#messaging">Messaging</a>
+      <a href="#apps">Apps</a>
+      <a href="#compare">Compare</a>
+      <a href="#install">Install</a>
+      <a href="https://www.tuxgenie.com/">TuxGenie ↗</a>
+    </div>
+    <div class="nav-btns">
+      <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest"><svg><use href="#g-dl"/></svg> Download</a>
+    </div>
+    <button class="hb" id="hb" aria-label="Open menu" onclick="toggleM()"><span></span><span></span><span></span></button>
+  </div>
+  <div class="mob" id="mob">
+    <a href="#idea" onclick="closeM()">💡 The idea</a>
+    <a href="#who" onclick="closeM()">👥 Who it’s for</a>
+    <a href="#features" onclick="closeM()">⚡ Shell</a>
+    <a href="#messaging" onclick="closeM()">💬 Messaging &amp; AI</a>
+    <a href="#apps" onclick="closeM()">📦 Apps</a>
+    <a href="#security" onclick="closeM()">🛡 Security</a>
+    <a href="#shortcuts" onclick="closeM()">⌨ Shortcuts</a>
+    <a href="#compare" onclick="closeM()">⚖ Compare</a>
+    <a href="#install" onclick="closeM()">⬇ Install</a>
+    <a href="#faq" onclick="closeM()">❓ FAQ</a>
+    <a href="https://www.tuxgenie.com/" onclick="closeM()">🐧 TuxGenie home</a>
+    <a data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest" onclick="closeM()" style="color:var(--green-2);font-weight:700">⬇ Download Aspera Hub</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section id="main" class="hero">
+  <div class="container">
+    <div class="hero-grid">
+      <div class="fade">
+        <span class="hero-tag">🅰 An app from the makers of TuxGenie · Free for Linux</span>
+        <h1 class="hero-h1">Aspera Hub<br><span class="grad">one warm workspace.</span></h1>
+        <p class="hero-sub">Run your <b>WhatsApp, Arattai, Gmail and Zoho</b> apps together in a single Linux window. The ones you use all day stay <b>warm</b> for instant switching — the rest go <b>cold</b> so they don't eat your RAM.</p>
+        <div class="hero-ctas">
+          <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest"><svg><use href="#g-dl"/></svg> Download .deb for Linux</a>
+          <a class="btn btn-s" href="https://github.com/ramchandragada/AsperaDock" target="_blank" rel="noopener"><svg><use href="#g-link"/></svg> View on GitHub</a>
         </div>
-        <p class="meta" id="download-meta">Fetching latest release…</p>
-        <div class="hero-stage" aria-hidden="true">
-          <div class="hero-window">
-            <div class="hero-bar">
-              <span class="pill wa"></span>
-              <span class="pill wa"></span>
-              <span class="pill ar"></span>
-              <span class="pill zo"></span>
-              <span class="pill gm"></span>
-              <strong>ASPERA</strong>
+        <div class="stats">
+          <div><span class="grad" data-version>v0.4.39</span><span>Latest</span></div>
+          <div><span class="grad">₹0</span><span>Free forever</span></div>
+          <div><span class="grad">MIT</span><span>Open source</span></div>
+          <div><span class="grad">.deb</span><span>Debian · Ubuntu · Mint</span></div>
+        </div>
+      </div>
+
+      <!-- Synthetic product window (no real accounts or messages) -->
+      <div class="tw-wrap fade" aria-label="Aspera Hub interface preview">
+        <div class="chip-float chip-warm"><svg><use href="#g-flame"/></svg> <span style="color:var(--t1)"><b>5</b> apps warm</span></div>
+        <div class="chip-float chip-cold"><svg><use href="#g-snow"/></svg> <span style="color:var(--t1)">rest hibernating</span></div>
+        <div class="win">
+          <div class="win-hdr"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="t">Aspera Hub</span></div>
+          <div class="rail">
+            <span class="app on" style="background:linear-gradient(160deg,#2bd06a,#128a3f)"><svg><use href="#g-chat"/></svg><svg class="fl"><use href="#g-flame"/></svg><span class="bdg">3</span></span>
+            <span class="app" style="background:linear-gradient(160deg,#2bd06a,#128a3f)"><svg><use href="#g-chat"/></svg><svg class="fl"><use href="#g-flame"/></svg></span>
+            <span class="app" style="background:linear-gradient(160deg,#ffab4d,#e0722a)"><svg><use href="#g-chat"/></svg><svg class="fl"><use href="#g-flame"/></svg></span>
+            <span class="app" style="background:linear-gradient(160deg,#f3574a,#c62f24)"><svg><use href="#g-mail"/></svg><svg class="fl"><use href="#g-flame"/></svg><span class="bdg">9</span></span>
+            <span class="app" style="background:linear-gradient(160deg,#f0863a,#d9660f)"><svg><use href="#g-users"/></svg></span>
+            <span class="app" style="background:linear-gradient(160deg,#3b83d6,#1f5aa0)"><svg><use href="#g-grid"/></svg></span>
+            <span class="word">ASPERA</span>
+            <span class="utils"><svg><use href="#g-plus"/></svg><svg><use href="#g-search"/></svg><svg><use href="#g-bell"/></svg><svg><use href="#g-menu"/></svg></span>
+          </div>
+          <div class="wbody">
+            <div class="side">
+              <div class="conv sel"><span class="ava"></span><span class="stk"><span class="bar" style="width:74%"></span><span class="bar s" style="width:50%"></span></span></div>
+              <div class="conv"><span class="ava"></span><span class="stk"><span class="bar" style="width:62%"></span><span class="bar s" style="width:44%"></span></span><span class="upill">2</span></div>
+              <div class="conv"><span class="ava"></span><span class="stk"><span class="bar" style="width:80%"></span><span class="bar s" style="width:38%"></span></span></div>
+              <div class="conv"><span class="ava"></span><span class="stk"><span class="bar" style="width:56%"></span><span class="bar s" style="width:52%"></span></span></div>
+              <div class="conv"><span class="ava"></span><span class="stk"><span class="bar" style="width:70%"></span><span class="bar s" style="width:40%"></span></span></div>
             </div>
-            <div class="hero-body">
-              <p>One shell. Many signed-in apps. Instant switches.</p>
+            <div class="chat">
+              <div class="chat-hd"><span class="ava" style="width:28px;height:28px"></span><span class="stk" style="max-width:150px"><span class="bar" style="width:110px"></span></span><span class="on-dot"></span></div>
+              <div class="msgs">
+                <div class="msg in"><span class="bar" style="width:120px"></span><span class="bar s" style="width:70px"></span></div>
+                <div class="msg out"><span class="bar" style="width:140px;background:rgba(165,180,252,.5)"></span></div>
+                <div class="msg in"><span class="bar" style="width:90px"></span></div>
+                <div class="msg out"><span class="bar" style="width:130px;background:rgba(165,180,252,.5)"></span><span class="bar s" style="width:60px;background:rgba(165,180,252,.32)"></span></div>
+              </div>
+              <div class="winput"><span class="bar s" style="width:40%"></span><span class="send"><svg><use href="#g-dl"/></svg></span></div>
             </div>
           </div>
         </div>
-      </section>
-
-      <section class="strip reveal" id="why">
-        <div class="strip-card">
-          <strong>~3 GB</strong>
-          <span>typical with real work in Hub</span>
-        </div>
-        <div class="strip-card">
-          <strong>~8 GB+</strong>
-          <span>Rambox with only two WhatsApps idle</span>
-        </div>
-        <div class="strip-card">
-          <strong>₹0</strong>
-          <span>forever free — no trials, no paywall</span>
-        </div>
-      </section>
-
-      <section class="section reveal" id="features">
-        <div class="section-head">
-          <h2>Built for how you actually work</h2>
-          <p>
-            Keep the apps you live in warm and instant. Leave the rest cold until
-            you need them. Linux users no longer need a heavy third-party suite
-            or five browser windows.
-          </p>
-        </div>
-        <div class="feature-grid">
-          <article>
-            <h3>Warm apps, full speed</h3>
-            <p>
-              Mark up to five apps with the flame. They stay loaded and
-              unthrottled so WhatsApp, Gmail, and Zoho switch instantly.
-            </p>
-          </article>
-          <article>
-            <h3>Cold apps on demand</h3>
-            <p>
-              Rarely used tabs load only when you click them — so RAM stays
-              sensible on 16&nbsp;GB refurbished PCs.
-            </p>
-          </article>
-          <article>
-            <h3>Separate logins</h3>
-            <p>
-              Profiles isolate sessions. Run multiple WhatsApp or Gmail accounts
-              side by side without cookie bleed.
-            </p>
-          </article>
-          <article>
-            <h3>Company catalog</h3>
-            <p>
-              WhatsApp, Arattai, Gmail, Zoho Mail, CRM, Books, and Zoho One —
-              ready for Aspera teams, open for anyone on Linux.
-            </p>
-          </article>
-          <article>
-            <h3>Desktop polish</h3>
-            <p>
-              Unread badges, focus mode, mute, lock, tray, downloads, and
-              right-click copy/paste that just works.
-            </p>
-          </article>
-          <article>
-            <h3>Auto updates</h3>
-            <p>
-              Grab the latest .deb from GitHub Releases, or let Hub check for
-              updates in Settings.
-            </p>
-          </article>
-        </div>
-      </section>
-
-      <section class="section alt reveal" id="apps">
-        <div class="section-head">
-          <h2>Apps that belong on your desktop</h2>
-          <p>Start with messaging and mail. More apps can join the catalog later.</p>
-        </div>
-        <ul class="app-chips">
-          <li>WhatsApp</li>
-          <li>Arattai</li>
-          <li>Gmail</li>
-          <li>Zoho One</li>
-          <li>Zoho Mail</li>
-          <li>Zoho CRM</li>
-          <li>Zoho Books</li>
-        </ul>
-      </section>
-
-      <section class="section reveal" id="install">
-        <div class="section-head">
-          <h2>Install on Debian, Ubuntu &amp; Mint</h2>
-          <p>One package. Electron is bundled — you never install Chromium separately.</p>
-        </div>
-        <ol class="steps">
-          <li>
-            <strong>Download</strong>
-            <span>Get the latest <code>.deb</code> from the button above (or GitHub Releases).</span>
-          </li>
-          <li>
-            <strong>Install</strong>
-            <pre><code>sudo dpkg -i asperadock_*_amd64.deb
-sudo apt-get install -f   # only if dpkg reports missing deps</code></pre>
-          </li>
-          <li>
-            <strong>Launch</strong>
-            <span>Open <em>Aspera Hub</em> from your app menu, add your apps, mark your daily ones warm.</span>
-          </li>
-        </ol>
-        <p class="note">
-          Package id stays <code>asperadock</code> so upgrades are smooth. The app
-          you see is <strong>Aspera Hub</strong>.
-        </p>
-      </section>
-
-      <section class="section alt reveal" id="faq">
-        <div class="section-head">
-          <h2>FAQ</h2>
-        </div>
-        <div class="faq">
-          <details open>
-            <summary>Is Aspera Hub really free?</summary>
-            <p>Yes. 100% free for anyone. No subscription, no freemium wall.</p>
-          </details>
-          <details>
-            <summary>Which Linux distros?</summary>
-            <p>
-              Built and tested for Debian / Ubuntu / Linux Mint (amd64). Other
-              Debian-based desktops usually work with the same <code>.deb</code>.
-            </p>
-          </details>
-          <details>
-            <summary>How is this different from Rambox or a browser?</summary>
-            <p>
-              Hub is tuned for light multi-account work: warm/cold apps, isolated
-              profiles, and far lower idle RAM than typical Electron suites —
-              while still feeling like a real desktop app.
-            </p>
-          </details>
-          <details>
-            <summary>Will more apps be added?</summary>
-            <p>
-              Yes. The catalog can grow. Today’s focus is messaging, mail, and Zoho
-              for company use.
-            </p>
-          </details>
-          <details>
-            <summary>Where do my logins live?</summary>
-            <p>
-              Sessions stay on your machine under your user profile. Clearing a
-              session in Hub signs that app out locally.
-            </p>
-          </details>
-        </div>
-      </section>
-
-      <section class="closing reveal">
-        <h2>Linux deserves a lighter Hub</h2>
-        <p>Download free. Add your apps. Get back to work.</p>
-        <a class="btn btn-primary btn-lg" id="download-deb-footer" href="https://github.com/ramchandragada/AsperaDock/releases/latest">
-          Download .deb for Linux
-        </a>
-      </section>
-    </main>
-
-    <footer class="site-footer">
-      <div>
-        <img src="assets/mark.png" alt="" width="28" height="28" />
-        <span>Aspera Hub</span>
       </div>
-      <p>Free forever · Made for Linux · by Aspera</p>
-      <a href="https://github.com/ramchandragada/AsperaDock">GitHub</a>
-    </footer>
+    </div>
 
-    <script src="main.js"></script>
-  </body>
+    <div class="runs fade">
+      <div class="runs-lab">Runs the apps you already use</div>
+      <div class="runs-row">
+        <span class="tag"><span class="ib" style="background:linear-gradient(160deg,#2bd06a,#128a3f)"><svg><use href="#g-chat"/></svg></span> WhatsApp</span>
+        <span class="tag"><span class="ib" style="background:linear-gradient(160deg,#ffab4d,#e0722a)"><svg><use href="#g-chat"/></svg></span> Arattai</span>
+        <span class="tag"><span class="ib" style="background:linear-gradient(160deg,#f3574a,#c62f24)"><svg><use href="#g-mail"/></svg></span> Gmail</span>
+        <span class="tag"><span class="ib" style="background:linear-gradient(160deg,#ef5b57,#c1231f)"><svg><use href="#g-mail"/></svg></span> Zoho Mail</span>
+        <span class="tag"><span class="ib" style="background:linear-gradient(160deg,#f0863a,#d9660f)"><svg><use href="#g-users"/></svg></span> Zoho CRM</span>
+        <span class="tag"><span class="ib" style="background:linear-gradient(160deg,#1aa35e,#067a41)"><svg><use href="#g-book"/></svg></span> Zoho Books</span>
+        <span class="tag"><span class="ib" style="background:linear-gradient(160deg,#3b83d6,#1f5aa0)"><svg><use href="#g-grid"/></svg></span> Zoho One</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- JUMP -->
+<section class="sec" style="padding:28px 0 0" id="guide">
+  <div class="container">
+    <div class="toc fade">
+      <a href="#who">Who it’s for</a>
+      <a href="#idea">Warm &amp; cold</a>
+      <a href="#features">Desktop shell</a>
+      <a href="#messaging">Pins · Forward · AI</a>
+      <a href="#apps">App catalog</a>
+      <a href="#security">Security</a>
+      <a href="#shortcuts">Shortcuts</a>
+      <a href="#compare">Compare</a>
+      <a href="#install">Install</a>
+      <a href="#faq">FAQ</a>
+    </div>
+  </div>
+</section>
+
+<!-- THE IDEA -->
+<section class="sec sec-alt" id="idea">
+  <div class="container">
+    <div class="sec-head fade">
+      <h2 class="sh">Warm where it counts. <span class="grad">Cold everywhere else.</span></h2>
+      <p class="sh-sub">A browser keeps every tab alive; a big suite keeps everything running. Aspera Hub does neither — you decide what stays hot.</p>
+    </div>
+    <div class="temp">
+      <div class="tcard warm fade">
+        <h3><span class="ti"><svg><use href="#g-flame"/></svg></span> Warm apps</h3>
+        <p>Mark the handful you use all day to <b>keep warm</b> — up to <b>5</b> stay fully loaded, so switching to WhatsApp or Gmail is instant, with no cold-start spinner.</p>
+        <p class="tcap">Default 5 warm · raise to 7 in Settings · instant switch</p>
+      </div>
+      <div class="tcard cold fade">
+        <h3><span class="ti"><svg><use href="#g-snow"/></svg></span> Cold on demand</h3>
+        <p>Everything else loads only when you click it, and can <b>hibernate</b> after it's been idle — so the apps you rarely open aren't quietly holding memory.</p>
+        <p class="tcap">Sensible on a ~16&nbsp;GB laptop</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- WHO -->
+<section class="sec" id="who">
+  <div class="container">
+    <div class="sec-head fade">
+      <h2 class="sh">Built for how Linux people <span class="grad">actually work</span></h2>
+      <p class="sh-sub">Not another browser window farm. A desktop shell for the apps you already trust — tuned for company fleets and everyday Linux desks.</p>
+    </div>
+    <div class="who">
+      <div class="who-card fade"><div class="num">01 · Daily drivers</div><h3>Messaging + mail all day</h3><p>Keep WhatsApp, Arattai, and Gmail <b>warm</b> so switching is instant. Park Zoho CRM or Books <b>cold</b> until you need them — they stop quietly eating RAM.</p></div>
+      <div class="who-card fade"><div class="num">02 · Multi-account</div><h3>Separate logins, one Hub</h3><p>Named <b>profiles</b> isolate sessions. Run personal and work WhatsApp, or several Gmail accounts, side by side — cookies never bleed between them.</p></div>
+      <div class="who-card fade"><div class="num">03 · Linux fleets</div><h3>Mint, Ubuntu, Debian</h3><p>Packaged as a <b>.deb</b> for amd64. Tuned for Linux Mint Cinnamon and XFCE company fleets — tray, notifications, and panel icons that behave.</p></div>
+    </div>
+    <div class="flow">
+      <div class="flow-step fade"><div class="n">1</div><h3>Install once</h3><p>Download the <b>.deb</b>, install, launch <b>Aspera Hub</b> from your app menu. Electron is bundled — you never manage Chromium yourself.</p></div>
+      <div class="flow-step fade"><div class="n">2</div><h3>Add your catalog apps</h3><p>WhatsApp, Arattai, Gmail, Zoho Mail, CRM, Books, Zoho One. Flame-mark the handful you live in. Cap: <b>10 apps</b> in the dock.</p></div>
+      <div class="flow-step fade"><div class="n">3</div><h3>Work lighter</h3><p>Unread badges, tray, mute, focus, lock, Hub pins, Forward, and optional Aspera AI — without five browser windows open forever.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- FEATURES -->
+<section class="sec" id="features">
+  <div class="container">
+    <div class="sec-head fade">
+      <h2 class="sh">A real desktop shell — <span class="grad">not just tabs</span></h2>
+      <p class="sh-sub">The polish of a native app, wrapped around the web apps you already live in.</p>
+    </div>
+    <div class="fgrid">
+      <div class="feat fade"><div class="fi"><svg><use href="#g-id"/></svg></div><h3>Separate logins</h3><p>Named profiles keep sessions isolated, so several <b>WhatsApp</b> or <b>Gmail</b> accounts never share cookies.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-bell"/></svg></div><h3>Unread badges</h3><p>Per-app counts, a global bell and an optional tray badge — see what needs you at a glance.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-focus"/></svg></div><h3>Focus &amp; mute</h3><p>Silence notifications or clear every badge with a shortcut when you need to concentrate.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-bolt"/></svg></div><h3>Jump anywhere</h3><p>Switch apps with <code>Ctrl+1…9</code>, quick-search with <code>Ctrl+/</code>, find in page with <code>Ctrl+F</code>.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-shield"/></svg></div><h3>Password lock</h3><p>Lock the whole workspace behind a password, and auto-lock when your PC goes idle or sleeps.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-dl"/></svg></div><h3>Downloads &amp; tray</h3><p>Pick a downloads folder, open files when they finish, and keep Hub in the tray or close-to-tray.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-palette"/></svg></div><h3>Themes</h3><p>System, light, dark, darkest, glossy or mint — make the shell match your desktop.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-refresh"/></svg></div><h3>Safe auto-update</h3><p>Updates come from GitHub Releases and are verified with <b>SHA-256</b> before they're applied.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-keys"/></svg></div><h3>Keyboard-driven</h3><p>Reorder tabs, reload an app, toggle focus, hibernate the background, or lock — all from the keyboard.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- MESSAGING & AI -->
+<section class="sec sec-alt" id="messaging">
+  <div class="container">
+    <div class="sec-head fade">
+      <h2 class="sh">Messaging power tools — <span class="grad">beyond tabs</span></h2>
+      <p class="sh-sub">WhatsApp and Arattai get Hub-native pins and Forward. Select text in chat or mail to summarize and refine with your own AI keys.</p>
+    </div>
+    <div class="msg-grid">
+      <div class="msg-card fade">
+        <div class="fi"><svg><use href="#g-bolt"/></svg></div>
+        <h3>Hub pins</h3>
+        <p>Right-click a chat in <b>WhatsApp</b> or <b>Arattai</b> → <b>Pin with Aspera Hub</b>. Up to <b>10 Hub pins</b> in the strip — separate from WhatsApp’s own 3-pin limit.</p>
+        <ul>
+          <li>Open pinned contacts from the Hub rail instantly</li>
+          <li>Works across both messaging apps</li>
+          <li>Does not fight WhatsApp’s in-app pins</li>
+        </ul>
+      </div>
+      <div class="msg-card fade">
+        <div class="fi"><svg><use href="#g-link"/></svg></div>
+        <h3>Forward with Aspera Hub</h3>
+        <p>Move <b>text, images, or documents</b> between WhatsApp and Arattai accounts inside Hub — including across different signed-in profiles.</p>
+        <ul>
+          <li>One Forward action — Hub detects content type</li>
+          <li>PDF-aware so preview thumbnails don’t paste as photos</li>
+          <li>Pick the destination account, then send</li>
+        </ul>
+      </div>
+      <div class="msg-card fade">
+        <div class="fi"><svg><use href="#g-focus"/></svg></div>
+        <h3>Aspera AI (BYOK)</h3>
+        <p>Optional. Bring your own API key — Aspera hosts no model. Works on WhatsApp, Arattai, Gmail, and Zoho Mail.</p>
+        <ul>
+          <li><b>Summarize</b> selection → English · Hindi · Marathi</li>
+          <li><b>Refine</b> drafts in the send box (EN · HI · MR)</li>
+          <li><b>Catch me up</b> from unread signals</li>
+          <li>Open a PDF preview, select text, then Summarize</li>
+        </ul>
+        <div class="prov">
+          <span>Gemini</span><span>Sarvam</span><span>Grok</span><span>DeepSeek</span><span>SambaNova</span><span>OpenRouter</span><span>Anthropic</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- APPS -->
+<section class="sec" id="apps">
+  <div class="container">
+    <div class="sec-head fade">
+      <h2 class="sh">What lives in the dock</h2>
+      <p class="sh-sub">Curated Aspera catalog — up to <b style="color:var(--t1)">10 apps</b> at once, including several of the same one with separate profiles.</p>
+    </div>
+    <div class="apps fade">
+      <span class="achip"><span class="ib" style="background:linear-gradient(160deg,#2bd06a,#128a3f)"><svg><use href="#g-chat"/></svg></span> WhatsApp</span>
+      <span class="achip"><span class="ib" style="background:linear-gradient(160deg,#ffab4d,#e0722a)"><svg><use href="#g-chat"/></svg></span> Arattai</span>
+      <span class="achip"><span class="ib" style="background:linear-gradient(160deg,#f3574a,#c62f24)"><svg><use href="#g-mail"/></svg></span> Gmail</span>
+      <span class="achip"><span class="ib" style="background:linear-gradient(160deg,#ef5b57,#c1231f)"><svg><use href="#g-mail"/></svg></span> Zoho Mail</span>
+      <span class="achip"><span class="ib" style="background:linear-gradient(160deg,#f0863a,#d9660f)"><svg><use href="#g-users"/></svg></span> Zoho CRM</span>
+      <span class="achip"><span class="ib" style="background:linear-gradient(160deg,#1aa35e,#067a41)"><svg><use href="#g-book"/></svg></span> Zoho Books</span>
+      <span class="achip"><span class="ib" style="background:linear-gradient(160deg,#3b83d6,#1f5aa0)"><svg><use href="#g-grid"/></svg></span> Zoho One</span>
+    </div>
+    <div class="app-desc fade">
+      <article><h4><span class="ib" style="background:linear-gradient(160deg,#2bd06a,#128a3f);width:22px;height:22px;border-radius:6px;display:inline-grid;place-items:center"><svg style="width:12px;height:12px;color:#fff"><use href="#g-chat"/></svg></span> WhatsApp</h4><p>web.whatsapp.com — team and client chat with Hub pins, Forward, and Aspera AI.</p></article>
+      <article><h4>Arattai</h4><p>web.arattai.in — Indian messaging with the same Hub pins, Forward, and AI skills.</p></article>
+      <article><h4>Gmail</h4><p>mail.google.com — work mail with summarize / refine and isolated multi-login.</p></article>
+      <article><h4>Zoho Mail</h4><p>mail.zoho.in — Zoho inbox deep link; AI summarize &amp; refine supported.</p></article>
+      <article><h4>Zoho CRM</h4><p>crm.zoho.in — keep cold until you need pipeline; warm when sales is your day.</p></article>
+      <article><h4>Zoho Books</h4><p>books.zoho.in — accounting when you need it, hibernating when you don’t.</p></article>
+      <article><h4>Zoho One</h4><p>one.zoho.in — Zoho One portal for the rest of the suite.</p></article>
+      <article><h4>Profiles</h4><p>Duplicate any catalog app with a named profile for a clean second login.</p></article>
+    </div>
+    <p class="more fade">More apps coming — the catalog grows over time. Company catalog only (no arbitrary HTTPS apps).</p>
+  </div>
+</section>
+
+<!-- SECURITY -->
+<section class="sec sec-band" id="security">
+  <div class="container">
+    <div class="sec-head fade">
+      <h2 class="sh">Reliable &amp; secure — <span class="grad">on your machine</span></h2>
+      <p class="sh-sub">Aspera Hub is a desktop app. Your WhatsApp and Zoho logins stay under your user profile. There is no Hub cloud account and no Aspera server in the middle.</p>
+    </div>
+    <ul class="sec-list fade">
+      <li><b>SHA-256 verified updates</b>GitHub Releases only. A corrupted or tampered download is refused before install.</li>
+      <li><b>Guest sandbox</b>Web apps run with contextIsolation and sandbox — no Node in the page.</li>
+      <li><b>Password lock</b>Optional whole-workspace lock; auto-lock on idle or sleep. Shortcut: Ctrl+Shift+L.</li>
+      <li><b>Isolated partitions</b>Each profile is its own Electron persist session — no cookie bleed.</li>
+      <li><b>Single instance</b>One Hub window per profile data dir — no accidental double sessions.</li>
+      <li><b>Open source MIT</b>Read it, modify it, share it. Free forever — no subscription, no ads.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- SHORTCUTS -->
+<section class="sec" id="shortcuts">
+  <div class="container">
+    <div class="sec-head fade">
+      <h2 class="sh">Keyboard-driven <span class="grad">from day one</span></h2>
+      <p class="sh-sub">Defaults you can remap in Settings. Jump, search, mute, hibernate, lock — without leaving the keyboard.</p>
+    </div>
+    <div class="keys fade">
+      <div class="key-row"><kbd>Ctrl+1…9</kbd><span>Jump to app by dock position</span></div>
+      <div class="key-row"><kbd>Ctrl+Tab</kbd><span>Next app (Shift+Tab for previous)</span></div>
+      <div class="key-row"><kbd>Ctrl+/</kbd><span>Quick search — apps, chats, message text</span></div>
+      <div class="key-row"><kbd>Ctrl+F</kbd><span>Find in the active page</span></div>
+      <div class="key-row"><kbd>Ctrl+Shift+D</kbd><span>Focus mode</span></div>
+      <div class="key-row"><kbd>Ctrl+Shift+M</kbd><span>Mute notifications</span></div>
+      <div class="key-row"><kbd>Ctrl+Shift+H</kbd><span>Hibernate background (Free RAM)</span></div>
+      <div class="key-row"><kbd>Ctrl+Shift+L</kbd><span>Lock workspace (if enabled)</span></div>
+      <div class="key-row"><kbd>Ctrl+,</kbd><span>Open Settings</span></div>
+      <div class="key-row"><kbd>Ctrl+R</kbd><span>Reload active app</span></div>
+      <div class="key-row"><kbd>Alt+← / →</kbd><span>Back / forward inside the app</span></div>
+      <div class="key-row"><kbd>Right-click icon</kbd><span>Hibernate a non-active warm app</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- COMPARE -->
+<section class="sec sec-alt" id="compare">
+  <div class="container">
+    <div class="sec-head fade">
+      <h2 class="sh">Why Linux users pick <span class="grad">Hub</span></h2>
+      <p class="sh-sub">Same web apps you already use — with a shell that respects RAM, privacy, and a free forever promise.</p>
+    </div>
+    <div class="fade" style="overflow-x:auto">
+      <table class="cmp">
+        <thead>
+          <tr><th>Capability</th><th>Aspera Hub</th><th>Browser tabs</th><th>Heavy Electron suites</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Warm / cold RAM control</td><td class="yes">Yes — default 5 warm, up to 7</td><td class="no">Every tab stays alive</td><td class="partial">Often loads everything</td></tr>
+          <tr><td>Isolated multi-login</td><td class="yes">Named profiles</td><td class="partial">Browser profiles (clunky)</td><td class="yes">Usually yes</td></tr>
+          <tr><td>Desktop shell (tray, mute, lock)</td><td class="yes">Built in</td><td class="no">Limited</td><td class="yes">Varies</td></tr>
+          <tr><td>Hub pins + cross-app Forward</td><td class="yes">WhatsApp ↔ Arattai</td><td class="no">No</td><td class="no">Rare</td></tr>
+          <tr><td>Workplace AI EN · HI · MR</td><td class="yes">BYOK, optional</td><td class="partial">External tools</td><td class="partial">Paid add-ons often</td></tr>
+          <tr><td>Price</td><td class="yes">₹0 forever · MIT</td><td class="yes">Free browser</td><td class="partial">Often freemium / paid</td></tr>
+          <tr><td>Cloud account required</td><td class="yes">None</td><td class="yes">None</td><td class="partial">Sometimes</td></tr>
+          <tr><td>Linux-first packaging</td><td class="yes">.deb · Mint/Ubuntu/Debian</td><td class="yes">—</td><td class="partial">Mixed</td></tr>
+          <tr><td>Verified auto-update</td><td class="yes">SHA-256 from GitHub</td><td class="partial">OS / browser</td><td class="partial">Varies</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- MISSION -->
+<section class="sec" id="mission">
+  <div class="container">
+    <div class="mission fade">
+      <p class="pill pill-g" style="margin-bottom:18px">Our intention</p>
+      <h2 class="sh" style="margin-bottom:16px">Not built to earn money.<br><span class="grad">Built to give Linux a reliable Hub.</span></h2>
+      <p>Aspera Hub is free — and it always will be. We built it so Linux users have a secure, easy, lifetime-free workspace for the apps they already trust. No paywall. No freemium. No ads.</p>
+      <p class="quote">Long live Linux. Long live Linus Torvalds.</p>
+      <p>Same team as <a href="https://www.tuxgenie.com/" style="color:var(--green-2);font-weight:600;text-decoration:none">TuxGenie</a> — our AI Linux assistant. Hub is the warm workspace for WhatsApp, Arattai, Gmail, and Zoho. You can install it from TuxGenie’s app catalog too.</p>
+      <p style="font-size:14px;color:var(--t3)">Built with years of research by Aspera Technologies Pte Ltd — crafted with Cursor AI on Linux.</p>
+    </div>
+  </div>
+</section>
+
+<!-- INSTALL -->
+<section class="sec sec-alt" id="install">
+  <div class="container">
+    <div class="sec-head fade">
+      <h2 class="sh">Running in about a minute</h2>
+      <p class="sh-sub">Download the <b style="color:var(--t1)">.deb</b>, install it, and launch <b style="color:var(--t1)">Aspera Hub</b> from your app menu.</p>
+    </div>
+    <div class="inst">
+      <div class="distro fade"><span>Debian</span><span>Ubuntu</span><span>Linux Mint</span><span>amd64</span></div>
+      <div class="term fade">
+        <div class="term-hd"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="t">bash</span><button class="copy" id="copyBtn" type="button">📋 Copy</button></div>
+<pre id="cmd"><span class="c"># Recommended — or just double-click the downloaded .deb</span>
+<span class="g">sudo apt install</span> ./asperadock_<span class="v">&lt;version&gt;</span>_amd64.deb
+
+<span class="c"># Or with dpkg, then pull in any missing dependencies</span>
+<span class="g">sudo dpkg -i</span> asperadock_*_amd64.deb
+<span class="g">sudo apt-get install -f</span></pre>
+      </div>
+      <p class="note fade">The package is named <b>asperadock</b> (kept stable so your logins survive updates) — the launcher and About screen show <b>Aspera Hub</b>. After that, updates arrive in-app from GitHub Releases.</p>
+      <div class="fade" style="text-align:center;margin-top:24px"><a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest"><svg><use href="#g-dl"/></svg> Download the latest .deb</a></div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="sec" id="faq">
+  <div class="container">
+    <div class="sec-head fade"><h2 class="sh">Good to know</h2></div>
+    <div class="faq">
+      <details class="fade" open><summary>Is it really free?</summary><div class="ans">Yes — free, forever. No subscription, no trial wall, no ads. Open source under the MIT license. 100% free for life.</div></details>
+      <details class="fade"><summary>Which Linux distros are supported?</summary><div class="ans">Debian, Ubuntu and Linux Mint (amd64). Other Debian-based distributions usually work with the same <b>.deb</b>. Tuned especially for Mint Cinnamon and XFCE fleets.</div></details>
+      <details class="fade"><summary>How is it different from Rambox or a browser?</summary><div class="ans">The warm/cold design keeps your daily apps instant while letting the rest sleep — typically lighter on RAM — and it's free and Linux-first. You also get a real desktop shell: badges, tray, mute, focus, lock, downloads, Hub pins, Forward, and isolated logins.</div></details>
+      <details class="fade"><summary>Where do my logins live?</summary><div class="ans">On your machine under <code class="mono" style="font-size:12px;background:#eef0ff;padding:2px 6px;border-radius:4px">~/.config/Aspera Dock</code>. Clearing a session in Hub signs that app out locally. There is no Hub cloud account.</div></details>
+      <details class="fade"><summary>How many apps can stay warm?</summary><div class="ans">By default <b>5</b> warm apps stay fully loaded. You can raise the cap to <b>7</b> in Settings. Everything else loads on click and can hibernate after idle. Max <b>10</b> apps in the dock.</div></details>
+      <details class="fade"><summary>Does Aspera AI cost money?</summary><div class="ans">Hub never charges. AI is optional and <b>bring-your-own-key</b> (Gemini, Sarvam, Grok, DeepSeek, SambaNova, OpenRouter, or Anthropic). Many providers offer free tiers. Keys stay on your machine.</div></details>
+      <details class="fade"><summary>Can I add any website?</summary><div class="ans">Today Hub uses the <b>Aspera catalog only</b> (WhatsApp, Arattai, Gmail, Zoho Mail/CRM/Books/One). You can run multiple copies of the same app with separate profiles. The catalog will grow over time.</div></details>
+      <details class="fade"><summary>How does it relate to TuxGenie?</summary><div class="ans">Same team. TuxGenie is our AI Linux assistant; Aspera Hub is the warm workspace for the apps you use all day. You can install Hub from inside TuxGenie’s app catalog.</div></details>
+    </div>
+    <div class="lim fade" style="margin-top:28px">
+      <h3>Honest limits</h3>
+      <ul>
+        <li>Primary package is <b>amd64 .deb</b> for Debian-family desktops.</li>
+        <li>Forward and Hub pins are for <b>WhatsApp ↔ Arattai</b>.</li>
+        <li>Aspera AI skills apply to WhatsApp, Arattai, Gmail, and Zoho Mail.</li>
+        <li>Hardware acceleration defaults <b>off</b> on Linux for Mint stability (you can enable it).</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- DOWNLOAD CTA -->
+<section class="sec">
+  <div class="container">
+    <div class="cta fade">
+      <h2>Get <span class="grad">Aspera Hub</span></h2>
+      <p>One warm workspace for WhatsApp, Arattai, Gmail and Zoho — free, for Linux.</p>
+      <div class="hero-ctas">
+        <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest"><svg><use href="#g-dl"/></svg> Download .deb for Linux</a>
+        <a class="btn btn-s" href="https://github.com/ramchandragada/AsperaDock" target="_blank" rel="noopener"><svg><use href="#g-link"/></svg> View on GitHub</a>
+      </div>
+      <p class="fine"><span data-version>v0.4.39</span> · Debian / Ubuntu / Mint · amd64 · MIT licensed</p>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER (TuxGenie site footer) -->
+<footer>
+  <div class="container">
+    <div class="foot-grid">
+      <div class="foot-col">
+        <a href="https://www.tuxgenie.com/" style="display:inline-flex;align-items:center;gap:8px;margin-bottom:14px;font-family:var(--fd);font-size:18px;font-weight:800;text-decoration:none" aria-label="TuxGenie home"><img src="tuxgenie.svg" alt="TuxGenie" width="28" height="28" style="display:block;border-radius:7px"><span class="grad">TuxGenie</span></a>
+        <p>Free Linux apps by Aspera Technologies. <b>Aspera Hub</b> is the first of a growing family — starting with our AI assistant, TuxGenie.</p>
+        <p style="color:var(--t3);font-size:12px;margin-top:4px">Built by Aspera Technologies · Dedicated to Linus Torvalds</p>
+      </div>
+      <div class="foot-col">
+        <h5>Aspera Hub</h5>
+        <a href="#features">Shell</a>
+        <a href="#messaging">Messaging &amp; AI</a>
+        <a href="#apps">Apps</a>
+        <a href="#compare">Compare</a>
+        <a href="#install">Install</a>
+        <a data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest">Download .deb</a>
+      </div>
+      <div class="foot-col">
+        <h5>TuxGenie</h5>
+        <a href="https://www.tuxgenie.com/">Home</a>
+        <a href="https://www.tuxgenie.com/catalog.html">App Catalog</a>
+        <a href="https://www.tuxgenie.com/#install">Install</a>
+        <a href="https://github.com/ramchandragada/tuxgenie" target="_blank" rel="noopener">GitHub</a>
+      </div>
+      <div class="foot-col">
+        <h5>Aspera Hub source</h5>
+        <a href="https://github.com/ramchandragada/AsperaDock" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://github.com/ramchandragada/AsperaDock/releases" target="_blank" rel="noopener">Releases</a>
+        <a href="https://github.com/ramchandragada/AsperaDock/issues" target="_blank" rel="noopener">Report an issue</a>
+        <a href="https://github.com/ramchandragada/AsperaDock/blob/master/LICENSE" target="_blank" rel="noopener">MIT License</a>
+      </div>
+    </div>
+    <div class="foot-divider"></div>
+    <div class="foot-bottom">
+      <span>© 2026 Aspera Technologies · Aspera Hub · MIT License</span>
+      <span><a href="https://www.tuxgenie.com/">← Back to TuxGenie</a></span>
+    </div>
+  </div>
+</footer>
+
+<script>
+function toggleM(){var m=document.getElementById('mob');var b=document.getElementById('hb');b.setAttribute('aria-expanded',m.classList.toggle('open'));}
+function closeM(){document.getElementById('mob').classList.remove('open');}
+document.addEventListener('click',function(e){var n=document.querySelector('.nav');if(!n.contains(e.target))closeM();});
+
+// Scroll reveal — same behaviour as the main site
+var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('vis');io.unobserve(e.target);}})},{threshold:.08});
+document.querySelectorAll('.fade').forEach(function(el){io.observe(el);});
+
+// Copy install commands
+(function(){
+  var btn=document.getElementById('copyBtn');
+  if(!btn) return;
+  btn.addEventListener('click',function(){
+    var text="sudo apt install ./asperadock_<version>_amd64.deb\nsudo dpkg -i asperadock_*_amd64.deb\nsudo apt-get install -f";
+    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(function(){btn.textContent='✓ Copied';setTimeout(function(){btn.textContent='📋 Copy';},1600);});}
+  });
+})();
+
+// Resolve the latest amd64 .deb from GitHub Releases; fall back to the releases page
+(function(){
+  var REPO="ramchandragada/AsperaDock";
+  var RELEASES="https://github.com/"+REPO+"/releases/latest";
+  var btns=document.querySelectorAll("[data-download]");
+  btns.forEach(function(b){if(!b.getAttribute("href"))b.setAttribute("href",RELEASES);});
+  try{
+    fetch("https://api.github.com/repos/"+REPO+"/releases/latest",{headers:{"Accept":"application/vnd.github+json"}})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(d){
+        if(!d) return;
+        if(d.tag_name){document.querySelectorAll("[data-version]").forEach(function(e){e.textContent=d.tag_name;});}
+        var assets=d.assets||[];
+        var debs=assets.filter(function(a){return /\.deb$/i.test(a.name||"");});
+        var amd=debs.filter(function(a){return /amd64/i.test(a.name||"");});
+        var pick=amd[0]||debs[0];
+        if(pick&&pick.browser_download_url){btns.forEach(function(b){b.setAttribute("href",pick.browser_download_url);});}
+      }).catch(function(){});
+  }catch(e){}
+})();
+</script>
+</body>
 </html>

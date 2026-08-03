@@ -12,9 +12,135 @@ import {
   dialog,
   powerMonitor,
   clipboard,
+  screen,
 } from 'electron';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { buildAppMenuHtml } from './appMenuHtml.js';
+import { buildChromeMenuHtml } from './chromeMenuHtml.js';
+import { buildNotifCenterHtml } from './notifCenterHtml.js';
+import { buildAiResultHtml } from './aiResultHtml.js';
+import { buildForwardPickerHtml } from './forwardPickerHtml.js';
+import { buildExtensionsHtml } from './extensionsHtml.js';
+import {
+  arattaiFullFileUrlFromAny,
+  buildForwardClipboardText,
+  canOfferForward,
+  FORWARD_WITH_HUB_ENABLED,
+  classifyForwardFileBytes,
+  describeForwardPayload,
+  extensionOf,
+  extractDocumentFileName,
+  forwardContentKind,
+  forwardPickerHint,
+  forwardPickerSteps,
+  forwardReadyMessage,
+  forwardRecipientClickSelector,
+  forwardRecipientConfirmSelector,
+  forwardTimeoutMessage,
+  forwardWaitMessage,
+  guestComposeDetectJs,
+  guestComposeSelector,
+  hasStrongDocumentEvidence,
+  isDocumentAccept,
+  isDocumentExtension,
+  isForwardAppId,
+  isImageOnlyAccept,
+  looksLikeDocument,
+  matchRecentDownload,
+  mimeForFilename,
+  sanitizeForwardFilename,
+  sanitizeForwardLinkURL,
+  shouldForwardAsDocument,
+} from './forwardHub.js';
+import {
+  clearMessagingLeftSearchJs,
+  composeReplyJs,
+  findMessagingChatTargetJs,
+  findMessagingLeftSearchJs,
+  findMessagingSearchChromeJs,
+  inspectChatListTargetJs,
+  isInboxAppId,
+  isJunkChatName,
+  makePinId,
+  messagingChatHeaderMatchJs,
+  normalizeChatKey,
+  openMessagingChatJs,
+  sanitizePinnedPeople,
+  searchMessagingChatsJs,
+} from './guestInbox.js';
+import {
+  findExactWhatsAppContactTargetJs,
+  findWhatsAppPaneResetJs,
+  nuclearWipeMessagingSearchJs,
+  readActiveWhatsAppChatJs,
+  readMessagingSearchTextJs,
+  tryOpenWhatsAppStoreChatJs,
+  waMutateSearchJs,
+  waSearchNodeJs,
+} from './whatsappPinOpen.js';
+import {
+  PRIOR_MESSAGE_COUNT,
+  sanitizePriorMessages,
+  scrapeNearbyMessagesJs,
+} from './guestChatContext.js';
+import { guestContextMenuActionOrder, canOfferHubPin } from './guestContextMenu.js';
+import { isHubComposePollution } from './composeSafety.js';
+import { aboutDetailText } from './aboutCopy.js';
+import { spawnSync } from 'node:child_process';
+import {
+  installUnpackedExtension,
+  listInstalledExtensions,
+  normalizeExtensionList,
+  uninstallExtensionFiles,
+} from './extensionsStore.js';
+import {
+  chromeWebStoreUrl,
+  downloadAndUnpackChromeExtension,
+  parseChromeExtensionId,
+  unpackExtensionPackage,
+} from './chromeWebStore.js';
+import {
+  AI_ALLOWED_APP_IDS,
+  AI_LANGUAGES,
+  AI_PROVIDER_TRY_ORDER,
+  AI_PROVIDERS,
+  aiProviderTryOrdinal,
+  configuredProvidersInRouteOrder,
+  getAiProvider,
+  isAiAllowedAppId,
+  isDefaultAiProviderOrder,
+  normalizeAnthropicModel,
+  normalizeGeminiModel,
+  normalizeGrokModel,
+  normalizeSarvamModel,
+  sanitizeAiDisabledProviders,
+  sanitizeAiProviderOrder,
+} from './ai/catalog.js';
+import {
+  clearAiProviderKey,
+  getAiProviderKey,
+  listConfiguredAiProviders,
+  setAiProviderKey,
+} from './ai/keys.js';
+import {
+  promptForSkill,
+  runAiCompletionWithFailover,
+  onAiProviderKeyChanged,
+  getStickyAiProviderId,
+  resetAiProviderSession,
+  setAiSettingsReader,
+} from './ai/service.js';
+import { parseSuggestedReplies } from './ai/replyEditor.js';
+import { parseRefinedDrafts, serializeRefinedDrafts } from './ai/refineDraft.js';
+import {
+  catalogModelsForProvider,
+  getCachedAiModels,
+  getProviderModelPreference,
+  invalidateAiModelCache,
+  listAiProviderModels,
+  normalizeProviderModelChoice,
+} from './ai/models.js';
 import {
   APP_CATALOG,
   MAX_INSTANCES_PER_APP,
@@ -40,7 +166,12 @@ import {
   PRIMARY_PROFILE_ID,
   DEFAULTS,
 } from './store.js';
-import { mergeAppConfig, MOBILE_USER_AGENT } from './appConfig.js';
+import {
+  matchShortcut,
+  migrateShortcutsMap,
+  normalizeShortcutEntry,
+} from './shortcutsConfig.js';
+import { mergeAppConfig, MOBILE_USER_AGENT, DEFAULT_APP_CONFIG } from './appConfig.js';
 import { APP_ICON_PNG_DATA_URL } from './appIconData.js';
 import {
   installErrorReporting,
@@ -84,6 +215,7 @@ import {
   safeStartUrlForService,
   extractGoogleOutboundUrl,
   isAllowedGmailTabUrl,
+  isGoogleOwnedUrl,
 } from './guestNav.js';
 import {
   isGoogleService,
@@ -111,6 +243,21 @@ if (process.platform === 'win32') {
   }
 }
 
+// Linux Mint (XFCE/Cinnamon): Chromium GPU + chrome-sandbox often FATAL-exit
+// before any window ("refuses to start"). Apply the safest flags FIRST.
+if (process.platform === 'linux') {
+  app.commandLine.appendSwitch('no-sandbox');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-software-rasterizer');
+  app.commandLine.appendSwitch('class', 'asperadock');
+  try {
+    app.disableHardwareAcceleration();
+  } catch {
+    // ignore if Electron rejects a duplicate call later
+  }
+}
+
 // Root is unsupported for packaged builds (also breaks chrome-sandbox).
 if (
   app.isPackaged &&
@@ -127,16 +274,76 @@ if (
 // (including the single-instance lock).
 app.setPath('userData', path.join(app.getPath('appData'), 'Aspera Dock'));
 
+// Only clear Chromium singleton files left by a *dead* session (crash).
+// Never delete a live lock — that would allow a second Hub window on the
+// same profile and can sign WhatsApp / Arattai out.
+function clearStaleChromiumSingleton(userDataPath) {
+  const lockPath = path.join(userDataPath, 'SingletonLock');
+  const cookiePath = path.join(userDataPath, 'SingletonCookie');
+  const socketPath = path.join(userDataPath, 'SingletonSocket');
+  let stale = false;
+
+  try {
+    if (fs.lstatSync(socketPath).isSymbolicLink()) {
+      try {
+        fs.statSync(socketPath);
+      } catch {
+        // Dangling SingletonSocket → previous crash.
+        stale = true;
+      }
+    }
+  } catch {
+    // no socket
+  }
+
+  try {
+    if (fs.lstatSync(lockPath).isSymbolicLink()) {
+      const target = fs.readlinkSync(lockPath);
+      const m = String(target).match(/-(\d+)$/);
+      if (m) {
+        const pid = parseInt(m[1], 10);
+        if (Number.isFinite(pid) && pid > 0) {
+          try {
+            process.kill(pid, 0);
+            // Owner process is alive — keep the lock.
+          } catch {
+            stale = true;
+          }
+        }
+      }
+    }
+  } catch {
+    // no lock
+  }
+
+  if (!stale) return;
+  for (const p of [lockPath, cookiePath, socketPath]) {
+    try {
+      fs.unlinkSync(p);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+try {
+  clearStaleChromiumSingleton(app.getPath('userData'));
+} catch {
+  // ignore
+}
+
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
+  // Another live instance owns the dock — exit immediately so this process
+  // never reaches createWindow() / whenReady (app.quit alone is not enough).
   app.quit();
+  process.exit(0);
 }
 
 // GNOME Wayland ignores BrowserWindow.setIcon for the dock/taskbar.
 // It matches windows to a .desktop file via app id / StartupWMClass.
 // Must be set before ready — use a stable id without spaces.
 if (process.platform === 'linux') {
-  app.commandLine.appendSwitch('class', 'asperadock');
   app.setName('asperadock');
   try {
     app.setDesktopName('asperadock.desktop');
@@ -244,6 +451,8 @@ let quitting = false;
 
 /** @type {Map<string, { view: WebContentsView, lastUsed: number }>} */
 const views = new Map();
+/** Child popup windows grouped by service id (OAuth/CRM popouts/etc). */
+const servicePopups = new Map();
 /** Last good in-app URL per service — used when recreating after hibernate/crash. */
 /** @type {Map<string, string>} */
 const lastGoodUrls = new Map();
@@ -253,9 +462,15 @@ const hibernatedAt = new Map();
 /** @type {Map<string, number>} */
 const unreadCounts = new Map();
 /** Recent unread activity shown in the notification center. */
-/** @type {{ id: string, serviceId: string, title: string, body: string, at: number }[]} */
+/** @type {{ id: string, serviceId: string, title: string, body: string, at: number, chatName?: string, chatKey?: string }[]} */
 let notificationLog = [];
 const NOTIFICATION_LOG_MAX = 40;
+/** Dedupe identical toasts per service (fingerprint → last shown at). */
+/** @type {Map<string, { fingerprint: string, at: number }>} */
+const recentNotificationFingerprints = new Map();
+const NOTIFICATION_DEDUPE_MS = 45_000;
+/** Magic prefix for guest → main Notification bridge (console-message). */
+const ASPERA_NOTIFY_PREFIX = '__ASPERA_DOCK_NOTIFY__';
 /** Renderer-measured chrome size — keeps guest view aligned with wrapped rows. */
 let chromeSize = null;
 /** @type {Record<string, number>} */
@@ -265,7 +480,103 @@ let memoryTimer = null;
 let activeServiceId = null;
 let locked = false;
 let overlayOpen = false;
+/** @type {null | 'full' | 'drawer' | 'menu'} */
+let overlayMode = null;
+/** Extra insets (px) so side drawers / floating menus stay above HTML. */
+let overlayRightInset = 0;
+let overlayLeftInset = 0;
+/** Floating app right-click menu (child window — paints above WebContentsView guests). */
+let appMenuWindow = null;
+let appMenuServiceId = null;
+/** Floating chrome (Aspera) menu — same overlay approach. */
+let chromeMenuWindow = null;
+/** Floating notification center. */
+let notifCenterWindow = null;
+/** Floating Aspera AI result panel. */
+let aiResultWindow = null;
+/** Context for follow-up actions on the open AI result (e.g. suggest replies). */
+let aiResultContext = null;
+/** Floating Forward-with-Hub account picker. */
+let forwardPickerWindow = null;
+/** @type {null | {
+ *   text: string,
+ *   linkURL: string,
+ *   imagePath: string,
+ *   filePath: string,
+ *   fileName: string,
+ *   hasImage: boolean,
+ *   isDocument: boolean,
+ *   sourceServiceId: string,
+ *   sourceAppId: string,
+ *   sourceName: string,
+ * }} */
+let forwardPayload = null;
+/** One-shot download hijack used while capturing a document to forward. */
+let pendingForwardDownload = null;
+/**
+ * While > now, every guest download is saved silently (no Save dialog).
+ * Needed because PDF preview Forward often fires 2–3 DownloadItems; only the
+ * first fills pendingForwardDownload — extras used to pop "Save download".
+ */
+let forwardCaptureSilentUntil = 0;
+/** Bumped to cancel in-flight Forward Ctrl+V waits (prevents paste into later chats). */
+let forwardPasteGeneration = 0;
+/** Text Hub last wrote to the system clipboard for Forward (for restore + sanitize). */
+let hubStagedClipboardText = '';
+/** Clipboard text before Hub staged a Forward payload. */
+let hubClipboardBeforeStage = null;
+/** Recent guest downloads (user tapped Download) — reused by Forward. */
+const recentGuestDownloads = [];
+const RECENT_DOWNLOAD_MAX = 40;
+
+function beginForwardCaptureWindow(ms = 20_000) {
+  forwardCaptureSilentUntil = Math.max(forwardCaptureSilentUntil, Date.now() + ms);
+}
+
+function endForwardCaptureWindow() {
+  forwardCaptureSilentUntil = 0;
+}
+
+function isForwardCaptureSilentActive() {
+  return !!pendingForwardDownload || Date.now() < forwardCaptureSilentUntil;
+}
+/** Floating Chrome-like Extensions manager. */
+let extensionsWindow = null;
 let settings = loadSettings();
+settings = {
+  ...settings,
+  extensions: normalizeExtensionList(settings.extensions),
+};
+setAiSettingsReader(() => settings);
+
+function trackServicePopup(serviceId, popupWindow) {
+  if (!serviceId || !popupWindow) return;
+  let set = servicePopups.get(serviceId);
+  if (!set) {
+    set = new Set();
+    servicePopups.set(serviceId, set);
+  }
+  set.add(popupWindow);
+  popupWindow.once('closed', () => {
+    const current = servicePopups.get(serviceId);
+    if (!current) return;
+    current.delete(popupWindow);
+    if (!current.size) servicePopups.delete(serviceId);
+  });
+}
+
+function closeServicePopups(serviceId) {
+  const set = servicePopups.get(serviceId);
+  if (!set || !set.size) return;
+  for (const win of [...set]) {
+    try {
+      if (!win.isDestroyed()) win.close();
+    } catch {
+      // ignore
+    }
+  }
+  servicePopups.delete(serviceId);
+}
 
 /** High performance is the default — low memory is opt-in only. */
 function isLowMemoryMode() {
@@ -283,14 +594,39 @@ function applyMemorySwitches() {
     ),
   );
 
+  // Linux Mint (NVIDIA / VM / older Intel): Chromium often dies at launch with
+  // FATAL "GPU process isn't usable. Goodbye." Prefer starting over GPU speed.
+  if (process.platform === 'linux') {
+    app.commandLine.appendSwitch('disable-gpu-sandbox');
+    try {
+      const crashFlag = path.join(app.getPath('userData'), 'gpu-crash-v1');
+      if (fs.existsSync(crashFlag)) {
+        app.disableHardwareAcceleration();
+        app.commandLine.appendSwitch('disable-gpu');
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   if (lean || settings.hardwareAcceleration === false) {
     app.disableHardwareAcceleration();
+    // disableHardwareAcceleration() alone is not enough on some Mint GPUs —
+    // Chromium still tries a GPU process and FATAL-exits.
+    if (process.platform === 'linux') {
+      app.commandLine.appendSwitch('disable-gpu');
+    }
   }
   if (settings.hiDpiSupport === false) {
     app.commandLine.appendSwitch('force-device-scale-factor', '1');
   }
   if (settings.mediaKeys === false) {
     disabled.add('HardwareMediaKeyHandling');
+  }
+  // Linux WMs (Mint XFCE/Cinnamon) often mis-report occlusion → blank WebContentsView
+  // until the next resize/click. Keep guest surfaces painting while alt-tabbed away.
+  if (process.platform === 'linux') {
+    disabled.add('CalculateNativeWinOcclusion');
   }
 
   app.commandLine.appendSwitch('disable-features', [...disabled].join(','));
@@ -339,7 +675,10 @@ function syncAllGuestPerfModes() {
     const service = getService(id) || entry.service;
     const keepWarm = isKeepWarmService(id);
     applyGuestPerfMode(wc, {
-      active: !overlayOpen && !locked && id === activeServiceId,
+      active:
+        !locked &&
+        id === activeServiceId &&
+        !(overlayOpen && overlayMode === 'full'),
       loadedOnce: entry.loadedOnce === true,
       keepWarm,
       allowThrottle:
@@ -353,10 +692,21 @@ function syncAllGuestPerfModes() {
 /** SPAs that need an unthrottled first boot (then stay full-speed if warm). */
 function isHeavyPortalApp(service) {
   const id = service?.appId;
-  return id === 'zoho-one' || id === 'arattai' || id === 'zoho-crm';}
+  return id === 'zoho-one' || id === 'arattai' || id === 'zoho-crm';
+}
 
 /**
- * Zoho One / Arattai: only recover when the content pane is actually blank.
+ * Auto blank-pane recovery is only needed for Zoho portal spaces.
+ * Arattai can look "blank enough" during fast tab restores and was getting
+ * unnecessary reloads on every switch.
+ */
+function shouldRunPortalBlankRecovery(service) {
+  const id = service?.appId;
+  return id === 'zoho-one' || id === 'zoho-crm';
+}
+
+/**
+ * Zoho portals: only recover when the content pane is actually blank.
  * Never blind-reload warm apps after tab switches or short idle — that is what
  * made "warm" feel cold (full reload every time you came back).
  */
@@ -371,11 +721,355 @@ function touchPortalPresence(entry) {
   if (entry) entry.lastPresenceAt = Date.now();
 }
 
+/** When the user last interacted / the system stopped being idle. */
+let lastUserActiveAt = Date.now();
+/** When the current away spell began (idle / blur / lock). */
+let awayStartedAt = 0;
+/** Peak system idle seconds observed in the current away spell. */
+let peakIdleSec = 0;
+
+function markUserAway(reason = 'idle') {
+  if (!awayStartedAt) {
+    awayStartedAt = Date.now();
+    try {
+      logBreadcrumb('user-away', { reason });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function markUserActive() {
+  lastUserActiveAt = Date.now();
+  awayStartedAt = 0;
+  peakIdleSec = 0;
+}
+
+/**
+ * Sample the guest compositor surface. After long idle on Linux the DOM can be
+ * fine while the on-screen surface is a flat blank — capturePage catches that.
+ *
+ * Must NOT treat WhatsApp QR / cream login pages as blank (that caused mid-login
+ * reloads and spontaneous logouts in v0.2.75).
+ */
+async function isGuestVisuallyBlank(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  if (typeof webContents.capturePage !== 'function') return false;
+  try {
+    const img = await webContents.capturePage();
+    const size = img?.getSize?.() || {};
+    const w = size.width || 0;
+    const h = size.height || 0;
+    if (w < 120 || h < 120) return true;
+    const crop = {
+      x: Math.floor(w * 0.12),
+      y: Math.floor(h * 0.12),
+      width: Math.max(40, Math.floor(w * 0.76)),
+      height: Math.max(40, Math.floor(h * 0.76)),
+    };
+    const region = img.crop(crop);
+    if (typeof region.toBitmap !== 'function') {
+      // Real UIs (QR codes, chat lists) compress larger than a flat panel.
+      const png = region.toPNG();
+      return png.length < 6_000;
+    }
+    const buf = region.toBitmap();
+    const unique = new Set();
+    let samples = 0;
+    let sumR = 0;
+    let sumG = 0;
+    let sumB = 0;
+    for (let i = 0; i + 3 < buf.length; i += 40 * 4) {
+      const b = buf[i];
+      const g = buf[i + 1];
+      const r = buf[i + 2];
+      samples += 1;
+      sumR += r;
+      sumG += g;
+      sumB += b;
+      // 4-bit quantization — enough to separate UI chrome from flat fills.
+      unique.add(`${r >> 4},${g >> 4},${b >> 4}`);
+    }
+    if (!samples) return false;
+    // Chat / QR / dashboards have many distinct colors.
+    if (unique.size >= 6) return false;
+
+    const meanR = sumR / samples;
+    const meanG = sumG / samples;
+    const meanB = sumB / samples;
+    let varSum = 0;
+    for (let i = 0; i + 3 < buf.length; i += 40 * 4) {
+      const b = buf[i];
+      const g = buf[i + 1];
+      const r = buf[i + 2];
+      const dr = r - meanR;
+      const dg = g - meanG;
+      const db = b - meanB;
+      varSum += dr * dr + dg * dg + db * db;
+    }
+    const stdev = Math.sqrt(varSum / samples);
+    // True compositor blanks are nearly uniform (stdev very low, few colors).
+    return unique.size <= 3 && stdev < 12;
+  } catch {
+    return false;
+  }
+}
+
+function isMessagingApp(service) {
+  const id = service?.appId || service?.id;
+  return id === 'whatsapp' || id === 'arattai';
+}
+
+/** WhatsApp/Arattai QR or phone-link screens — never reload these. */
+async function guestLooksLikeLoginOrPairing(webContents, service) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    const url = String(webContents.getURL() || '');
+    const title = String(webContents.getTitle() || '');
+    if (isAuthOrLoginUrl(url)) return true;
+    if (/scan|log\s*in|qr code|link with phone|stay logged in/i.test(title)) {
+      return true;
+    }
+    if (!isMessagingApp(service)) return false;
+    const pairing = await webContents.executeJavaScript(
+      `(() => {
+        try {
+          const t = ((document.body && document.body.innerText) || '').slice(0, 4000);
+          return /Scan to log in|Stay logged in on this browser|Link with phone number|QR code|Use WhatsApp on your phone|Enter phone number/i.test(t);
+        } catch (_) { return false; }
+      })()`,
+      true,
+    );
+    return !!pairing;
+  } catch {
+    return false;
+  }
+}
+
+function softReloadActiveGuest(reason = 'idle-blank') {
+  if (!activeServiceId || locked) return false;
+  const entry = views.get(activeServiceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed() || wc.isLoading()) return false;
+  const service = getService(activeServiceId) || entry.service;
+  // Never interrupt WhatsApp/Arattai login — reload mid-QR logs the user out.
+  if (isMessagingApp(service) && /surface|active-surface/i.test(String(reason || ''))) {
+    return false;
+  }
+  const now = Date.now();
+  if (
+    entry.__lastStaleReloadAt &&
+    now - entry.__lastStaleReloadAt < PORTAL_RELOAD_COOLDOWN_MS
+  ) {
+    return false;
+  }
+  entry.__lastStaleReloadAt = now;
+  try {
+    rememberGoodUrl(activeServiceId, wc.getURL());
+  } catch {
+    // ignore
+  }
+  try {
+    logBreadcrumb('guest-idle-reload', {
+      reason,
+      serviceId: activeServiceId,
+      awayMs: awayStartedAt ? now - awayStartedAt : 0,
+    });
+    wc.reload();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const ACTIVE_SURFACE_CHECK_DELAYS_MS = [2500, 5500, 10000];
+const ACTIVE_SURFACE_POLL_MS = 40_000;
+/** Give messaging apps time to finish QR pairing before any surface checks. */
+const MESSAGING_SURFACE_GRACE_MS = 90_000;
+
+function clearActiveSurfaceTimers(entry) {
+  if (!entry?.__surfaceHealthTimers?.length) return;
+  for (const t of entry.__surfaceHealthTimers) clearTimeout(t);
+  entry.__surfaceHealthTimers = [];
+}
+
+/**
+ * Pixel-based blank recovery for the ACTIVE guest.
+ * Messaging apps (WhatsApp/Arattai): repaint only — never soft-reload (QR false positives).
+ */
+async function runActiveGuestSurfaceHealthCheck(id, { fromPoll = false } = {}) {
+  if (!id || id !== activeServiceId || locked) return;
+  if (overlayOpen && overlayMode === 'full') return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindow.isVisible() || mainWindow.isMinimized()) return;
+  if (fromPoll && !dockIsUserFocused()) return;
+
+  const entry = views.get(id);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed() || wc.isLoading()) return;
+  const service = getService(id) || entry.service;
+
+  // Grace period after create/activate — WhatsApp QR is cream/white and used to
+  // trip blank recovery, which reloaded and logged users out mid-pairing.
+  const createdAt = entry.createdAt || entry.lastUsed || 0;
+  if (
+    isMessagingApp(service) &&
+    createdAt &&
+    Date.now() - createdAt < MESSAGING_SURFACE_GRACE_MS
+  ) {
+    return;
+  }
+
+  if (await guestLooksLikeLoginOrPairing(wc, service)) {
+    entry.__surfaceBlankStrikes = 0;
+    return;
+  }
+
+  const blank = await isGuestVisuallyBlank(wc);
+  if (!blank) {
+    entry.__surfaceBlankStrikes = 0;
+    return;
+  }
+
+  entry.__surfaceBlankStrikes = (entry.__surfaceBlankStrikes || 0) + 1;
+  try {
+    logBreadcrumb('guest-surface-blank', {
+      serviceId: id,
+      appId: service?.appId,
+      strikes: entry.__surfaceBlankStrikes,
+      fromPoll: !!fromPoll,
+    });
+  } catch {
+    // ignore
+  }
+
+  // Always try a gentle compositor kick first (bounds only — no detach for messaging).
+  entry.__lastBounds = null;
+  if (!isMessagingApp(service) && entry.__surfaceBlankStrikes === 1) {
+    try {
+      detachGuestView(entry.view);
+      attachGuestView(entry.view);
+    } catch {
+      // ignore
+    }
+  }
+  repaintActiveGuestView({ reason: 'active-surface-blank' });
+
+  if (entry.__surfaceBlankStrikes === 1) {
+    setTimeout(() => {
+      if (id === activeServiceId) {
+        runActiveGuestSurfaceHealthCheck(id, { fromPoll });
+      }
+    }, 2200);
+    return;
+  }
+
+  // Second strike: reload only for non-messaging apps.
+  entry.__surfaceBlankStrikes = 0;
+  if (isMessagingApp(service)) {
+    // Keep trying gentle repaints; never reload WhatsApp while focused.
+    return;
+  }
+  softReloadActiveGuest('active-surface-blank');
+}
+
+function scheduleActiveGuestSurfaceChecks(id) {
+  const entry = views.get(id);
+  if (!entry) return;
+  clearActiveSurfaceTimers(entry);
+  entry.__surfaceBlankStrikes = 0;
+  const service = getService(id) || entry.service;
+  const delays = isMessagingApp(service)
+    ? ACTIVE_SURFACE_CHECK_DELAYS_MS.map((d) => d + MESSAGING_SURFACE_GRACE_MS)
+    : ACTIVE_SURFACE_CHECK_DELAYS_MS;
+  entry.__surfaceHealthTimers = delays.map((delay) =>
+    setTimeout(() => {
+      runActiveGuestSurfaceHealthCheck(id);
+    }, delay),
+  );
+}
+
+/**
+ * After the user returns from lock / sleep / long idle: reattach + two-step
+ * repaint, then reload only if the surface is still visually blank.
+ */
+function recoverActiveGuestAfterAway(reason = 'idle', idleMs = 0) {
+  const awayMs =
+    idleMs || (awayStartedAt ? Date.now() - awayStartedAt : 0);
+  if (!activeServiceId || locked) {
+    markUserActive();
+    return;
+  }
+  const entry = views.get(activeServiceId);
+  if (!entry?.view) {
+    markUserActive();
+    return;
+  }
+
+  guestNeedsRepaint = true;
+  try {
+    // Re-seat the native view — long occlusion can leave a dead compositor surface.
+    detachGuestView(entry.view);
+    attachGuestView(entry.view);
+  } catch {
+    // ignore
+  }
+  entry.__lastBounds = null;
+  entry.__parked = false;
+  repaintActiveGuestView({ reason });
+
+  const serviceId = activeServiceId;
+  const checkAt = (delay, allowReload) => {
+    setTimeout(async () => {
+      if (!mainWindow || mainWindow.isDestroyed() || locked) return;
+      if (activeServiceId !== serviceId) return;
+      const live = views.get(serviceId);
+      const wc = live?.view?.webContents;
+      if (!wc || wc.isDestroyed() || wc.isLoading()) return;
+
+      // Always nudge again — XFCE often needs a second pass after unlock.
+      live.__lastBounds = null;
+      repaintActiveGuestView({ reason: `${reason}-verify` });
+
+      if (!allowReload) return;
+      // Short away: repaint is enough. Long away / resume: verify pixels.
+      if (awayMs < 5 * 60_000 && reason !== 'power-resume') return;
+
+      // Give the nudge a moment to paint before sampling.
+      setTimeout(async () => {
+        if (activeServiceId !== serviceId || locked) return;
+        const still = views.get(serviceId)?.view?.webContents;
+        if (!still || still.isDestroyed() || still.isLoading()) return;
+        const svc = getService(serviceId) || views.get(serviceId)?.service;
+        if (await guestLooksLikeLoginOrPairing(still, svc)) return;
+        const blank = await isGuestVisuallyBlank(still);
+        if (blank) {
+          softReloadActiveGuest(reason);
+        }
+      }, 350);
+    }, delay);
+  };
+
+  checkAt(450, false);
+  checkAt(1200, true);
+  // Very long idle (screensaver / lunch): if still blank, reload once more.
+  if (awayMs >= 15 * 60_000 || reason === 'power-resume') {
+    checkAt(2800, true);
+  }
+
+  markUserActive();
+  try {
+    logBreadcrumb('guest-idle-recover', { reason, awayMs, serviceId });
+  } catch {
+    // ignore
+  }
+}
+
 function maybeRefreshStaleHeavyPortal(id, { reason = 'idle' } = {}) {
   const entry = views.get(id);
   if (!entry) return false;
   const service = getService(id) || entry.service;
-  if (!isHeavyPortalApp(service)) return false;
+  if (!shouldRunPortalBlankRecovery(service)) return false;
   const wc = entry.view?.webContents;
   if (!wc || wc.isDestroyed() || wc.isLoading()) return false;
 
@@ -423,6 +1117,10 @@ function maybeRefreshStaleHeavyPortal(id, { reason = 'idle' } = {}) {
 }
 
 function onUserReturnedFromIdle(reason = 'presence') {
+  const awayMs = awayStartedAt ? Date.now() - awayStartedAt : peakIdleSec * 1000;
+  // Always recover the visible guest after away — Zoho blank checks alone miss
+  // Arattai/WhatsApp compositor blanks on Mint after ~30 minutes idle.
+  recoverActiveGuestAfterAway(reason, awayMs);
   if (activeServiceId) {
     maybeRefreshStaleHeavyPortal(activeServiceId, { reason });
     touchPortalPresence(views.get(activeServiceId));
@@ -466,8 +1164,25 @@ setErrorReporterContext(() => ({
   serviceCount: (settings.serviceInstances || []).length,
 }));
 
+function getRawInstance(id) {
+  return (settings.serviceInstances || []).find((i) => i.id === id) || null;
+}
+
 function getAppConfig(id) {
-  return mergeAppConfig((settings.serviceConfigs || {})[id] || {});
+  // IMPORTANT: do NOT call getService()/orderedServices() here.
+  // orderedServices() decorates with getAppConfig() — that recursion
+  // crashed startup with "Maximum call stack size exceeded" (blank launch).
+  const raw = getRawInstance(id);
+  const appId = raw?.appId || id;
+  const stored = (settings.serviceConfigs || {})[id] || {};
+  // Messaging sessions die if hibernated mid-pairing — keep them warm by default
+  // unless the user explicitly turned keepWarm off.
+  const messagingDefault =
+    (appId === 'whatsapp' || appId === 'arattai') &&
+    stored.keepWarm === undefined
+      ? { keepWarm: true }
+      : {};
+  return mergeAppConfig({ ...messagingDefault, ...stored });
 }
 
 function saveAppConfig(id, patch) {
@@ -867,6 +1582,8 @@ function raiseDockWindow() {
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
   mainWindow.focus();
+  // Focus event usually fires; still kick a repaint for WMs that skip it.
+  setTimeout(() => repaintActiveGuestView({ reason: 'raise' }), 30);
 }
 
 function assertShellSender(event) {
@@ -882,6 +1599,85 @@ function assertShellSender(event) {
 function dockHandle(channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
     assertShellSender(event);
+    return handler(event, ...args);
+  });
+}
+
+/** IPC for the floating app-menu child window (not the dock shell). */
+function appMenuHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !appMenuWindow ||
+      appMenuWindow.isDestroyed() ||
+      event.sender !== appMenuWindow.webContents
+    ) {
+      throw new Error('Unauthorized app-menu IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
+function chromeMenuHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !chromeMenuWindow ||
+      chromeMenuWindow.isDestroyed() ||
+      event.sender !== chromeMenuWindow.webContents
+    ) {
+      throw new Error('Unauthorized chrome-menu IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
+function notifCenterHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !notifCenterWindow ||
+      notifCenterWindow.isDestroyed() ||
+      event.sender !== notifCenterWindow.webContents
+    ) {
+      throw new Error('Unauthorized notif-center IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
+function aiResultHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !aiResultWindow ||
+      aiResultWindow.isDestroyed() ||
+      event.sender !== aiResultWindow.webContents
+    ) {
+      throw new Error('Unauthorized ai-result IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
+function forwardPickerHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !forwardPickerWindow ||
+      forwardPickerWindow.isDestroyed() ||
+      event.sender !== forwardPickerWindow.webContents
+    ) {
+      throw new Error('Unauthorized forward-picker IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
+function extensionsHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !extensionsWindow ||
+      extensionsWindow.isDestroyed() ||
+      event.sender !== extensionsWindow.webContents
+    ) {
+      throw new Error('Unauthorized extensions IPC sender');
+    }
     return handler(event, ...args);
   });
 }
@@ -1227,7 +2023,7 @@ function attachZohoOneBlankGuardian(webContents) {
 async function runPortalHealthCheck(id, { salesRecovery = false } = {}) {
   const entry = views.get(id);
   const service = getService(id) || entry?.service;
-  if (!entry || !isHeavyPortalApp(service)) return;
+  if (!entry || !shouldRunPortalBlankRecovery(service)) return;
   if (id !== activeServiceId || locked || overlayOpen) return;
   const wc = entry.view?.webContents;
   if (!wc || wc.isDestroyed() || wc.isLoading()) return;
@@ -1411,20 +2207,23 @@ async function runPortalHealthCheck(id, { salesRecovery = false } = {}) {
 }
 
 function layoutActiveView() {
-  if (!mainWindow || !activeServiceId || locked || overlayOpen) return;
+  if (!mainWindow || !activeServiceId || locked) return;
+  // Full-screen overlays hide the guest; drawer/menu keep it visible with inset.
+  if (overlayOpen && overlayMode === 'full') return;
   if (mainWindow.isDestroyed()) return;
   const entry = views.get(activeServiceId);
   if (!entry?.view) return;
 
   const [width, height] = mainWindow.getContentSize();
   const m = effectiveMetrics();
-  const right = m.right || 0;
+  const left = (m.left || 0) + (overlayLeftInset || 0);
+  const right = (m.right || 0) + (overlayRightInset || 0);
   // Always keep a floor under the measured bar so the guest never covers chrome.
   const top = Math.max(64, m.top || 0);
   const next = {
-    x: Math.max(0, m.left || 0),
+    x: Math.max(0, left),
     y: top,
-    width: Math.max(1, width - (m.left || 0) - right),
+    width: Math.max(1, width - left - right),
     height: Math.max(1, height - top),
   };
   // Skip identical layouts — repeated setBounds on Linux can flicker the guest.
@@ -1450,6 +2249,129 @@ function layoutActiveView() {
   }
 }
 
+/** @type {ReturnType<typeof setTimeout> | null} */
+let guestRepaintTimer = null;
+/** @type {ReturnType<typeof setTimeout> | null} */
+let guestRepaintTimer2 = null;
+let guestNeedsRepaint = false;
+
+function activeGuestTargetBounds() {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  const [width, height] = mainWindow.getContentSize();
+  if (width < 2 || height < 2) return null;
+  const m = effectiveMetrics();
+  const left = (m.left || 0) + (overlayLeftInset || 0);
+  const right = (m.right || 0) + (overlayRightInset || 0);
+  const top = Math.max(64, m.top || 0);
+  return {
+    x: Math.max(0, left),
+    y: top,
+    width: Math.max(1, width - left - right),
+    height: Math.max(1, height - top),
+  };
+}
+
+/**
+ * Linux Mint XFCE/Cinnamon: WebContentsView often stays blank after alt-tab
+ * until a real resize. Force a two-step setBounds across event-loop turns so
+ * Chromium submits a fresh compositor frame (clicking into the app "fixed" it).
+ */
+function repaintActiveGuestView({ reason = 'focus' } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed() || locked) return;
+  if (overlayOpen && overlayMode === 'full') return;
+  if (!activeServiceId) return;
+  const entry = views.get(activeServiceId);
+  if (!entry?.view) return;
+
+  const target = activeGuestTargetBounds();
+  if (!target) return;
+
+  try {
+    attachGuestView(entry.view);
+  } catch {
+    // ignore
+  }
+
+  if (guestRepaintTimer) {
+    clearTimeout(guestRepaintTimer);
+    guestRepaintTimer = null;
+  }
+  if (guestRepaintTimer2) {
+    clearTimeout(guestRepaintTimer2);
+    guestRepaintTimer2 = null;
+  }
+
+  const serviceId = activeServiceId;
+  try {
+    if (typeof entry.view.setVisible === 'function') {
+      entry.view.setVisible(true);
+    }
+    // Step 1 — nudge by 1px (must differ from final bounds).
+    const nudge = {
+      ...target,
+      height: Math.max(1, target.height - 1),
+    };
+    entry.view.setBounds(nudge);
+    entry.__lastBounds = nudge;
+    entry.__parked = false;
+  } catch {
+    // ignore
+  }
+
+  guestRepaintTimer = setTimeout(() => {
+    guestRepaintTimer = null;
+    if (!mainWindow || mainWindow.isDestroyed() || locked) return;
+    if (activeServiceId !== serviceId) return;
+    if (overlayOpen && overlayMode === 'full') return;
+    const live = views.get(serviceId);
+    if (!live?.view) return;
+    const finalBounds = activeGuestTargetBounds() || target;
+    try {
+      if (typeof live.view.setVisible === 'function') {
+        live.view.setVisible(true);
+      }
+      live.view.setBounds(finalBounds);
+      live.__lastBounds = finalBounds;
+      live.__parked = false;
+      const wc = live.view.webContents;
+      if (wc && !wc.isDestroyed()) {
+        try {
+          wc.invalidate?.();
+        } catch {
+          // ignore
+        }
+        applyGuestPerfMode(wc, {
+          active: true,
+          loadedOnce: live.loadedOnce === true,
+          keepWarm: isKeepWarmService(serviceId),
+          allowThrottle: true,
+        });
+      }
+    } catch {
+      // ignore
+    }
+    guestNeedsRepaint = false;
+  }, 48);
+
+  // XFCE sometimes settles focus a beat later — one more real layout pass.
+  guestRepaintTimer2 = setTimeout(() => {
+    guestRepaintTimer2 = null;
+    if (!mainWindow || mainWindow.isDestroyed() || locked) return;
+    if (activeServiceId !== serviceId) return;
+    const live = views.get(serviceId);
+    if (!live?.view) return;
+    live.__lastBounds = null;
+    layoutActiveView();
+    focusActiveContents();
+  }, 160);
+
+  try {
+    logBreadcrumb('guest-repaint', { reason, serviceId });
+  } catch {
+    // ignore
+  }
+}
+
 function detachAllViews() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   for (const entry of views.values()) {
@@ -1457,16 +2379,44 @@ function detachAllViews() {
   }
 }
 
-/** Guest views paint above the dock HTML — hide them while modals are open. */
-function setOverlayOpen(open) {
+/**
+ * Guest views paint above dock HTML.
+ * - full: hide guest (lock / centered dialogs)
+ * - drawer: keep guest visible, shrink from the right (Settings / Edit / Profiles)
+ * - menu: keep guest visible, optional left/right inset for floating menus
+ */
+function setOverlayOpen(open, options = {}) {
   const next = !!open;
-  // No-op when unchanged. Re-adding/focusing the view on every state sync
-  // strobes the navy window background over the guest page on Linux.
-  if (next === overlayOpen) return;
+  const mode = next
+    ? options.mode === 'drawer' || options.mode === 'menu'
+      ? options.mode
+      : 'full'
+    : null;
+  const rightInset =
+    next && (mode === 'drawer' || mode === 'menu')
+      ? Math.max(0, Number(options.rightInset) || (mode === 'drawer' ? 440 : 0))
+      : 0;
+  const leftInset =
+    next && (mode === 'drawer' || mode === 'menu')
+      ? Math.max(0, Number(options.leftInset) || 0)
+      : 0;
+
+  if (
+    next === overlayOpen &&
+    mode === overlayMode &&
+    rightInset === overlayRightInset &&
+    leftInset === overlayLeftInset
+  ) {
+    return;
+  }
+
   overlayOpen = next;
+  overlayMode = mode;
+  overlayRightInset = rightInset;
+  overlayLeftInset = leftInset;
   if (!mainWindow) return;
 
-  if (overlayOpen) {
+  if (overlayOpen && overlayMode === 'full') {
     detachAllViews();
     syncAllGuestPerfModes();
     return;
@@ -1476,13 +2426,18 @@ function setOverlayOpen(open) {
     syncAllGuestPerfModes();
     return;
   }
+
   const entry = views.get(activeServiceId);
-  if (!entry) return;
+  if (!entry) {
+    syncAllGuestPerfModes();
+    return;
+  }
+
   parkBackgroundViews(activeServiceId);
   attachGuestView(entry.view);
   entry.__lastBounds = null;
   layoutActiveView();
-  focusActiveContents();
+  if (!overlayOpen) focusActiveContents();
   syncAllGuestPerfModes();
 }
 
@@ -1490,10 +2445,1451 @@ function hideViewsForLock() {
   detachAllViews();
 }
 
+function closeAppContextMenu() {
+  appMenuServiceId = null;
+  if (!appMenuWindow || appMenuWindow.isDestroyed()) {
+    appMenuWindow = null;
+    return;
+  }
+  const win = appMenuWindow;
+  appMenuWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
+function closeChromeMenuWindow() {
+  if (!chromeMenuWindow || chromeMenuWindow.isDestroyed()) {
+    chromeMenuWindow = null;
+    return;
+  }
+  const win = chromeMenuWindow;
+  chromeMenuWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
+function closeNotifCenterWindow() {
+  if (!notifCenterWindow || notifCenterWindow.isDestroyed()) {
+    notifCenterWindow = null;
+    return;
+  }
+  const win = notifCenterWindow;
+  notifCenterWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
+function closeAiResultWindow() {
+  aiResultContext = null;
+  if (!aiResultWindow || aiResultWindow.isDestroyed()) {
+    aiResultWindow = null;
+    return;
+  }
+  const win = aiResultWindow;
+  aiResultWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
+function closeExtensionsWindow() {
+  if (!extensionsWindow || extensionsWindow.isDestroyed()) {
+    extensionsWindow = null;
+    return;
+  }
+  const win = extensionsWindow;
+  extensionsWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
+function closeForwardPickerWindow({ clearPayload = false } = {}) {
+  if (!forwardPickerWindow || forwardPickerWindow.isDestroyed()) {
+    forwardPickerWindow = null;
+    if (clearPayload) {
+      cancelPendingForwardPaste();
+      forwardPayload = null;
+      restoreHubClipboardAfterForward();
+    }
+    return;
+  }
+  const win = forwardPickerWindow;
+  forwardPickerWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+  if (clearPayload) {
+    cancelPendingForwardPaste();
+    forwardPayload = null;
+    restoreHubClipboardAfterForward();
+  }
+}
+
+function cancelPendingForwardPaste() {
+  forwardPasteGeneration += 1;
+}
+
+function restoreHubClipboardAfterForward() {
+  try {
+    if (hubClipboardBeforeStage) {
+      clipboard.writeText(String(hubClipboardBeforeStage.text || ''));
+    } else if (hubStagedClipboardText) {
+      const cur = clipboard.readText() || '';
+      if (cur === hubStagedClipboardText) clipboard.clear();
+    }
+  } catch {
+    // ignore
+  }
+  hubClipboardBeforeStage = null;
+  hubStagedClipboardText = '';
+}
+
+function stageHubForwardClipboard(write) {
+  try {
+    hubClipboardBeforeStage = { text: clipboard.readText() || '' };
+  } catch {
+    hubClipboardBeforeStage = { text: '' };
+  }
+  hubStagedClipboardText = String(write?.text || '');
+  clipboard.write(write);
+}
+
+function closeAllFloatMenus() {
+  closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAiResultWindow();
+  closeForwardPickerWindow();
+  closeExtensionsWindow();
+}
+
+function clampFloatPosition(screenX, screenY, menuW, menuH) {
+  const display = screen.getDisplayNearestPoint({ x: screenX, y: screenY });
+  const wa = display.workArea;
+  let x = screenX;
+  let y = screenY;
+  if (x + menuW > wa.x + wa.width - 8) x = wa.x + wa.width - menuW - 8;
+  if (y + menuH > wa.y + wa.height - 8) y = wa.y + wa.height - menuH - 8;
+  if (x < wa.x + 8) x = wa.x + 8;
+  if (y < wa.y + 8) y = wa.y + 8;
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
+/** Linux Mint XFCE (and similar) without a compositor paint transparent windows badly. */
+function linuxUsesOpaqueOverlays() {
+  if (process.platform !== 'linux') return false;
+  const de = `${process.env.XDG_CURRENT_DESKTOP || ''} ${process.env.DESKTOP_SESSION || ''} ${process.env.GDMSESSION || ''}`.toLowerCase();
+  return (
+    de.includes('xfce') ||
+    de.includes('xubuntu') ||
+    de.includes('lxde') ||
+    de.includes('lxqt') ||
+    de.includes('openbox')
+  );
+}
+
+function createFloatBrowserWindow({
+  width,
+  height,
+  x,
+  y,
+  preload,
+  dark = false,
+}) {
+  const opaque = linuxUsesOpaqueOverlays();
+  const win = new BrowserWindow({
+    parent: mainWindow,
+    modal: false,
+    frame: false,
+    // Cinnamon: transparent overlays are fine. XFCE: prefer opaque to avoid black/blank menus.
+    transparent: !opaque,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    show: false,
+    width,
+    height,
+    x,
+    y,
+    backgroundColor: opaque ? (dark ? '#111827' : '#ffffff') : '#00000000',
+    hasShadow: !opaque,
+    webPreferences: {
+      preload: path.join(__dirname, preload),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  win.setMenuBarVisibility(false);
+  return win;
+}
+
+/**
+ * Rambox-style: float the HTML app menu above the guest without resizing it.
+ * In-page HTML cannot paint over WebContentsView, so use a frameless child window.
+ */
+function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
+  const service = getService(serviceId);
+  if (!service || !mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAppContextMenu();
+
+  const menuW = 236;
+  const menuH = 292;
+  const content = mainWindow.getContentBounds();
+  const pos = clampFloatPosition(
+    content.x + (Number(x) || 0),
+    content.y + (Number(y) || 0),
+    menuW,
+    menuH,
+  );
+
+  appMenuServiceId = serviceId;
+  appMenuWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'appMenuPreload.js',
+    dark: !!dark,
+  });
+
+  const win = appMenuWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildAppMenuHtml(!!dark))}`,
+  );
+
+  const pushState = () => {
+    if (!win || win.isDestroyed() || appMenuServiceId !== serviceId) return;
+    const latest = getAppConfig(serviceId);
+    win.webContents.send('app-menu:init', {
+      serviceId,
+      name: service.name || service.defaultName || 'App',
+      enabled: latest.enabled !== false,
+      sound: latest.allowSounds !== false,
+      notifications: latest.allowNotifications !== false,
+      warm: latest.keepWarm === true,
+    });
+  };
+
+  win.webContents.once('did-finish-load', pushState);
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  win.on('blur', () => {
+    setTimeout(() => {
+      if (appMenuWindow === win) closeAppContextMenu();
+    }, 120);
+  });
+  win.on('closed', () => {
+    if (appMenuWindow === win) {
+      appMenuWindow = null;
+      appMenuServiceId = null;
+    }
+  });
+
+  return { ok: true };
+}
+
+function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeAppContextMenu();
+  closeNotifCenterWindow();
+  closeChromeMenuWindow();
+
+  const menuW = 242;
+  // Tall enough for About + version; clampFloatPosition shrinks into the work area.
+  const display = screen.getDisplayNearestPoint({
+    x: mainWindow.getBounds().x,
+    y: mainWindow.getBounds().y,
+  });
+  const menuH = Math.min(760, Math.max(520, (display?.workArea?.height || 800) - 48));
+  const content = mainWindow.getContentBounds();
+  const anchorX = content.x + (Number(x) || 0);
+  const anchorY = content.y + (Number(y) || 0);
+  const rawX = align === 'right' ? anchorX - menuW : anchorX;
+  const pos = clampFloatPosition(rawX, anchorY, menuW, menuH);
+
+  chromeMenuWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'chromeMenuPreload.js',
+    dark: !!dark,
+  });
+
+  const win = chromeMenuWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildChromeMenuHtml(!!dark))}`,
+  );
+
+  const versionLabel = `Aspera Hub ${app.getVersion()}${app.isPackaged ? '' : ' (dev)'}`;
+  win.webContents.once('did-finish-load', () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('chrome-menu:init', {
+        versionLabel,
+        focusMode: !!settings.focusMode,
+        muted: !!settings.muted,
+      });
+    }
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  win.on('blur', () => {
+    setTimeout(() => {
+      if (chromeMenuWindow === win) closeChromeMenuWindow();
+    }, 120);
+  });
+  win.on('closed', () => {
+    if (chromeMenuWindow === win) chromeMenuWindow = null;
+  });
+
+  return { ok: true };
+}
+
+function buildNotifCenterData() {
+  const notifications = (notificationLog || []).slice(0, 40).map((item) => {
+    const service = getService(item.serviceId);
+    const canReply = isInboxAppId(service?.appId || item.appId);
+    return {
+      id: item.id,
+      serviceId: item.serviceId,
+      title: item.title,
+      body: item.body,
+      at: item.at,
+      chatName: item.chatName || '',
+      chatKey: item.chatKey || '',
+      canReply,
+      accountLabel: item.accountLabel || service?.title || service?.name || '',
+      logo: service?.logo || null,
+      color: service?.color || '#e2e8f0',
+    };
+  });
+  const monitorOn = !!settings.consumptionMonitor;
+  const memoryRows = monitorOn
+    ? (settings.serviceInstances || [])
+        .map((service) => ({
+          name: service.name || service.defaultName || 'App',
+          mb: Number(appMemory?.[service.id]) || 0,
+        }))
+        .filter((row) => row.mb > 0)
+        .sort((a, b) => b.mb - a.mb)
+    : [];
+  return { notifications, monitorOn, memoryRows };
+}
+
+function pushNotifCenterData() {
+  if (!notifCenterWindow || notifCenterWindow.isDestroyed()) return;
+  try {
+    notifCenterWindow.webContents.send('notif-center:init', buildNotifCenterData());
+  } catch {
+    // ignore
+  }
+}
+
+function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+
+  const menuW = 420;
+  const menuH = 580;
+  const content = mainWindow.getContentBounds();
+  const anchorX = content.x + (Number(x) || 0);
+  const anchorY = content.y + (Number(y) || 0);
+  const rawX = align === 'right' ? anchorX - menuW : anchorX;
+  const pos = clampFloatPosition(rawX, anchorY, menuW, menuH);
+
+  notifCenterWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'notifCenterPreload.js',
+    dark: !!dark,
+  });
+
+  const win = notifCenterWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildNotifCenterHtml(!!dark))}`,
+  );
+
+  win.webContents.once('did-finish-load', () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('notif-center:init', buildNotifCenterData());
+    }
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  win.on('blur', () => {
+    setTimeout(() => {
+      if (notifCenterWindow === win) closeNotifCenterWindow();
+    }, 120);
+  });
+  win.on('closed', () => {
+    if (notifCenterWindow === win) notifCenterWindow = null;
+  });
+
+  return { ok: true };
+}
+
+function pushAiResult(payload) {
+  if (!aiResultWindow || aiResultWindow.isDestroyed()) return;
+  try {
+    aiResultWindow.webContents.send('ai-result:init', payload);
+  } catch {
+    // ignore
+  }
+}
+
+function openAiResultWindow({ title, meta, dark = false } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAiResultWindow();
+
+  const content = mainWindow.getContentBounds();
+  const margin = 10;
+  // Use nearly the full guest/workspace height so long EN/HI/MR text is readable.
+  const menuW = Math.min(
+    580,
+    Math.max(440, Math.floor(content.width * 0.45)),
+  );
+  const menuH = Math.max(360, content.height - margin * 2);
+  const pos = clampFloatPosition(
+    content.x + content.width - menuW - margin,
+    content.y + margin,
+    menuW,
+    menuH,
+  );
+
+  aiResultWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'aiResultPreload.js',
+    dark: !!dark,
+  });
+
+  const win = aiResultWindow;
+  attachAiResultContextMenu(win.webContents);
+  // Always paint above the guest WhatsApp/Arattai WebContentsView.
+  try {
+    win.setAlwaysOnTop(true, 'pop-up-menu');
+  } catch {
+    // ignore
+  }
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildAiResultHtml(!!dark))}`,
+  );
+  win.webContents.once('did-finish-load', () => {
+    pushAiResult({
+      title: title || 'Aspera AI',
+      meta: meta || '',
+      loading: true,
+      text: 'Working…',
+    });
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+      try {
+        win.moveTop();
+      } catch {
+        // ignore
+      }
+    }
+  });
+  // Keep the panel open while reading — do not auto-close on blur.
+  win.on('closed', () => {
+    if (aiResultWindow === win) {
+      aiResultWindow = null;
+      aiResultContext = null;
+    }
+  });
+  return { ok: true };
+}
+
+/** Right-click Copy / Select all inside the floating AI result panel. */
+function attachAiResultContextMenu(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  webContents.on('context-menu', (_event, params) => {
+    if (webContents.isDestroyed()) return;
+    const hasSelection = Boolean(params.selectionText);
+    /** @type {Electron.MenuItemConstructorOptions[]} */
+    const template = [
+      {
+        label: 'Copy',
+        role: 'copy',
+        enabled: hasSelection,
+      },
+      {
+        label: 'Copy all',
+        click: () => {
+          const text = [
+            aiResultContext?.summaryText,
+            aiResultContext?.repliesText,
+          ]
+            .filter(Boolean)
+            .join('\n\n—\n\n');
+          if (text) clipboard.writeText(text);
+        },
+        enabled: Boolean(
+          aiResultContext?.summaryText || aiResultContext?.repliesText,
+        ),
+      },
+      { type: 'separator' },
+      { label: 'Select all', role: 'selectAll' },
+    ];
+    Menu.buildFromTemplate(template).popup({
+      window: BrowserWindow.fromWebContents(webContents) || undefined,
+    });
+  });
+}
+
+function aiRoutePrefs() {
+  return {
+    order: sanitizeAiProviderOrder(settings.aiProviderOrder),
+    disabledIds: sanitizeAiDisabledProviders(settings.aiDisabledProviders),
+  };
+}
+
+function aiConfiguredRouteOrderIds() {
+  const configured = listConfiguredAiProviders()
+    .filter((p) => p.configured)
+    .map((p) => p.id);
+  return configuredProvidersInRouteOrder(configured, aiRoutePrefs()).map(
+    (p) => p.id,
+  );
+}
+
+function aiProvidersForUi() {
+  const { order, disabledIds } = aiRoutePrefs();
+  const disabled = new Set(disabledIds);
+  const byId = new Map(listConfiguredAiProviders().map((p) => [p.id, p]));
+  const enabledOrder = order.filter((id) => !disabled.has(id));
+  return order.map((id, index) => {
+    const base = byId.get(id) || getAiProvider(id);
+    const selectedModel = getProviderModelPreference(settings, id);
+    const availableModels =
+      getCachedAiModels(id) || catalogModelsForProvider(id);
+    const enabled = !disabled.has(id);
+    const tryIndex = enabled ? enabledOrder.indexOf(id) : -1;
+    return {
+      ...base,
+      id,
+      selectedModel,
+      availableModels,
+      modelsLive: Boolean(getCachedAiModels(id)?.length),
+      enabled,
+      routeIndex: index,
+      tryOrdinal: tryIndex >= 0 ? aiProviderTryOrdinal(tryIndex) : '',
+    };
+  });
+}
+
+function saveAiProviderRoute({ order, disabledIds } = {}) {
+  const nextOrder =
+    order === undefined
+      ? sanitizeAiProviderOrder(settings.aiProviderOrder)
+      : sanitizeAiProviderOrder(order);
+  const nextDisabled =
+    disabledIds === undefined
+      ? sanitizeAiDisabledProviders(settings.aiDisabledProviders)
+      : sanitizeAiDisabledProviders(disabledIds);
+  settings = saveSettings({
+    aiProviderOrder: nextOrder,
+    aiDisabledProviders: nextDisabled,
+  });
+  // Sticky session may point at a now-disabled provider — clear failover state.
+  resetAiProviderSession();
+  syncPreferredAiProvider();
+  broadcastState();
+  return {
+    ok: true,
+    order: nextOrder,
+    disabledIds: nextDisabled,
+    isDefault: isDefaultAiProviderOrder(nextOrder) && nextDisabled.length === 0,
+    routeOrder: aiConfiguredRouteOrderIds(),
+  };
+}
+
+async function refreshAiProviderModels(providerId, { force = true } = {}) {
+  const id = String(providerId || '').trim();
+  if (!id) return { ok: false, error: 'Unknown provider' };
+  const apiKey = getAiProviderKey(id);
+  if (!apiKey) {
+    return {
+      ok: false,
+      providerId: id,
+      models: catalogModelsForProvider(id),
+      source: 'catalog',
+      error: 'No API key saved',
+    };
+  }
+  if (force) invalidateAiModelCache(id);
+  return listAiProviderModels(id, apiKey, { force });
+}
+
+function setAiProviderModelPreference(providerId, modelId) {
+  const id = String(providerId || '').trim();
+  if (!AI_PROVIDERS.some((p) => p.id === id)) {
+    return { ok: false, error: 'Unknown AI provider' };
+  }
+  const choice = normalizeProviderModelChoice(modelId);
+  const nextMap = {
+    ...(settings.aiProviderModels && typeof settings.aiProviderModels === 'object'
+      ? settings.aiProviderModels
+      : {}),
+    [id]: choice,
+  };
+  settings = saveSettings({
+    aiProviderModels: nextMap,
+    // Keep legacy field in sync for the preferred/sticky provider.
+    aiModel:
+      id === (settings.aiProvider || 'gemini')
+        ? choice === 'auto'
+          ? ''
+          : choice
+        : settings.aiModel,
+  });
+  return { ok: true, providerId: id, model: choice };
+}
+
+function aiSettingsSnapshot() {
+  const language = ['en', 'hi', 'mr'].includes(settings.aiLanguage)
+    ? settings.aiLanguage
+    : 'en';
+  const configured = listConfiguredAiProviders()
+    .filter((p) => p.configured)
+    .map((p) => p.id);
+  const order = configuredProvidersInRouteOrder(configured, aiRoutePrefs());
+  const sticky = getStickyAiProviderId();
+  const provider =
+    (sticky && order.find((p) => p.id === sticky)) ||
+    order[0] ||
+    getAiProvider(settings.aiProvider || 'gemini');
+  let model = String(
+    getProviderModelPreference(settings, provider.id) === 'auto'
+      ? ''
+      : getProviderModelPreference(settings, provider.id),
+  ).trim();
+  if (provider.id === 'openrouter' && (!model || model === 'openrouter/free')) {
+    model = provider.defaultModel;
+  }
+  if (provider.id === 'anthropic') {
+    model = normalizeAnthropicModel(model || provider.defaultModel);
+  }
+  if (provider.id === 'gemini') {
+    model = normalizeGeminiModel(model || provider.defaultModel);
+  }
+  if (provider.id === 'grok') {
+    model = normalizeGrokModel(model || provider.defaultModel);
+  }
+  if (provider.id === 'sarvam') {
+    model = normalizeSarvamModel(model || provider.defaultModel);
+  }
+  if (!model) model = provider.defaultModel;
+  return { provider, model, language, routeOrder: order, stickyId: sticky };
+}
+
+/**
+ * Keep settings.aiProvider aligned with sticky / first available in the
+ * user's effective failover order (enabled + has key).
+ */
+function syncPreferredAiProvider() {
+  const configured = listConfiguredAiProviders()
+    .filter((p) => p.configured)
+    .map((p) => p.id);
+  const order = configuredProvidersInRouteOrder(configured, aiRoutePrefs());
+  const sticky = getStickyAiProviderId();
+  const stickyOk =
+    sticky &&
+    configured.includes(sticky) &&
+    order.some((p) => p.id === sticky);
+  const nextId = (stickyOk && sticky) || order[0]?.id || 'gemini';
+  if (nextId !== settings.aiProvider) {
+    settings = saveSettings({ aiProvider: nextId });
+  }
+  return nextId;
+}
+
+function collectCatchUpItems() {
+  const services = orderedServices().filter((s) => isAiAllowedAppId(s.appId));
+  const byId = new Map(services.map((s) => [s.id, s]));
+  const items = [];
+
+  for (const note of notificationLog || []) {
+    const service = byId.get(note.serviceId);
+    if (!service) continue;
+    items.push({
+      appId: service.appId,
+      appName: service.name || service.defaultName || service.appId,
+      unread: unreadCounts.get(service.id) || 0,
+      title: note.title || '',
+      body: settings.hideNotificationContent ? '' : note.body || '',
+      at: note.at || 0,
+    });
+  }
+
+  for (const service of services) {
+    const unread = unreadCounts.get(service.id) || 0;
+    if (unread <= 0) continue;
+    if (items.some((i) => i.appId === service.appId && i.unread === unread)) continue;
+    items.push({
+      appId: service.appId,
+      appName: service.name || service.defaultName || service.appId,
+      unread,
+      title: `${unread} unread`,
+      body: '',
+      at: Date.now(),
+    });
+  }
+
+  return items.slice(0, 30);
+}
+
+/**
+ * Read ~4–5 earlier messages near the current selection in the open chat/thread.
+ * Best-effort: returns [] if the DOM cannot be scraped (mail layouts vary).
+ */
+async function getNearbyPriorMessages({
+  selectionText = '',
+  clickX = 0,
+  clickY = 0,
+  maxPrior = PRIOR_MESSAGE_COUNT,
+} = {}) {
+  if (!activeServiceId) return [];
+  const entry = views.get(activeServiceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return [];
+  try {
+    const result = await wc.executeJavaScript(
+      scrapeNearbyMessagesJs({
+        selectionText,
+        maxPrior,
+        clickX,
+        clickY,
+      }),
+      true,
+    );
+    return sanitizePriorMessages(result?.messages, { max: maxPrior });
+  } catch {
+    return [];
+  }
+}
+
+async function getActiveSelectionText() {
+  if (!activeServiceId) return '';
+  const entry = views.get(activeServiceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return '';
+  try {
+    const text = await wc.executeJavaScript(
+      `(() => {
+        try { return String(window.getSelection?.()?.toString() || ''); }
+        catch (e) { return ''; }
+      })()`,
+      true,
+    );
+    return String(text || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+/** Mark the focused/selected compose field so refined text can be put back later. */
+async function markActiveComposeTarget(serviceId = activeServiceId) {
+  if (!serviceId) return false;
+  const entry = views.get(serviceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return false;
+  try {
+    return !!(await wc.executeJavaScript(
+      `(() => {
+        try {
+          const mark = (target) => {
+            document.querySelectorAll('[data-aspera-ai-compose]').forEach((n) => {
+              if (n !== target) n.removeAttribute('data-aspera-ai-compose');
+            });
+            target.setAttribute('data-aspera-ai-compose', '1');
+            return true;
+          };
+          const isCompose = (node) => {
+            if (!node) return false;
+            const tag = String(node.tagName || '');
+            const inputOk =
+              tag === 'TEXTAREA' ||
+              (tag === 'INPUT' &&
+                /^(text|search|email|tel|url|password)?$/i.test(node.type || 'text'));
+            return !!(node.isContentEditable || inputOk);
+          };
+          const sel = window.getSelection?.();
+          let node = sel?.anchorNode || null;
+          let el = node && node.nodeType === 3 ? node.parentElement : node;
+          while (el && el !== document.documentElement) {
+            if (isCompose(el)) return mark(el);
+            el = el.parentElement;
+          }
+          const active = document.activeElement;
+          if (isCompose(active)) return mark(active);
+          // Keep a previous mark when the AI panel stole focus (Refine again).
+          if (document.querySelector('[data-aspera-ai-compose="1"]')) return true;
+        } catch (e) {}
+        return false;
+      })()`,
+      true,
+    ));
+  } catch {
+    return false;
+  }
+}
+
+async function applyTextToMarkedCompose(serviceId, text, originalText) {
+  if (!serviceId) return { ok: false, error: 'No chat app selected.' };
+  const entry = views.get(serviceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) {
+    return { ok: false, error: 'Chat view is gone.' };
+  }
+  const refined = String(text || '');
+  const original = String(originalText || '');
+  if (!refined.trim()) {
+    return { ok: false, error: 'Nothing to insert.' };
+  }
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
+    wc.focus();
+    const result = await wc.executeJavaScript(
+      `(() => {
+        const text = ${JSON.stringify(refined)};
+        const original = ${JSON.stringify(original)};
+        const el = document.querySelector('[data-aspera-ai-compose="1"]');
+        if (!el) return { ok: false, reason: 'no-target' };
+        el.focus();
+        const tag = String(el.tagName || '');
+        if (tag === 'TEXTAREA' || tag === 'INPUT') {
+          const value = String(el.value || '');
+          if (original && value.includes(original)) {
+            const i = value.indexOf(original);
+            el.value = value.slice(0, i) + text + value.slice(i + original.length);
+          } else {
+            el.value = text;
+          }
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          return { ok: true };
+        }
+        if (el.isContentEditable) {
+          const current = String(el.innerText || el.textContent || '');
+          const sel = window.getSelection?.();
+          const range = document.createRange();
+          range.selectNodeContents(el);
+          sel?.removeAllRanges?.();
+          sel?.addRange?.(range);
+          if (original && current.includes(original) && current.trim() !== original.trim()) {
+            // Replace only the original draft substring when the box has more text.
+            const next = current.replace(original, text);
+            el.focus();
+            document.execCommand('selectAll', false, null);
+            document.execCommand('insertText', false, next);
+            return { ok: true };
+          }
+          document.execCommand('selectAll', false, null);
+          document.execCommand('insertText', false, text);
+          return { ok: true };
+        }
+        return { ok: false, reason: 'not-editable' };
+      })()`,
+      true,
+    );
+    if (result?.ok) return { ok: true };
+    return {
+      ok: false,
+      error:
+        'Could not find the send box. Text was copied — paste with Ctrl+V.',
+    };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+function activeAiService() {
+  if (!activeServiceId) return null;
+  const service = getService(activeServiceId);
+  if (!service || !isAiAllowedAppId(service.appId)) return null;
+  return service;
+}
+
+function asperaAiSkillTitle(skill) {
+  if (skill === 'catch-up') return 'Catch me up';
+  if (skill === 'refine') return 'Refine draft';
+  return 'Summarize selection';
+}
+
+function cleanAiPlainText(text) {
+  return String(text || '')
+    .trim()
+    .replace(/^["'“”]+|["'“”]+$/g, '')
+    .trim();
+}
+
+async function runAsperaAiSkill(
+  skill,
+  { selectionText = '', dark = false, clickX = 0, clickY = 0 } = {},
+) {
+  if (settings.aiEnabled === false) {
+    return { ok: false, error: 'Aspera AI is turned off in Settings.' };
+  }
+
+  const { language, routeOrder } = aiSettingsSnapshot();
+  if (!routeOrder.length) {
+    mainWindow?.webContents.send('dock:chrome-action', 'settings');
+    return {
+      ok: false,
+      error:
+        'Add at least one AI API key in Settings → Aspera AI (Gemini recommended for speed).',
+    };
+  }
+
+  const langLabel =
+    AI_LANGUAGES.find((l) => l.id === language)?.label || 'English';
+  const skillTitle = asperaAiSkillTitle(skill);
+  const routeHint = routeOrder.map((p) => p.name).join(' → ');
+  const metaLang =
+    skill === 'summarize' || skill === 'refine' ? 'EN · HI · MR' : langLabel;
+
+  openAiResultWindow({
+    title: `Aspera AI · ${skillTitle}`,
+    meta: `Auto · ${routeHint} · ${metaLang}`,
+    dark,
+  });
+
+  try {
+    let prompt;
+    let summarizeSelection = '';
+    let summarizeAppName = '';
+    let summarizePriorMessages = [];
+    let refineSelection = '';
+    let refineAppName = '';
+    let refineServiceId = '';
+    let refineHasComposeTarget = false;
+    if (skill === 'catch-up') {
+      const items = collectCatchUpItems();
+      prompt = promptForSkill('catch-up', { items, language });
+    } else if (skill === 'summarize') {
+      const service = activeAiService();
+      if (!service) {
+        throw new Error(
+          'Summarize works only in WhatsApp, Arattai, Gmail, or Zoho Mail. Open one of those apps first.',
+        );
+      }
+      const text = String(selectionText || (await getActiveSelectionText()) || '').trim();
+      if (!text) {
+        throw new Error('Select text in the app first, then run Summarize.');
+      }
+      summarizeSelection = text;
+      summarizeAppName = service.name || service.defaultName || service.appId;
+      // Human-like context: a few messages above the selection in the open thread.
+      summarizePriorMessages = await getNearbyPriorMessages({
+        selectionText: text,
+        clickX,
+        clickY,
+      });
+      prompt = promptForSkill('summarize', {
+        text,
+        appName: summarizeAppName,
+        priorMessages: summarizePriorMessages,
+      });
+    } else if (skill === 'refine') {
+      const service = activeAiService();
+      if (!service) {
+        throw new Error(
+          'Refine works only in WhatsApp, Arattai, Gmail, or Zoho Mail. Open one of those apps first.',
+        );
+      }
+      refineServiceId = service.id;
+      refineHasComposeTarget = await markActiveComposeTarget(service.id);
+      const text = String(selectionText || (await getActiveSelectionText()) || '').trim();
+      if (!text) {
+        throw new Error(
+          'Select the text in the send box first, then choose Refine with Aspera AI.',
+        );
+      }
+      refineSelection = text;
+      refineAppName = service.name || service.defaultName || service.appId;
+      prompt = promptForSkill('refine', {
+        text,
+        appName: refineAppName,
+      });
+    } else {
+      throw new Error('Unknown skill');
+    }
+
+    const result = await runAiCompletionWithFailover(prompt);
+    syncPreferredAiProvider();
+    let resultText = result.text;
+    let refineSections = null;
+    if (skill === 'refine') {
+      refineSections = parseRefinedDrafts(result.text);
+      resultText = serializeRefinedDrafts(refineSections);
+    }
+    if (skill === 'summarize') {
+      aiResultContext = {
+        skill: 'summarize',
+        selectionText: summarizeSelection,
+        appName: summarizeAppName,
+        priorMessages: summarizePriorMessages,
+        dark: !!dark,
+        summaryText: resultText,
+        providerName: result.providerName,
+        model: result.model,
+      };
+    } else if (skill === 'refine') {
+      aiResultContext = {
+        skill: 'refine',
+        selectionText: refineSelection,
+        originalComposeText: refineSelection,
+        appName: refineAppName,
+        serviceId: refineServiceId,
+        hasComposeTarget: refineHasComposeTarget,
+        dark: !!dark,
+        refinedText: resultText,
+        refineSections,
+        providerName: result.providerName,
+        model: result.model,
+      };
+    } else {
+      aiResultContext = null;
+    }
+    const priorMeta =
+      skill === 'summarize' && summarizePriorMessages.length
+        ? ` · +${summarizePriorMessages.length} prior`
+        : '';
+    pushAiResult({
+      title: `Aspera AI · ${skillTitle}`,
+      meta: `${result.providerName} · ${result.model} · ${metaLang}${priorMeta}`,
+      text: resultText,
+      loading: false,
+      mode: skill === 'refine' ? 'refine' : skill === 'summarize' ? 'summarize' : 'catch-up',
+      showTrilingual: skill === 'summarize',
+      canSuggestReply: skill === 'summarize',
+      canUseInCompose: skill === 'refine',
+      canRefineAgain: skill === 'refine',
+      refineSections: refineSections || undefined,
+      repliesText: '',
+      repliesLoading: false,
+    });
+    return {
+      ok: true,
+      text: resultText,
+      provider: result.providerId,
+      model: result.model,
+    };
+  } catch (error) {
+    const message = String(error?.message || error);
+    aiResultContext = null;
+    pushAiResult({
+      title: `Aspera AI · ${skillTitle}`,
+      meta: `Auto · ${routeHint} · ${metaLang}`,
+      error: message,
+      text: message,
+      loading: false,
+      mode: skill === 'refine' ? 'refine' : undefined,
+      canSuggestReply: false,
+      canUseInCompose: false,
+      canRefineAgain: false,
+    });
+    return { ok: false, error: message };
+  }
+}
+
+async function runRefineAgainFromAiResult(payload = {}) {
+  const ctx = aiResultContext;
+  if (!ctx || ctx.skill !== 'refine') {
+    return { ok: false, error: 'No draft to refine.' };
+  }
+  // Always re-refine from the original send-box draft (not one language variant).
+  const draft = String(
+    ctx.originalComposeText || ctx.selectionText || payload?.text || '',
+  ).trim();
+  if (!draft) {
+    return { ok: false, error: 'Nothing to refine.' };
+  }
+  const originalComposeText = ctx.originalComposeText || ctx.selectionText || '';
+  const serviceId = ctx.serviceId || activeServiceId;
+  const result = await runAsperaAiSkill('refine', {
+    selectionText: draft,
+    dark: !!ctx.dark,
+  });
+  // Keep the send-box original so "Use in send box" still matches the typed draft.
+  if (result?.ok && aiResultContext?.skill === 'refine') {
+    aiResultContext = {
+      ...aiResultContext,
+      originalComposeText,
+      selectionText: originalComposeText || aiResultContext.selectionText,
+      serviceId: serviceId || aiResultContext.serviceId,
+    };
+  }
+  return result;
+}
+
+async function runUseRefinedInCompose(payload = {}) {
+  const ctx = aiResultContext;
+  if (!ctx || ctx.skill !== 'refine') {
+    return { ok: false, error: 'No refined draft available.' };
+  }
+  const text = cleanAiPlainText(payload?.text || ctx.refinedText || '');
+  if (!text) {
+    return { ok: false, error: 'Nothing to insert.' };
+  }
+  ctx.refinedText = text;
+  const applied = await applyTextToMarkedCompose(
+    ctx.serviceId || activeServiceId,
+    text,
+    ctx.originalComposeText || ctx.selectionText || '',
+  );
+  if (applied.ok) {
+    closeAiResultWindow();
+    return { ok: true };
+  }
+  clipboard.writeText(text);
+  return {
+    ok: false,
+    copied: true,
+    error:
+      applied.error ||
+      'Could not find the send box. Text was copied — paste with Ctrl+V.',
+  };
+}
+
+async function runSuggestRepliesFromAiResult() {
+  if (settings.aiEnabled === false) {
+    return { ok: false, error: 'Aspera AI is turned off in Settings.' };
+  }
+  const ctx = aiResultContext;
+  if (!ctx?.selectionText) {
+    return { ok: false, error: 'No message context for reply suggestions.' };
+  }
+  const { routeOrder } = aiSettingsSnapshot();
+  if (!routeOrder.length) {
+    return {
+      ok: false,
+      error: 'Add at least one AI API key in Settings → Aspera AI.',
+    };
+  }
+
+  pushAiResult({
+    title: 'Aspera AI · Summarize selection',
+    meta: [ctx.providerName, ctx.model, 'EN · HI · MR'].filter(Boolean).join(' · '),
+    text: ctx.summaryText || '',
+    loading: false,
+    showTrilingual: true,
+    canSuggestReply: true,
+    repliesLoading: true,
+    repliesText: '',
+  });
+
+  try {
+    const prompt = promptForSkill('suggest-reply', {
+      text: ctx.selectionText,
+      appName: ctx.appName,
+      priorMessages: ctx.priorMessages,
+    });
+    const result = await runAiCompletionWithFailover(prompt);
+    syncPreferredAiProvider();
+    const repliesSections = parseSuggestedReplies(result.text);
+    aiResultContext = {
+      ...ctx,
+      repliesText: result.text,
+      providerName: result.providerName,
+      model: result.model,
+    };
+    pushAiResult({
+      title: 'Aspera AI · Summarize selection',
+      meta: `${result.providerName} · ${result.model} · EN · HI · MR`,
+      text: ctx.summaryText || '',
+      loading: false,
+      showTrilingual: true,
+      canSuggestReply: true,
+      repliesLoading: false,
+      repliesText: result.text,
+      repliesSections,
+    });
+    return { ok: true, text: result.text };
+  } catch (error) {
+    const message = String(error?.message || error);
+    pushAiResult({
+      title: 'Aspera AI · Summarize selection',
+      meta: 'EN · HI · MR',
+      text: ctx.summaryText || '',
+      loading: false,
+      showTrilingual: true,
+      canSuggestReply: true,
+      repliesLoading: false,
+      repliesError: message,
+    });
+    return { ok: false, error: message };
+  }
+}
+
+async function runReviseReplyFromAiResult(payload = {}) {
+  if (settings.aiEnabled === false) {
+    return { ok: false, error: 'Aspera AI is turned off in Settings.' };
+  }
+  const ctx = aiResultContext;
+  if (!ctx?.selectionText) {
+    return { ok: false, error: 'No message context for reply revision.' };
+  }
+  const { routeOrder } = aiSettingsSnapshot();
+  if (!routeOrder.length) {
+    return {
+      ok: false,
+      error: 'Add at least one AI API key in Settings → Aspera AI.',
+    };
+  }
+  const replyText = String(payload?.replyText || '').trim();
+  if (!replyText) {
+    return { ok: false, error: 'Type a reply first, then Revise with AI.' };
+  }
+  try {
+    const prompt = promptForSkill('revise-reply', {
+      replyText,
+      language: payload?.language || 'en',
+      selectionText: ctx.selectionText,
+      appName: ctx.appName,
+      priorMessages: ctx.priorMessages,
+    });
+    const result = await runAiCompletionWithFailover(prompt);
+    syncPreferredAiProvider();
+    const revised = String(result.text || '')
+      .trim()
+      .replace(/^["'“”]+|["'“”]+$/g, '')
+      .trim();
+    return { ok: true, text: revised || result.text };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+async function handleAppMenuAction(type, value) {
+  const id = appMenuServiceId;
+  if (!id || !getService(id)) return { ok: false };
+
+  if (type === 'home') {
+    const entry = views.get(id);
+    const service = getService(id);
+    if (entry?.view?.webContents && !entry.view.webContents.isDestroyed()) {
+      const home = startUrlForService(service) || service.url;
+      if (home) entry.view.webContents.loadURL(home).catch(() => {});
+    }
+    closeAppContextMenu();
+    return { ok: true };
+  }
+  if (type === 'reload') {
+    const entry = views.get(id);
+    if (entry?.view?.webContents && !entry.view.webContents.isDestroyed()) {
+      entry.view.webContents.reload();
+    }
+    return { ok: true };
+  }
+  if (type === 'edit') {
+    closeAppContextMenu();
+    mainWindow?.webContents.send('dock:open-edit-app', id);
+    return { ok: true };
+  }
+  if (type === 'enabled') {
+    saveAppConfig(id, { enabled: !!value });
+    broadcastState();
+    if (!value && id === activeServiceId) {
+      // Stay on tab but guest may show disabled — mirror existing save path.
+    }
+    return { ok: true };
+  }
+  if (type === 'sound') {
+    saveAppConfig(id, { allowSounds: !!value });
+    broadcastState();
+    return { ok: true };
+  }
+  if (type === 'notifications') {
+    saveAppConfig(id, { allowNotifications: !!value });
+    broadcastState();
+    return { ok: true };
+  }
+  if (type === 'warm') {
+    const want = !!value;
+    const have = isKeepWarmService(id);
+    const result =
+      want === have ? { ok: true, keepWarm: have } : toggleKeepWarm(id);
+    if (appMenuWindow && !appMenuWindow.isDestroyed()) {
+      const latest = getAppConfig(id);
+      const svc = getService(id);
+      appMenuWindow.webContents.send('app-menu:init', {
+        serviceId: id,
+        name: svc?.name || svc?.defaultName || 'App',
+        enabled: latest.enabled !== false,
+        sound: latest.allowSounds !== false,
+        notifications: latest.allowNotifications !== false,
+        warm: latest.keepWarm === true,
+      });
+    }
+    return result;
+  }
+  return { ok: false };
+}
+
+function handleChromeMenuAction(type) {
+  closeChromeMenuWindow();
+  if (!type) return { ok: false };
+
+  if (type === 'catch-up') {
+    const dark = false;
+    runAsperaAiSkill('catch-up', { dark }).catch(() => {});
+    return { ok: true };
+  }
+  if (type === 'summarize') {
+    runAsperaAiSkill('summarize', { dark: false }).catch(() => {});
+    return { ok: true };
+  }
+  if (type === 'ai-settings') {
+    mainWindow?.webContents.send('dock:chrome-action', 'settings');
+    // Renderer will scroll/focus AI section if we send a dedicated event.
+    mainWindow?.webContents.send('dock:open-ai-settings');
+    return { ok: true };
+  }
+  if (type === 'extensions') {
+    openExtensionsWindow({ dark: false });
+    return { ok: true };
+  }
+  if (type === 'search') {
+    mainWindow?.webContents.send('dock:chrome-action', 'search');
+    return { ok: true };
+  }
+  if (type === 'focus') {
+    toggleFocusMode();
+    return { ok: true };
+  }
+  if (type === 'mute') {
+    toggleMute();
+    return { ok: true };
+  }
+  if (type === 'reload') {
+    if (activeServiceId) {
+      const wc = views.get(activeServiceId)?.view?.webContents;
+      if (wc && !wc.isDestroyed()) wc.reload();
+    }
+    return { ok: true };
+  }
+  if (type === 'home') {
+    if (activeServiceId) {
+      const service = getService(activeServiceId);
+      const wc = views.get(activeServiceId)?.view?.webContents;
+      if (service && wc && !wc.isDestroyed()) {
+        const home = startUrlForService(service) || service.url;
+        if (home) wc.loadURL(home).catch(() => {});
+      }
+    }
+    return { ok: true };
+  }
+  if (type === 'free-ram') {
+    hibernateBackground();
+    broadcastState();
+    return { ok: true };
+  }
+  if (type === 'about') {
+    showAboutDialog();
+    return { ok: true };
+  }
+  if (type === 'check-updates') {
+    checkForUpdates({ silent: false }).catch(() => {});
+    return { ok: true };
+  }
+
+  // UI drawers/modals live in the dock renderer.
+  mainWindow?.webContents.send('dock:chrome-action', type);
+  return { ok: true };
+}
+
+async function handleNotifCenterAction(type, value) {
+  if (type === 'clear') {
+    notificationLog = [];
+    broadcastState();
+    return { ok: true };
+  }
+  if (type === 'read-all') {
+    markAllReadWithoutNotifySpam();
+    return { ok: true };
+  }
+  if (type === 'activate') {
+    closeNotifCenterWindow();
+    const serviceId =
+      typeof value === 'string' ? value : String(value?.serviceId || '');
+    const chatName =
+      typeof value === 'object' ? String(value?.chatName || '') : '';
+    const chatKey =
+      typeof value === 'object' ? String(value?.chatKey || '') : '';
+    if (!serviceId) return { ok: false };
+    if (chatName || chatKey) {
+      return openMessagingChat(serviceId, { name: chatName, chatKey });
+    }
+    activateService(serviceId);
+    return { ok: true };
+  }
+  if (type === 'reply') {
+    closeNotifCenterWindow();
+    const serviceId = String(value?.serviceId || '');
+    const text = String(value?.text || '').trim();
+    const chatName = String(value?.chatName || value?.title || '');
+    const chatKey = String(value?.chatKey || '');
+    return sendQuickReply(serviceId, { name: chatName, chatKey, text });
+  }
+  return { ok: false };
+}
+
 function applyFocusMode(webContents, serviceId) {
   const cfg = serviceId ? getAppConfig(serviceId) : mergeAppConfig();
-  // Always suppress in-page Notification — guest notifications raise the
-  // Electron window on Linux. Unread is handled in main via page title.
+  // Suppress native guest Notification (avoids Linux focus steal) but forward
+  // title/body to main via a console bridge for rich OS + in-app toasts.
   const hideBody =
     settings.hideNotificationContent || cfg.hideNotificationContent
       ? 'true'
@@ -1502,7 +3898,6 @@ function applyFocusMode(webContents, serviceId) {
     .executeJavaScript(
       `(() => {
         window.__asperaDockHideBody = ${hideBody};
-        // Pages calling window.focus() will otherwise steal the desktop focus.
         try { window.focus = function () {}; } catch (e) {}
         if (window.__asperaDockPatched) {
           window.__asperaDockSilenced = true;
@@ -1513,12 +3908,21 @@ function applyFocusMode(webContents, serviceId) {
         const Original = window.Notification;
         if (!Original) return;
         function Patched(title, options) {
-          // No-op: never create a real OS notification from the guest page.
+          try {
+            const opts = options && typeof options === 'object' ? options : {};
+            const payload = {
+              title: String(title || ''),
+              body: String(opts.body || ''),
+              tag: String(opts.tag || ''),
+            };
+            console.log('${ASPERA_NOTIFY_PREFIX}' + JSON.stringify(payload));
+          } catch (e) {}
           return {
             close() {},
             addEventListener() {},
             removeEventListener() {},
             dispatchEvent() { return false; },
+            onclick: null,
           };
         }
         Patched.prototype = Original.prototype;
@@ -1533,25 +3937,1078 @@ function applyFocusMode(webContents, serviceId) {
     .catch(() => {});
 }
 
+function firstTwoMessageLines(text) {
+  const raw = String(text || '').replace(/\r\n/g, '\n').trim();
+  if (!raw) return '';
+  const lines = raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length >= 2) {
+    return `${lines[0].slice(0, 160)}\n${lines[1].slice(0, 160)}`;
+  }
+  const single = lines[0] || raw;
+  if (single.length <= 160) return single;
+  return `${single.slice(0, 160)}\n${single.slice(160, 320)}`;
+}
+
+function notificationFingerprint(serviceId, title, body) {
+  return `${serviceId}|${String(title || '').trim()}|${String(body || '').trim()}`;
+}
+
+function shouldShowNotification(serviceId, fingerprint) {
+  const now = Date.now();
+  const prev = recentNotificationFingerprints.get(serviceId);
+  if (
+    prev &&
+    prev.fingerprint === fingerprint &&
+    now - prev.at < NOTIFICATION_DEDUPE_MS
+  ) {
+    return false;
+  }
+  recentNotificationFingerprints.set(serviceId, { fingerprint, at: now });
+  return true;
+}
+
+function logNotification(service, body, titleOverride) {
+  const title = String(
+    titleOverride || service.title || service.name || 'App',
+  ).trim();
+  const accountLabel = String(service.title || service.name || 'App').trim();
+  // Rich notifications use the sender as title — keep that for jump / reply.
+  const chatName =
+    title && title !== accountLabel && !/^\d+\s*unread$/i.test(title)
+      ? title
+      : '';
+  notificationLog = [
+    {
+      id: `${service.id}-${Date.now().toString(36)}`,
+      serviceId: service.id,
+      title,
+      body: String(body || '').trim(),
+      at: Date.now(),
+      chatName,
+      chatKey: chatName ? normalizeChatKey(chatName) : '',
+      appId: service.appId || '',
+      accountLabel,
+    },
+    ...notificationLog,
+  ].slice(0, NOTIFICATION_LOG_MAX);
+  broadcastState();
+  pushNotifCenterData();
+}
+
+async function guestHeaderMatchesPin(wc, chatName, key) {
+  if (!wc || wc.isDestroyed()) return { ok: false, header: '' };
+  try {
+    const match = await wc.executeJavaScript(
+      messagingChatHeaderMatchJs(chatName, key),
+      true,
+    );
+    if (match?.ok) {
+      return { ok: true, header: String(match.header || chatName) };
+    }
+    return { ok: false, header: String(match?.header || '') };
+  } catch {
+    return { ok: false, header: '' };
+  }
+}
+
+/** Trusted key chord into the focused guest control. */
+function sendGuestKey(webContents, keyCode, modifiers = []) {
+  if (!webContents || webContents.isDestroyed()) return;
+  try {
+    webContents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+    if (!modifiers.length || (keyCode.length === 1 && !modifiers.includes('control') && !modifiers.includes('meta'))) {
+      webContents.sendInputEvent({ type: 'char', keyCode, modifiers });
+    } else if (modifiers.includes('control') || modifiers.includes('meta')) {
+      // Still emit char for Ctrl+A / Ctrl+V on some guests.
+      webContents.sendInputEvent({ type: 'char', keyCode, modifiers });
+    }
+    webContents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Replace left-pane search text.
+ * Never use Ctrl+A here — if focus is on the chat, Ctrl+A selects every message.
+ */
+async function replaceGuestSearchText(webContents, text) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  const value = String(text || '');
+  try {
+    const mutated = await cdpEvaluate(webContents, waMutateSearchJs(value));
+    if (mutated?.ok) return true;
+  } catch {
+    /* fall through */
+  }
+  // Focus search geometrically, then CDP-mutate again (still no Ctrl+A).
+  try {
+    const node = await cdpEvaluate(webContents, waSearchNodeJs());
+    if (node?.x != null) await cdpClickAt(webContents, node.x, node.y);
+    await sleepMs(80);
+    const mutated = await cdpEvaluate(webContents, waMutateSearchJs(value));
+    if (mutated?.ok) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/** Drop any blue text selection left in the open chat after pin-open. */
+async function clearGuestPageSelection(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  try {
+    await cdpEvaluate(
+      webContents,
+      `(() => {
+        try { window.getSelection()?.removeAllRanges(); } catch (e) {}
+        try {
+          const ae = document.activeElement;
+          const ph = String(
+            ae?.getAttribute?.('placeholder')
+              || ae?.getAttribute?.('data-placeholder')
+              || ae?.getAttribute?.('aria-label')
+              || '',
+          ).toLowerCase();
+          // Blur search so the green search chrome goes away; keep compose focused later.
+          if (ae && (ae.getAttribute?.('data-tab') === '3' || /search/.test(ph))) {
+            ae.blur();
+          }
+        } catch (e) {}
+        return true;
+      })()`,
+    );
+  } catch {
+    try {
+      await webContents.executeJavaScript(
+        `(() => { try { window.getSelection()?.removeAllRanges(); } catch (e) {} return true; })()`,
+        true,
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+/**
+ * After a successful pin open: clear leftover search text ONLY.
+ * Never click Back / re-focus search / Chats — those close the open chat
+ * (Meta AI empty pane) and caused the 0.4.27 pin chaos.
+ */
+async function dismissMessagingSearchAfterOpen(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  try {
+    const node = await cdpEvaluate(webContents, waSearchNodeJs());
+    // Prefer the clear (X) control only — do not click the search field or Back.
+    if (node?.clearX != null) {
+      await cdpClickAt(webContents, node.clearX, node.clearY);
+      await sleepMs(50);
+    }
+  } catch {
+    /* ignore */
+  }
+  try {
+    await cdpEvaluate(webContents, waMutateSearchJs(''));
+  } catch {
+    try {
+      await webContents.executeJavaScript(
+        `(() => {
+          const els = document.querySelectorAll(
+            '[contenteditable="true"][data-tab="3"], [data-testid="chat-list-search"]',
+          );
+          for (const el of els) {
+            try {
+              if (document.activeElement === el) {
+                document.execCommand('selectAll', false, null);
+                document.execCommand('delete', false, null);
+              }
+              if ('value' in el) el.value = '';
+              else el.textContent = '';
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+            } catch (e) {}
+          }
+          try { window.getSelection()?.removeAllRanges(); } catch (e) {}
+          try { document.activeElement?.blur?.(); } catch (e) {}
+          return true;
+        })()`,
+        true,
+      );
+    } catch {
+      /* ignore */
+    }
+  }
+  await clearGuestPageSelection(webContents);
+}
+
+/** Monotonic token — a newer pin click cancels in-flight automation. */
+let pinOpenGeneration = 0;
+
+/** CDP evaluate with userGesture — required for WhatsApp React contenteditable. */
+async function cdpEvaluate(webContents, expression, { awaitPromise = false } = {}) {
+  if (!webContents || webContents.isDestroyed()) return null;
+  const dbg = await ensureGuestDebugger(webContents);
+  const result = await dbg.sendCommand('Runtime.evaluate', {
+    expression: String(expression || ''),
+    returnByValue: true,
+    awaitPromise: !!awaitPromise,
+    userGesture: true,
+  });
+  if (result?.exceptionDetails) {
+    const msg =
+      result.exceptionDetails?.exception?.description ||
+      result.exceptionDetails?.text ||
+      'cdp_evaluate_failed';
+    throw new Error(String(msg));
+  }
+  return result?.result?.value;
+}
+
+async function cdpClickAt(webContents, x, y) {
+  if (!webContents || webContents.isDestroyed()) return;
+  const dbg = await ensureGuestDebugger(webContents);
+  const cx = Math.max(0, Math.round(Number(x) || 0));
+  const cy = Math.max(0, Math.round(Number(y) || 0));
+  const base = {
+    x: cx,
+    y: cy,
+    button: 'left',
+    clickCount: 1,
+    buttons: 1,
+  };
+  try {
+    await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...base });
+    await dbg.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', ...base });
+    await dbg.sendCommand('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      ...base,
+      buttons: 0,
+    });
+  } catch {
+    clickWebContentsAt(webContents, cx, cy);
+  }
+}
+
+async function readGuestSearchText(webContents) {
+  if (!webContents || webContents.isDestroyed()) return '';
+  try {
+    const got = await cdpEvaluate(webContents, readMessagingSearchTextJs());
+    return String(got?.text || '').trim();
+  } catch {
+    try {
+      const got = await webContents.executeJavaScript(readMessagingSearchTextJs(), true);
+      return String(got?.text || '').trim();
+    } catch {
+      return '';
+    }
+  }
+}
+
+/**
+ * Nuclear WhatsApp search wipe — CDP userGesture + verified empty.
+ * Screenshots on 0.4.22 still showed leftover "shrikant" after the first pin.
+ */
+async function trustedClearMessagingSearch(webContents, { resetPane = true } = {}) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  for (let pass = 0; pass < 6; pass += 1) {
+    let node = null;
+    let reset = null;
+    try {
+      node = await cdpEvaluate(webContents, waSearchNodeJs());
+      reset = await cdpEvaluate(webContents, findWhatsAppPaneResetJs());
+    } catch {
+      try {
+        node = await webContents.executeJavaScript(waSearchNodeJs(), true);
+        reset = await webContents.executeJavaScript(findWhatsAppPaneResetJs(), true);
+      } catch {
+        node = null;
+      }
+    }
+
+    if (node?.clearX != null) await cdpClickAt(webContents, node.clearX, node.clearY);
+    else if (reset?.clearHint) await cdpClickAt(webContents, reset.clearHint.x, reset.clearHint.y);
+    await sleepMs(70);
+
+    if (node?.x != null) await cdpClickAt(webContents, node.x, node.y);
+    else if (reset?.search) await cdpClickAt(webContents, reset.search.x, reset.search.y);
+    await sleepMs(70);
+
+    // CDP userGesture mutate — plain executeJavaScript is ignored by WA React.
+    // Do NOT send Ctrl+A: if focus is on the conversation it selects every message.
+    try {
+      await cdpEvaluate(webContents, waMutateSearchJs(''));
+    } catch {
+      try {
+        await webContents.executeJavaScript(nuclearWipeMessagingSearchJs(), true);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    if (node?.backX != null) await cdpClickAt(webContents, node.backX, node.backY);
+    else if (reset?.backHint) await cdpClickAt(webContents, reset.backHint.x, reset.backHint.y);
+    await sleepMs(80);
+
+    if (resetPane && reset?.chats && pass <= 1) {
+      await cdpClickAt(webContents, reset.chats.x, reset.chats.y);
+      await sleepMs(120);
+    }
+    if (resetPane && reset?.allFilter && pass <= 2) {
+      await cdpClickAt(webContents, reset.allFilter.x, reset.allFilter.y);
+      await sleepMs(80);
+    }
+
+    try {
+      await webContents.executeJavaScript(clearMessagingLeftSearchJs(), true);
+    } catch {
+      /* ignore */
+    }
+
+    const left = await readGuestSearchText(webContents);
+    if (!left) return true;
+  }
+  return !(await readGuestSearchText(webContents));
+}
+
+/** Focus left-pane search (not the compose box) via CDP click. */
+async function focusGuestLeftSearch(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  for (let i = 0; i < 4; i += 1) {
+    let node = null;
+    try {
+      node = await cdpEvaluate(webContents, waSearchNodeJs());
+    } catch {
+      node = await webContents.executeJavaScript(waSearchNodeJs(), true).catch(() => null);
+    }
+    if (!node || !Number.isFinite(node.x)) {
+      const box = await webContents.executeJavaScript(findMessagingLeftSearchJs(), true);
+      if (!box?.ok) return false;
+      await cdpClickAt(webContents, box.x, box.y);
+    } else {
+      await cdpClickAt(webContents, node.x, node.y);
+    }
+    await sleepMs(120);
+    try {
+      const focused = await cdpEvaluate(
+        webContents,
+        `(() => {
+          const el = document.activeElement;
+          return !!(el && (el.getAttribute('data-tab') === '3'
+            || /search/i.test(el.getAttribute('aria-label') || '')
+            || /search/i.test(el.getAttribute('data-placeholder') || '')));
+        })()`,
+      );
+      if (focused) return true;
+    } catch {
+      /* retry */
+    }
+  }
+  return false;
+}
+
+/** Clear then set pin name via CDP userGesture; verify box shows the new name. */
+async function fillGuestSearchVerified(webContents, text) {
+  const want = String(text || '').trim();
+  const wantN = want.toLowerCase().replace(/\s+/g, ' ');
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await trustedClearMessagingSearch(webContents, { resetPane: attempt === 0 });
+    const emptied = !(await readGuestSearchText(webContents));
+    if (!emptied && attempt < 4) continue;
+
+    await focusGuestLeftSearch(webContents);
+    let mutated = null;
+    try {
+      mutated = await cdpEvaluate(webContents, waMutateSearchJs(want));
+    } catch {
+      mutated = null;
+    }
+    if (!mutated?.ok) {
+      // Fallback: CDP mutate again after re-focus (never Ctrl+A — selects chat text).
+      await focusGuestLeftSearch(webContents);
+      await replaceGuestSearchText(webContents, want);
+      await sleepMs(220);
+    }
+    await sleepMs(260);
+    const got = (await readGuestSearchText(webContents)).toLowerCase().replace(/\s+/g, ' ');
+    if (got === wantN || (wantN && got.includes(wantN)) || (got && wantN.includes(got) && got.length >= 6)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId = '' } = {}) {
+  const service = getService(serviceId);
+  if (!service || !isInboxAppId(service.appId)) {
+    return { ok: false, error: 'Open a WhatsApp or Arattai chat.' };
+  }
+  const chatName = String(name || '').trim();
+  const key = chatKey || normalizeChatKey(chatName);
+  const waId = String(nativeId || '').trim();
+  if (!chatName && !key) {
+    return { ok: false, error: 'Missing contact name.' };
+  }
+  const isWhatsApp = service.appId === 'whatsapp';
+  // Never let a leftover Forward Ctrl+V land in the chat we are about to open.
+  cancelPendingForwardPaste();
+  // Cancel any previous pin-open automation (video: late AYUSH click stole later UI).
+  const myGen = (pinOpenGeneration += 1);
+  const alive = () => myGen === pinOpenGeneration;
+
+  raiseDockWindow();
+  activateService(serviceId);
+
+  // Wait for the guest to be interactive (cold/warm wake).
+  let wc = null;
+  const readyDeadline = Date.now() + 8_000;
+  while (Date.now() < readyDeadline) {
+    if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
+    const entry = views.get(serviceId);
+    wc = entry?.view?.webContents || null;
+    if (wc && !wc.isDestroyed() && !wc.isLoading()) break;
+    await sleepMs(200);
+  }
+  if (!wc || wc.isDestroyed()) {
+    return { ok: false, error: 'Chat view is not ready.' };
+  }
+
+  // After account switch, WA/Arattai list can still be empty for a beat.
+  // Arattai: shorter wait — frequent contacts / recent search often enough.
+  const listDeadline = Date.now() + (isWhatsApp ? 5_000 : 2_000);
+  while (Date.now() < listDeadline) {
+    if (!alive() || wc.isDestroyed()) break;
+    try {
+      const listReady = await wc.executeJavaScript(
+        `(() => {
+          const hasRow = !!(
+            document.querySelector('[data-testid="cell-frame-container"]')
+            || document.querySelector('.art-chat-item')
+            || document.querySelector('[role="listitem"]')
+            || document.querySelector('[chid]')
+          );
+          const hasSearch = !!(
+            document.querySelector('[data-testid="chat-list-search"]')
+            || document.querySelector('[contenteditable="true"][data-tab="3"]')
+            || document.querySelector('[aria-label*="Search or start" i]')
+            || document.querySelector('[placeholder*="Search" i]')
+          );
+          return hasRow || hasSearch;
+        })()`,
+        true,
+      );
+      if (listReady) break;
+    } catch (_) {
+      /* retry */
+    }
+    await sleepMs(isWhatsApp ? 200 : 100);
+  }
+  if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
+  await sleepMs(isWhatsApp ? 280 : 80);
+
+  // Header match only — do not focus compose yet (that steals the next search paste).
+  const headerOpen = async () => {
+    const match = await guestHeaderMatchesPin(wc, chatName, key);
+    if (!match.ok) return null;
+    return { ok: true, via: 'opened', chat: match.header || chatName };
+  };
+
+  const persistResolvedNativeId = async () => {
+    if (!isWhatsApp) return;
+    try {
+      const active = await wc.executeJavaScript(readActiveWhatsAppChatJs(), true);
+      const nid = String(active?.nativeId || '').trim();
+      if (!nid) return;
+      const pins = sanitizePinnedPeople(settings.pinnedPeople || []);
+      const pinId = makePinId(serviceId, key);
+      let changed = false;
+      const next = pins.map((p) => {
+        if (p.id !== pinId && normalizeChatKey(p.name) !== key) return p;
+        if (p.nativeId === nid) return p;
+        changed = true;
+        return { ...p, nativeId: nid };
+      });
+      if (changed) {
+        settings = saveSettings({ pinnedPeople: next });
+        broadcastState();
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const finishOpenWhatsApp = async (opened) => {
+    if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
+    // Clear search text only — never Back (closes chat → Meta AI empty pane).
+    await dismissMessagingSearchAfterOpen(wc);
+    if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
+    // Re-confirm header after dismiss — false "success" was the 0.4.27 chaos.
+    const still = await headerOpen();
+    if (!still) {
+      return { ok: false, error: `Could not keep “${chatName}” open.` };
+    }
+    await markActiveComposeTarget(serviceId);
+    await clearGuestPageSelection(wc);
+    await sanitizeComposeAfterHubChatOpen(wc);
+    await persistResolvedNativeId();
+    return { ...opened, chat: still.chat || opened.chat };
+  };
+
+  /** Arattai: light cleanup only — never WA nuclear wipe / CDP search smash. */
+  const finishOpenArattai = async (opened) => {
+    if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
+    try {
+      await wc.executeJavaScript(clearMessagingLeftSearchJs(), true);
+    } catch {
+      /* ignore */
+    }
+    await clearGuestPageSelection(wc);
+    await markActiveComposeTarget(serviceId);
+    await clearGuestPageSelection(wc);
+    await sanitizeComposeAfterHubChatOpen(wc);
+    return opened;
+  };
+
+  const trustedClickTarget = async (via) => {
+    if (!alive()) return null;
+    const hit = await wc.executeJavaScript(
+      findMessagingChatTargetJs(chatName, key, waId),
+      true,
+    );
+    if (!hit?.ok || !Number.isFinite(hit.x) || !Number.isFinite(hit.y)) {
+      return null;
+    }
+    // Refuse weak / group matches for WhatsApp person pins.
+    if (isWhatsApp && (hit.group || hit.score < 78)) return null;
+    if (isWhatsApp) await cdpClickAt(wc, hit.x, hit.y);
+    else clickWebContentsAt(wc, hit.x, hit.y);
+    await sleepMs(isWhatsApp ? 380 : 220);
+    if (!alive()) return null;
+    const opened = await headerOpen();
+    if (opened) return { ...opened, via };
+    if (isWhatsApp) await cdpClickAt(wc, hit.x, hit.y);
+    else clickWebContentsAt(wc, hit.x, hit.y);
+    await sleepMs(isWhatsApp ? 420 : 260);
+    if (!alive()) return null;
+    const again = await headerOpen();
+    return again ? { ...again, via: `${via}-retry` } : null;
+  };
+
+  // ── Arattai fast path ──────────────────────────────────────────────
+  if (!isWhatsApp) {
+    let lastError = '';
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!alive() || wc.isDestroyed()) {
+        return { ok: false, error: 'cancelled', cancelled: true };
+      }
+      try {
+        const already = await headerOpen();
+        if (already) return finishOpenArattai({ ...already, via: 'already-open' });
+
+        let opened = await trustedClickTarget(
+          waId && attempt === 0 ? 'arattai-chid' : attempt === 0 ? 'list-click' : 'list-retry',
+        );
+        if (opened) return finishOpenArattai(opened);
+
+        const legacy = await wc.executeJavaScript(
+          openMessagingChatJs(chatName, key, waId),
+          true,
+        );
+        if (legacy?.ok) {
+          const matched = await headerOpen();
+          if (matched) {
+            return finishOpenArattai({ ...matched, via: legacy.via || 'legacy-js' });
+          }
+          lastError = `Could not confirm “${chatName}” opened.`;
+        } else {
+          lastError = legacy?.reason || 'chat_not_found';
+        }
+      } catch (error) {
+        lastError = String(error?.message || error);
+      }
+      await sleepMs(220 + attempt * 120);
+    }
+    if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
+    try {
+      if (!wc.isDestroyed()) await wc.executeJavaScript(clearMessagingLeftSearchJs(), true);
+    } catch {
+      /* ignore */
+    }
+    await clearGuestPageSelection(wc);
+    return {
+      ok: false,
+      error:
+        lastError && lastError !== 'chat_not_found'
+          ? lastError
+          : `Could not open “${chatName || 'chat'}”. Search that name once in the app, then pin again.`,
+    };
+  }
+
+  // ── WhatsApp hardened path ─────────────────────────────────────────
+  // ONLY header match counts as success (never trust Store title alone).
+  const confirmOpened = async (via) => {
+    for (let i = 0; i < 5; i += 1) {
+      if (!alive()) return null;
+      const matched = await headerOpen();
+      if (matched) return { ...matched, via };
+      await sleepMs(200);
+    }
+    return null;
+  };
+
+  const tryStoreOpen = async (via) => {
+    if (!alive()) return null;
+    let storeOpen = null;
+    try {
+      storeOpen = await cdpEvaluate(
+        wc,
+        tryOpenWhatsAppStoreChatJs(chatName, waId),
+        { awaitPromise: true },
+      );
+    } catch {
+      try {
+        storeOpen = await wc.executeJavaScript(
+          tryOpenWhatsAppStoreChatJs(chatName, waId),
+          true,
+        );
+      } catch {
+        storeOpen = null;
+      }
+    }
+    if (!storeOpen?.ok) return null;
+    await sleepMs(350);
+    return confirmOpened(via);
+  };
+
+  const tryExactContactClick = async (via) => {
+    if (!alive()) return null;
+    let hit = null;
+    try {
+      hit = await cdpEvaluate(wc, findExactWhatsAppContactTargetJs(chatName, waId));
+    } catch {
+      try {
+        hit = await wc.executeJavaScript(
+          findExactWhatsAppContactTargetJs(chatName, waId),
+          true,
+        );
+      } catch {
+        hit = null;
+      }
+    }
+    if (!hit?.ok || !Number.isFinite(hit.x)) return null;
+    await cdpClickAt(wc, hit.x, hit.y);
+    await sleepMs(380);
+    if (!alive()) return null;
+    const opened = await confirmOpened(via);
+    if (opened) return opened;
+    await cdpClickAt(wc, hit.x, hit.y);
+    await sleepMs(420);
+    if (!alive()) return null;
+    return confirmOpened(`${via}-retry`);
+  };
+
+  let lastError = '';
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    if (!alive() || wc.isDestroyed()) {
+      return { ok: false, error: 'cancelled', cancelled: true };
+    }
+    try {
+      const viaStore = await tryStoreOpen(attempt === 0 ? 'wa-store' : 'wa-store-retry');
+      if (viaStore) return finishOpenWhatsApp(viaStore);
+
+      const alreadyPre = await headerOpen();
+      if (alreadyPre) return finishOpenWhatsApp({ ...alreadyPre, via: 'already-open' });
+
+      // Exact chip/list only — do not focus search first (that steals the UI).
+      let opened = await tryExactContactClick(
+        attempt === 0 ? 'exact-chip' : 'exact-chip-retry',
+      );
+      if (opened) return finishOpenWhatsApp(opened);
+      opened = await trustedClickTarget(
+        attempt === 0 ? 'list-click' : 'list-retry',
+      );
+      if (opened) return finishOpenWhatsApp(opened);
+
+      // Light clear (no Chats reset) then exact again.
+      await trustedClearMessagingSearch(wc, { resetPane: false });
+      await sleepMs(100);
+      if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
+
+      const already = await headerOpen();
+      if (already) return finishOpenWhatsApp({ ...already, via: 'already-open' });
+
+      opened = await tryExactContactClick('exact-after-clear');
+      if (opened) return finishOpenWhatsApp(opened);
+
+      // Short search fill — click exact Contacts hit only. Never ArrowDown/Enter
+      // (opens wrong chat / races with the user's next click).
+      const filled = await fillGuestSearchVerified(wc, chatName);
+      if (filled) {
+        await sleepMs(400);
+        const searchStarted = Date.now();
+        while (Date.now() - searchStarted < 2800) {
+          if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
+          opened = await tryExactContactClick('search-exact');
+          if (opened) return finishOpenWhatsApp(opened);
+          await sleepMs(200);
+        }
+      } else {
+        lastError = 'search_fill_failed';
+      }
+
+      const viaStoreLate = await tryStoreOpen('wa-store-late');
+      if (viaStoreLate) return finishOpenWhatsApp(viaStoreLate);
+      lastError = lastError || 'chat_not_found';
+    } catch (error) {
+      lastError = String(error?.message || error);
+    }
+    await sleepMs(280 + attempt * 120);
+  }
+
+  if (!alive()) return { ok: false, error: 'cancelled', cancelled: true };
+  // Failed: clear leftover search gently so the next pin is not poisoned.
+  try {
+    if (!wc.isDestroyed()) await dismissMessagingSearchAfterOpen(wc);
+  } catch {
+    /* ignore */
+  }
+
+  return {
+    ok: false,
+    error:
+      lastError && lastError !== 'chat_not_found' && lastError !== 'search_fill_failed'
+        ? lastError
+        : `Could not open “${chatName || 'chat'}”. Search that name once in the app, then pin again.`,
+  };
+}
+
+async function sendQuickReply(serviceId, { name = '', chatKey = '', text = '' } = {}) {
+  const message = String(text || '').trim();
+  if (!message) return { ok: false, error: 'Type a short reply first.' };
+  const opened = await openMessagingChat(serviceId, { name, chatKey });
+  if (!opened.ok) return opened;
+  const entry = views.get(serviceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) {
+    return { ok: false, error: 'Chat view is gone.' };
+  }
+  try {
+    await markActiveComposeTarget(serviceId);
+    const placed = await wc.executeJavaScript(
+      composeReplyJs(message, { send: true }),
+      true,
+    );
+    if (placed?.ok) {
+      return { ok: true, via: placed.via || 'sent' };
+    }
+    return {
+      ok: false,
+      error: 'Opened the chat — paste or type your reply, then Send.',
+    };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+async function searchChatsAcrossAccounts(query) {
+  const q = String(query || '').trim();
+  if (!q) return { ok: true, chats: [] };
+  const services = orderedServices().filter(
+    (s) => isInboxAppId(s.appId) && views.has(s.id),
+  );
+  const chats = [];
+  await Promise.all(
+    services.map(async (service) => {
+      const wc = views.get(service.id)?.view?.webContents;
+      if (!wc || wc.isDestroyed()) return;
+      try {
+        const result = await wc.executeJavaScript(searchMessagingChatsJs(q), true);
+        for (const chat of result?.chats || []) {
+          chats.push({
+            serviceId: service.id,
+            appId: service.appId,
+            accountLabel: service.title || service.name || 'App',
+            chatKey: normalizeChatKey(chat.chatKey || chat.name),
+            name: String(chat.name || '').trim(),
+            match: String(chat.match || 'name'),
+            snippet: String(chat.snippet || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+            color: service.color || '#64748b',
+            logo: service.logo || null,
+          });
+        }
+      } catch {
+        // ignore
+      }
+    }),
+  );
+  return { ok: true, chats: chats.slice(0, 30) };
+}
+
+function pinPerson(payload = {}) {
+  const service = getService(payload.serviceId);
+  if (!service || !isInboxAppId(service.appId)) {
+    return { ok: false, error: 'Pin WhatsApp or Arattai chats only.' };
+  }
+  const name = String(payload.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const chatKey = normalizeChatKey(payload.chatKey || name);
+  const nativeId = String(payload.nativeId || payload.chid || '').trim().slice(0, 120);
+  if (!name || !chatKey || isJunkChatName(name)) {
+    return { ok: false, error: 'Could not read that chat name. Right-click the contact in the list.' };
+  }
+  const existing = sanitizePinnedPeople(settings.pinnedPeople || []);
+  if (existing.some((p) => p.id === makePinId(service.id, chatKey))) {
+    return { ok: true, pinnedPeople: existing, already: true };
+  }
+  if (existing.length >= 10) {
+    return {
+      ok: false,
+      error: 'Hub pins are full (10). Unpin one from the Pinned strip, then try again.',
+    };
+  }
+  const next = sanitizePinnedPeople([
+    {
+      id: makePinId(service.id, chatKey),
+      serviceId: service.id,
+      chatKey,
+      name,
+      appId: service.appId,
+      ...(nativeId ? { nativeId } : {}),
+    },
+    ...existing,
+  ]);
+  settings = saveSettings({ pinnedPeople: next });
+  broadcastState();
+  return { ok: true, pinnedPeople: next };
+}
+
+/**
+ * Pin a chat from the guest right-click menu.
+ * Uses the chat-list row under the cursor — not WhatsApp/Arattai's own Pin.
+ * Prefer a hit resolved when the menu opened (Arattai's overlay can cover the row later).
+ */
+async function pinChatFromGuestContext(webContents, service, params = {}, preHit = null) {
+  if (!webContents || webContents.isDestroyed() || !service) {
+    return { ok: false };
+  }
+  let name = '';
+  let chatKey = '';
+  let nativeId = '';
+  const applyHit = (hit) => {
+    if (!hit?.ok) return;
+    const n = String(hit.name || '').trim();
+    if (!n || isJunkChatName(n)) return;
+    name = n;
+    chatKey = String(hit.chatKey || normalizeChatKey(n)).trim();
+    const nid = String(hit.nativeId || hit.chid || '').trim();
+    if (nid) nativeId = nid;
+  };
+  applyHit(preHit);
+  if (!name) {
+    try {
+      const hit = await webContents.executeJavaScript(
+        inspectChatListTargetJs(params.x, params.y),
+        true,
+      );
+      applyHit(hit);
+    } catch {
+      // ignore
+    }
+  }
+  // Selection / titleText from the context-menu event (contact name under cursor).
+  if (!name || isJunkChatName(name)) {
+    for (const raw of [params.selectionText, params.titleText, params.altText]) {
+      const n = String(raw || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+      if (n && !isJunkChatName(n)) {
+        name = n;
+        chatKey = normalizeChatKey(n);
+        break;
+      }
+    }
+  }
+  // Open conversation header as fallback when right-clicking inside an open chat.
+  if (!name || isJunkChatName(name)) {
+    try {
+      const key = await getGuestChatKey(webContents);
+      if (key?.title && !isJunkChatName(key.title)) {
+        name = key.title;
+        chatKey = normalizeChatKey(key.title);
+      }
+    } catch {
+      // ignore
+    }
+  }
+  // Capture WA chat id whenever possible — name-only pins fail for mention-heavy contacts.
+  if (!nativeId && service.appId === 'whatsapp') {
+    try {
+      const active = await webContents.executeJavaScript(readActiveWhatsAppChatJs(), true);
+      if (active?.ok) {
+        const nid = String(active.nativeId || '').trim();
+        if (nid) nativeId = nid;
+        if ((!name || isJunkChatName(name)) && active.title && !isJunkChatName(active.title)) {
+          name = String(active.title).trim();
+          chatKey = normalizeChatKey(name);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  const result = pinPerson({
+    serviceId: service.id,
+    name,
+    chatKey,
+    appId: service.appId,
+    nativeId,
+  });
+  try {
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Aspera Hub',
+        body: result.ok
+          ? result.already
+            ? `“${name}” is already in Hub Pinned.`
+            : `Pinned “${name}” in Hub (works for Arattai + WhatsApp; Hub pins ≠ in-app pins).`
+          : result.error || 'Could not pin that chat.',
+        silent: true,
+      }).show();
+    }
+  } catch {
+    // ignore
+  }
+  return result;
+}
+
+function unpinPerson(pinId) {
+  const id = String(pinId || '');
+  const next = sanitizePinnedPeople(
+    (settings.pinnedPeople || []).filter((p) => p.id !== id),
+  );
+  settings = saveSettings({ pinnedPeople: next });
+  broadcastState();
+  return { ok: true, pinnedPeople: next };
+}
+
+/**
+ * Show a rich desktop + in-app notification for a guest app.
+ * Prefer intercepted page Notification payloads (sender + message).
+ */
+function emitServiceNotification(service, { title, body, fromTitleCount = false } = {}) {
+  if (!service || settings.focusMode) return false;
+  const liveCfg = getAppConfig(service.id);
+  if (!liveCfg.allowNotifications) return false;
+  if (service.id === activeServiceId) return false;
+
+  const hide =
+    settings.hideNotificationContent || liveCfg.hideNotificationContent;
+  const sender = String(title || '').trim();
+  const message = firstTwoMessageLines(body);
+  const displayTitle = hide
+    ? service.title || service.name || 'App'
+    : sender || service.title || service.name || 'App';
+  const displayBody = hide
+    ? 'New notification'
+    : message || (fromTitleCount ? `${body || ''}`.trim() : 'New message');
+
+  if (!displayBody) return false;
+
+  const fingerprint = notificationFingerprint(
+    service.id,
+    displayTitle,
+    displayBody,
+  );
+  if (!shouldShowNotification(service.id, fingerprint)) return false;
+
+  logNotification(service, displayBody, displayTitle);
+
+  if (!Notification.isSupported()) return true;
+  const n = new Notification({
+    title: displayTitle,
+    body: displayBody,
+    silent: settings.muted || !liveCfg.allowSounds,
+  });
+  n.on('click', () => {
+    raiseDockWindow();
+    if (isInboxAppId(service.appId) && sender && !hide) {
+      openMessagingChat(service.id, {
+        name: sender,
+        chatKey: normalizeChatKey(sender),
+      }).catch(() => activateService(service.id));
+      return;
+    }
+    activateService(service.id);
+  });
+  n.show();
+  return true;
+}
+
+function handleGuestNotificationBridge(service, rawMessage) {
+  const text = String(rawMessage || '');
+  if (!text.startsWith(ASPERA_NOTIFY_PREFIX)) return false;
+  let payload = {};
+  try {
+    payload = JSON.parse(text.slice(ASPERA_NOTIFY_PREFIX.length));
+  } catch {
+    return true;
+  }
+  const title = String(payload?.title || '').trim();
+  const body = String(payload?.body || '').trim();
+  // Mark that this service delivered a rich notification recently — skip
+  // the next generic title-count toast for a short window.
+  const entry = views.get(service.id);
+  if (entry) entry.__lastRichNotifyAt = Date.now();
+  emitServiceNotification(service, { title, body, fromTitleCount: false });
+  return true;
+}
+
+/** Seed unread from the live page title without firing a notification. */
+function seedUnreadFromTitle(serviceId, webContents) {
+  let count = 0;
+  try {
+    if (webContents && !webContents.isDestroyed()) {
+      count = parseUnread(webContents.getTitle() || '');
+    }
+  } catch {
+    count = 0;
+  }
+  unreadCounts.set(serviceId, count);
+  const entry = views.get(serviceId);
+  if (entry) {
+    entry.__suppressTitleNotifyUntil = Date.now() + 2_500;
+    entry.__titleCountBaseline = count;
+  }
+  return count;
+}
+
+function markAllReadWithoutNotifySpam() {
+  for (const [id, entry] of views.entries()) {
+    let titleCount = 0;
+    try {
+      titleCount = parseUnread(entry.view?.webContents?.getTitle?.() || '');
+    } catch {
+      titleCount = 0;
+    }
+    unreadCounts.set(id, 0);
+    if (entry) {
+      entry.__titleCountBaseline = Math.max(titleCount, 0);
+      entry.__suppressTitleNotifyUntil = Date.now() + 5_000;
+    }
+  }
+  for (const id of [...unreadCounts.keys()]) {
+    if (!views.has(id)) unreadCounts.set(id, 0);
+  }
+  notificationLog = [];
+  recentNotificationFingerprints.clear();
+  refreshBadge();
+  broadcastState();
+  pushNotifCenterData();
+}
+
 function applyMuteState() {
   for (const [id, entry] of views.entries()) {
     const cfg = getAppConfig(id);
     entry.view.webContents.setAudioMuted(settings.muted || !cfg.allowSounds);
   }
-}
-
-function logNotification(service, body) {
-  notificationLog = [
-    {
-      id: `${service.id}-${Date.now().toString(36)}`,
-      serviceId: service.id,
-      title: service.title || service.name,
-      body,
-      at: Date.now(),
-    },
-    ...notificationLog,
-  ].slice(0, NOTIFICATION_LOG_MAX);
-  broadcastState();
 }
 
 /** Map each app's renderer process to its memory footprint (MB). */
@@ -1681,7 +5138,11 @@ const configuredPartitions = new Set();
 
 function configureSession(partitionSession, partitionKey) {
   applyProxy(partitionSession);
-  if (configuredPartitions.has(partitionKey)) return;
+  if (configuredPartitions.has(partitionKey)) {
+    // Partition already wired — still (re)load extensions on later calls.
+    syncExtensionsIntoSession(partitionSession).catch(() => {});
+    return;
+  }
   configuredPartitions.add(partitionKey);
 
   partitionSession.setUserAgent(CHROME_USER_AGENT);
@@ -1725,6 +5186,64 @@ function configureSession(partitionSession, partitionKey) {
   );
 
   partitionSession.on('will-download', (_event, item) => {
+    // Silent capture for Forward-with-Hub (must not show Save dialog).
+    // Keep hijacking for the whole capture window — preview Download often
+    // fires multiple items; only the first should fulfill the promise.
+    if (isForwardCaptureSilentActive()) {
+      const pending = pendingForwardDownload;
+      if (pending) {
+        pendingForwardDownload = null;
+        try {
+          const hinted = String(pending.fileName || '').trim();
+          const rawName = hinted || item.getFilename() || 'document.bin';
+          const name = sanitizeForwardFilename(
+            rawName,
+            extensionOf(rawName) || 'bin',
+          );
+          const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
+          item.setSavePath(savePath);
+          item.once('done', (_e, state) => {
+            if (state === 'completed') {
+              rememberGuestDownload(savePath, name);
+              pending.resolve(item.getSavePath());
+            } else {
+              pending.reject(new Error(`Download ${state}`));
+            }
+          });
+        } catch (error) {
+          try {
+            item.cancel();
+          } catch {
+            // ignore
+          }
+          pending.reject(error);
+        }
+        return;
+      }
+      // Extra download during Forward capture — swallow silently (no Save dialog).
+      try {
+        item.cancel();
+      } catch {
+        try {
+          const dump = path.join(
+            forwardTempDir(),
+            `fwd-extra-${Date.now()}-${sanitizeForwardFilename(item.getFilename() || 'bin')}`,
+          );
+          item.setSavePath(dump);
+          item.once('done', () => {
+            try {
+              fs.unlinkSync(dump);
+            } catch {
+              // ignore
+            }
+          });
+        } catch {
+          // ignore
+        }
+      }
+      return;
+    }
+
     if (settings.downloadPath) {
       item.setSavePath(path.join(settings.downloadPath, item.getFilename()));
     } else {
@@ -1741,10 +5260,201 @@ function configureSession(partitionSession, partitionKey) {
     }
     item.once('done', (_e, state) => {
       if (state !== 'completed') return;
-      if (settings.openFolderOnDownload) shell.showItemInFolder(item.getSavePath());
-      if (settings.openFileOnDownload) shell.openPath(item.getSavePath());
+      const savePath = item.getSavePath();
+      rememberGuestDownload(savePath, item.getFilename?.() || path.basename(savePath));
+      if (settings.openFolderOnDownload) shell.showItemInFolder(savePath);
+      if (settings.openFileOnDownload) shell.openPath(savePath);
     });
   });
+
+  syncExtensionsIntoSession(partitionSession).catch(() => {});
+}
+
+function rememberGuestDownload(filePath, fileName = '') {
+  const abs = String(filePath || '').trim();
+  if (!abs || !fs.existsSync(abs)) return;
+  const name = String(fileName || path.basename(abs)).trim();
+  const ext = extensionOf(name || abs);
+  if (!isDocumentExtension(ext) && !['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) {
+    return;
+  }
+  recentGuestDownloads.unshift({ path: abs, name, at: Date.now() });
+  if (recentGuestDownloads.length > RECENT_DOWNLOAD_MAX) {
+    recentGuestDownloads.length = RECENT_DOWNLOAD_MAX;
+  }
+}
+
+function getSessionExtensionsApi(partitionSession) {
+  if (!partitionSession) return null;
+  if (partitionSession.extensions) return partitionSession.extensions;
+  // Older Electron surface on session itself.
+  if (typeof partitionSession.loadExtension === 'function') {
+    return partitionSession;
+  }
+  return null;
+}
+
+function listLoadedSessionExtensions(partitionSession) {
+  const api = getSessionExtensionsApi(partitionSession);
+  if (!api) return [];
+  try {
+    if (typeof api.getAllExtensions === 'function') {
+      return api.getAllExtensions() || [];
+    }
+  } catch {
+    // ignore
+  }
+  return [];
+}
+
+async function syncExtensionsIntoSession(partitionSession) {
+  const api = getSessionExtensionsApi(partitionSession);
+  if (!api || typeof api.loadExtension !== 'function') return;
+
+  const catalog = listInstalledExtensions(settings.extensions);
+  const enabledPaths = new Set(
+    catalog.filter((e) => e.enabled && e.exists).map((e) => path.resolve(e.path)),
+  );
+  const root = path.join(app.getPath('userData'), 'extensions');
+
+  for (const loaded of listLoadedSessionExtensions(partitionSession)) {
+    const loadedPath = path.resolve(String(loaded.path || ''));
+    const ours = loadedPath.startsWith(root + path.sep);
+    if (!ours) continue;
+    if (!enabledPaths.has(loadedPath)) {
+      try {
+        if (typeof api.removeExtension === 'function') {
+          api.removeExtension(loaded.id);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  const loadedPaths = new Set(
+    listLoadedSessionExtensions(partitionSession).map((e) =>
+      path.resolve(String(e.path || '')),
+    ),
+  );
+
+  let chromeIdChanged = false;
+  const nextCatalog = catalog.map((ext) => ({ ...ext }));
+  for (const ext of nextCatalog) {
+    if (!ext.enabled || !ext.exists) continue;
+    const abs = path.resolve(ext.path);
+    if (loadedPaths.has(abs)) continue;
+    try {
+      const info = await api.loadExtension(abs, { allowFileAccess: true });
+      if (info?.id && info.id !== ext.chromeId) {
+        ext.chromeId = info.id;
+        chromeIdChanged = true;
+      }
+    } catch (error) {
+      console.warn('[extensions] load failed', ext.name, error?.message || error);
+    }
+  }
+  if (chromeIdChanged) {
+    settings = saveSettings({ extensions: nextCatalog });
+  }
+}
+
+async function syncExtensionsToAllGuestSessions() {
+  const partitions = new Set();
+  for (const profile of settings.profiles || []) {
+    if (String(profile?.partition || '').startsWith('persist:')) {
+      partitions.add(String(profile.partition));
+    }
+  }
+  for (const inst of settings.serviceInstances || []) {
+    const part = partitionForInstance(inst);
+    if (part) partitions.add(part);
+  }
+  for (const part of partitions) {
+    try {
+      await syncExtensionsIntoSession(session.fromPartition(part));
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function reloadAllGuestViews() {
+  for (const [, entry] of views.entries()) {
+    const wc = entry?.view?.webContents;
+    if (wc && !wc.isDestroyed()) {
+      try {
+        wc.reload();
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
+function buildExtensionsManagerData(error = '') {
+  return {
+    extensions: listInstalledExtensions(settings.extensions),
+    error: String(error || ''),
+  };
+}
+
+function pushExtensionsManagerData(error = '') {
+  if (!extensionsWindow || extensionsWindow.isDestroyed()) return;
+  try {
+    extensionsWindow.webContents.send(
+      'extensions:init',
+      buildExtensionsManagerData(error),
+    );
+  } catch {
+    // ignore
+  }
+}
+
+function openExtensionsWindow({ dark = false } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeExtensionsWindow();
+
+  const menuW = 440;
+  const menuH = 580;
+  const content = mainWindow.getContentBounds();
+  const pos = clampFloatPosition(
+    content.x + content.width - menuW - 16,
+    content.y + Math.max(56, content.height * 0.1),
+    menuW,
+    menuH,
+  );
+
+  extensionsWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'extensionsPreload.js',
+    dark: !!dark,
+  });
+
+  const win = extensionsWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildExtensionsHtml(!!dark))}`,
+  );
+  win.webContents.once('did-finish-load', () => {
+    pushExtensionsManagerData();
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  win.on('closed', () => {
+    if (extensionsWindow === win) extensionsWindow = null;
+  });
+  return { ok: true };
 }
 
 function guestWebPreferences(service) {
@@ -1757,14 +5467,2376 @@ function guestWebPreferences(service) {
   };
 }
 
+function serviceIdForWebContents(webContents) {
+  if (!webContents) return activeServiceId;
+  for (const [id, entry] of views.entries()) {
+    if (entry?.view?.webContents === webContents) return id;
+  }
+  // PDF preview / child popups are tracked separately.
+  for (const [id, set] of servicePopups.entries()) {
+    if (!set) continue;
+    for (const win of set) {
+      try {
+        if (win && !win.isDestroyed() && win.webContents === webContents) return id;
+      } catch {
+        // ignore
+      }
+    }
+  }
+  try {
+    const owner = BrowserWindow.fromWebContents(webContents);
+    if (owner) {
+      for (const [id, set] of servicePopups.entries()) {
+        if (set?.has?.(owner)) return id;
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return activeServiceId;
+}
+
+function listForwardTargets(excludeServiceId) {
+  return orderedServices().filter((service) => {
+    if (!isForwardAppId(service.appId)) return false;
+    if (service.id === excludeServiceId) return false;
+    const cfg = getAppConfig(service.id);
+    return cfg?.enabled !== false;
+  });
+}
+
+function forwardTempDir() {
+  const dir = path.join(app.getPath('temp'), 'asperadock-forward');
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function saveForwardImage(image) {
+  if (!image || image.isEmpty()) return '';
+  try {
+    const file = path.join(forwardTempDir(), `forward-${Date.now()}.png`);
+    fs.writeFileSync(file, image.toPNG());
+    return file;
+  } catch {
+    return '';
+  }
+}
+
+async function captureForwardImage(webContents, params) {
+  try {
+    if (params?.hasImageContents) {
+      webContents.copyImageAt(params.x, params.y);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      const fromClipboard = clipboard.readImage();
+      if (fromClipboard && !fromClipboard.isEmpty()) return fromClipboard;
+    }
+  } catch {
+    // ignore
+  }
+  const src = String(params?.srcURL || '');
+  if (src.startsWith('data:image')) {
+    try {
+      const img = nativeImage.createFromDataURL(src);
+      if (!img.isEmpty()) return img;
+    } catch {
+      // ignore
+    }
+  }
+  return nativeImage.createEmpty();
+}
+
+async function inspectForwardContext(webContents, x, y) {
+  const empty = {
+    url: '',
+    name: '',
+    nearbyText: '',
+    hasDownload: false,
+    hasDocIcon: false,
+    docLikely: false,
+    arattaiDownloadUrl: '',
+    downloadPoints: [],
+  };
+  if (!webContents || webContents.isDestroyed()) return empty;
+  try {
+    const result = await webContents.executeJavaScript(
+      `(() => {
+        const x = ${Number(x) || 0};
+        const y = ${Number(y) || 0};
+        const start = document.elementFromPoint(x, y);
+        if (!start) {
+          return {
+            url: '', name: '', nearbyText: '', hasDownload: false,
+            hasDocIcon: false, docLikely: false,
+            arattaiDownloadUrl: '', downloadPoints: [],
+          };
+        }
+        const isDoc = (href, name) => {
+          const s = String(href || '') + ' ' + String(name || '');
+          return /\\.(pdf|docx?|xlsx?|pptx?|txt|csv|zip|rar|7z)(\\?|#|$)/i.test(s)
+            || /application\\/pdf|\\/pdf\\b/i.test(s)
+            || /webdownload|\\/v1\\/attachments\\//i.test(s)
+            || /\\bpdf\\b/i.test(String(name || ''));
+        };
+        const abs = (href) => {
+          try { return new URL(href, location.href).href; }
+          catch (e) { return String(href || ''); }
+        };
+        const chatIdGuess = () => {
+          const href = String(location.href || '');
+          const hash = String(location.hash || '');
+          const hay = href + ' ' + hash;
+          return (
+            (hay.match(/chats?\\/([A-Za-z0-9_.-]+)/i) || [])[1] ||
+            (hay.match(/[?&#](?:chat[_-]?id|chid|chidid)=([A-Za-z0-9_.-]+)/i) || [])[1] ||
+            (hay.match(/\\b([0-9]{10,})\\b/) || [])[1] ||
+            ''
+          );
+        };
+        const pickLink = (node) => {
+          if (!node) return null;
+          if (node.tagName === 'A' && node.href && isDoc(node.href, node.download || node.textContent)) {
+            return {
+              url: node.href,
+              name: String(node.download || node.textContent || '').trim(),
+            };
+          }
+          const attrUrl =
+            node.getAttribute?.('href') ||
+            node.getAttribute?.('data-url') ||
+            node.getAttribute?.('data-src') ||
+            node.getAttribute?.('data-file-url') ||
+            node.getAttribute?.('data-original') ||
+            '';
+          const attrName =
+            node.getAttribute?.('download') ||
+            node.getAttribute?.('data-filename') ||
+            node.getAttribute?.('title') ||
+            node.getAttribute?.('aria-label') ||
+            '';
+          if (attrUrl && isDoc(attrUrl, attrName)) {
+            return { url: abs(attrUrl), name: String(attrName || '').trim() };
+          }
+          return null;
+        };
+        const collectAttrUrls = (root) => {
+          const out = [];
+          const push = (v) => {
+            const s = String(v || '').trim();
+            if (!s) return;
+            if (/^https?:|^blob:|^data:/i.test(s) || s.startsWith('/')) out.push(abs(s));
+          };
+          if (!root?.querySelectorAll) return out;
+          for (const el of root.querySelectorAll('img, a, source, [src], [href], [data-url], [data-src], [data-file-url], [data-file-id], [data-id]')) {
+            push(el.currentSrc || el.src);
+            push(el.href);
+            for (const attr of [
+              'data-url', 'data-src', 'data-file-url', 'data-original',
+              'data-file-id', 'data-id', 'data-event-id', 'data-msgid',
+            ]) {
+              push(el.getAttribute?.(attr));
+            }
+          }
+          try {
+            for (const entry of performance.getEntriesByType('resource') || []) {
+              push(entry.name);
+            }
+          } catch (e) {}
+          return out;
+        };
+        const downloadishScore = (el) => {
+          if (!el || el === document.body) return 0;
+          const hay = [
+            el.getAttribute?.('aria-label'),
+            el.getAttribute?.('title'),
+            el.getAttribute?.('data-icon'),
+            el.getAttribute?.('data-testid'),
+            el.getAttribute?.('data-mat-icon-name'),
+            el.className,
+            el.id,
+            el.tagName === 'MAT-ICON' || el.classList?.contains?.('material-icons')
+              ? el.textContent
+              : '',
+          ].join(' ').toLowerCase();
+          let score = 0;
+          if (/download|file_download|get_app|save as|save_alt|arrow_downward/.test(hay)) score += 8;
+          if (/\\bpdf\\b|document|attachment/.test(hay)) score += 2;
+          if (el.tagName === 'A' && el.hasAttribute?.('download')) score += 10;
+          // Small icon-like controls inside a document card (Arattai arrow).
+          try {
+            const r = el.getBoundingClientRect?.();
+            if (r && r.width > 8 && r.width < 56 && r.height > 8 && r.height < 56) score += 1;
+          } catch (e) {}
+          return score;
+        };
+        const centerOf = (el) => {
+          try {
+            const r = el.getBoundingClientRect();
+            if (!r || r.width < 2 || r.height < 2) return null;
+            return {
+              x: Math.round(r.left + r.width / 2),
+              y: Math.round(r.top + r.height / 2),
+            };
+          } catch (e) {
+            return null;
+          }
+        };
+
+        // Prefer a message/bubble container so "Invoice.pdf" labels are visible.
+        let root = start;
+        for (let i = 0; i < 14 && root && root !== document.body; i += 1) {
+          const role = String(root.getAttribute?.('role') || '');
+          const cls = String(root.className || '');
+          const testid = String(root.getAttribute?.('data-testid') || '');
+          if (
+            role === 'row' ||
+            /message|bubble|msg|document|attachment|media/i.test(cls + ' ' + testid)
+          ) {
+            break;
+          }
+          if (root.parentElement) root = root.parentElement;
+        }
+
+        let url = '';
+        let name = '';
+        let node = start;
+        for (let i = 0; i < 12 && node; i += 1) {
+          const direct = pickLink(node);
+          if (direct) { url = direct.url; name = direct.name; break; }
+          node = node.parentElement;
+        }
+        if (!url && root?.querySelectorAll) {
+          for (const a of root.querySelectorAll('a[href], [download], [data-url], [data-file-url]')) {
+            const hit = pickLink(a);
+            if (hit) { url = hit.url; name = hit.name; break; }
+          }
+        }
+
+        const nearbyText = String(root?.innerText || start.innerText || '')
+          .replace(/\\s+/g, ' ')
+          .trim()
+          .slice(0, 500);
+        const fileFromText = (nearbyText.match(/([\\w.\\- ()[\\]]+\\.(?:pdf|docx?|xlsx?|pptx?|zip|rar|7z|txt|csv))\\b/i) || [])[1] || '';
+        const truncatedPdf = (nearbyText.match(
+          /([A-Za-z0-9][\\w.\\- ()[\\]]{2,80})\\.\\.\\.(?:(?!\\n).{0,80})?\\bPDF\\b/i,
+        ) || [])[1] || '';
+        if (!name && fileFromText) name = fileFromText;
+        if (!name && truncatedPdf) name = truncatedPdf + '.pdf';
+
+        const downloadSelectors = [
+          '[aria-label*="download" i]',
+          '[title*="download" i]',
+          '[aria-label*="Download" i]',
+          '[data-testid*="download" i]',
+          '[data-icon="download"]',
+          '[class*="download" i]',
+          '[id*="download" i]',
+          'a[download]',
+          'button[aria-label*="save" i]',
+          '[aria-label*="Save as" i]',
+          '[title*="Save as" i]',
+          '[data-mat-icon-name*="download" i]',
+        ];
+        const hasDownload = !!(root?.querySelector?.(downloadSelectors.join(', ')));
+        // Avoid broad class*=document matches — many UIs use "document" in
+        // unrelated class names and that false-flags ordinary photo bubbles.
+        const hasDocIcon = !!(root?.querySelector?.(
+          [
+            '[data-icon="document"]',
+            '[data-testid*="document" i]',
+            '[aria-label*="document" i]',
+            '[aria-label*="PDF" i]',
+            'span[data-icon="document"]',
+            'span[data-icon="audio-document"]',
+          ].join(', '),
+        ));
+        const pagesMeta = /\\b\\d+\\s*pages?\\s*[·•|\\-]\\s*[\\d.,]+\\s*(KB|MB|GB)\\b/i.test(nearbyText);
+        const docLikely =
+          !!url ||
+          !!fileFromText ||
+          !!truncatedPdf ||
+          hasDocIcon ||
+          pagesMeta ||
+          /\\bPDF\\b/.test(nearbyText) ||
+          /\\b(Document|Attachment)\\b/i.test(nearbyText) ||
+          /\\.(pdf|docx?|xlsx?|pptx?)\\b/i.test(nearbyText);
+
+        const chatId = chatIdGuess();
+        let arattaiDownloadUrl = '';
+        const mediaUrls = collectAttrUrls(root || start);
+        for (const mediaUrl of mediaUrls) {
+          if (/files\\.arattai\\.in\\/webdownload|\\/v1\\/attachments\\//i.test(mediaUrl)) {
+            url = url || mediaUrl;
+            // Prefer rebuilding full-file URL in main via parse helpers.
+            arattaiDownloadUrl = arattaiDownloadUrl || mediaUrl;
+          }
+          const fileIdAttr = (mediaUrl.match(/event-id=([^&]+)/i) || [])[1];
+          if (fileIdAttr && chatId && !arattaiDownloadUrl.includes('thumbnail')) {
+            // keep first candidate; main will strip thumbnail
+          }
+        }
+        // data-file-id on card + chat from location
+        if (!arattaiDownloadUrl && root?.querySelectorAll && chatId) {
+          for (const el of root.querySelectorAll('[data-file-id], [data-event-id], [data-id]')) {
+            const fid = el.getAttribute('data-file-id')
+              || el.getAttribute('data-event-id')
+              || el.getAttribute('data-id')
+              || '';
+            if (fid && fid.length >= 8) {
+              arattaiDownloadUrl =
+                'https://files.arattai.in/webdownload?x-service=CLIQ&event-id=' +
+                encodeURIComponent(fid) +
+                '&x-cli-msg=' +
+                encodeURIComponent(JSON.stringify({ chat_id: chatId }));
+              break;
+            }
+          }
+        }
+
+        const downloadPoints = [];
+        const seen = new Set();
+        const pushPoint = (el, why) => {
+          const pt = centerOf(el);
+          if (!pt) return;
+          const key = pt.x + ',' + pt.y;
+          if (seen.has(key)) return;
+          seen.add(key);
+          downloadPoints.push({ x: pt.x, y: pt.y, why: String(why || '') });
+        };
+        const scope = root || document;
+        for (const sel of downloadSelectors) {
+          for (const btn of scope.querySelectorAll(sel)) pushPoint(btn, sel);
+        }
+        // Score icon-like controls in the bubble (Arattai often uses unlabeled arrows).
+        const candidates = Array.from(
+          scope.querySelectorAll('button, a, [role="button"], svg, i, mat-icon, span, div'),
+        );
+        candidates
+          .map((el) => ({ el, score: downloadishScore(el) }))
+          .filter((row) => row.score >= 3)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 8)
+          .forEach((row) => pushPoint(row.el.closest('button, a, [role="button"]') || row.el, 'score'));
+
+        // Filename / PDF meta label click (opens or downloads depending on app).
+        for (const n of scope.querySelectorAll('span, div, a, button, p')) {
+          const t = String(n.textContent || '').replace(/\\s+/g, ' ').trim();
+          if (!t || t.length > 120) continue;
+          if (
+            /\\.(pdf|docx?|xlsx?|pptx?)\\b/i.test(t) ||
+            (/\\bPDF\\b/.test(t) && t.length < 80) ||
+            /\\b\\d+\\s*pages?\\b/i.test(t)
+          ) {
+            pushPoint(n, 'label');
+          }
+        }
+
+        return {
+          url,
+          name: String(name || '').trim(),
+          nearbyText,
+          hasDownload: hasDownload || downloadPoints.length > 0,
+          hasDocIcon,
+          docLikely,
+          arattaiDownloadUrl,
+          chatId,
+          downloadPoints: downloadPoints.slice(0, 12),
+        };
+      })()`,
+      true,
+    );
+    const chatId = String(result?.chatId || '').trim();
+    const rawArattai = String(result?.arattaiDownloadUrl || '').trim();
+    const arattaiDownloadUrl =
+      arattaiFullFileUrlFromAny(rawArattai, chatId) ||
+      arattaiFullFileUrlFromAny(String(result?.url || ''), chatId) ||
+      rawArattai;
+    return {
+      url: String(result?.url || '').trim(),
+      name: String(result?.name || '').trim(),
+      nearbyText: String(result?.nearbyText || '').trim(),
+      hasDownload: !!result?.hasDownload,
+      hasDocIcon: !!result?.hasDocIcon,
+      docLikely: !!result?.docLikely,
+      arattaiDownloadUrl,
+      chatId,
+      downloadPoints: Array.isArray(result?.downloadPoints) ? result.downloadPoints : [],
+    };
+  } catch {
+    return empty;
+  }
+}
+
+function moveWebContentsTo(webContents, x, y) {
+  if (!webContents || webContents.isDestroyed()) return;
+  const cx = Math.max(0, Math.round(Number(x) || 0));
+  const cy = Math.max(0, Math.round(Number(y) || 0));
+  try {
+    webContents.focus();
+    webContents.sendInputEvent({ type: 'mouseMove', x: cx, y: cy });
+  } catch {
+    // ignore
+  }
+}
+
+function clickWebContentsAt(webContents, x, y) {
+  if (!webContents || webContents.isDestroyed()) return;
+  const cx = Math.max(0, Math.round(Number(x) || 0));
+  const cy = Math.max(0, Math.round(Number(y) || 0));
+  try {
+    webContents.focus();
+  } catch {
+    // ignore
+  }
+  const base = { x: cx, y: cy, button: 'left', clickCount: 1 };
+  try {
+    webContents.sendInputEvent({ type: 'mouseMove', x: cx, y: cy });
+    webContents.sendInputEvent({ type: 'mouseDown', ...base });
+    webContents.sendInputEvent({ type: 'mouseUp', ...base });
+  } catch {
+    // ignore
+  }
+}
+
+function armForwardDownload(fileName = '', timeoutMs = 12_000) {
+  beginForwardCaptureWindow(Math.max(timeoutMs + 2_000, 8_000));
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (pendingForwardDownload?.reject === reject) pendingForwardDownload = null;
+      reject(new Error('Document download timed out.'));
+    }, timeoutMs);
+    pendingForwardDownload = {
+      fileName,
+      resolve: (filePath) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        // Keep silent window briefly so duplicate DownloadItems from the same
+        // preview click cannot open the Save dialog.
+        beginForwardCaptureWindow(4_000);
+        resolve(filePath);
+      },
+      reject: (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+    };
+  });
+}
+
+function disarmForwardDownload(downloadPromise) {
+  if (pendingForwardDownload) {
+    const pending = pendingForwardDownload;
+    pendingForwardDownload = null;
+    try {
+      pending.reject(new Error('cancelled'));
+    } catch {
+      // ignore
+    }
+  }
+  return downloadPromise.catch(() => '');
+}
+
+/** Script: find any in-memory PDF (%PDF-) from embeds, blobs, or WA caches. */
+function guestPdfBytesProbeJs() {
+  return `(() => {
+    const toB64 = async (url) => {
+      try {
+        const res = await fetch(url);
+        const buf = await res.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        if (bytes.length < 5) return null;
+        if (!(bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)) {
+          return null;
+        }
+        if (bytes.length > 12 * 1024 * 1024) return null;
+        let bin = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        return { b64: btoa(bin), size: bytes.length, url: String(url || '') };
+      } catch (e) {
+        return null;
+      }
+    };
+
+    const urls = [];
+    const push = (u) => {
+      const s = String(u || '').trim();
+      if (!s || urls.includes(s)) return;
+      urls.push(s);
+    };
+
+    for (const el of document.querySelectorAll(
+      'embed, object, iframe, a[href], a[download], source, video, audio',
+    )) {
+      push(el.src);
+      push(el.href);
+      push(el.getAttribute?.('data'));
+      push(el.getAttribute?.('data-url'));
+      push(el.getAttribute?.('data-src'));
+    }
+
+    // WhatsApp blob: URLs usually have no ".pdf" in the name — collect ALL blobs.
+    try {
+      for (const e of performance.getEntriesByType('resource') || []) {
+        const n = String(e.name || '');
+        if (/^blob:/i.test(n) || /\\.pdf($|\\?|#)/i.test(n) || /application%2Fpdf|application\\/pdf/i.test(n)) {
+          push(n);
+        }
+        // WhatsApp CDN media often already decrypted into blob cache after open.
+        if (/mmg\\.whatsapp\\.net|media\\.whatsapp|web\\.whatsapp\\.com\\/.*media/i.test(n)) {
+          push(n);
+        }
+      }
+    } catch (e) {}
+
+    // Walk open dialogs / media viewers for hidden anchors.
+    try {
+      const roots = [
+        document.querySelector('[role="dialog"]'),
+        document.querySelector('[data-animate-modal-body="true"]'),
+        document.body,
+      ].filter(Boolean);
+      for (const root of roots) {
+        for (const a of root.querySelectorAll('a[href], a[download]')) {
+          push(a.href);
+          push(a.getAttribute('download') ? a.href : '');
+        }
+      }
+    } catch (e) {}
+
+    return (async () => {
+      let best = null;
+      // Prefer larger PDFs (skip tiny broken headers / thumbs).
+      for (const url of urls.slice(0, 40)) {
+        const hit = await toB64(url);
+        if (!hit) continue;
+        if (!best || hit.size > best.size) best = hit;
+      }
+      if (best) return { ok: true, ...best };
+
+      // Last resort: WhatsApp Store media blob for the open document message.
+      try {
+        const modules = window.require && window.require('__debug')
+          ? null
+          : null;
+        void modules;
+      } catch (e) {}
+      try {
+        const chunk = window.webpackChunkwhatsapp_web_client || window.webpackChunkbuild;
+        // Soft probe — ignore if Store is unavailable.
+        void chunk;
+      } catch (e) {}
+
+      return { ok: false, tried: urls.length };
+    })();
+  })()`;
+}
+
+/**
+ * True when WhatsApp/Adobe already shows a full-screen PDF / media viewer.
+ * Used so we do not click the page (that closes the open preview).
+ */
+async function tryCaptureViewerDocumentBytes(webContents, fileName = '') {
+  if (!webContents || webContents.isDestroyed()) {
+    return { ok: false, error: 'Chat view is gone.' };
+  }
+
+  const runInFrame = async (frame) => {
+    try {
+      if (!frame || frame.isDestroyed?.()) return null;
+      return await frame.executeJavaScript(guestPdfBytesProbeJs(), true);
+    } catch {
+      return null;
+    }
+  };
+
+  try {
+    const frames = [];
+    try {
+      const main = webContents.mainFrame;
+      if (main) {
+        frames.push(main);
+        for (const f of main.framesInSubtree || []) frames.push(f);
+      }
+    } catch {
+      // ignore
+    }
+
+    let result = null;
+    if (frames.length) {
+      for (const frame of frames) {
+        const hit = await runInFrame(frame);
+        if (hit?.ok && hit.b64) {
+          if (!result || Number(hit.size) > Number(result.size)) result = hit;
+        }
+      }
+    } else {
+      result = await webContents.executeJavaScript(guestPdfBytesProbeJs(), true);
+    }
+
+    if (!result?.ok || !result.b64) {
+      return { ok: false, error: 'No viewer PDF bytes.' };
+    }
+    const buf = Buffer.from(String(result.b64), 'base64');
+    const classified = classifyForwardFileBytes(
+      buf.subarray(0, 16),
+      fileName || 'document.pdf',
+    );
+    if (!classified.ok) {
+      return { ok: false, error: classified.error || classified.kind };
+    }
+    const name = sanitizeForwardFilename(
+      fileName || 'document.pdf',
+      extensionOf(fileName) || 'pdf',
+    );
+    const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
+    fs.writeFileSync(savePath, buf);
+    return { ok: true, filePath: savePath };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', points = []) {
+  if (!webContents || webContents.isDestroyed()) {
+    return { ok: false, error: 'Chat view is gone.' };
+  }
+
+  beginForwardCaptureWindow(25_000);
+
+  let clickPoints = Array.isArray(points) ? points.filter((p) => p && p.x >= 0 && p.y >= 0) : [];
+  if (!clickPoints.length) {
+    try {
+      const found = await inspectForwardContext(webContents, x, y);
+      clickPoints = found.downloadPoints || [];
+    } catch {
+      clickPoints = [];
+    }
+  }
+  if (!clickPoints.length) {
+    clickPoints = [{ x, y, why: 'origin' }];
+  }
+
+  // Hover only (no click) so download arrows reveal without starting a download.
+  moveWebContentsTo(webContents, x, y);
+  await new Promise((r) => setTimeout(r, 120));
+
+  for (const point of clickPoints.slice(0, 4)) {
+    const downloadPromise = armForwardDownload(fileName, 5_000);
+    // Prefer one real mouse click — avoid stacking DOM + input events.
+    clickWebContentsAt(webContents, point.x, point.y);
+    try {
+      const filePath = await downloadPromise;
+      if (filePath) {
+        beginForwardCaptureWindow(4_000);
+        return { ok: true, filePath };
+      }
+    } catch {
+      await disarmForwardDownload(downloadPromise);
+    }
+  }
+
+  // Viewer toolbar Download (Adobe / WhatsApp preview).
+  try {
+    const overlayPoints = await webContents.executeJavaScript(
+      `(() => {
+        const sels = [
+          '[aria-label*="download" i]',
+          '[title*="download" i]',
+          '[data-icon="download"]',
+          '[class*="download" i]',
+          'a[download]',
+          'button[aria-label*="save" i]',
+          '[aria-label*="Save as" i]',
+          '#download',
+          '#downloadButton',
+        ];
+        const pts = [];
+        const seen = new Set();
+        const scopes = [document.querySelector('[role="dialog"]'), document.body];
+        for (const scope of scopes) {
+          if (!scope?.querySelectorAll) continue;
+          for (const sel of sels) {
+            for (const el of scope.querySelectorAll(sel)) {
+              const r = el.getBoundingClientRect();
+              if (!r || r.width < 2 || r.height < 2) continue;
+              const x = Math.round(r.left + r.width / 2);
+              const y = Math.round(r.top + r.height / 2);
+              const key = x + ',' + y;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              pts.push({ x, y });
+            }
+          }
+        }
+        return pts.slice(0, 6);
+      })()`,
+      true,
+    );
+    for (const point of overlayPoints || []) {
+      const downloadPromise = armForwardDownload(fileName, 5_000);
+      clickWebContentsAt(webContents, point.x, point.y);
+      try {
+        const filePath = await downloadPromise;
+        if (filePath) {
+          beginForwardCaptureWindow(4_000);
+          return { ok: true, filePath };
+        }
+      } catch {
+        await disarmForwardDownload(downloadPromise);
+      }
+    }
+  } catch (error) {
+    console.warn('[forward] overlay download attempt failed', error);
+  }
+
+  return { ok: false, error: 'No download control in this message.' };
+}
+
+function downloadForwardFile(webContents, url, fileName = '') {
+  return new Promise((resolve, reject) => {
+    if (!webContents || webContents.isDestroyed()) {
+      reject(new Error('Chat view is gone.'));
+      return;
+    }
+    const target = String(url || '').trim();
+    if (!target || target.startsWith('javascript:')) {
+      reject(new Error('No downloadable document URL.'));
+      return;
+    }
+    beginForwardCaptureWindow(50_000);
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (pendingForwardDownload?.reject === reject) pendingForwardDownload = null;
+      reject(new Error('Document download timed out.'));
+    }, 45_000);
+    pendingForwardDownload = {
+      fileName,
+      resolve: (filePath) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        beginForwardCaptureWindow(4_000);
+        resolve(filePath);
+      },
+      reject: (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+    };
+    try {
+      webContents.downloadURL(target);
+    } catch (error) {
+      pendingForwardDownload = null;
+      clearTimeout(timer);
+      reject(error);
+    }
+  });
+}
+
+function writeLinuxFileClipboard(filePath) {
+  if (process.platform !== 'linux') return false;
+  const abs = path.resolve(String(filePath || ''));
+  if (!abs || !fs.existsSync(abs)) return false;
+  const uri = `file://${abs}`;
+  const attempts = [
+    {
+      args: ['-selection', 'clipboard', '-t', 'x-special/gnome-copied-files'],
+      input: `copy\n${uri}\n`,
+    },
+    {
+      args: ['-selection', 'clipboard', '-t', 'text/uri-list'],
+      input: `${uri}\n`,
+    },
+  ];
+  for (const attempt of attempts) {
+    try {
+      const result = spawnSync('xclip', attempt.args, {
+        input: attempt.input,
+        encoding: 'utf8',
+      });
+      if (result.status === 0) return true;
+    } catch {
+      // try next
+    }
+  }
+  return false;
+}
+
+async function fetchArattaiDocumentViaSession(webContents, downloadUrl, fileName = '') {
+  const url = String(downloadUrl || '').trim();
+  if (!url || !webContents || webContents.isDestroyed()) {
+    return { ok: false, error: 'No Arattai download URL.' };
+  }
+  try {
+    const ses = webContents.session;
+    if (!ses?.fetch) return { ok: false, error: 'Session fetch unavailable.' };
+    const res = await ses.fetch(url, { bypassCustomProtocolHandlers: true });
+    if (!res.ok) return { ok: false, error: `Download HTTP ${res.status}` };
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 64) return { ok: false, error: 'Empty download.' };
+    const classified = classifyForwardFileBytes(buf.subarray(0, 16), fileName || 'document.pdf');
+    if (!classified.ok) return { ok: false, error: classified.error || classified.kind };
+    const name = sanitizeForwardFilename(
+      fileName || 'document.pdf',
+      extensionOf(fileName) || (classified.kind === 'pdf' ? 'pdf' : 'bin'),
+    );
+    const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
+    fs.writeFileSync(savePath, buf);
+    return { ok: true, filePath: savePath };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
+  // Feature parked — flip FORWARD_WITH_HUB_ENABLED in forwardHub.js to restore.
+  if (!FORWARD_WITH_HUB_ENABLED) {
+    return { ok: false, error: 'Forward with Aspera Hub is temporarily disabled.' };
+  }
+  const forceDocument = !!opts.forceDocument;
+  const sourceId = serviceIdForWebContents(webContents);
+  const source = getService(sourceId);
+  if (!source || !isForwardAppId(source.appId)) {
+    return { ok: false, error: 'Forward works from WhatsApp or Arattai.' };
+  }
+  const targets = listForwardTargets(source.id);
+  if (!targets.length) {
+    const box = {
+      type: 'info',
+      title: 'Forward with Aspera Hub',
+      message: 'Add another WhatsApp or Arattai account first.',
+      detail:
+        'Forward sends content to a different Hub tab. Add a second messaging account, then try again.',
+      buttons: ['OK'],
+    };
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await dialog.showMessageBox(mainWindow, box);
+    } else {
+      await dialog.showMessageBox(box);
+    }
+    return { ok: false, error: 'No target accounts.' };
+  }
+
+  const text = String(params.selectionText || '').trim();
+  // Never treat Arattai profile/thumbnail webdownload URLs as the message link.
+  let linkURL = sanitizeForwardLinkURL(params.linkURL);
+  const srcURL = String(params.srcURL || '').trim();
+  const titleText = String(params.titleText || params.altText || '').trim();
+  let pageTitle = '';
+  try {
+    pageTitle = String(webContents.getTitle?.() || '').trim();
+  } catch {
+    pageTitle = '';
+  }
+  const ctx = await inspectForwardContext(webContents, params.x, params.y);
+  // blob: alone is not proof of a photo — Adobe/WhatsApp PDF previews use blob: too.
+  const srcLooksLikeImage =
+    /^data:image\//i.test(srcURL) ||
+    /\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(srcURL);
+  const srcIsBlob = /^blob:/i.test(srcURL);
+  // Prefer real document links — never treat a preview thumbnail URL as the PDF.
+  // ctx.url may be an Arattai webdownload (used for file capture only).
+  const candidateUrl =
+    linkURL ||
+    String(ctx.url || '').trim() ||
+    (srcLooksLikeImage ? '' : srcURL);
+  const candidateName =
+    ctx.name ||
+    extractDocumentFileName(ctx.nearbyText) ||
+    extractDocumentFileName(titleText) ||
+    extractDocumentFileName(pageTitle) ||
+    extractDocumentFileName(text) ||
+    titleText ||
+    '';
+
+  const hasImageContents = !!params.hasImageContents;
+  const nearbyForDoc = [ctx.nearbyText, pageTitle, titleText].filter(Boolean).join(' ');
+  const strongDocument = hasStrongDocumentEvidence({
+    forceDocument,
+    hasImage: hasImageContents || srcLooksLikeImage,
+    linkURL: candidateUrl || linkURL || ctx.url,
+    srcURL: srcLooksLikeImage ? '' : srcIsBlob ? '' : srcURL,
+    fileName: candidateName,
+    text,
+    titleText: titleText || pageTitle,
+    nearbyText: nearbyForDoc,
+    mediaType: params.mediaType,
+    hasDownload: ctx.hasDownload,
+    hasDocIcon: ctx.hasDocIcon,
+    docLikely: ctx.docLikely || /\.pdf\b/i.test(pageTitle),
+  });
+  const documentHint = shouldForwardAsDocument({
+    forceDocument,
+    hasImage: hasImageContents || srcLooksLikeImage,
+    linkURL: candidateUrl || linkURL || ctx.url,
+    srcURL: srcLooksLikeImage ? '' : srcIsBlob ? '' : srcURL,
+    fileName: candidateName,
+    text,
+    titleText: titleText || pageTitle,
+    nearbyText: nearbyForDoc,
+    mediaType: params.mediaType,
+    hasDownload: ctx.hasDownload,
+    hasDocIcon: ctx.hasDocIcon,
+    docLikely: ctx.docLikely || /\.pdf\b/i.test(pageTitle),
+  });
+
+  let filePath = '';
+  let fileName = '';
+  let isDocument = false;
+  let imagePath = '';
+  let hasImage = false;
+
+  if (documentHint) {
+    // Entire document capture must stay silent — no "Save download" dialogs.
+    beginForwardCaptureWindow(45_000);
+    const hintedName = sanitizeForwardFilename(
+      candidateName || 'document.pdf',
+      extensionOf(candidateName) || extensionOf(candidateUrl) || 'pdf',
+    );
+
+    const arattaiUrl =
+      String(ctx.arattaiDownloadUrl || '').trim() ||
+      arattaiFullFileUrlFromAny(candidateUrl, ctx.chatId) ||
+      arattaiFullFileUrlFromAny(String(params.linkURL || ''), ctx.chatId) ||
+      arattaiFullFileUrlFromAny(srcURL, ctx.chatId);
+
+    try {
+      // 0) PDF already open in Adobe / WhatsApp preview — read bytes (no Download click).
+      if (!filePath) {
+        const viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
+        if (viewer.ok) filePath = viewer.filePath;
+      }
+
+      // 1) User already downloaded this file in chat — reuse it.
+      if (!filePath) {
+        const recentPath = matchRecentDownload(
+          recentGuestDownloads,
+          hintedName,
+          ctx.nearbyText || candidateName,
+        );
+        if (recentPath && fs.existsSync(recentPath)) {
+          try {
+            const dest = path.join(
+              forwardTempDir(),
+              `${Date.now()}-${path.basename(recentPath)}`,
+            );
+            fs.copyFileSync(recentPath, dest);
+            filePath = dest;
+          } catch (error) {
+            console.warn('[forward] reuse recent download failed', error);
+          }
+        }
+      }
+
+      // 2) Arattai UDS via session cookies (more reliable than downloadURL).
+      if (!filePath && arattaiUrl) {
+        const fetched = await fetchArattaiDocumentViaSession(
+          webContents,
+          arattaiUrl,
+          hintedName,
+        );
+        if (fetched.ok) filePath = fetched.filePath;
+        else {
+          try {
+            filePath = await downloadForwardFile(webContents, arattaiUrl, hintedName);
+          } catch (error) {
+            console.warn('[forward] Arattai document URL download failed', error);
+          }
+        }
+      }
+
+      // 3) Direct URL download when we have a real document link (not image/blob thumbs).
+      if (
+        !filePath &&
+        candidateUrl &&
+        !/^data:image\//i.test(candidateUrl) &&
+        !/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(candidateUrl) &&
+        !/webdownload/i.test(candidateUrl)
+      ) {
+        try {
+          filePath = await downloadForwardFile(webContents, candidateUrl, hintedName);
+        } catch (error) {
+          console.warn('[forward] document URL download failed', error);
+        }
+      }
+
+      // 4) Click download control; extras during capture window are cancelled silently.
+      if (!filePath) {
+        const ui = await tryCaptureDocumentByUiDownload(
+          webContents,
+          params.x,
+          params.y,
+          hintedName,
+          ctx.downloadPoints,
+        );
+        if (ui.ok && ui.filePath) filePath = ui.filePath;
+        else console.warn('[forward] UI document download failed', ui.error);
+      }
+
+      // 5) Retry session fetch after UI click (Arattai may warm the file).
+      if (!filePath && arattaiUrl) {
+        const fetched = await fetchArattaiDocumentViaSession(
+          webContents,
+          arattaiUrl,
+          hintedName,
+        );
+        if (fetched.ok) filePath = fetched.filePath;
+      }
+    } finally {
+      // Keep a short silence tail so late duplicate DownloadItems cannot open Save.
+      beginForwardCaptureWindow(3_500);
+    }
+
+    if (filePath && fs.existsSync(filePath)) {
+      // Guard: reject preview thumbs / non-document bytes (causes "File not supported").
+      const ext = extensionOf(filePath);
+      const size = fs.statSync(filePath).size;
+      const looksImage = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext);
+      let header = Buffer.alloc(0);
+      try {
+        const fd = fs.openSync(filePath, 'r');
+        header = Buffer.alloc(16);
+        const n = fs.readSync(fd, header, 0, 16, 0);
+        fs.closeSync(fd);
+        header = header.subarray(0, n);
+      } catch {
+        header = Buffer.alloc(0);
+      }
+      const classified = classifyForwardFileBytes(header, path.basename(filePath));
+      if (looksImage || size < 512 || !classified.ok) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch {
+          // ignore
+        }
+        filePath = '';
+        if (!classified.ok) {
+          console.warn('[forward] rejected non-document download', classified.error || classified.kind);
+        }
+      } else {
+        fileName = path.basename(filePath);
+        isDocument = true;
+      }
+    }
+
+    // Never paste a PDF preview tile as a photo when the bubble is clearly a document.
+    // Plain Forward on a real photo may still use the image path if document capture
+    // was only a soft/false hint.
+    if (!filePath) {
+      if (!forceDocument && hasImageContents && !strongDocument) {
+        console.warn('[forward] document capture missed; falling back to image forward');
+      } else {
+        const box = {
+          type: 'warning',
+          title: 'Forward with Aspera Hub',
+          message: 'Could not get the PDF/document file.',
+          detail:
+            'Aspera Hub will not paste the preview thumbnail as a photo.\n\n' +
+            'Try: tap the download arrow on the document in this chat once, then right-click → Forward with Aspera Hub again.',
+          buttons: ['OK'],
+        };
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          await dialog.showMessageBox(mainWindow, box);
+        } else {
+          await dialog.showMessageBox(box);
+        }
+        return { ok: false, error: 'Document download failed.' };
+      }
+    }
+  }
+
+  if (!isDocument) {
+    // True photos — never call copyImageAt while a real document was staged
+    // (that pollutes the clipboard with the PDF thumbnail).
+    const image = await captureForwardImage(webContents, params);
+    imagePath = saveForwardImage(image);
+    hasImage = !!(imagePath || (image && !image.isEmpty()));
+  }
+
+  if (!text && !hasImage && !linkURL && !filePath && !isDocument) {
+    // Right-click on empty chrome / no capturable bubble.
+    const box = {
+      type: 'info',
+      title: 'Forward with Aspera Hub',
+      message: 'Nothing to forward here.',
+      detail:
+        'Right-click the message text, photo, or PDF card you want to send to another Hub account.',
+      buttons: ['OK'],
+    };
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await dialog.showMessageBox(mainWindow, box);
+    } else {
+      await dialog.showMessageBox(box);
+    }
+    return { ok: false, error: 'Select text, an image, or a document to forward.' };
+  }
+
+  forwardPayload = {
+    text: isDocument ? '' : text,
+    // Never append Arattai webdownload / profile URLs to text paste.
+    linkURL: isDocument ? '' : sanitizeForwardLinkURL(linkURL),
+    imagePath,
+    filePath,
+    fileName,
+    hasImage,
+    isDocument,
+    sourceServiceId: source.id,
+    sourceAppId: source.appId,
+    sourceName: source.name || source.defaultName || source.appId,
+  };
+
+  return openForwardPickerWindow({
+    dark: false,
+    anchorX: params.x,
+    anchorY: params.y,
+    webContents,
+  });
+}
+
+function openForwardPickerWindow({
+  dark = false,
+  anchorX = 0,
+  anchorY = 0,
+  webContents = null,
+} = {}) {
+  if (!mainWindow || mainWindow.isDestroyed() || !forwardPayload) {
+    return { ok: false };
+  }
+
+  closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAiResultWindow();
+  closeForwardPickerWindow();
+  closeExtensionsWindow();
+
+  const menuW = 360;
+  const menuH = 420;
+  const content = mainWindow.getContentBounds();
+  let rawX = content.x + content.width - menuW - 16;
+  let rawY = content.y + 72;
+  try {
+    if (webContents) {
+      for (const entry of views.values()) {
+        if (entry?.view?.webContents === webContents) {
+          const bounds = entry.view.getBounds?.() || entry.__lastBounds;
+          if (bounds) {
+            rawX = content.x + (bounds.x || 0) + (Number(anchorX) || 0);
+            rawY = content.y + (bounds.y || 0) + (Number(anchorY) || 0);
+          }
+          break;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  const pos = clampFloatPosition(rawX, rawY, menuW, menuH);
+
+  forwardPickerWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'forwardPickerPreload.js',
+    dark: !!dark,
+  });
+
+  const win = forwardPickerWindow;
+  const source = getService(forwardPayload.sourceServiceId);
+  const targets = listForwardTargets(forwardPayload.sourceServiceId).map((service) => {
+    const profile = (settings.profiles || []).find((p) => p.id === service.profileId);
+    const catalog = getAppCatalogEntry(service.appId);
+    return {
+      id: service.id,
+      name: service.name || service.defaultName || catalog?.name || service.appId,
+      appName: catalog?.name || service.appId,
+      color: service.color || catalog?.color || '#64748b',
+      profileName: profile?.name || '',
+      logoDataUrl: '',
+    };
+  });
+
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildForwardPickerHtml(!!dark))}`,
+  );
+  win.webContents.once('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    const kind = forwardContentKind(forwardPayload);
+    win.webContents.send('forward-picker:init', {
+      sourceLabel: source?.name || forwardPayload.sourceName || 'this chat',
+      preview: describeForwardPayload({
+        text: forwardPayload.text,
+        hasImage: forwardPayload.hasImage,
+        isDocument: forwardPayload.isDocument,
+        linkURL: forwardPayload.linkURL,
+        fileName:
+          forwardPayload.fileName ||
+          (forwardPayload.filePath ? path.basename(forwardPayload.filePath) : ''),
+      }),
+      kind,
+      steps: forwardPickerSteps(),
+      hint: forwardPickerHint(kind),
+      targets,
+    });
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  win.on('blur', () => {
+    setTimeout(() => {
+      if (forwardPickerWindow === win) closeForwardPickerWindow();
+    }, 160);
+  });
+  win.on('closed', () => {
+    if (forwardPickerWindow === win) forwardPickerWindow = null;
+  });
+  return { ok: true };
+}
+
+
+async function readGuestComposeText(webContents) {
+  if (!webContents || webContents.isDestroyed()) return '';
+  try {
+    return String(
+      (await webContents.executeJavaScript(
+        `(() => {
+          const nodes = [
+            document.querySelector('[data-testid="conversation-compose-box-input"]'),
+            document.querySelector('[data-aspera-ai-compose="1"]'),
+            ...document.querySelectorAll(${JSON.stringify(guestComposeSelector())}),
+          ].filter(Boolean);
+          for (const el of nodes) {
+            const tag = String(el.tagName || '');
+            if (tag === 'TEXTAREA' || tag === 'INPUT') {
+              const v = String(el.value || '').trim();
+              if (v) return v;
+            }
+            const t = String(el.innerText || el.textContent || '').trim();
+            if (t) return t;
+          }
+          return '';
+        })()`,
+        true,
+      )) || '',
+    );
+  } catch {
+    return '';
+  }
+}
+
+async function clearGuestComposeBox(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    return !!(await webContents.executeJavaScript(
+      `(() => {
+        const clearOne = (el) => {
+          if (!el) return false;
+          try { el.focus(); } catch (e) {}
+          const tag = String(el.tagName || '');
+          if (tag === 'TEXTAREA' || tag === 'INPUT') {
+            el.value = '';
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+          }
+          if (el.isContentEditable) {
+            try {
+              const sel = window.getSelection?.();
+              const range = document.createRange();
+              range.selectNodeContents(el);
+              sel?.removeAllRanges?.();
+              sel?.addRange?.(range);
+              document.execCommand('delete', false, null);
+              document.execCommand('selectAll', false, null);
+              document.execCommand('delete', false, null);
+            } catch (e) {}
+            try {
+              el.textContent = '';
+              while (el.firstChild) el.removeChild(el.firstChild);
+            } catch (e) {}
+            el.dispatchEvent(new InputEvent('input', {
+              bubbles: true, inputType: 'deleteContentBackward', data: null,
+            }));
+            return true;
+          }
+          return false;
+        };
+        const marked = document.querySelector('[data-aspera-ai-compose="1"]');
+        if (clearOne(marked)) return true;
+        const wa = document.querySelector('[data-testid="conversation-compose-box-input"]');
+        if (clearOne(wa)) return true;
+        for (const node of document.querySelectorAll(${JSON.stringify(guestComposeSelector())})) {
+          if (clearOne(node)) return true;
+        }
+        return false;
+      })()`,
+      true,
+    ));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * After Hub opens a chat (pin / Forward), wipe send-box text that was clearly
+ * an accidental clipboard paste or a leftover AI/Forward error — WhatsApp
+ * persists drafts, so this otherwise looks like Hub "typed" into the chat.
+ */
+async function sanitizeComposeAfterHubChatOpen(
+  webContents,
+  { allowClipboardMatch = true } = {},
+) {
+  if (!webContents || webContents.isDestroyed()) return { cleared: false };
+  const text = await readGuestComposeText(webContents);
+  if (!String(text || '').trim()) return { cleared: false };
+  let systemClipboard = '';
+  try {
+    systemClipboard = clipboard.readText() || '';
+  } catch {
+    systemClipboard = '';
+  }
+  const polluted = isHubComposePollution(text, {
+    stagedClipboard: hubStagedClipboardText,
+    systemClipboard,
+    allowClipboardMatch,
+  });
+  if (!polluted) return { cleared: false, text };
+  const ok = await clearGuestComposeBox(webContents);
+  return { cleared: !!ok, text };
+}
+
+async function focusGuestCompose(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    return !!(await webContents.executeJavaScript(
+      `(() => {
+        const marked = document.querySelector('[data-aspera-ai-compose="1"]');
+        const nodes = [
+          marked,
+          ...document.querySelectorAll(${JSON.stringify(guestComposeSelector())}),
+        ].filter(Boolean);
+        for (const node of nodes) {
+          try { node.focus({ preventScroll: true }); } catch (e) {
+            try { node.focus(); } catch (e2) {}
+          }
+          try { node.click(); } catch (e) {}
+          return true;
+        }
+        return false;
+      })()`,
+      true,
+    ));
+  } catch {
+    return false;
+  }
+}
+
+/** Native Ctrl+V — more reliable than execCommand('paste') for image clipboard in guests. */
+async function sendCtrlVToGuest(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    webContents.focus();
+  } catch {
+    /* ignore */
+  }
+  const mods = ['control'];
+  try {
+    webContents.sendInputEvent({ type: 'keyDown', keyCode: 'V', modifiers: mods });
+    webContents.sendInputEvent({ type: 'char', keyCode: 'V', modifiers: mods });
+    webContents.sendInputEvent({ type: 'keyUp', keyCode: 'V', modifiers: mods });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function stageForwardPaste(serviceId) {
+  const entry = views.get(serviceId);
+  const wc = entry?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return false;
+
+  const focused = await focusGuestCompose(wc);
+  if (!focused) return false;
+
+  // Prefer OS-level paste for images; execCommand often no-ops on WhatsApp/Arattai.
+  const viaKeys = await sendCtrlVToGuest(wc);
+  if (viaKeys) {
+    await sleepMs(180);
+    return true;
+  }
+
+  try {
+    return !!(await wc.executeJavaScript(
+      `(() => {
+        const focusAndPaste = (node) => {
+          if (!node) return false;
+          try { node.focus(); } catch (e) {}
+          try {
+            return document.execCommand('paste');
+          } catch (e) {
+            return false;
+          }
+        };
+        const marked = document.querySelector('[data-aspera-ai-compose="1"]');
+        if (focusAndPaste(marked)) return true;
+        const marked2 = document.querySelector('[data-aspera-ai-compose="1"]');
+        if (focusAndPaste(marked2)) return true;
+        for (const node of document.querySelectorAll(${JSON.stringify(guestComposeSelector())})) {
+          if (focusAndPaste(node)) return true;
+        }
+        return false;
+      })()`,
+      true,
+    ));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Wait for an open compose box, then paste the staged image/text (like doc attach).
+ */
+async function waitForChatAndPasteForward(serviceId, pasteGen = forwardPasteGeneration) {
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    if (pasteGen !== forwardPasteGeneration) return false;
+    const entry = views.get(serviceId);
+    const wc = entry?.view?.webContents;
+    if (!wc || wc.isDestroyed()) return false;
+    if (await guestHasOpenCompose(wc)) {
+      await sleepMs(280);
+      if (pasteGen !== forwardPasteGeneration) return false;
+      await markActiveComposeTarget(serviceId);
+      return stageForwardPaste(serviceId);
+    }
+    await sleepMs(400);
+  }
+  return false;
+}
+
+/** Snapshot of the open chat so we don't paste into a pre-selected recipient. */
+async function getGuestChatKey(webContents) {
+  if (!webContents || webContents.isDestroyed()) {
+    return { title: '', compose: false, href: '' };
+  }
+  try {
+    const result = await webContents.executeJavaScript(
+      `(() => {
+        const header =
+          document.querySelector('.art-chwindow-hdr')
+          || document.querySelector('[data-testid="conversation-info-header"]')
+          || document.querySelector('#main header')
+          || document.querySelector('[class*="chat-header" i]')
+          || document.querySelector('[class*="ChatHeader" i]')
+          || document.querySelector('[class*="conversation-header" i]')
+          || document.querySelector('header');
+        const title = String(
+          header?.querySelector?.('.chat-title-text')?.getAttribute?.('title')
+          || header?.querySelector?.('.chat-title-text')?.textContent
+          || header?.querySelector?.('.art-chat-title')?.textContent
+          || header?.querySelector?.('[data-testid="conversation-info-header-chat-title"]')?.textContent
+          || header?.querySelector?.('span[title]')?.getAttribute?.('title')
+          || header?.querySelector?.('[dir="auto"]')?.textContent
+          || header?.querySelector?.('h1,h2,h3,[role="heading"]')?.textContent
+          || header?.querySelector?.('span')?.textContent
+          || '',
+        ).replace(/\\s+/g, ' ').trim().slice(0, 120);
+        const compose = ${guestComposeDetectJs()};
+        return { title, compose: !!compose, href: String(location.href || '') };
+      })()`,
+      true,
+    );
+    return {
+      title: String(result?.title || ''),
+      compose: !!result?.compose,
+      href: String(result?.href || ''),
+    };
+  } catch {
+    return { title: '', compose: false, href: '' };
+  }
+}
+
+/**
+ * Wait until the user searches/opens a recipient chat.
+ * Never treat the already-open chat as the pick — they must choose (or re-click).
+ */
+async function waitForRecipientChatSelection(webContents, {
+  initialKey = null,
+  timeoutMs = 90_000,
+} = {}) {
+  const baseline = initialKey || (await getGuestChatKey(webContents));
+  const deadline = Date.now() + timeoutMs;
+  // Ignore accidental focus clicks during tab activate (Arattai often already has a chat open).
+  const confirmAfter = Date.now() + 700;
+  // Arm a detector for chat-list / search-result picks and "confirm open chat" clicks.
+  try {
+    await webContents.executeJavaScript(
+      `(() => {
+        window.__asperaForwardRecipientArmed = true;
+        window.__asperaForwardRecipientPicked = false;
+        window.__asperaForwardRecipientConfirmed = false;
+        if (window.__asperaForwardRecipientHandler) {
+          document.removeEventListener('click', window.__asperaForwardRecipientHandler, true);
+        }
+        const listSel = ${JSON.stringify(forwardRecipientClickSelector())};
+        const confirmSel = ${JSON.stringify(forwardRecipientConfirmSelector())};
+        window.__asperaForwardRecipientHandler = (e) => {
+          const t = e?.target;
+          if (!t || !t.closest) return;
+          if (t.closest(listSel)) window.__asperaForwardRecipientPicked = true;
+          // Click compose / conversation panel = "use this already-open chat".
+          if (t.closest(confirmSel)) window.__asperaForwardRecipientConfirmed = true;
+        };
+        document.addEventListener('click', window.__asperaForwardRecipientHandler, true);
+        return true;
+      })()`,
+      true,
+    );
+  } catch {
+    // ignore
+  }
+
+  while (Date.now() < deadline) {
+    if (!webContents || webContents.isDestroyed()) {
+      return { ok: false, error: 'Chat view is gone.' };
+    }
+    let pickedClick = false;
+    let confirmedClick = false;
+    try {
+      const flags = await webContents.executeJavaScript(
+        `({
+          picked: !!window.__asperaForwardRecipientPicked,
+          confirmed: !!window.__asperaForwardRecipientConfirmed,
+        })`,
+        true,
+      );
+      pickedClick = !!flags?.picked;
+      confirmedClick = !!flags?.confirmed;
+    } catch {
+      pickedClick = false;
+      confirmedClick = false;
+    }
+    const cur = await getGuestChatKey(webContents);
+    if (cur.compose) {
+      const titleChanged =
+        !!(cur.title && baseline.title && cur.title !== baseline.title) ||
+        !!(cur.title && !baseline.title);
+      const hrefChanged =
+        !!(cur.href && baseline.href && cur.href !== baseline.href);
+      // No chat was open → first compose the user opens is the recipient.
+      if (!baseline.compose) {
+        return { ok: true, via: 'opened-chat', chat: cur };
+      }
+      if (titleChanged || hrefChanged) {
+        return { ok: true, via: 'chat-changed', chat: cur };
+      }
+      // Same chat still open: chat-list click OR compose/panel click (Arattai Pocket case).
+      if (pickedClick || (confirmedClick && Date.now() >= confirmAfter)) {
+        await sleepMs(250);
+        const after = await getGuestChatKey(webContents);
+        if (after.compose) {
+          return {
+            ok: true,
+            via: pickedClick ? 'chat-list-click' : 'compose-confirm',
+            chat: after,
+          };
+        }
+      }
+    }
+    await sleepMs(350);
+  }
+
+  try {
+    await webContents.executeJavaScript(
+      `(() => {
+        if (window.__asperaForwardRecipientHandler) {
+          document.removeEventListener('click', window.__asperaForwardRecipientHandler, true);
+        }
+        window.__asperaForwardRecipientArmed = false;
+        window.__asperaForwardRecipientPicked = false;
+        window.__asperaForwardRecipientConfirmed = false;
+        window.__asperaForwardRecipientHandler = null;
+        return true;
+      })()`,
+      true,
+    );
+  } catch {
+    // ignore
+  }
+  return { ok: false, timedOut: true };
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function guestHasOpenCompose(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    return !!(await webContents.executeJavaScript(guestComposeDetectJs(), true));
+  } catch {
+    return false;
+  }
+}
+
+async function ensureGuestDebugger(webContents) {
+  const dbg = webContents.debugger;
+  if (!dbg.isAttached()) {
+    try {
+      dbg.attach('1.3');
+    } catch {
+      // May already be attached by another helper.
+    }
+  }
+  return dbg;
+}
+
+/** Click Attach → Document (WhatsApp) or equivalent attach control (Arattai). */
+async function clickAttachDocumentUi(webContents, appId = '') {
+  if (!webContents || webContents.isDestroyed()) return { ok: false };
+  const requireDocument = String(appId || '') === 'whatsapp';
+  const isArattai = String(appId || '') === 'arattai';
+  try {
+    return await webContents.executeJavaScript(
+      `(async () => {
+        const requireDocument = ${JSON.stringify(requireDocument)};
+        const isArattai = ${JSON.stringify(isArattai)};
+        const composeSel = ${JSON.stringify(guestComposeSelector())};
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        const visible = (el) => {
+          if (!el) return false;
+          const s = window.getComputedStyle(el);
+          const r = el.getBoundingClientRect();
+          return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 0 && r.height > 0;
+        };
+        const click = (el) => {
+          if (!el || !visible(el)) return false;
+          try { el.focus({ preventScroll: true }); } catch (e) {}
+          try { el.click(); return true; } catch (e) { return false; }
+        };
+        const labelOf = (el) => [
+          el.getAttribute('aria-label') || '',
+          el.getAttribute('title') || '',
+          el.getAttribute('data-testid') || '',
+          el.getAttribute('data-tooltip') || '',
+          el.textContent || '',
+        ].join(' ').replace(/\\s+/g, ' ').trim();
+        const all = () => Array.from(document.querySelectorAll(
+          'button,[role="button"],li,[role="menuitem"],label,div,span,a',
+        ));
+        const byText = (re) => all().find((el) => {
+          if (!visible(el)) return false;
+          return re.test(labelOf(el));
+        });
+        const isPhotoOrOther = (el) => {
+          const t = labelOf(el).toLowerCase();
+          return /photo|video|camera|sticker|contact|poll|event|location|image|emoji|mic|voice|send/i.test(t);
+        };
+        const findDocumentItem = () => {
+          const direct =
+            document.querySelector('[data-testid="mi-attach-document"]')
+            || document.querySelector('span[data-icon="document"]')?.closest('li,button,[role="button"],[role="menuitem"]');
+          if (direct && visible(direct) && !isPhotoOrOther(direct)) return direct;
+          return all().find((el) => {
+            if (!visible(el) || isPhotoOrOther(el)) return false;
+            const t = labelOf(el).toLowerCase();
+            const icon = String(el.getAttribute('data-icon') || el.querySelector?.('[data-icon]')?.getAttribute?.('data-icon') || '').toLowerCase();
+            if (icon.includes('document') || icon.includes('doc')) return true;
+            if (t === 'document' || t === 'documents') return true;
+            if (/\\bdocument\\b/.test(t) && !/photo|video/.test(t)) return true;
+            return false;
+          }) || null;
+        };
+
+        // Prefer the paperclip sitting to the left of the compose box (Arattai).
+        const findComposePaperclip = () => {
+          const compose = document.querySelector(composeSel);
+          if (!compose) return null;
+          const cr = compose.getBoundingClientRect();
+          const root =
+            compose.closest('footer, form, [class*="composer" i], [class*="Composer"], [class*="input-area" i], [class*="InputArea"]')
+            || compose.parentElement?.parentElement
+            || compose.parentElement
+            || document.body;
+          const candidates = Array.from(
+            root.querySelectorAll('button, [role="button"], label, span, div, a'),
+          );
+          let best = null;
+          let bestScore = -1;
+          for (const el of candidates) {
+            if (!visible(el) || isPhotoOrOther(el)) continue;
+            const er = el.getBoundingClientRect();
+            if (er.width < 10 || er.height < 10 || er.width > 72 || er.height > 72) continue;
+            const t = labelOf(el).toLowerCase();
+            let score = 0;
+            if (/attach|paper\\s*clip|upload|clip/.test(t)) score += 8;
+            if (el.querySelector?.('svg, img, [data-icon], use')) score += 2;
+            // Left of compose, same row.
+            if (er.right <= cr.left + 12 && Math.abs((er.top + er.bottom) / 2 - (cr.top + cr.bottom) / 2) < 36) {
+              score += 6;
+            }
+            if (score > bestScore) {
+              bestScore = score;
+              best = el;
+            }
+          }
+          return bestScore >= 6 ? best : null;
+        };
+
+        // WhatsApp Web: plus / attach → Document (must click Document, not Photos).
+        const waAttach =
+          document.querySelector('[data-testid="conversation-clip"]')
+          || document.querySelector('[data-testid="attach-menu-plus"]')
+          || document.querySelector('button[aria-label="Attach"]')
+          || document.querySelector('div[title="Attach"]')
+          || document.querySelector('span[data-icon="plus"]')?.closest('button,[role="button"]')
+          || byText(/^\\s*attach\\s*$/i);
+        if (!isArattai && waAttach && click(waAttach)) {
+          const deadline = Date.now() + 2200;
+          while (Date.now() < deadline) {
+            await wait(80);
+            const doc = findDocumentItem();
+            if (doc && click(doc)) return { ok: true, via: 'whatsapp-document' };
+          }
+          if (requireDocument) {
+            return { ok: false, reason: 'document_menu_missing' };
+          }
+          return { ok: false, reason: 'document_menu_missing', via: 'whatsapp-attach-open' };
+        }
+
+        // Arattai / generic paperclip — often opens a chooser without a Document submenu.
+        const genericAttach =
+          findComposePaperclip()
+          || document.querySelector('[aria-label*="attach" i]')
+          || document.querySelector('[title*="attach" i]')
+          || document.querySelector('[aria-label*="upload" i]')
+          || document.querySelector('[title*="upload" i]')
+          || byText(/^\\s*(attach|upload|paper\\s*clip)\\s*$/i)
+          || document.querySelector('input[type="file"]')?.closest('button,label,[role="button"]');
+        if (genericAttach && click(genericAttach)) {
+          const deadline = Date.now() + 2500;
+          while (Date.now() < deadline) {
+            await wait(80);
+            if (!isArattai) {
+              const doc = findDocumentItem() || byText(/\\bdocument\\b|\\bpdf\\b|\\bfile\\b/i);
+              if (doc && !isPhotoOrOther(doc) && click(doc)) {
+                return { ok: true, via: 'generic-document' };
+              }
+            }
+            if (document.querySelector('input[type="file"]')) {
+              return { ok: true, via: 'generic-attach-open' };
+            }
+          }
+          return { ok: true, via: 'generic-attach-clicked' };
+        }
+
+        if (document.querySelector('input[type="file"]')) {
+          return { ok: true, via: 'file-input-ready' };
+        }
+        return { ok: false, reason: 'attach_missing' };
+      })()`,
+      true,
+    );
+  } catch (error) {
+    return { ok: false, reason: String(error?.message || error) };
+  }
+}
+
+/**
+ * Inject a local file into a guest <input type="file"> via CDP.
+ * For documents, never target image/video-only accept attributes (WhatsApp Photos).
+ */
+async function setFileInputViaCdp(webContents, filePath, { documentOnly = true } = {}) {
+  const abs = path.resolve(filePath);
+  if (!webContents || webContents.isDestroyed() || !fs.existsSync(abs)) {
+    return { ok: false };
+  }
+  try {
+    const dbg = await ensureGuestDebugger(webContents);
+    await dbg.sendCommand('DOM.enable');
+    const { root } = await dbg.sendCommand('DOM.getDocument', { depth: -1 });
+    const { nodeIds } = await dbg.sendCommand('DOM.querySelectorAll', {
+      nodeId: root.nodeId,
+      selector: 'input[type="file"]',
+    });
+    if (!Array.isArray(nodeIds) || !nodeIds.length) {
+      return { ok: false, reason: 'no_file_input' };
+    }
+
+    const scored = [];
+    for (let i = 0; i < nodeIds.length; i += 1) {
+      const nodeId = nodeIds[i];
+      let accept = '';
+      let multiple = false;
+      try {
+        const { attributes } = await dbg.sendCommand('DOM.getAttributes', { nodeId });
+        const attrs = {};
+        for (let j = 0; j + 1 < (attributes || []).length; j += 2) {
+          attrs[String(attributes[j]).toLowerCase()] = String(attributes[j + 1] || '');
+        }
+        accept = String(attrs.accept || '');
+        multiple = Object.prototype.hasOwnProperty.call(attrs, 'multiple');
+      } catch {
+        /* ignore */
+      }
+      const imageOnly = isImageOnlyAccept(accept);
+      const docOk = isDocumentAccept(accept);
+      let score = 0;
+      if (documentOnly) {
+        if (imageOnly || !docOk) continue;
+        if (/pdf|application\/pdf/i.test(accept)) score += 5;
+        else if (/application\//i.test(accept)) score += 3;
+        else if (!accept.trim() || accept.trim() === '*' || accept.includes('*/*')) score += 2;
+        else score += 1;
+      } else {
+        if (docOk) score += 3;
+        if (imageOnly) score -= 4;
+      }
+      if (multiple) score += 1;
+      // Prefer later (menu-opened) inputs when scores tie.
+      score += i * 0.01;
+      scored.push({ nodeId, score, accept });
+    }
+
+    if (!scored.length) {
+      return {
+        ok: false,
+        reason: documentOnly ? 'no_document_file_input' : 'no_file_input',
+        totalInputs: nodeIds.length,
+      };
+    }
+
+    scored.sort((a, b) => b.score - a.score);
+    const best = scored[0];
+    await dbg.sendCommand('DOM.setFileInputFiles', {
+      nodeId: best.nodeId,
+      files: [abs],
+    });
+    await webContents.executeJavaScript(
+      `(() => {
+        const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+        // Nudge the document-capable input(s); skip image-only to avoid WA errors.
+        const isImageOnly = (accept) => {
+          const a = String(accept || '').toLowerCase().trim();
+          if (!a) return false;
+          const hasDoc = /pdf|msword|officedocument|opendocument|\\.docx?|\\.xlsx?|\\.pptx?|\\.txt|\\.csv|\\.zip|text\\/plain|application\\//i.test(a);
+          if (hasDoc) return false;
+          return /image\\//.test(a) || /\\.(png|jpe?g|gif|webp|bmp|heic|svg)/.test(a) || /video\\//.test(a);
+        };
+        for (const el of inputs) {
+          if (isImageOnly(el.getAttribute('accept'))) continue;
+          try { el.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+          try { el.dispatchEvent(new Event('input', { bubbles: true })); } catch (e) {}
+        }
+        return true;
+      })()`,
+      true,
+    );
+    return {
+      ok: true,
+      method: 'cdp-set-files',
+      documentOnly: !!documentOnly,
+      accept: best.accept || '',
+      score: best.score,
+    };
+  } catch (error) {
+    console.warn('[forward] CDP setFileInputFiles failed', error);
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+/** Drop a real File onto the open chat (works like OS drag-and-drop for many web apps). */
+async function dropFileOntoGuestChat(webContents, filePath) {
+  const abs = path.resolve(filePath);
+  if (!webContents || webContents.isDestroyed() || !fs.existsSync(abs)) {
+    return { ok: false };
+  }
+  const stat = fs.statSync(abs);
+  // Keep IPC payload reasonable — large docs use CDP attach instead.
+  if (stat.size > 12 * 1024 * 1024) return { ok: false, error: 'too-large-for-drop' };
+  const b64 = fs.readFileSync(abs).toString('base64');
+  const name = path.basename(abs);
+  const mime = mimeForFilename(name);
+  try {
+    const result = await webContents.executeJavaScript(
+      `(() => {
+        const b64 = ${JSON.stringify(b64)};
+        const name = ${JSON.stringify(name)};
+        const mime = ${JSON.stringify(mime)};
+        const binary = atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        const file = new File([bytes], name, { type: mime });
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        const isImageOnly = (accept) => {
+          const a = String(accept || '').toLowerCase().trim();
+          if (!a) return false;
+          const hasDoc = /pdf|msword|officedocument|opendocument|\\.docx?|\\.xlsx?|\\.pptx?|\\.txt|\\.csv|\\.zip|text\\/plain|application\\//i.test(a);
+          if (hasDoc) return false;
+          return /image\\//.test(a) || /\\.(png|jpe?g|gif|webp|bmp|heic|svg)/.test(a) || /video\\//.test(a);
+        };
+        const isDocAccept = (accept) => {
+          const a = String(accept || '').toLowerCase().trim();
+          if (isImageOnly(a)) return false;
+          if (!a || a === '*' || a.includes('*/*')) return true;
+          return /pdf|msword|officedocument|opendocument|\\.docx?|\\.xlsx?|\\.pptx?|\\.txt|\\.csv|\\.zip|text\\/plain|application\\//i.test(a);
+        };
+        const composeSel = ${JSON.stringify(guestComposeSelector())};
+        const targets = [
+          document.querySelector('#main'),
+          document.querySelector('[data-testid="conversation-panel-wrapper"]'),
+          document.querySelector('[data-testid="conversation-panel-body"]'),
+          document.querySelector('[data-testid="conversation-compose-box-input"]'),
+          document.querySelector('footer'),
+          document.querySelector(composeSel),
+          document.querySelector('[class*="composer" i]'),
+          document.querySelector('[class*="Composer"]'),
+          document.querySelector('[class*="chat-content" i]'),
+          document.querySelector('[contenteditable="true"][role="textbox"]'),
+          document.querySelector('[contenteditable="true"]'),
+          document.querySelector('textarea'),
+          document.body,
+        ].filter(Boolean);
+        let dropped = false;
+        for (const target of targets) {
+          for (const type of ['dragenter', 'dragover', 'drop']) {
+            const ev = new DragEvent(type, {
+              bubbles: true,
+              cancelable: true,
+              dataTransfer: dt,
+            });
+            target.dispatchEvent(ev);
+          }
+          dropped = true;
+        }
+        const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+        const docInput = inputs.find((el) => isDocAccept(el.getAttribute('accept'))) || null;
+        // Never assign a PDF into Photos & videos input — WhatsApp shows "File not supported".
+        if (docInput) {
+          try {
+            const iDt = new DataTransfer();
+            iDt.items.add(file);
+            docInput.files = iDt.files;
+            docInput.dispatchEvent(new Event('change', { bubbles: true }));
+            return { ok: true, method: 'input-files' };
+          } catch (e) {}
+        }
+        return { ok: dropped, method: 'drop' };
+      })()`,
+      true,
+    );
+    return result?.ok ? { ok: true, method: result.method || 'drop' } : { ok: false };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+}
+
+function validateLocalForwardDocument(filePath) {
+  const abs = path.resolve(filePath);
+  if (!fs.existsSync(abs)) {
+    return { ok: false, error: 'Document file missing.' };
+  }
+  const size = fs.statSync(abs).size;
+  if (size < 32) {
+    return { ok: false, error: 'Document file is empty or too small.' };
+  }
+  let header = Buffer.alloc(0);
+  try {
+    const fd = fs.openSync(abs, 'r');
+    header = Buffer.alloc(16);
+    const n = fs.readSync(fd, header, 0, 16, 0);
+    fs.closeSync(fd);
+    header = header.subarray(0, n);
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+  const classified = classifyForwardFileBytes(header, path.basename(abs));
+  if (!classified.ok) {
+    return { ok: false, error: classified.error || 'Unsupported file type.' };
+  }
+  return { ok: true, kind: classified.kind, size };
+}
+
+/**
+ * Attach a local document into the guest chat the seamless way:
+ * file-chooser intercept → Attach/Document click → CDP set files → DOM drop.
+ */
+async function attachDocumentToGuest(webContents, filePath, { appId = '' } = {}) {
+  const abs = path.resolve(filePath);
+  if (!webContents || webContents.isDestroyed()) {
+    return { ok: false, error: 'Chat view is gone.' };
+  }
+  const validated = validateLocalForwardDocument(abs);
+  if (!validated.ok) {
+    return { ok: false, error: validated.error || 'Document file missing.' };
+  }
+
+  const targetApp = String(appId || '');
+  // WhatsApp Photos accept is image-only — must use Document input.
+  // Arattai uses one unrestricted file input behind the paperclip.
+  const documentOnly = targetApp === 'whatsapp';
+
+  const dbg = await ensureGuestDebugger(webContents);
+  let chooserHandled = false;
+  let chooserError = '';
+  const onMessage = (_event, method) => {
+    if (method !== 'Page.fileChooserOpened' || chooserHandled) return;
+    chooserHandled = true;
+    dbg
+      .sendCommand('Page.handleFileChooser', {
+        action: 'select',
+        files: [abs],
+      })
+      .catch((error) => {
+        chooserError = String(error?.message || error);
+        chooserHandled = false;
+      });
+  };
+
+  try {
+    dbg.on('message', onMessage);
+    try {
+      await dbg.sendCommand('Page.enable');
+    } catch {
+      // ignore
+    }
+    try {
+      await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
+    } catch (error) {
+      console.warn('[forward] setInterceptFileChooserDialog failed', error);
+    }
+
+    const composeOpen = await guestHasOpenCompose(webContents);
+    if (!composeOpen) {
+      return {
+        ok: false,
+        needChat: true,
+        error: 'Open the person or group chat first.',
+      };
+    }
+
+    const menu = await clickAttachDocumentUi(webContents, appId);
+    // WhatsApp: must open Document path. Injecting into Photos yields "File not supported".
+    if (targetApp === 'whatsapp' && !menu?.ok) {
+      return {
+        ok: false,
+        error:
+          'Could not open Attach → Document. Open the chat, then try Forward again.',
+        reason: menu?.reason || 'document_menu_missing',
+      };
+    }
+
+    const start = Date.now();
+    while (!chooserHandled && Date.now() - start < 7000) {
+      await sleepMs(120);
+      if (Date.now() - start > 400) {
+        const injected = await setFileInputViaCdp(webContents, abs, { documentOnly });
+        if (injected.ok) return injected;
+        // Arattai: retry without accept filtering if the first pass found nothing.
+        if (targetApp === 'arattai') {
+          const anyInput = await setFileInputViaCdp(webContents, abs, {
+            documentOnly: false,
+          });
+          if (anyInput.ok) return anyInput;
+        }
+      }
+    }
+    if (chooserHandled) {
+      await sleepMs(250);
+      return { ok: true, method: 'file-chooser' };
+    }
+    if (chooserError) {
+      console.warn('[forward] file chooser handle failed', chooserError);
+    }
+
+    let injected = await setFileInputViaCdp(webContents, abs, { documentOnly });
+    if (injected.ok) return injected;
+    if (targetApp === 'arattai') {
+      injected = await setFileInputViaCdp(webContents, abs, { documentOnly: false });
+      if (injected.ok) return injected;
+    }
+
+    const dropped = await dropFileOntoGuestChat(webContents, abs);
+    if (dropped.ok) return dropped;
+
+    // Last try: click paperclip again, then CDP once more (Arattai mounts input late).
+    if (targetApp === 'arattai') {
+      await clickAttachDocumentUi(webContents, appId);
+      await sleepMs(350);
+      injected = await setFileInputViaCdp(webContents, abs, { documentOnly: false });
+      if (injected.ok) return injected;
+      if (chooserHandled) {
+        await sleepMs(200);
+        return { ok: true, method: 'file-chooser-retry' };
+      }
+    }
+
+    return {
+      ok: false,
+      error: 'Could not attach the document automatically.',
+    };
+  } finally {
+    try {
+      dbg.removeListener('message', onMessage);
+    } catch {
+      // ignore
+    }
+    try {
+      await dbg.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * If no chat is open yet, wait briefly for the user to click one, then attach.
+ */
+async function waitForChatAndAttachDocument(webContents, filePath, appId = '') {
+  const deadline = Date.now() + 45_000;
+  while (Date.now() < deadline) {
+    if (!webContents || webContents.isDestroyed()) {
+      return { ok: false, error: 'Chat view is gone.' };
+    }
+    if (await guestHasOpenCompose(webContents)) {
+      await sleepMs(350);
+      return attachDocumentToGuest(webContents, filePath, { appId });
+    }
+    await sleepMs(400);
+  }
+  return { ok: false, needChat: true, error: 'Timed out waiting for a chat.' };
+}
+
+async function deliverForwardToTarget(targetId) {
+  if (!FORWARD_WITH_HUB_ENABLED) {
+    return { ok: false, error: 'Forward with Aspera Hub is temporarily disabled.' };
+  }
+  const payload = forwardPayload;
+  if (!payload) return { ok: false, error: 'Nothing to forward.' };
+  const target = getService(targetId);
+  if (!target || !isForwardAppId(target.appId)) {
+    return { ok: false, error: 'Choose a WhatsApp or Arattai account.' };
+  }
+
+  const isDocument =
+    !!payload.isDocument &&
+    !!payload.filePath &&
+    fs.existsSync(payload.filePath);
+  const kind = forwardContentKind({
+    isDocument,
+    hasImage: !!payload.hasImage,
+  });
+  const clipText = buildForwardClipboardText(payload);
+
+  // Stage content the same way for every direction: clipboard for text/image,
+  // file path for documents (placed after the user picks a recipient).
+  if (isDocument) {
+    try {
+      clipboard.clear();
+    } catch {
+      // ignore
+    }
+  } else {
+    /** @type {Electron.Data} */
+    const write = {};
+    if (clipText) write.text = clipText;
+    if (payload.imagePath && fs.existsSync(payload.imagePath)) {
+      const image = nativeImage.createFromPath(payload.imagePath);
+      if (!image.isEmpty()) write.image = image;
+    }
+    if (Object.keys(write).length) {
+      try {
+        stageHubForwardClipboard(write);
+      } catch {
+        if (clipText) {
+          try {
+            hubClipboardBeforeStage = { text: clipboard.readText() || '' };
+          } catch {
+            hubClipboardBeforeStage = { text: '' };
+          }
+          hubStagedClipboardText = clipText;
+          clipboard.writeText(clipText);
+        }
+      }
+    }
+  }
+
+  const pasteGen = forwardPasteGeneration;
+  closeForwardPickerWindow();
+  activateService(targetId);
+  await sleepMs(520);
+
+  const targetName = target.name || target.defaultName || 'account';
+  const docName =
+    payload.fileName ||
+    (payload.filePath ? path.basename(payload.filePath) : 'document');
+  const entry = views.get(targetId);
+  const wc = entry?.view?.webContents;
+
+  let pasted = false;
+  let attached = false;
+  let detail = '';
+
+  // Unified step 2: never dump into whoever is already open.
+  const initialChat = await getGuestChatKey(wc);
+  try {
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Forward with Aspera Hub',
+        body: forwardWaitMessage(kind, targetName, docName),
+        silent: true,
+      }).show();
+    }
+  } catch {
+    // ignore
+  }
+
+  const picked = await waitForRecipientChatSelection(wc, {
+    initialKey: initialChat,
+    timeoutMs: 90_000,
+  });
+
+  if (!picked.ok) {
+    detail = forwardTimeoutMessage(kind, targetName, docName);
+    try {
+      if (Notification.isSupported()) {
+        new Notification({
+          title: 'Forward with Aspera Hub',
+          body: detail,
+          silent: true,
+        }).show();
+      }
+    } catch {
+      // ignore
+    }
+    if (isDocument) {
+      writeLinuxFileClipboard(payload.filePath);
+      try {
+        shell.showItemInFolder(payload.filePath);
+      } catch {
+        // ignore
+      }
+    } else {
+      restoreHubClipboardAfterForward();
+    }
+    cancelPendingForwardPaste();
+    return { ok: false, needRecipient: true, isDocument, kind, detail };
+  }
+
+  try {
+    await wc?.executeJavaScript?.(
+      `(() => {
+        if (window.__asperaForwardRecipientHandler) {
+          document.removeEventListener('click', window.__asperaForwardRecipientHandler, true);
+        }
+        window.__asperaForwardRecipientArmed = false;
+        window.__asperaForwardRecipientPicked = false;
+        window.__asperaForwardRecipientConfirmed = false;
+        window.__asperaForwardRecipientHandler = null;
+        return true;
+      })()`,
+      true,
+    );
+  } catch {
+    // ignore
+  }
+
+  await sleepMs(280);
+  await markActiveComposeTarget(targetId);
+
+  // Unified step 3: Hub places content the same way every direction.
+  // Documents → attach; text/images → paste. On failure, stage clipboard + Ctrl+V.
+  if (isDocument) {
+    let result = await attachDocumentToGuest(wc, payload.filePath, {
+      appId: target.appId,
+    });
+    if (!result.ok && result.needChat) {
+      result = await waitForChatAndAttachDocument(wc, payload.filePath, target.appId);
+    }
+    attached = !!result.ok;
+    if (!attached) {
+      // Same fallback for WhatsApp ↔ Arattai: file on clipboard, try Ctrl+V once.
+      writeLinuxFileClipboard(payload.filePath);
+      await sleepMs(120);
+      pasted = await stageForwardPaste(targetId);
+      if (pasted) attached = true;
+    }
+    detail = forwardReadyMessage(kind, targetName, {
+      ok: attached,
+      fileName: docName,
+    });
+  } else {
+    pasted = await stageForwardPaste(targetId);
+    if (!pasted) {
+      await sleepMs(350);
+      await markActiveComposeTarget(targetId);
+      pasted = await stageForwardPaste(targetId);
+    }
+    if (!pasted) {
+      pasted = await waitForChatAndPasteForward(targetId, pasteGen);
+    }
+    detail = forwardReadyMessage(kind, targetName, { ok: pasted });
+  }
+
+  // Unified step 4 cue: same toast style for every content type / direction.
+  try {
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Forward with Aspera Hub',
+        body: detail,
+        silent: true,
+      }).show();
+    }
+  } catch {
+    // ignore
+  }
+
+  // Do not leave Forward text sitting on the system clipboard for the next chat open.
+  restoreHubClipboardAfterForward();
+  return {
+    ok: true,
+    pasted,
+    attached,
+    isDocument,
+    kind,
+  };
+}
+
 /**
  * Native right-click menu for guest pages (Cut / Copy / Paste / Select All…).
  * Electron does not show Chromium's built-in menu unless we handle this event.
+ * WhatsApp/Arattai: one Forward entry — Hub decides text / image / document.
+ *
+ * Do NOT suppress the page's own contextmenu — blocking it (v0.3.5) disabled
+ * right-click entirely when the native Menu.popup was not visible over the guest.
  */
 function attachGuestContextMenu(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
+  if (webContents.__asperaGuestContextMenu) return;
+  webContents.__asperaGuestContextMenu = true;
+
   webContents.on('context-menu', (_event, params) => {
     if (webContents.isDestroyed()) return;
+
+    const sourceServiceId = serviceIdForWebContents(webContents);
+    const service = getService(sourceServiceId) || getService(activeServiceId);
 
     /** @type {Electron.MenuItemConstructorOptions[]} */
     const template = [];
@@ -1785,14 +7857,15 @@ function attachGuestContextMenu(webContents) {
       template.push({ type: 'separator' });
     }
 
-    if (params.linkURL) {
+    const safeLink = sanitizeForwardLinkURL(params.linkURL);
+    if (safeLink) {
       template.push({
         label: 'Open link',
-        click: () => openExternalSafe(params.linkURL),
+        click: () => openExternalSafe(safeLink),
       });
       template.push({
         label: 'Copy link address',
-        click: () => clipboard.writeText(params.linkURL),
+        click: () => clipboard.writeText(safeLink),
       });
       template.push({ type: 'separator' });
     }
@@ -1815,6 +7888,99 @@ function attachGuestContextMenu(webContents) {
 
     const editable = params.isEditable;
     const hasSelection = Boolean(params.selectionText);
+    const forwardTargets = service ? listForwardTargets(service.id) : [];
+    const canForward = !!(
+      service &&
+      canOfferForward({
+        appId: service.appId,
+        hasSelection,
+        hasImage: !!params.hasImageContents,
+        linkURL: safeLink,
+        srcURL: params.srcURL,
+        mediaType: params.mediaType,
+        titleText: params.titleText || params.altText,
+        targetCount: forwardTargets.length,
+        alwaysOnMessaging: true,
+      })
+    );
+    const canSummarize = !!(
+      hasSelection &&
+      service &&
+      isAiAllowedAppId(service.appId) &&
+      settings.aiEnabled !== false
+    );
+
+    // With selected message text: Summarize → Forward (Pin does not apply to a selection).
+    // On chat-list rows (no selection, not an image): Pin → Forward.
+    // Never show Pin on photos / PDF preview tiles in an open chat.
+    const canPin = canOfferHubPin({
+      inboxApp: !!(service && isInboxAppId(service.appId)),
+      hasSelection,
+      hasImage: !!params.hasImageContents,
+      mediaType: params.mediaType,
+    });
+    const pushPinItem = () => {
+      if (!canPin) return;
+      const pinHitPromise = webContents
+        .executeJavaScript(inspectChatListTargetJs(params.x, params.y), true)
+        .catch(() => null);
+      template.push({
+        label: 'Pin with Aspera Hub',
+        click: () => {
+          pinHitPromise
+            .then((preHit) =>
+              pinChatFromGuestContext(webContents, service, params, preHit),
+            )
+            .catch(() => {});
+        },
+      });
+    };
+    const pushForwardItem = () => {
+      if (!canForward) return;
+      template.push({
+        label: 'Forward with Aspera Hub',
+        click: () => {
+          beginForwardFromGuest(webContents, params).catch(() => {});
+        },
+      });
+    };
+    const pushSummarizeItems = () => {
+      if (!canSummarize) return;
+      template.push({
+        label: 'Summarize with Aspera AI',
+        click: () => {
+          runAsperaAiSkill('summarize', {
+            selectionText: String(params.selectionText || ''),
+            clickX: Number(params.x) || 0,
+            clickY: Number(params.y) || 0,
+          }).catch(() => {});
+        },
+      });
+      if (editable) {
+        template.push({
+          label: 'Refine with Aspera AI',
+          click: () => {
+            runAsperaAiSkill('refine', {
+              selectionText: String(params.selectionText || ''),
+            }).catch(() => {});
+          },
+        });
+      }
+    };
+    for (const action of guestContextMenuActionOrder({
+      hasSelection,
+      canSummarize,
+      canForward,
+      canPin,
+    })) {
+      if (action === 'summarize') pushSummarizeItems();
+      else if (action === 'forward') pushForwardItem();
+      else if (action === 'pin') pushPinItem();
+    }
+
+    if (canSummarize || canForward || canPin) {
+      template.push({ type: 'separator' });
+    }
 
     if (editable || hasSelection) {
       template.push({
@@ -1859,8 +8025,6 @@ function attachGuestContextMenu(webContents) {
       template.push({ type: 'separator' });
       template.push({ label: 'Select all', role: 'selectAll' });
     } else {
-      // Always offer clipboard actions so users can paste into the page
-      // even when the hit-test did not mark an input (common in SPAs).
       template.push({ label: 'Copy', role: 'copy' });
       template.push({ label: 'Paste', role: 'paste' });
       template.push({ label: 'Select all', role: 'selectAll' });
@@ -1868,25 +8032,44 @@ function attachGuestContextMenu(webContents) {
 
     if (!template.length) return;
     const menu = Menu.buildFromTemplate(template);
-    // params.x/y are relative to the guest WebContents; Menu.popup needs window coords.
+
+    let popupWindow =
+      mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
     let popupX = params.x;
     let popupY = params.y;
     try {
-      for (const entry of views.values()) {
-        if (entry?.view?.webContents === webContents) {
-          const bounds = entry.view.getBounds?.() || entry.__lastBounds;
-          if (bounds) {
-            popupX += bounds.x || 0;
-            popupY += bounds.y || 0;
-          }
-          break;
+      const owner = BrowserWindow.fromWebContents(webContents);
+      if (owner && !owner.isDestroyed()) {
+        popupWindow = owner;
+        // Child preview windows: coords are already relative to that window.
+        if (owner !== mainWindow) {
+          popupX = params.x;
+          popupY = params.y;
         }
       }
     } catch {
       // ignore
     }
+    if (popupWindow === mainWindow || !popupWindow) {
+      try {
+        for (const entry of views.values()) {
+          if (entry?.view?.webContents === webContents) {
+            const bounds = entry.view.getBounds?.() || entry.__lastBounds;
+            if (bounds) {
+              popupX += bounds.x || 0;
+              popupY += bounds.y || 0;
+            }
+            break;
+          }
+        }
+      } catch {
+        // ignore
+      }
+      popupWindow =
+        mainWindow && !mainWindow.isDestroyed() ? mainWindow : popupWindow;
+    }
     menu.popup({
-      window: mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined,
+      window: popupWindow,
       x: Math.round(popupX),
       y: Math.round(popupY),
     });
@@ -1932,6 +8115,12 @@ function configureGuestWindowOpen(wc, service) {
           openExternalSafe(outbound);
           return { action: 'deny' };
         }
+        if (isGoogleOwnedUrl(raw) && !isAllowedGmailTabUrl(raw)) {
+          // Malformed internal Google handoff URLs (drive/accounts continue=...)
+          // should not spawn external error tabs. Reset to Gmail home.
+          wc.loadURL(startUrlForService(service) || service.url).catch(() => {});
+          return { action: 'deny' };
+        }
         if (!isAllowedGmailTabUrl(raw)) {
           openExternalSafe(raw);
           return { action: 'deny' };
@@ -1941,8 +8130,17 @@ function configureGuestWindowOpen(wc, service) {
         return { action: 'deny' };
       }
 
+      // Google OAuth / SSO popups must stay in-app for all services
+      // (ChatGPT, Claude, etc. use "Sign in with Google").
+      if (isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) {
+        return allowPopup();
+      }
+
       const internal = isInternalUrl(raw, service);
       if (!internal) {
+        // Never open broken Google consent/handoff URLs externally —
+        // they produce 400 error tabs in the default browser.
+        if (isGoogleOwnedUrl(raw)) return { action: 'deny' };
         openExternalSafe(raw);
         return { action: 'deny' };
       }
@@ -1977,6 +8175,11 @@ function attachGuestNavigationGate(webContents, service) {
         openExternalSafe(outbound);
         return;
       }
+      if (isGoogleOwnedUrl(url) && !isAllowedGmailTabUrl(url)) {
+        event.preventDefault();
+        webContents.loadURL(startUrlForService(service) || service.url).catch(() => {});
+        return;
+      }
       if (!isAllowedGmailTabUrl(url)) {
         event.preventDefault();
         openExternalSafe(url);
@@ -1985,7 +8188,15 @@ function attachGuestNavigationGate(webContents, service) {
       return;
     }
 
+    // Allow Google OAuth/SSO flows for any app (ChatGPT, Claude, etc.).
+    if (isAuthOrLoginUrl(url) && isGoogleOwnedUrl(url)) return;
+
     if (isInternalUrl(url, service)) return;
+    // Suppress broken Google consent URLs — they 400 in external browsers.
+    if (isGoogleOwnedUrl(url)) {
+      event.preventDefault();
+      return;
+    }
     event.preventDefault();
     openExternalSafe(url);
   };
@@ -1999,8 +8210,9 @@ function attachGuestNavigationGate(webContents, service) {
     if (!isGoogleService(service)) return;
     if (!url || !String(url).startsWith('http')) return;
     if (isAllowedGmailTabUrl(url)) return;
-    const outbound = extractGoogleOutboundUrl(url) || url;
-    openExternalSafe(outbound);
+    const outbound = extractGoogleOutboundUrl(url);
+    if (outbound) openExternalSafe(outbound);
+    else if (!isGoogleOwnedUrl(url)) openExternalSafe(url);
     const home = startUrlForService(service);
     webContents.loadURL(home).catch(() => {});
   });
@@ -2102,6 +8314,7 @@ function createViewForService(service) {
   // rules too, and must never be trapped inside a broken denied handle.
   webContents.on('did-create-window', (childWindow) => {
     const childWc = childWindow.webContents;
+    trackServicePopup(service.id, childWindow);
     configureGuestWindowOpen(childWc, service);
     attachGuestContextMenu(childWc);
     attachGuestNavigationGate(childWc, service);
@@ -2116,6 +8329,17 @@ function createViewForService(service) {
     watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
   });
 
+  webContents.on('console-message', (event, level, message) => {
+    const text =
+      (typeof event === 'object' && event && 'message' in event
+        ? String(event.message || '')
+        : '') ||
+      (typeof message === 'string' ? message : '') ||
+      '';
+    if (!text) return;
+    handleGuestNotificationBridge(service, text);
+  });
+
   webContents.on('page-title-updated', (_event, title) => {
     const previous = unreadCounts.get(service.id) || 0;
     const next = parseUnread(title);
@@ -2124,45 +8348,35 @@ function createViewForService(service) {
     refreshBadge();
     broadcastState();
 
-    const liveCfg = getAppConfig(service.id);
-    if (
-      next > previous &&
-      !settings.focusMode &&
-      liveCfg.allowNotifications &&
-      service.id !== activeServiceId
-    ) {
-      const body =
-        settings.hideNotificationContent || liveCfg.hideNotificationContent
-          ? 'New notification'
-          : `${next} unread`;
-      logNotification(service, body);
-    }
-    if (
-      next > previous &&
-      !settings.focusMode &&
-      liveCfg.allowNotifications &&
-      service.id !== activeServiceId &&
-      Notification.isSupported()
-    ) {
-      const n = new Notification({
+    const entry = views.get(service.id);
+    const suppressUntil = entry?.__suppressTitleNotifyUntil || 0;
+    if (Date.now() < suppressUntil) return;
+
+    // Prefer rich Notification payloads (sender + message). Skip generic
+    // "N unread" toasts when a rich toast was just shown, or when the count
+    // has not risen above the last seeded/read baseline.
+    const richRecently =
+      entry?.__lastRichNotifyAt &&
+      Date.now() - entry.__lastRichNotifyAt < 15_000;
+    if (richRecently) return;
+
+    const baseline = Number(entry?.__titleCountBaseline) || 0;
+    if (next > previous && next > baseline) {
+      if (entry) entry.__titleCountBaseline = next;
+      emitServiceNotification(service, {
         title: service.title || service.name,
-        body:
-          settings.hideNotificationContent || liveCfg.hideNotificationContent
-            ? 'New notification'
-            : `${next} unread`,
-        silent: settings.muted || !liveCfg.allowSounds,
+        body: `${next} unread`,
+        fromTitleCount: true,
       });
-      n.on('click', () => {
-        // Explicit user action — OK to raise.
-        raiseDockWindow();
-        activateService(service.id);
-      });
-      n.show();
     }
   });
 
   webContents.on('dom-ready', async () => {
     applyFocusMode(webContents, service.id);
+    // Seed badge from current title without treating it as a new message.
+    seedUnreadFromTitle(service.id, webContents);
+    refreshBadge();
+    broadcastState();
     const live = getAppConfig(service.id);
     if (settings.allowPageInjection && live.injectCss && live.injectCss.trim()) {
       try {
@@ -2218,6 +8432,67 @@ function createViewForService(service) {
     }, 500);
   });
 
+  // Network blips used to leave a permanent blank until the user manually reloaded.
+  webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    if (!isMainFrame) return;
+    // -3 ERR_ABORTED is normal (navigation superseded). Never clear storage here.
+    if (errorCode === -3 || errorCode === 0) return;
+    const entry = views.get(service.id);
+    if (!entry || entry.view !== view) return;
+    const fails = (entry.__failLoadCount || 0) + 1;
+    entry.__failLoadCount = fails;
+    try {
+      logBreadcrumb('guest-fail-load', {
+        serviceId: service.id,
+        appId: service.appId,
+        errorCode,
+        errorDescription: String(errorDescription || ''),
+        url: String(validatedURL || '').slice(0, 180),
+        attempt: fails,
+      });
+    } catch {
+      // ignore
+    }
+    if (fails > 3) return;
+    const delay = Math.min(8_000, 700 * fails * fails);
+    setTimeout(() => {
+      const live = views.get(service.id);
+      if (!live || live.view !== view) return;
+      const wc = live.view.webContents;
+      if (!wc || wc.isDestroyed() || wc.isLoading()) return;
+      try {
+        if (validatedURL && String(validatedURL).startsWith('http')) {
+          wc.loadURL(String(validatedURL));
+        } else {
+          wc.reload();
+        }
+      } catch {
+        // ignore
+      }
+    }, delay);
+  });
+
+  webContents.on('unresponsive', () => {
+    try {
+      logBreadcrumb('guest-unresponsive', {
+        serviceId: service.id,
+        appId: service.appId,
+      });
+    } catch {
+      // ignore
+    }
+    if (service.id !== activeServiceId || locked) return;
+    // Kick the surface first; reload on next blank health strike if still dead.
+    const entry = views.get(service.id);
+    if (!entry) return;
+    entry.__surfaceBlankStrikes = Math.max(1, entry.__surfaceBlankStrikes || 0);
+    setTimeout(() => {
+      if (service.id === activeServiceId) {
+        runActiveGuestSurfaceHealthCheck(service.id);
+      }
+    }, 800);
+  });
+
   if (cfg.preventBasicAuth) {
     webContents.on('login', (event) => {
       event.preventDefault();
@@ -2235,7 +8510,7 @@ function createViewForService(service) {
     rememberGoodUrl(service.id, url);
     // Zoho One Sales/Finance/HR are in-page space switches — CRM often blanks here.
     if (
-      isHeavyPortalApp(service) &&
+      shouldRunPortalBlankRecovery(service) &&
       service.id === activeServiceId &&
       !locked &&
       !overlayOpen
@@ -2258,6 +8533,7 @@ function createViewForService(service) {
       if (entry) {
         entry.loadedOnce = true;
         entry.__portalBootPending = false;
+        entry.__failLoadCount = 0;
         const keepWarm = isKeepWarmService(service.id);
         applyGuestPerfMode(webContents, {
           active: service.id === activeServiceId,
@@ -2268,7 +8544,7 @@ function createViewForService(service) {
             !isHeavyPortalApp(service) ||
             entry.activatedOnce === true,
         });
-        if (isHeavyPortalApp(service) && service.id === activeServiceId) {
+        if (shouldRunPortalBlankRecovery(service) && service.id === activeServiceId) {
           schedulePortalHealthChecks(service.id);
         }
       }
@@ -2294,6 +8570,7 @@ function createViewForService(service) {
   views.set(service.id, {
     view,
     lastUsed: Date.now(),
+    createdAt: Date.now(),
     loadedOnce: false,
     service,
     lastPresenceAt: Date.now(),
@@ -2316,18 +8593,41 @@ function createViewForService(service) {
   return views.get(service.id);
 }
 
+function persistGuestSession(partition) {
+  if (!partition) return;
+  const appSession = session.fromPartition(partition);
+  // IndexedDB / localStorage for WhatsApp must hit disk BEFORE the renderer dies.
+  try {
+    if (typeof appSession.flushStorageData === 'function') {
+      appSession.flushStorageData();
+    }
+  } catch {
+    // ignore
+  }
+  appSession.cookies.flushStore().catch(() => {});
+}
+
 function hibernateService(id, { force = false } = {}) {
   const entry = views.get(id);
   if (!entry) return;
   if (!force && id === activeServiceId) return;
+  // Popouts are often the biggest hidden RAM users (Zoho CRM, OAuth windows).
+  // When an app is hibernated, close its popups too.
+  closeServicePopups(id);
   clearPortalTimer(entry, '__portalHealthTimer');
   clearPortalTimer(entry, '__portalHealthTimer2');
+  clearActiveSurfaceTimers(entry);
   const service = getService(id);
   try {
     const url = entry.view.webContents.getURL();
     rememberGoodUrl(id, url);
   } catch {
     // ignore
+  }
+  // CRITICAL: flush session to disk before destroying the guest process.
+  // Closing first caused WhatsApp/Arattai "random" sign-outs.
+  if (service?.partition) {
+    persistGuestSession(service.partition);
   }
   if (mainWindow) {
     detachGuestView(entry.view);
@@ -2343,17 +8643,14 @@ function hibernateService(id, { force = false } = {}) {
   if (force && activeServiceId === id) {
     activeServiceId = null;
   }
-  // Persist cookies before the renderer is gone — otherwise Zoho/Gmail may
-  // treat the next wake as a fresh device and demand MFA / sign-in again.
-  if (service?.partition) {
-    session
-      .fromPartition(service.partition)
-      .cookies.flushStore()
-      .catch(() => {});
-    // Heavy portals break (blank CRM) if we wipe cache between wakes.
-    if (!isHeavyPortalApp(service)) {
-      trimGuestHttpCache(service.partition).catch(() => {});
-    }
+  // Heavy portals break (blank CRM) if we wipe cache between wakes.
+  // Also skip HTTP cache trim for messaging — safer for session stickiness.
+  if (
+    service?.partition &&
+    !isHeavyPortalApp(service) &&
+    !isMessagingApp(service)
+  ) {
+    trimGuestHttpCache(service.partition).catch(() => {});
   }
 }
 
@@ -2437,8 +8734,8 @@ function isKeepWarmService(id) {
 }
 
 function warmSelectionLimit() {
-  // All warm slots are usable; active tab may also be warm.
-  return Math.max(1, maxWarm());
+  // Keep one slot for the active tab so "warm apps" means background warm apps.
+  return Math.max(1, maxWarm() - 1);
 }
 
 function selectedWarmIds() {
@@ -2598,6 +8895,7 @@ function ensureLiveView(service) {
 }
 
 function activateService(id) {
+  closeAllFloatMenus();
   const service = getService(id);
   if (!service || !mainWindow || locked) return;
   const cfg = getAppConfig(id);
@@ -2614,7 +8912,7 @@ function activateService(id) {
   // Warm apps: never reload on activate — only blank health checks (delayed).
   const wasStale =
     !keepWarm &&
-    isHeavyPortalApp(service) &&
+    shouldRunPortalBlankRecovery(service) &&
     entry.lastPresenceAt &&
     Date.now() - entry.lastPresenceAt >= PORTAL_STALE_MS;
   entry.lastUsed = Date.now();
@@ -2640,7 +8938,7 @@ function activateService(id) {
     } catch {
       // ignore
     }
-  } else if (isHeavyPortalApp(service)) {
+  } else if (shouldRunPortalBlankRecovery(service)) {
     // Delayed blank checks only — do not reload a healthy warm tab.
     schedulePortalHealthChecks(id);
     if (service.appId === 'zoho-one') {
@@ -2654,6 +8952,8 @@ function activateService(id) {
       }
     }
   }
+  // All apps (WhatsApp included): pixel surface checks while this tab is active.
+  scheduleActiveGuestSurfaceChecks(id);
   entry.__parked = false;
 
   // Only user-selected apps remain loaded after switching away.
@@ -2671,9 +8971,24 @@ function activateService(id) {
     focusActiveContents();
   }
 
+  // Clear Hub/AI error drafts that WhatsApp may have persisted in the send box.
+  // Clipboard-match clearing is only for pin-open (too aggressive on every tab switch).
+  if (isInboxAppId(service.appId)) {
+    const sanitizeId = id;
+    setTimeout(() => {
+      if (activeServiceId !== sanitizeId) return;
+      const live = views.get(sanitizeId)?.view?.webContents;
+      if (!live || live.isDestroyed()) return;
+      sanitizeComposeAfterHubChatOpen(live, { allowClipboardMatch: false }).catch(
+        () => {},
+      );
+    }, 450);
+  }
+
   syncAllGuestPerfModes();
 
-  unreadCounts.set(id, 0);
+  // Seed from live title (do not zero — that made "(2)" look like a new alert).
+  seedUnreadFromTitle(id, entry?.view?.webContents);
   enforceWarmLimit();
   softWakeKeepWarmApps(id);
   refreshBadge();
@@ -2703,9 +9018,14 @@ function toggleMute() {
   broadcastState();
 }
 
-function hibernateBackground() {
+/**
+ * Free RAM from background tabs. Never destroys Keep Warm / messaging apps —
+ * those sessions are sacred for daily work (WhatsApp, Arattai).
+ */
+function hibernateBackground({ forceWarm = false } = {}) {
   for (const id of [...views.keys()]) {
     if (id === activeServiceId) continue;
+    if (!forceWarm && isKeepWarmService(id)) continue;
     hibernateService(id);
   }
   broadcastState();
@@ -2713,7 +9033,13 @@ function hibernateBackground() {
 
 function reloadActive() {
   if (!activeServiceId) return;
-  views.get(activeServiceId)?.view.webContents.reload();
+  const entry = views.get(activeServiceId);
+  if (!entry) {
+    // Hibernated / crashed — recreate instead of a dead no-op.
+    activateService(activeServiceId);
+    return;
+  }
+  entry.view.webContents.reload();
 }
 
 function applyWindowPrefs() {
@@ -2767,10 +9093,33 @@ function currentState() {
     unread: unreadForUi,
     totalUnread: totalUnread(),
     notifications: notificationLog,
+    pinnedPeople: sanitizePinnedPeople(settings.pinnedPeople || []),
     appMemory,
+    ai: {
+      enabled: settings.aiEnabled !== false,
+      provider: settings.aiProvider || 'gemini',
+      model: settings.aiModel || '',
+      providerModels:
+        settings.aiProviderModels && typeof settings.aiProviderModels === 'object'
+          ? settings.aiProviderModels
+          : {},
+      language: settings.aiLanguage || 'en',
+      allowedAppIds: AI_ALLOWED_APP_IDS,
+      languages: AI_LANGUAGES,
+      providers: aiProvidersForUi(),
+      providerOrder: aiRoutePrefs().order,
+      disabledProviders: aiRoutePrefs().disabledIds,
+      routeOrder: aiConfiguredRouteOrderIds(),
+      routeIsDefault:
+        isDefaultAiProviderOrder(settings.aiProviderOrder) &&
+        sanitizeAiDisabledProviders(settings.aiDisabledProviders).length === 0,
+      defaultProviderOrder: [...AI_PROVIDER_TRY_ORDER],
+    },
     settings: {
       ...settings,
+      shortcuts: migrateShortcutsMap(settings.shortcuts || {}),
       lockPasswordHash: undefined,
+      hasLockPassword: Boolean(settings.lockPasswordHash),
       errorReportGithubToken: settings.errorReportGithubToken
         ? '[configured]'
         : '',
@@ -2784,11 +9133,48 @@ function currentState() {
 
 function broadcastState() {
   mainWindow?.webContents.send('dock:state', currentState());
+  pushNotifCenterData();
+}
+
+function shortcutEntry(id) {
+  return normalizeShortcutEntry(id, (settings.shortcuts || {})[id]);
 }
 
 function shortcutOn(id) {
-  const map = settings.shortcuts || {};
-  return map[id] !== false;
+  return shortcutEntry(id).enabled !== false;
+}
+
+function runMatchedShortcut(hit) {
+  if (!hit) return false;
+  if (hit.action === 'back') {
+    if (activeServiceId) {
+      const wc = views.get(activeServiceId)?.view.webContents;
+      if (wc?.canGoBack()) wc.goBack();
+    }
+    return true;
+  }
+  if (hit.action === 'forward') {
+    if (activeServiceId) {
+      const wc = views.get(activeServiceId)?.view.webContents;
+      if (wc?.canGoForward()) wc.goForward();
+    }
+    return true;
+  }
+  if (hit.action === 'switchTab') {
+    const service = orderedServices()[(hit.digit || 1) - 1];
+    if (service) activateService(service.id);
+    return true;
+  }
+  if (hit.action === 'nextTab') {
+    activateByOffset(1);
+    return true;
+  }
+  if (hit.action === 'prevTab') {
+    activateByOffset(-1);
+    return true;
+  }
+  if (hit.action === 'run') return true;
+  return false;
 }
 
 function attachShortcuts(webContents) {
@@ -2800,97 +9186,86 @@ function attachShortcuts(webContents) {
       return;
     }
 
-    const key = input.key.toLowerCase();
+    const key = String(input.key || '').toLowerCase();
 
-    if (input.alt && !input.control && shortcutOn('backForward')) {
-      if (key === 'arrowleft' || key === 'left') {
-        event.preventDefault();
-        if (activeServiceId) {
-          const wc = views.get(activeServiceId)?.view.webContents;
-          if (wc?.canGoBack()) wc.goBack();
-        }
-        return;
-      }
-      if (key === 'arrowright' || key === 'right') {
-        event.preventDefault();
-        if (activeServiceId) {
-          const wc = views.get(activeServiceId)?.view.webContents;
-          if (wc?.canGoForward()) wc.goForward();
-        }
-        return;
-      }
-    }
-
-    if (!input.control) return;
-
-    if (!input.shift && /^[1-9]$/.test(key) && shortcutOn('switchTab')) {
-      const service = orderedServices()[Number.parseInt(key, 10) - 1];
-      if (service) {
-        event.preventDefault();
-        activateService(service.id);
-      }
-      return;
-    }
-
-    if ((key === 'tab' || key === 'pagedown') && shortcutOn('nextTab')) {
-      event.preventDefault();
-      activateByOffset(key === 'tab' && input.shift ? -1 : 1);
-      return;
-    }
-    if (key === 'pageup' && shortcutOn('nextTab')) {
-      event.preventDefault();
-      activateByOffset(-1);
-      return;
-    }
-    if (key === 'r' && !input.shift) {
+    // Always-on reload (not user-remappable — reserved).
+    if (input.control && !input.alt && !input.meta && key === 'r' && !input.shift) {
       event.preventDefault();
       reloadActive();
       return;
     }
-    if (key === ',' && shortcutOn('settings')) {
+
+    const map = migrateShortcutsMap(settings.shortcuts || {});
+    const order = [
+      'backForward',
+      'switchTab',
+      'nextTab',
+      'settings',
+      'search',
+      'find',
+      'print',
+      'focusMode',
+      'mute',
+      'hibernate',
+      'lock',
+    ];
+
+    for (const id of order) {
+      const entry = map[id];
+      const hit = matchShortcut(entry, input);
+      if (!hit) continue;
       event.preventDefault();
-      mainWindow?.webContents.send('dock:open-settings');
+      if (id === 'settings') {
+        mainWindow?.webContents.send('dock:open-settings');
+        return;
+      }
+      if (id === 'search') {
+        mainWindow?.webContents.send('dock:open-search');
+        return;
+      }
+      if (id === 'find') {
+        mainWindow?.webContents.send('dock:open-find');
+        return;
+      }
+      if (id === 'print') {
+        printActivePage();
+        return;
+      }
+      if (id === 'focusMode') {
+        toggleFocusMode();
+        return;
+      }
+      if (id === 'mute') {
+        toggleMute();
+        return;
+      }
+      if (id === 'hibernate') {
+        hibernateBackground();
+        return;
+      }
+      if (id === 'lock') {
+        try {
+          mainWindow?.webContents?.send('dock:request-lock');
+        } catch {
+          if (settings.lockEnabled && settings.lockPasswordHash) lockApp();
+        }
+        return;
+      }
+      runMatchedShortcut(hit);
       return;
-    }
-    if (key === '/' && shortcutOn('search')) {
-      event.preventDefault();
-      mainWindow?.webContents.send('dock:open-search');
-      return;
-    }
-    if (key === 'f' && !input.shift) {
-      event.preventDefault();
-      mainWindow?.webContents.send('dock:open-find');
-      return;
-    }
-    if (key === 'p' && !input.shift) {
-      event.preventDefault();
-      printActivePage();
-      return;
-    }
-    if (input.shift && key === 'd' && shortcutOn('focusMode')) {
-      event.preventDefault();
-      toggleFocusMode();
-      return;
-    }
-    if (input.shift && key === 'm' && shortcutOn('mute')) {
-      event.preventDefault();
-      toggleMute();
-      return;
-    }
-    if (input.shift && key === 'h' && shortcutOn('hibernate')) {
-      event.preventDefault();
-      hibernateBackground();
-      return;
-    }
-    if (input.shift && key === 'l' && settings.lockEnabled && shortcutOn('lock')) {
-      event.preventDefault();
-      lockApp();
     }
   });
 }
 
 function lockApp() {
-  if (!settings.lockEnabled || !settings.lockPasswordHash) return;
+  if (!settings.lockEnabled || !settings.lockPasswordHash) {
+    return {
+      ok: false,
+      needSetup: true,
+      error: 'Set a lock password first.',
+    };
+  }
+  closeAllFloatMenus();
   locked = true;
   const resumeId = activeServiceId || settings.lastActiveServiceId || null;
   if (resumeId) {
@@ -2903,6 +9278,7 @@ function lockApp() {
   activeServiceId = null;
   hideViewsForLock();
   broadcastState();
+  return { ok: true };
 }
 
 function unlockApp(password) {
@@ -2924,25 +9300,50 @@ function unlockApp(password) {
   return { ok: true };
 }
 
-function createTrayIcon(badge) {
-  const showBadge = !!(badge && settings.trayUnreadIndicator);
-  // Crisp SVG of the Aspera open-A mark (matches app icon).
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-      <rect width="64" height="64" rx="14" fill="#081230"/>
-      <defs>
-        <linearGradient id="g" x1="14" y1="48" x2="50" y2="16" gradientUnits="userSpaceOnUse">
-          <stop stop-color="#5A6EE6"/>
-          <stop offset="1" stop-color="#A0AFFF"/>
-        </linearGradient>
-      </defs>
-      <path fill="url(#g)" d="M15.2 47.5 L29.4 18.2 H33.2 L21.5 47.5 Z"/>
-      <path fill="url(#g)" d="M48.8 47.5 L34.6 18.2 H30.8 L42.5 47.5 Z"/>
-      ${showBadge ? '<circle cx="52" cy="12" r="10" fill="#e5484d"/>' : ''}
-    </svg>`;
-  return nativeImage.createFromDataURL(
-    `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`,
-  );
+function getTrayIconPath(size = 32) {
+  const names = [
+    `icon-${size}.png`,
+    'icon-32.png',
+    'icon-24.png',
+    'icon-48.png',
+    'icon.png',
+  ];
+  const bases = [
+    process.resourcesPath || '',
+    path.join(app.getAppPath(), 'assets'),
+    path.join(__dirname, '../../assets'),
+    path.join(__dirname, '../assets'),
+  ];
+  for (const base of bases) {
+    if (!base) continue;
+    for (const name of names) {
+      const p = path.join(base, name);
+      try {
+        if (fs.existsSync(p) && fs.statSync(p).size > 100) return p;
+      } catch {
+        // try next
+      }
+    }
+  }
+  return getAppIconPath();
+}
+
+function createTrayIcon(_badge) {
+  // Prefer PNG for Linux Mint XFCE / Cinnamon StatusNotifier hosts (SVG data-URLs are flaky).
+  // Unread count stays in the tray tooltip + in-app bell (panel badge overlays vary by DE).
+  const iconPath = getTrayIconPath(32);
+  let image = iconPath
+    ? nativeImage.createFromPath(iconPath)
+    : getAppIcon();
+  if (!image || image.isEmpty()) {
+    image = getAppIcon();
+  }
+  if (!image.isEmpty()) {
+    // XFCE panel icons are typically ~22–24px; Cinnamon is similar.
+    const size = process.platform === 'linux' ? 24 : 32;
+    image = image.resize({ width: size, height: size, quality: 'best' });
+  }
+  return image;
 }
 
 function updateTray() {
@@ -3329,9 +9730,10 @@ function showAboutDialog() {
       type: 'info',
       title: 'About Aspera Hub',
       message: `Aspera Hub ${app.getVersion()}`,
-      detail:
-        'Company workspace by Aspera — messaging and business apps in one dock.\n\n' +
-        `Electron ${process.versions.electron} · Chrome ${process.versions.chrome}`,
+      detail: aboutDetailText({
+        electronVersion: process.versions.electron,
+        chromeVersion: process.versions.chrome,
+      }),
       buttons: ['OK'],
       icon: getAppIcon(),
     })
@@ -3350,15 +9752,33 @@ function beforeDialogSafe() {
 function afterDialogSafe() {
   try {
     resumeFreezeWatch();
+    // Renderer is authoritative for open drawers/menus — do NOT force overlay
+    // off here (that briefly puts the guest on top of Settings).
     mainWindow?.webContents.send('dock:sync-overlay');
-    setOverlayOpen(false);
-    setTimeout(() => layoutActiveView(), 50);
+    setTimeout(() => {
+      layoutActiveView();
+      repaintActiveGuestView({ reason: 'after-dialog' });
+    }, 50);
   } catch {
     // ignore
   }
 }
 
 function createWindow() {
+  // Hard guarantee: never open a second main Hub window on this profile.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    raiseDockWindow();
+    return;
+  }
+  const existing = BrowserWindow.getAllWindows().find(
+    (w) => w && !w.isDestroyed() && !w.getParentWindow()
+  );
+  if (existing) {
+    mainWindow = existing;
+    raiseDockWindow();
+    return;
+  }
+
   const icon = electronNativeIcon();
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -3389,6 +9809,12 @@ function createWindow() {
     // Company desktops: always open full-screen workspace.
     mainWindow.maximize();
     mainWindow.show();
+    try {
+      const crashFlag = path.join(app.getPath('userData'), 'gpu-crash-v1');
+      if (fs.existsSync(crashFlag)) fs.unlinkSync(crashFlag);
+    } catch {
+      // ignore
+    }
     // Some Linux panels only refresh the icon after the window is mapped.
     setTimeout(() => applyWindowIcon(mainWindow), 250);
     setTimeout(() => applyWindowIcon(mainWindow), 1000);
@@ -3409,8 +9835,12 @@ function createWindow() {
         await showPendingCrashDialog(mainWindow);
       } finally {
         resumeFreezeWatch();
+        // Let renderer re-assert Settings/menus; only clear if nothing is open.
         mainWindow?.webContents.send('dock:sync-overlay');
-        setOverlayOpen(false);
+        setTimeout(() => {
+          layoutActiveView();
+          repaintActiveGuestView({ reason: 'after-crash-dialog' });
+        }, 50);
       }
     }, 1200);
   });
@@ -3422,11 +9852,38 @@ function createWindow() {
   mainWindow.on('unmaximize', () => setTimeout(() => layoutActiveView(), 50));
   mainWindow.on('show', () => {
     setTimeout(() => layoutActiveView(), 50);
-    onUserReturnedFromIdle('window-show');
+    const awayMs = awayStartedAt ? Date.now() - awayStartedAt : 0;
+    if (awayMs >= 3 * 60_000 || peakIdleSec >= 3 * 60) {
+      setTimeout(() => onUserReturnedFromIdle('window-show'), 60);
+    } else {
+      setTimeout(() => repaintActiveGuestView({ reason: 'window-show' }), 60);
+      markUserActive();
+    }
+  });
+  mainWindow.on('restore', () => {
+    setTimeout(() => repaintActiveGuestView({ reason: 'window-restore' }), 40);
+  });
+  mainWindow.on('hide', () => {
+    guestNeedsRepaint = true;
+    markUserAway('window-hide');
+  });
+  mainWindow.on('blur', () => {
+    // Guest compositor may need a kick when we come back (esp. Mint XFCE).
+    guestNeedsRepaint = true;
+    markUserAway('window-blur');
   });
   mainWindow.on('focus', () => {
-    focusActiveContents();
-    onUserReturnedFromIdle('window-focus');
+    const awayMs = awayStartedAt ? Date.now() - awayStartedAt : 0;
+    // Long away: full recover (repaint + blank reload). Short: two-step repaint.
+    if (awayMs >= 3 * 60_000 || peakIdleSec >= 3 * 60) {
+      onUserReturnedFromIdle('window-focus-after-away');
+    } else if (process.platform === 'linux' || guestNeedsRepaint) {
+      repaintActiveGuestView({ reason: 'window-focus' });
+      markUserActive();
+    } else {
+      focusActiveContents();
+      markUserActive();
+    }
   });
   attachShortcuts(mainWindow.webContents);
 
@@ -3591,8 +10048,12 @@ function startHibernateTimer() {
 }
 
 // —— IPC ——
-dockHandle('dock:set-overlay', (_e, open) => {
-  setOverlayOpen(open);
+dockHandle('dock:set-overlay', (_e, openOrOptions) => {
+  if (openOrOptions && typeof openOrOptions === 'object') {
+    setOverlayOpen(!!openOrOptions.open, openOrOptions);
+  } else {
+    setOverlayOpen(!!openOrOptions);
+  }
   return { ok: true };
 });
 
@@ -3609,10 +10070,7 @@ dockHandle('dock:clear-notifications', () => {
 });
 
 dockHandle('dock:mark-all-read', () => {
-  unreadCounts.clear();
-  notificationLog = [];
-  refreshBadge();
-  broadcastState();
+  markAllReadWithoutNotifySpam();
   return { ok: true };
 });
 
@@ -3682,6 +10140,379 @@ dockHandle('dock:rename-profile', (_e, id, name) => renameProfile(id, name));
 dockHandle('dock:delete-profile', (_e, id) => deleteProfile(id));
 dockHandle('dock:set-instance-profile', (_e, serviceId, profileId) =>
   setInstanceProfile(serviceId, profileId),
+);
+dockHandle('dock:open-app-menu', (_e, payload) =>
+  openAppContextMenu(payload || {}),
+);
+dockHandle('dock:close-app-menu', () => {
+  closeAppContextMenu();
+  return { ok: true };
+});
+dockHandle('dock:open-chrome-menu', (_e, payload) =>
+  openChromeMenuWindow(payload || {}),
+);
+dockHandle('dock:close-chrome-menu', () => {
+  closeChromeMenuWindow();
+  return { ok: true };
+});
+dockHandle('dock:toggle-chrome-menu', (_e, payload) => {
+  if (chromeMenuWindow && !chromeMenuWindow.isDestroyed()) {
+    closeChromeMenuWindow();
+    return { ok: true, open: false };
+  }
+  openChromeMenuWindow(payload || {});
+  return { ok: true, open: true };
+});
+dockHandle('dock:open-inbox-chat', async (_e, payload) => {
+  const serviceId = String(payload?.serviceId || '');
+  const name = String(payload?.name || '');
+  const chatKey = String(payload?.chatKey || '');
+  let nativeId = String(payload?.nativeId || payload?.chid || '').trim();
+  // Recover nativeId from saved pin when older UI clicks omit it.
+  if (!nativeId) {
+    const pin = sanitizePinnedPeople(settings.pinnedPeople || []).find(
+      (p) =>
+        p.serviceId === serviceId &&
+        (p.chatKey === normalizeChatKey(chatKey || name) ||
+          p.name === name),
+    );
+    if (pin?.nativeId) nativeId = pin.nativeId;
+  }
+  const result = await openMessagingChat(serviceId, { name, chatKey, nativeId });
+  // Superseded by a newer pin click — do not toast "Could not open".
+  if (result?.cancelled) return { ok: true, cancelled: true };
+  return result;
+});
+dockHandle('dock:pin-person', (_e, payload) => pinPerson(payload || {}));
+dockHandle('dock:unpin-person', (_e, pinId) => unpinPerson(pinId));
+dockHandle('dock:search-chats', async (_e, query) =>
+  searchChatsAcrossAccounts(query),
+);
+dockHandle('dock:quick-reply', async (_e, payload) =>
+  sendQuickReply(String(payload?.serviceId || ''), {
+    name: String(payload?.name || payload?.chatName || ''),
+    chatKey: String(payload?.chatKey || ''),
+    text: String(payload?.text || ''),
+  }),
+);
+dockHandle('dock:open-notif-center', (_e, payload) =>
+  openNotifCenterWindow(payload || {}),
+);
+dockHandle('dock:close-notif-center', () => {
+  closeNotifCenterWindow();
+  return { ok: true };
+});
+dockHandle('dock:toggle-notif-center', (_e, payload) => {
+  if (notifCenterWindow && !notifCenterWindow.isDestroyed()) {
+    closeNotifCenterWindow();
+    return { ok: true, open: false };
+  }
+  openNotifCenterWindow(payload || {});
+  return { ok: true, open: true };
+});
+appMenuHandle('app-menu:action', (_e, type, value) => handleAppMenuAction(type, value));
+appMenuHandle('app-menu:close', () => {
+  closeAppContextMenu();
+  return { ok: true };
+});
+chromeMenuHandle('chrome-menu:action', (_e, type) => handleChromeMenuAction(type));
+chromeMenuHandle('chrome-menu:close', () => {
+  closeChromeMenuWindow();
+  return { ok: true };
+});
+notifCenterHandle('notif-center:action', (_e, type, value) =>
+  handleNotifCenterAction(type, value),
+);
+notifCenterHandle('notif-center:close', () => {
+  closeNotifCenterWindow();
+  return { ok: true };
+});
+aiResultHandle('ai-result:copy', (_e, text) => {
+  clipboard.writeText(String(text || ''));
+  return { ok: true };
+});
+aiResultHandle('ai-result:close', () => {
+  closeAiResultWindow();
+  return { ok: true };
+});
+aiResultHandle('ai-result:suggest-reply', () => runSuggestRepliesFromAiResult());
+aiResultHandle('ai-result:sync-replies', (_e, text) => {
+  if (!aiResultContext) return { ok: false };
+  aiResultContext = {
+    ...aiResultContext,
+    repliesText: String(text || ''),
+  };
+  return { ok: true };
+});
+aiResultHandle('ai-result:revise-reply', (_e, payload) =>
+  runReviseReplyFromAiResult(payload),
+);
+aiResultHandle('ai-result:refine-again', (_e, payload) =>
+  runRefineAgainFromAiResult(payload),
+);
+aiResultHandle('ai-result:use-in-compose', (_e, payload) =>
+  runUseRefinedInCompose(payload),
+);
+aiResultHandle('ai-result:sync-refine', (_e, payload) => {
+  if (!aiResultContext || aiResultContext.skill !== 'refine') {
+    return { ok: false };
+  }
+  if (Array.isArray(payload?.sections)) {
+    const refineSections = payload.sections.map((s) => ({
+      id: s.id,
+      heading: s.heading,
+      label: s.label,
+      text: String(s?.text || ''),
+    }));
+    aiResultContext = {
+      ...aiResultContext,
+      refineSections,
+      refinedText: serializeRefinedDrafts(refineSections),
+    };
+    return { ok: true };
+  }
+  const rawText =
+    payload && typeof payload === 'object' && 'text' in payload
+      ? payload.text
+      : payload;
+  aiResultContext = {
+    ...aiResultContext,
+    refinedText: String(rawText || ''),
+  };
+  return { ok: true };
+});
+forwardPickerHandle('forward-picker:pick', (_e, serviceId) =>
+  deliverForwardToTarget(String(serviceId || '')),
+);
+forwardPickerHandle('forward-picker:close', () => {
+  closeForwardPickerWindow({ clearPayload: true });
+  return { ok: true };
+});
+async function commitInstalledExtension(installed) {
+  const chromeId = String(installed.chromeId || '').trim().toLowerCase();
+  let list = listInstalledExtensions(settings.extensions);
+  if (chromeId) {
+    const prev = list.find((ext) => String(ext.chromeId || '').toLowerCase() === chromeId);
+    if (prev && prev.id !== installed.id) {
+      uninstallExtensionFiles(prev);
+      list = list.filter((ext) => ext.id !== prev.id);
+    }
+  }
+  const withoutSame = list.filter((ext) => ext.id !== installed.id);
+  const next = [...withoutSame, installed];
+  settings = saveSettings({ extensions: next });
+  await syncExtensionsToAllGuestSessions();
+  reloadAllGuestViews();
+  pushExtensionsManagerData();
+  return installed;
+}
+
+extensionsHandle('extensions:close', () => {
+  closeExtensionsWindow();
+  return { ok: true };
+});
+extensionsHandle('extensions:install-webstore', async (_e, input) => {
+  let workRoot = '';
+  try {
+    const chromeId = parseChromeExtensionId(input);
+    if (!chromeId) {
+      throw new Error(
+        'Paste a Chrome Web Store link or 32-character extension ID.',
+      );
+    }
+    const existing = listInstalledExtensions(settings.extensions).find(
+      (ext) => String(ext.chromeId || '').toLowerCase() === chromeId,
+    );
+    const unpacked = await downloadAndUnpackChromeExtension(chromeId);
+    workRoot = unpacked.workRoot;
+    const installed = installUnpackedExtension(unpacked.path, {
+      chromeId,
+      replaceId: existing?.id || `ext-${chromeId}`,
+    });
+    await commitInstalledExtension(installed);
+    return { ok: true, extension: installed };
+  } catch (error) {
+    const message = String(error?.message || error);
+    pushExtensionsManagerData(message);
+    return { ok: false, error: message };
+  } finally {
+    if (workRoot && fs.existsSync(workRoot)) {
+      try {
+        fs.rmSync(workRoot, { recursive: true, force: true });
+      } catch {
+        // ignore temp cleanup
+      }
+    }
+  }
+});
+extensionsHandle('extensions:install-package', async () => {
+  const picked = dialog.showOpenDialogSync(mainWindow || undefined, {
+    title: 'Install extension package',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Chrome extension', extensions: ['crx', 'zip'] },
+      { name: 'All files', extensions: ['*'] },
+    ],
+  });
+  if (!picked?.length) return { ok: false, cancelled: true };
+  let workRoot = '';
+  try {
+    const unpacked = unpackExtensionPackage(picked[0]);
+    workRoot = unpacked.workRoot;
+    const installed = installUnpackedExtension(unpacked.path);
+    await commitInstalledExtension(installed);
+    return { ok: true, extension: installed };
+  } catch (error) {
+    const message = String(error?.message || error);
+    pushExtensionsManagerData(message);
+    return { ok: false, error: message };
+  } finally {
+    if (workRoot && fs.existsSync(workRoot)) {
+      try {
+        fs.rmSync(workRoot, { recursive: true, force: true });
+      } catch {
+        // ignore
+      }
+    }
+  }
+});
+extensionsHandle('extensions:open-webstore', async (_e, input) => {
+  const url = chromeWebStoreUrl(input);
+  await shell.openExternal(url);
+  return { ok: true, url };
+});
+extensionsHandle('extensions:load-unpacked', async () => {
+  const picked = dialog.showOpenDialogSync(mainWindow || undefined, {
+    title: 'Load unpacked Chrome extension',
+    properties: ['openDirectory'],
+  });
+  if (!picked?.length) return { ok: false, cancelled: true };
+  try {
+    const installed = installUnpackedExtension(picked[0]);
+    await commitInstalledExtension(installed);
+    return { ok: true, extension: installed };
+  } catch (error) {
+    const message = String(error?.message || error);
+    pushExtensionsManagerData(message);
+    return { ok: false, error: message };
+  }
+});
+extensionsHandle('extensions:set-enabled', async (_e, id, enabled) => {
+  const list = listInstalledExtensions(settings.extensions);
+  const next = list.map((ext) =>
+    ext.id === String(id || '')
+      ? { ...ext, enabled: enabled !== false }
+      : ext,
+  );
+  settings = saveSettings({ extensions: next });
+  await syncExtensionsToAllGuestSessions();
+  reloadAllGuestViews();
+  pushExtensionsManagerData();
+  return { ok: true };
+});
+extensionsHandle('extensions:remove', async (_e, id) => {
+  const list = listInstalledExtensions(settings.extensions);
+  const target = list.find((ext) => ext.id === String(id || ''));
+  const next = list.filter((ext) => ext.id !== String(id || ''));
+  settings = saveSettings({ extensions: next });
+  if (target) uninstallExtensionFiles(target);
+  await syncExtensionsToAllGuestSessions();
+  reloadAllGuestViews();
+  pushExtensionsManagerData();
+  return { ok: true };
+});
+extensionsHandle('extensions:reload-guests', async () => {
+  await syncExtensionsToAllGuestSessions();
+  reloadAllGuestViews();
+  pushExtensionsManagerData();
+  return { ok: true };
+});
+dockHandle('dock:ai-status', () => ({
+  enabled: settings.aiEnabled !== false,
+  provider: settings.aiProvider || 'gemini',
+  model: settings.aiModel || '',
+  providerModels:
+    settings.aiProviderModels && typeof settings.aiProviderModels === 'object'
+      ? settings.aiProviderModels
+      : {},
+  language: settings.aiLanguage || 'en',
+  allowedAppIds: AI_ALLOWED_APP_IDS,
+  languages: AI_LANGUAGES,
+  providers: aiProvidersForUi(),
+  providerOrder: aiRoutePrefs().order,
+  disabledProviders: aiRoutePrefs().disabledIds,
+  routeOrder: aiConfiguredRouteOrderIds(),
+  routeIsDefault:
+    isDefaultAiProviderOrder(settings.aiProviderOrder) &&
+    sanitizeAiDisabledProviders(settings.aiDisabledProviders).length === 0,
+  defaultProviderOrder: [...AI_PROVIDER_TRY_ORDER],
+}));
+dockHandle('dock:ai-set-key', (_e, providerId, apiKey) => {
+  const id = String(providerId || '').trim();
+  const result = setAiProviderKey(id, apiKey);
+  if (result.ok) {
+    onAiProviderKeyChanged(id, result.configured !== false);
+    syncPreferredAiProvider();
+    invalidateAiModelCache(id);
+    if (result.configured) {
+      // Warm live model list in the background for Auto + Settings picker.
+      refreshAiProviderModels(id, { force: true }).finally(() => broadcastState());
+    }
+  }
+  broadcastState();
+  return result;
+});
+dockHandle('dock:ai-clear-key', (_e, providerId) => {
+  const id = String(providerId || '').trim();
+  const result = clearAiProviderKey(id);
+  onAiProviderKeyChanged(id, false);
+  invalidateAiModelCache(id);
+  syncPreferredAiProvider();
+  broadcastState();
+  return result;
+});
+dockHandle('dock:ai-list-models', async (_e, providerId) => {
+  const result = await refreshAiProviderModels(providerId, { force: true });
+  broadcastState();
+  return result;
+});
+dockHandle('dock:ai-set-model', (_e, providerId, modelId) => {
+  const result = setAiProviderModelPreference(providerId, modelId);
+  if (result.ok) broadcastState();
+  return result;
+});
+dockHandle('dock:ai-set-provider', (_e, providerId) => {
+  const id = String(providerId || '').trim();
+  const provider = getAiProvider(id);
+  if (!id || provider.id !== id) {
+    return { ok: false, error: 'Unknown AI provider' };
+  }
+  // Preference for display; failover uses custom/default order + enabled set.
+  settings = saveSettings({ aiProvider: id });
+  broadcastState();
+  return { ok: true, provider: id };
+});
+dockHandle('dock:ai-set-route', (_e, payload) => {
+  const body = payload && typeof payload === 'object' ? payload : {};
+  return saveAiProviderRoute({
+    order: body.order,
+    disabledIds: body.disabledIds,
+  });
+});
+dockHandle('dock:ai-reset-route', () =>
+  saveAiProviderRoute({
+    order: [...AI_PROVIDER_TRY_ORDER],
+    disabledIds: [],
+  }),
+);
+dockHandle('dock:ai-catch-up', (_e, opts) =>
+  runAsperaAiSkill('catch-up', opts || {}),
+);
+dockHandle('dock:ai-summarize', (_e, opts) =>
+  runAsperaAiSkill('summarize', opts || {}),
+);
+dockHandle('dock:ai-refine', (_e, opts) =>
+  runAsperaAiSkill('refine', opts || {}),
 );
 dockHandle('dock:toggle-keep-warm', (_e, id) => toggleKeepWarm(id));
 dockHandle('dock:save-app-config', (_e, id, incoming) => {
@@ -3771,8 +10602,16 @@ dockHandle('dock:save-app-config', (_e, id, incoming) => {
   return { ok: true, config: cfg };
 });
 dockHandle('dock:app-navigate', (_e, id, action) => {
-  const entry = views.get(id);
-  if (!entry) return { ok: false };
+  let entry = views.get(id);
+  if (!entry) {
+    const service = getService(id);
+    if (!service) return { ok: false, error: 'App not found' };
+    // Hibernated apps made Home/Reload look dead — wake first.
+    activateService(id);
+    entry = views.get(id);
+    if (!entry) return { ok: false, error: 'Could not open app' };
+    if (action === 'home' || action === 'reload') return { ok: true };
+  }
   const wc = entry.view.webContents;
   if (action === 'back' && wc.canGoBack()) wc.goBack();
   else if (action === 'forward' && wc.canGoForward()) wc.goForward();
@@ -3924,10 +10763,7 @@ dockHandle('dock:save-settings', (_e, patch) => {
   broadcastState();
   return currentState();
 });
-dockHandle('dock:lock', () => {
-  lockApp();
-  return { ok: true };
-});
+dockHandle('dock:lock', () => lockApp());
 dockHandle('dock:unlock', (_e, password) => unlockApp(password));
 dockHandle('dock:clear-session', async (_e, id) => {
   const service = getService(id);
@@ -3957,6 +10793,9 @@ dockHandle('dock:pick-download-dir', async () => {
   if (result.canceled || !result.filePaths[0]) return { path: null };
   return { path: result.filePaths[0] };
 });
+dockHandle('dock:open-extensions', (_e, payload = {}) =>
+  openExtensionsWindow({ dark: !!payload?.dark }),
+);
 dockHandle('dock:open-downloads', async () => {
   const downloadDir = String(settings.downloadPath || '').trim() || app.getPath('downloads');
   try {
@@ -3970,13 +10809,13 @@ dockHandle('dock:open-downloads', async () => {
 
 function watchSystemIdle() {
   const lockIfEnabled = () => {
+    markUserAway('lock-or-suspend');
     if (settings.lockOnSystemIdle && settings.lockEnabled) lockApp();
   };
   powerMonitor.on('lock-screen', lockIfEnabled);
   powerMonitor.on('suspend', lockIfEnabled);
 
-  // User walked away with Zoho One open — screen lock / sleep / long idle.
-  // When they return, refresh the portal so CRM is not a blank white pane.
+  // User walked away — when they return, recover the guest surface (not just Zoho).
   const onResume = () => {
     setTimeout(() => onUserReturnedFromIdle('power-resume'), 400);
   };
@@ -3992,27 +10831,55 @@ function watchSystemIdle() {
     } catch {
       return;
     }
+
+    if (idleSec >= 60) {
+      markUserAway('system-idle');
+      peakIdleSec = Math.max(peakIdleSec, idleSec);
+    }
+
     if (idleSec >= 8 * 60) systemWasIdle = true;
     if (systemWasIdle && idleSec < 8) {
       systemWasIdle = false;
       onUserReturnedFromIdle('system-idle-end');
     }
-    // Long away: when user returns, blank-check the active portal (no blind reload for warm).
+    // Medium away (3+ min): recover when the user comes back.
     if (idleSec >= 3 * 60) portalWasIdle = true;
     if (portalWasIdle && idleSec < 8) {
       portalWasIdle = false;
       onUserReturnedFromIdle('short-idle-end');
     }
-    // Warm portals stay "present" forever while loaded — never mark them stale.
-    for (const [id, entry] of views.entries()) {
-      if (isKeepWarmService(id) || id === activeServiceId) {
-        touchPortalPresence(entry);
+
+    // Only refresh "presence" while the user is actually active.
+    // Touching presence during idle hid 30-minute blanks from recovery logic.
+    if (idleSec < 60) {
+      for (const [id, entry] of views.entries()) {
+        if (isKeepWarmService(id) || id === activeServiceId) {
+          touchPortalPresence(entry);
+        }
       }
     }
   }, 15_000);
+
+  // While Hub stays focused, periodically sample the active guest surface.
+  // Catches WhatsApp/Arattai going blank without alt-tab or idle.
+  setInterval(() => {
+    if (!activeServiceId || locked) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (!dockIsUserFocused()) return;
+    let idleSec = 0;
+    try {
+      idleSec = powerMonitor.getSystemIdleTime();
+    } catch {
+      idleSec = 0;
+    }
+    if (idleSec >= 90) return;
+    runActiveGuestSurfaceHealthCheck(activeServiceId, { fromPoll: true });
+  }, ACTIVE_SURFACE_POLL_MS);
 }
 
 app.whenReady().then(async () => {
+  setAiSettingsReader(() => settings);
+  resetAiProviderSession({ preferGemini: true });
   if (
     app.isPackaged &&
     typeof process.getuid === 'function' &&
@@ -4052,22 +10919,27 @@ app.whenReady().then(async () => {
   logBreadcrumb('app-ready');
   hydrateLastUrls();
   createWindow();
+  syncExtensionsToAllGuestSessions().catch(() => {});
+  // Prefetch live model catalogs for saved keys (Auto + Settings picker).
+  for (const p of listConfiguredAiProviders().filter((x) => x.configured)) {
+    refreshAiProviderModels(p.id, { force: false })
+      .then(() => broadcastState())
+      .catch(() => {});
+  }
   startHibernateTimer();
   startMemoryTimer();
   watchSystemIdle();
   configureUpdater({
     getSettings: () => settings,
+    getMainWindow: () => mainWindow,
     onError: (kind, payload) => reportError(kind, payload).catch(() => {}),
+    // Native OS dialogs already draw above BrowserViews — do not detach guests
+    // (full overlay) or Linux sessions can lose focus and never show the box.
     onBeforeDialog: () => {
-      setOverlayOpen(true);
       pauseFreezeWatch();
     },
     onAfterDialog: () => {
       resumeFreezeWatch();
-      // Let the renderer re-assert if a settings/menu overlay is still open.
-      mainWindow?.webContents.send('dock:sync-overlay');
-      setOverlayOpen(false);
-      // Re-layout after native dialogs — guest view can end up fullscreen otherwise.
       setTimeout(() => layoutActiveView(), 50);
       setTimeout(() => layoutActiveView(), 250);
     },
@@ -4082,7 +10954,16 @@ app.whenReady().then(async () => {
 });
 
 app.on('second-instance', () => {
-  raiseDockWindow();
+  // User launched Hub again (menu / .desktop / CLI). Focus the one window —
+  // never create another; a second process sharing the profile can sign out
+  // WhatsApp / Arattai.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    raiseDockWindow();
+    return;
+  }
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
 });
 
 app.on('before-quit', () => {
@@ -4116,6 +10997,18 @@ app.on('window-all-closed', () => {
 });
 
 app.on('child-process-gone', (_event, details) => {
+  const kind = String(details?.type || '');
+  if (/gpu/i.test(kind) || /gpu/i.test(String(details?.reason || ''))) {
+    try {
+      fs.writeFileSync(
+        path.join(app.getPath('userData'), 'gpu-crash-v1'),
+        new Date().toISOString(),
+        'utf8',
+      );
+    } catch {
+      // ignore
+    }
+  }
   reportError('child-process-gone', {
     message: `Child process gone: ${details?.type || 'unknown'} / ${details?.reason || ''}`,
     details,
