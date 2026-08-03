@@ -84,7 +84,7 @@ import {
   sanitizePriorMessages,
   scrapeNearbyMessagesJs,
 } from './guestChatContext.js';
-import { guestContextMenuActionOrder } from './guestContextMenu.js';
+import { guestContextMenuActionOrder, canOfferHubPin } from './guestContextMenu.js';
 import { isHubComposePollution } from './composeSafety.js';
 import { aboutDetailText } from './aboutCopy.js';
 import { spawnSync } from 'node:child_process';
@@ -7911,9 +7911,16 @@ function attachGuestContextMenu(webContents) {
     );
 
     // With selected message text: Summarize → Forward (Pin does not apply to a selection).
-    // On chat-list rows (no selection): Pin → Forward.
+    // On chat-list rows (no selection, not an image): Pin → Forward.
+    // Never show Pin on photos / PDF preview tiles in an open chat.
+    const canPin = canOfferHubPin({
+      inboxApp: !!(service && isInboxAppId(service.appId)),
+      hasSelection,
+      hasImage: !!params.hasImageContents,
+      mediaType: params.mediaType,
+    });
     const pushPinItem = () => {
-      if (!(service && isInboxAppId(service.appId) && !hasSelection)) return;
+      if (!canPin) return;
       const pinHitPromise = webContents
         .executeJavaScript(inspectChatListTargetJs(params.x, params.y), true)
         .catch(() => null);
@@ -7960,7 +7967,6 @@ function attachGuestContextMenu(webContents) {
         });
       }
     };
-    const canPin = !!(service && isInboxAppId(service.appId) && !hasSelection);
     for (const action of guestContextMenuActionOrder({
       hasSelection,
       canSummarize,

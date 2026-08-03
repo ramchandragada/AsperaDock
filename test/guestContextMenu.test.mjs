@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { guestContextMenuActionOrder } from '../src/guestContextMenu.js';
+import {
+  guestContextMenuActionOrder,
+  canOfferHubPin,
+} from '../src/guestContextMenu.js';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -49,12 +52,52 @@ test('menu order never includes summarize-pdf', () => {
   );
 });
 
+test('canOfferHubPin allows chat-list rows only', () => {
+  assert.equal(
+    canOfferHubPin({ inboxApp: true, hasSelection: false }),
+    true,
+  );
+  assert.equal(
+    canOfferHubPin({ inboxApp: true, hasSelection: true }),
+    false,
+  );
+  assert.equal(
+    canOfferHubPin({
+      inboxApp: true,
+      hasSelection: false,
+      hasImage: true,
+    }),
+    false,
+  );
+  assert.equal(
+    canOfferHubPin({
+      inboxApp: true,
+      hasSelection: false,
+      mediaType: 'image',
+    }),
+    false,
+  );
+  assert.equal(
+    canOfferHubPin({
+      inboxApp: true,
+      hasSelection: false,
+      mediaType: 'video',
+    }),
+    false,
+  );
+  assert.equal(
+    canOfferHubPin({ inboxApp: false, hasSelection: false }),
+    false,
+  );
+});
+
 test('main guest context menu follows guestContextMenuActionOrder', () => {
   const src = readFileSync(
     fileURLToPath(new URL('../src/main.js', import.meta.url)),
     'utf8',
   );
   assert.match(src, /guestContextMenuActionOrder/);
+  assert.match(src, /canOfferHubPin/);
   assert.match(src, /action === 'summarize'/);
   assert.match(src, /action === 'forward'/);
   assert.match(src, /action === 'pin'/);
