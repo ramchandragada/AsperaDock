@@ -24,7 +24,7 @@ export const DEFAULT_APP_CONFIG = {
   preventBasicAuth: false,
   /** null = use global */
   spellChecker: null,
-  /** null = use global: block | external | hub-tab */
+  /** null = use global: block | external | hub-tab | ask */
   linkHandling: null,
 };
 

@@ -224,7 +224,9 @@ import {
   resolveLinkHandling,
   shouldOpenUnknownExternally,
   shouldOpenInternalAsHubTab,
+  shouldAskLinkHandling,
   normalizeLinkHandling,
+  rememberModeForChoice,
 } from './linkHandling.js';
 import {
   isGoogleService,
@@ -1533,6 +1535,115 @@ function openUnknownExternalIfAllowed(service, url) {
   if (!shouldOpenUnknownExternally(effectiveLinkHandling(service))) return false;
   if (!shouldOpenInSystemBrowser(url)) return false;
   return openExternalSafe(url);
+}
+
+/** Avoid stacking chooser dialogs when many links fire at once. */
+let linkAskInFlight = false;
+
+/**
+ * Open a URL in an in-Hub popup that shares the app session
+ * (fallback when a new app-bar tab is not possible).
+ */
+function openUrlAsHubPopup(service, url) {
+  if (!service || !url || !String(url).startsWith('http')) return false;
+  const win = new BrowserWindow({
+    autoHideMenuBar: true,
+    width: 1024,
+    height: 720,
+    parent: mainWindow || undefined,
+    webPreferences: guestWebPreferences(service),
+  });
+  trackServicePopup(service.id, win);
+  const childWc = win.webContents;
+  // Intentionally no navigation gate: the user chose to open this URL in Hub.
+  // Nested window.open still follows the app linkHandling via the handler below.
+  configureGuestWindowOpen(childWc, service);
+  attachGuestContextMenu(childWc);
+  win.loadURL(url).catch(() => {});
+  return true;
+}
+
+/**
+ * Rambox-style chooser: browser vs Hub tab, optional remember for this app.
+ * Always deny/prevent the original navigation first, then call this async.
+ */
+async function promptAndApplyLinkChoice(service, url, webContents) {
+  const href = String(url || '');
+  if (!href.startsWith('http')) return;
+  if (linkAskInFlight) return;
+  linkAskInFlight = true;
+  try {
+    const detail =
+      href.length > 480 ? `${href.slice(0, 477)}…` : href;
+    const box = {
+      type: 'question',
+      buttons: ['Open in default browser', 'Open in Hub tab', 'Cancel'],
+      defaultId: 1,
+      cancelId: 2,
+      title: 'Open link',
+      message: 'How should Aspera Hub open this link?',
+      detail,
+      checkboxLabel: 'Do this for this app always',
+      checkboxChecked: false,
+      noLink: true,
+    };
+    const result = mainWindow
+      ? await dialog.showMessageBox(mainWindow, box)
+      : await dialog.showMessageBox(box);
+    if (result.response === 2) return;
+
+    const choice = result.response === 0 ? 'browser' : 'hub-tab';
+    if (result.checkboxChecked && service?.id) {
+      saveAppConfig(service.id, {
+        linkHandling: rememberModeForChoice(choice),
+      });
+      broadcastState();
+    }
+
+    if (choice === 'browser') {
+      if (shouldOpenInSystemBrowser(href)) openExternalSafe(href);
+      return;
+    }
+
+    if (openInternalLinkAsHubTab(service, href)) return;
+    if (webContents && !webContents.isDestroyed() && isInternalUrl(href, service)) {
+      webContents.loadURL(href).catch(() => {});
+      return;
+    }
+    openUrlAsHubPopup(service, href);
+  } catch (err) {
+    reportError('link-ask-failed', {
+      message: String(err?.message || err),
+      url: href.slice(0, 200),
+    }).catch(() => {});
+  } finally {
+    linkAskInFlight = false;
+  }
+}
+
+/**
+ * Handle an outbound / new-window http link according to linkHandling.
+ * Returns true when the caller should deny/preventDefault (already handled).
+ */
+function handleOutboundOrNewWindowLink(service, url, webContents) {
+  const href = String(url || '');
+  if (!href.startsWith('http')) return false;
+  const mode = effectiveLinkHandling(service);
+  if (shouldAskLinkHandling(mode)) {
+    void promptAndApplyLinkChoice(service, href, webContents);
+    return true;
+  }
+  if (isInternalUrl(href, service)) {
+    if (
+      shouldOpenInternalAsHubTab(mode) &&
+      openInternalLinkAsHubTab(service, href)
+    ) {
+      return true;
+    }
+    return false;
+  }
+  openUnknownExternalIfAllowed(service, href);
+  return true;
 }
 
 /** Custom URLs are disabled — Aspera Hub only exposes the company catalog. */
@@ -7949,18 +8060,10 @@ function attachGuestContextMenu(webContents) {
             webContents.loadURL(safeLink).catch(() => {});
             return;
           }
-          if (service && isInternalUrl(safeLink, service)) {
-            const mode = effectiveLinkHandling(service);
-            if (
-              shouldOpenInternalAsHubTab(mode) &&
-              openInternalLinkAsHubTab(service, safeLink)
-            ) {
-              return;
-            }
-            webContents.loadURL(safeLink).catch(() => {});
+          if (handleOutboundOrNewWindowLink(service, safeLink, webContents)) {
             return;
           }
-          openUnknownExternalIfAllowed(service, safeLink);
+          webContents.loadURL(safeLink).catch(() => {});
         },
       });
       template.push({
@@ -8189,6 +8292,7 @@ function attachGuestContextMenu(webContents) {
  * - block:    known hosts in Hub; unknown blocked
  * - external: known in Hub; unknown → system browser
  * - hub-tab:  known → new Hub tab when possible; unknown → system browser
+ * - ask:      chooser (browser vs Hub tab; optional remember for this app)
  *
  * Gmail: never load google.com/url?q=… or third-party sites into the Gmail tab.
  */
@@ -8207,7 +8311,6 @@ function configureGuestWindowOpen(wc, service) {
 
   wc.setWindowOpenHandler(({ url }) => {
     const raw = String(url || '');
-    const mode = effectiveLinkHandling(service);
     // Zoho One CRM / SPA portals boot child frames via about:blank first.
     if (!raw || raw === 'about:blank' || raw.startsWith('about:blank')) {
       return allowPopup();
@@ -8221,7 +8324,7 @@ function configureGuestWindowOpen(wc, service) {
             wc.loadURL(outbound).catch(() => {});
             return { action: 'deny' };
           }
-          openUnknownExternalIfAllowed(service, outbound);
+          handleOutboundOrNewWindowLink(service, outbound, wc);
           return { action: 'deny' };
         }
         if (isGoogleOwnedUrl(raw) && !isAllowedGmailTabUrl(raw)) {
@@ -8229,7 +8332,7 @@ function configureGuestWindowOpen(wc, service) {
           return { action: 'deny' };
         }
         if (!isAllowedGmailTabUrl(raw)) {
-          openUnknownExternalIfAllowed(service, raw);
+          handleOutboundOrNewWindowLink(service, raw, wc);
           return { action: 'deny' };
         }
         wc.loadURL(raw).catch(() => {});
@@ -8243,18 +8346,8 @@ function configureGuestWindowOpen(wc, service) {
         return allowPopup();
       }
 
-      const internal = isInternalUrl(raw, service);
-      if (!internal) {
-        if (isGoogleOwnedUrl(raw)) return { action: 'deny' };
-        openUnknownExternalIfAllowed(service, raw);
-        return { action: 'deny' };
-      }
-
-      // Known/internal host: Hub tab when configured (Zoho CRM multi-screen).
-      if (
-        shouldOpenInternalAsHubTab(mode) &&
-        openInternalLinkAsHubTab(service, raw)
-      ) {
+      // Ask / hub-tab / external for new-window http links.
+      if (handleOutboundOrNewWindowLink(service, raw, wc)) {
         return { action: 'deny' };
       }
 
@@ -8288,7 +8381,7 @@ function attachGuestNavigationGate(webContents, service) {
           webContents.loadURL(outbound).catch(() => {});
           return;
         }
-        openUnknownExternalIfAllowed(service, outbound);
+        handleOutboundOrNewWindowLink(service, outbound, webContents);
         return;
       }
       if (isGoogleOwnedUrl(url) && !isAllowedGmailTabUrl(url)) {
@@ -8298,7 +8391,7 @@ function attachGuestNavigationGate(webContents, service) {
       }
       if (!isAllowedGmailTabUrl(url)) {
         event.preventDefault();
-        openUnknownExternalIfAllowed(service, url);
+        handleOutboundOrNewWindowLink(service, url, webContents);
         return;
       }
       return;
@@ -8308,10 +8401,10 @@ function attachGuestNavigationGate(webContents, service) {
     if (mustKeepGoogleUrlInApp(url)) return;
 
     if (isInternalUrl(url, service)) return;
-    // Unknown host: leave Hub only when linkHandling allows it.
+    // Unknown host: ask, open externally, or block — never leave the guest blank.
     event.preventDefault();
     if (isGoogleOwnedUrl(url)) return;
-    openUnknownExternalIfAllowed(service, url);
+    handleOutboundOrNewWindowLink(service, url, webContents);
   };
 
   webContents.on('will-navigate', gate);
@@ -8326,10 +8419,10 @@ function attachGuestNavigationGate(webContents, service) {
       if (mustKeepGoogleUrlInApp(outbound) || isGoogleOwnedUrl(outbound)) {
         // keep in Hub
       } else {
-        openUnknownExternalIfAllowed(service, outbound);
+        handleOutboundOrNewWindowLink(service, outbound, webContents);
       }
     } else if (!isGoogleOwnedUrl(url)) {
-      openUnknownExternalIfAllowed(service, url);
+      handleOutboundOrNewWindowLink(service, url, webContents);
     }
     const home = startUrlForService(service);
     webContents.loadURL(home).catch(() => {});
