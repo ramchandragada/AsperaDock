@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('crmLookupApi', {
     return () => ipcRenderer.removeListener('crm-lookup:init', listener);
   },
   copy: (text) => ipcRenderer.invoke('crm-lookup:copy', text),
+  prepareCopy: (payload) => ipcRenderer.invoke('crm-lookup:prepare-copy', payload),
   openDeal: (url) => ipcRenderer.invoke('crm-lookup:open-deal', url),
   close: () => ipcRenderer.invoke('crm-lookup:close'),
 });

@@ -12,6 +12,8 @@ import { buildCrmLookupHtml } from '../src/crmLookupHtml.js';
 import {
   formatDealWhatsAppMessage,
   formatDealsWhatsAppDigest,
+  buildDealWhatsAppPrepPrompt,
+  sanitizePreparedWhatsAppMessage,
 } from '../src/zohoCrm/waDealMessage.js';
 
 test('sanitizeDealQuery trims and caps length', () => {
@@ -94,6 +96,8 @@ test('CRM lookup popup renders deal stage UI hooks', () => {
   assert.match(html, /Copy all for WhatsApp/);
   assert.match(html, /Copy stage/);
   assert.match(html, /crmLookupApi/);
+  assert.match(html, /prepareCopy/);
+  assert.match(html, /Preparing…/);
   assert.match(html, /Created:/);
   assert.match(html, /State:/);
   assert.match(html, /Premise:/);
@@ -127,4 +131,39 @@ test('WhatsApp digest lists name stage state for all deals', () => {
   assert.match(msg, /Stage: Renewal Done/);
   assert.match(msg, /State: TELANGANA/);
   assert.match(msg, /2\. \*Other\*/);
+});
+
+test('deal prep prompt keeps facts and forbids invention', () => {
+  const prompt = buildDealWhatsAppPrepPrompt({
+    name: 'FERNWEH',
+    stage: 'Renewal Done',
+    state: 'TELANGANA',
+    premise: 'TS-3-CHANDRALOK',
+  });
+  assert.match(prompt, /FERNWEH/);
+  assert.match(prompt, /Renewal Done/);
+  assert.match(prompt, /Do not invent/);
+  assert.match(prompt, /paste-ready/i);
+});
+
+test('sanitizePreparedWhatsAppMessage strips fences and preamble', () => {
+  const fallback = formatDealWhatsAppMessage({
+    name: 'A',
+    stage: 'B',
+  });
+  assert.equal(
+    sanitizePreparedWhatsAppMessage(
+      '```\nHi — *A* is at stage B.\n```',
+      fallback,
+    ),
+    'Hi — *A* is at stage B.',
+  );
+  assert.match(
+    sanitizePreparedWhatsAppMessage(
+      "Here's your message: Friendly note about the deal.",
+      fallback,
+    ),
+    /Friendly note/,
+  );
+  assert.equal(sanitizePreparedWhatsAppMessage('', fallback), fallback);
 });

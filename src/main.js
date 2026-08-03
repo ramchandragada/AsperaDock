@@ -25,11 +25,24 @@ import { buildCrmLookupHtml } from './crmLookupHtml.js';
 import { buildForwardPickerHtml } from './forwardPickerHtml.js';
 import { buildExtensionsHtml } from './extensionsHtml.js';
 import {
+  isWhatsAppSafeMode,
+  maxWhatsAppInstances,
+  whatsappAutomationBlocked,
+  whatsappSafeModeBlockedMessage,
+} from './whatsappSafeMode.js';
+import {
   clearZohoCrmAccessCache,
   exchangeGrantCode,
   searchDeals,
   testZohoCrmConnection,
 } from './zohoCrm/client.js';
+import {
+  buildDealWhatsAppPrepPrompt,
+  buildDealsWhatsAppDigestPrepPrompt,
+  formatDealWhatsAppMessage,
+  formatDealsWhatsAppDigest,
+  sanitizePreparedWhatsAppMessage,
+} from './zohoCrm/waDealMessage.js';
 import {
   ZOHO_CRM_DCS,
   ZOHO_CRM_OAUTH_SCOPES,
@@ -1483,6 +1496,17 @@ function addService(appId, profileId = null, { startUrl = null } = {}) {
   }
   if (countInstances(appId) >= MAX_INSTANCES_PER_APP) {
     return { ok: false, error: `Max ${MAX_INSTANCES_PER_APP} ${entry.name} apps` };
+  }
+  if (appId === 'whatsapp') {
+    const waMax = maxWhatsAppInstances(settings);
+    if (countInstances('whatsapp') >= waMax) {
+      return {
+        ok: false,
+        error: isWhatsAppSafeMode(settings)
+          ? 'WhatsApp Safe Mode allows only 1 WhatsApp tab. Turn it off in Settings → Security to add more.'
+          : `Max ${waMax} WhatsApp apps`,
+      };
+    }
   }
   const slot = nextSlot(appId);
   if (!slot) {
@@ -3219,17 +3243,19 @@ function buildNotifCenterDataSync(scrapedChats = []) {
   const hideContent = !!settings.hideNotificationContent;
   const logItems = (notificationLog || []).slice(0, 40).map((item) => {
     const service = getService(item.serviceId);
+    const appId = service?.appId || item.appId || '';
     return {
       id: item.id,
       serviceId: item.serviceId,
-      appId: service?.appId || item.appId || '',
+      appId,
       title: item.title,
       body: item.body,
       at: item.at,
       chatName: item.chatName || '',
       chatKey: item.chatKey || '',
       unread: Number(item.unread) || 0,
-      canReply: isInboxAppId(service?.appId || item.appId),
+      canReply:
+        isInboxAppId(appId) && !whatsappAutomationBlocked(settings, appId),
       accountLabel: item.accountLabel || service?.title || service?.name || '',
       logo: service?.logo || null,
       color: service?.color || '#e2e8f0',
@@ -3259,6 +3285,7 @@ function buildNotifCenterData() {
 
 async function scrapeUnreadChatsForService(service) {
   if (!service || !isInboxAppId(service.appId)) return [];
+  if (whatsappAutomationBlocked(settings, service.appId)) return [];
   const wc = views.get(service.id)?.view?.webContents;
   if (!wc || wc.isDestroyed()) return [];
   try {
@@ -3801,7 +3828,11 @@ function syncPreferredAiProvider() {
 }
 
 function collectCatchUpItems() {
-  const services = orderedServices().filter((s) => isAiAllowedAppId(s.appId));
+  const services = orderedServices().filter(
+    (s) =>
+      isAiAllowedAppId(s.appId) &&
+      !whatsappAutomationBlocked(settings, s.appId),
+  );
   const byId = new Map(services.map((s) => [s.id, s]));
   const items = [];
 
@@ -3846,6 +3877,8 @@ async function getNearbyPriorMessages({
   maxPrior = PRIOR_MESSAGE_COUNT,
 } = {}) {
   if (!activeServiceId) return [];
+  const service = getService(activeServiceId);
+  if (whatsappAutomationBlocked(settings, service?.appId)) return [];
   const entry = views.get(activeServiceId);
   const wc = entry?.view?.webContents;
   if (!wc || wc.isDestroyed()) return [];
@@ -4004,6 +4037,8 @@ function activeAiService() {
   if (!activeServiceId) return null;
   const service = getService(activeServiceId);
   if (!service || !isAiAllowedAppId(service.appId)) return null;
+  // Safe Mode: do not scrape / AI-instrument WhatsApp Web.
+  if (whatsappAutomationBlocked(settings, service.appId)) return null;
   return service;
 }
 
@@ -4544,6 +4579,9 @@ async function handleNotifCenterAction(type, value) {
 }
 
 function applyFocusMode(webContents, serviceId) {
+  const service = getService(serviceId);
+  // Safe Mode: do not replace Notification / focus on WhatsApp Web.
+  if (whatsappAutomationBlocked(settings, service?.appId)) return;
   const cfg = serviceId ? getAppConfig(serviceId) : mergeAppConfig();
   // Suppress native guest Notification (avoids Linux focus steal) but forward
   // title/body to main via a console bridge for rich OS + in-app toasts.
@@ -4990,6 +5028,12 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
   if (!service || !isInboxAppId(service.appId)) {
     return { ok: false, error: 'Open a WhatsApp or Arattai chat.' };
   }
+  if (whatsappAutomationBlocked(settings, service.appId)) {
+    return {
+      ok: false,
+      error: whatsappSafeModeBlockedMessage('auto-opening WhatsApp chats'),
+    };
+  }
   const chatName = String(name || '').trim();
   const key = chatKey || normalizeChatKey(chatName);
   const waId = String(nativeId || '').trim();
@@ -5332,6 +5376,13 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
 async function sendQuickReply(serviceId, { name = '', chatKey = '', text = '' } = {}) {
   const message = String(text || '').trim();
   if (!message) return { ok: false, error: 'Type a short reply first.' };
+  const service = getService(serviceId);
+  if (whatsappAutomationBlocked(settings, service?.appId)) {
+    return {
+      ok: false,
+      error: whatsappSafeModeBlockedMessage('Quick reply Send on WhatsApp'),
+    };
+  }
   const opened = await openMessagingChat(serviceId, { name, chatKey });
   if (!opened.ok) return opened;
   const entry = views.get(serviceId);
@@ -5361,7 +5412,10 @@ async function searchChatsAcrossAccounts(query) {
   const q = String(query || '').trim();
   if (!q) return { ok: true, chats: [] };
   const services = orderedServices().filter(
-    (s) => isInboxAppId(s.appId) && views.has(s.id),
+    (s) =>
+      isInboxAppId(s.appId) &&
+      views.has(s.id) &&
+      !whatsappAutomationBlocked(settings, s.appId),
   );
   const chats = [];
   await Promise.all(
@@ -5395,6 +5449,12 @@ function pinPerson(payload = {}) {
   const service = getService(payload.serviceId);
   if (!service || !isInboxAppId(service.appId)) {
     return { ok: false, error: 'Pin WhatsApp or Arattai chats only.' };
+  }
+  if (whatsappAutomationBlocked(settings, service.appId)) {
+    return {
+      ok: false,
+      error: whatsappSafeModeBlockedMessage('Hub Pins on WhatsApp'),
+    };
   }
   const name = String(payload.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
   const chatKey = normalizeChatKey(payload.chatKey || name);
@@ -8632,7 +8692,8 @@ function attachGuestContextMenu(webContents) {
       hasSelection &&
       service &&
       isAiAllowedAppId(service.appId) &&
-      settings.aiEnabled !== false
+      settings.aiEnabled !== false &&
+      !whatsappAutomationBlocked(settings, service.appId)
     );
     const canCrmLookup = !!(
       hasSelection && settings.zohoCrmEnabled !== false
@@ -8642,7 +8703,11 @@ function attachGuestContextMenu(webContents) {
     // On chat-list rows (no selection, not an image): Pin → Forward.
     // Never show Pin on photos / PDF preview tiles in an open chat.
     const canPin = canOfferHubPin({
-      inboxApp: !!(service && isInboxAppId(service.appId)),
+      inboxApp: !!(
+        service &&
+        isInboxAppId(service.appId) &&
+        !whatsappAutomationBlocked(settings, service.appId)
+      ),
       hasSelection,
       hasImage: !!params.hasImageContents,
       mediaType: params.mediaType,
@@ -8981,7 +9046,10 @@ function createViewForService(service) {
   attachGuestContextMenu(webContents);
   attachGuestNavigationGate(webContents, service);
   if (isHeavyPortalApp(service) || isKeepWarmService(service.id)) {
-    attachPortalVisibilityKeepAlive(webContents);
+    // Safe Mode: do not spoof Page Visibility on WhatsApp.
+    if (!whatsappAutomationBlocked(settings, service.appId)) {
+      attachPortalVisibilityKeepAlive(webContents);
+    }
   }
   if (service.appId === 'zoho-one') {
     attachZohoOneBlankGuardian(webContents);
@@ -9838,21 +9906,28 @@ function currentState() {
       appCount: appsUsingProfile(p.id).length,
       locked: p.id === PRIMARY_PROFILE_ID,
     })),
-    catalog: APP_CATALOG.map((a) => ({
-      ...a,
-      count: countInstances(a.appId),
-      max: MAX_INSTANCES_PER_APP,
-      totalApps: totalAppCount(),
-      maxTotal: MAX_APPS_TOTAL,
-      canAdd:
-        totalAppCount() < MAX_APPS_TOTAL &&
-        countInstances(a.appId) < MAX_INSTANCES_PER_APP,
-    })),
+    catalog: APP_CATALOG.map((a) => {
+      const max =
+        a.appId === 'whatsapp'
+          ? maxWhatsAppInstances(settings)
+          : MAX_INSTANCES_PER_APP;
+      const count = countInstances(a.appId);
+      return {
+        ...a,
+        count,
+        max,
+        totalApps: totalAppCount(),
+        maxTotal: MAX_APPS_TOTAL,
+        canAdd: totalAppCount() < MAX_APPS_TOTAL && count < max,
+      };
+    }),
     limits: {
       maxAppsTotal: MAX_APPS_TOTAL,
       maxPerApp: MAX_INSTANCES_PER_APP,
       maxNameLength: MAX_APP_NAME_LENGTH,
       totalApps: totalAppCount(),
+      whatsappMax: maxWhatsAppInstances(settings),
+      whatsappSafeMode: isWhatsAppSafeMode(settings),
     },
     appVersion: app.getVersion(),
     isPackaged: app.isPackaged,
@@ -11012,6 +11087,52 @@ aiResultHandle('ai-result:close', () => {
 crmLookupHandle('crm-lookup:copy', (_e, text) => {
   clipboard.writeText(String(text || ''));
   return { ok: true };
+});
+crmLookupHandle('crm-lookup:prepare-copy', async (_e, payload = {}) => {
+  const mode = String(payload?.mode || 'deal');
+  let fallback = '';
+  let prompt = '';
+  if (mode === 'digest') {
+    const deals = Array.isArray(payload?.deals) ? payload.deals : [];
+    const query = String(payload?.query || '');
+    fallback = formatDealsWhatsAppDigest(deals, query);
+    prompt = buildDealsWhatsAppDigestPrepPrompt(deals, query);
+  } else {
+    const deal = payload?.deal && typeof payload.deal === 'object' ? payload.deal : {};
+    fallback = formatDealWhatsAppMessage(deal);
+    prompt = buildDealWhatsAppPrepPrompt(deal);
+  }
+
+  if (!fallback.trim()) {
+    return { ok: false, error: 'Nothing to copy', text: '', usedAi: false };
+  }
+
+  if (settings.aiEnabled === false) {
+    return { ok: true, text: fallback, usedAi: false, reason: 'ai-disabled' };
+  }
+
+  const { routeOrder } = aiSettingsSnapshot();
+  if (!routeOrder.length) {
+    return { ok: true, text: fallback, usedAi: false, reason: 'no-key' };
+  }
+
+  try {
+    const result = await runAiCompletionWithFailover(prompt);
+    syncPreferredAiProvider();
+    const text = sanitizePreparedWhatsAppMessage(result?.text, fallback);
+    if (!text || text === fallback) {
+      return { ok: true, text: fallback, usedAi: false, reason: 'empty' };
+    }
+    return {
+      ok: true,
+      text,
+      usedAi: true,
+      provider: result.providerId,
+      model: result.model,
+    };
+  } catch {
+    return { ok: true, text: fallback, usedAi: false, reason: 'ai-failed' };
+  }
 });
 crmLookupHandle('crm-lookup:close', () => {
   closeCrmLookupWindow();

@@ -65,6 +65,12 @@ export const DEFAULTS = {
   // Security
   lockEnabled: false,
   lockPasswordHash: '',
+  /**
+   * When true (default), Hub disables high-risk WhatsApp Web automation:
+   * pin-open Store/CDP, quick-reply Send, inbox scrape/search, Notification
+   * patch, visibility spoof, and caps WhatsApp at 1 instance.
+   */
+  whatsappSafeMode: true,
   /** When true *and* ASPERADOCK_ADMIN=1, allow injectJs / stylishUrl. */
   allowPageInjection: false,
   /** When false (default), guest DevTools are blocked in packaged builds. */

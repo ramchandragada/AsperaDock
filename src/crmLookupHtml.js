@@ -15,6 +15,7 @@ export function buildCrmLookupHtml(dark = false) {
   const soft = dark ? 'rgba(148,163,184,0.12)' : 'rgba(15,23,42,0.05)';
 
   // Inject pure formatters into the float window (no module loader there).
+  // Keep fallback path self-contained if prepare IPC fails (v0.4.67 lesson).
   const fmtDealSrc = formatDealWhatsAppMessage.toString();
   const fmtDigestSrc = formatDealsWhatsAppDigest.toString();
 
@@ -106,13 +107,34 @@ export function buildCrmLookupHtml(dark = false) {
       try { return new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(Number(n)); }
       catch (e) { return String(n); }
     }
-    async function copyText(btn, text, label) {
-      const value = String(text || '').trim();
-      if (!value) return;
-      await api.copy(value);
+    async function copyPrepared(btn, preparePayload, fallbackText, label) {
       if (!btn) return;
       const prev = btn.textContent;
-      btn.textContent = 'Copied';
+      btn.disabled = true;
+      btn.textContent = 'Preparing…';
+      let text = '';
+      try {
+        if (typeof api.prepareCopy === 'function') {
+          const result = await api.prepareCopy(preparePayload);
+          text = String(result?.text || '').trim();
+        }
+      } catch (e) {
+        text = '';
+      }
+      if (!text) text = String(fallbackText || '').trim();
+      if (!text) {
+        btn.textContent = 'Copy failed';
+        btn.disabled = false;
+        setTimeout(() => { btn.textContent = label || prev; }, 1500);
+        return;
+      }
+      try {
+        await api.copy(text);
+        btn.textContent = 'Copied';
+      } catch (err) {
+        btn.textContent = 'Copy failed';
+      }
+      btn.disabled = false;
       setTimeout(() => { btn.textContent = label || prev; }, 1200);
     }
     function paint(data) {
@@ -179,20 +201,28 @@ export function buildCrmLookupHtml(dark = false) {
         btn.addEventListener('click', async () => {
           const deal = deals[Number(btn.dataset.index)];
           if (!deal) return;
-          try {
-            await copyText(btn, formatDealWhatsAppMessage(deal), 'Copy message');
-          } catch (err) {
-            btn.textContent = 'Copy failed';
-            setTimeout(() => { btn.textContent = 'Copy message'; }, 1500);
-          }
+          await copyPrepared(
+            btn,
+            { mode: 'deal', deal },
+            formatDealWhatsAppMessage(deal),
+            'Copy message',
+          );
         });
       });
       body.querySelectorAll('.copy-stage').forEach((btn) => {
         btn.addEventListener('click', async () => {
           const deal = deals[Number(btn.dataset.index)];
-          const text = deal?.stage || '';
-          if (!text) return;
-          await copyText(btn, text, 'Copy stage');
+          const stageText = deal?.stage || '';
+          if (!stageText) return;
+          btn.disabled = true;
+          try {
+            await api.copy(stageText);
+            btn.textContent = 'Copied';
+          } catch (err) {
+            btn.textContent = 'Copy failed';
+          }
+          btn.disabled = false;
+          setTimeout(() => { btn.textContent = 'Copy stage'; }, 1200);
         });
       });
     }
@@ -200,8 +230,9 @@ export function buildCrmLookupHtml(dark = false) {
     document.getElementById('close').onclick = () => api.close();
     document.getElementById('copy-all').onclick = async (e) => {
       const btn = e.currentTarget;
-      await copyText(
+      await copyPrepared(
         btn,
+        { mode: 'digest', deals: latestDeals, query: latestQuery },
         formatDealsWhatsAppDigest(latestDeals, latestQuery),
         'Copy all for WhatsApp',
       );

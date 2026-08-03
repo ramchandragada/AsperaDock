@@ -1130,6 +1130,7 @@ function fillSettingsForm() {
   set('set-lock-enabled', String(!!s.lockEnabled));
   set('set-lock-password', '');
   set('set-lock-idle', s.lockOnSystemIdle);
+  set('set-whatsapp-safe-mode', s.whatsappSafeMode !== false);
   set('set-ai-enabled', s.aiEnabled !== false);
   set('set-ai-language', s.aiLanguage || 'en');
   aiKeyEditMode.clear();
@@ -1199,6 +1200,7 @@ function readSettingsForm() {
     confirmQuit: checked('set-confirm-quit'),
     lockEnabled: val('set-lock-enabled') === 'true',
     lockOnSystemIdle: checked('set-lock-idle'),
+    whatsappSafeMode: checked('set-whatsapp-safe-mode'),
     aiEnabled: checked('set-ai-enabled'),
     aiLanguage: val('set-ai-language'),
     zohoCrmEnabled: checked('set-zoho-crm-enabled'),
