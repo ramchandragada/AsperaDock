@@ -112,6 +112,13 @@ export function looksLikeDocument(opts = {}) {
 }
 
 /**
+ * Master switch for "Forward with Aspera Hub".
+ * Keep false until the clipboard / paste bugs are fully ironed out.
+ * Flip to true to restore the menu + picker (code paths stay in place).
+ */
+export const FORWARD_WITH_HUB_ENABLED = false;
+
+/**
  * Decide whether Forward should take the document capture path.
  * One menu action ("Forward with Aspera Hub") auto-detects: PDF/Office
  * bubbles use the document path; clear photos stay on the image path.
@@ -290,6 +297,7 @@ export function arattaiFullFileUrlFromAny(url, chatIdFallback = '') {
  * }} opts
  */
 export function canOfferForward(opts = {}) {
+  if (!FORWARD_WITH_HUB_ENABLED) return false;
   if (!isForwardAppId(opts.appId)) return false;
   if (Number(opts.targetCount) <= 0) return false;
   if (opts.alwaysOnMessaging !== false) return true;

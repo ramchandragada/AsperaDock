@@ -26,6 +26,7 @@ import {
   arattaiFullFileUrlFromAny,
   buildForwardClipboardText,
   canOfferForward,
+  FORWARD_WITH_HUB_ENABLED,
   classifyForwardFileBytes,
   describeForwardPayload,
   extensionOf,
@@ -6300,6 +6301,10 @@ async function fetchArattaiDocumentViaSession(webContents, downloadUrl, fileName
 }
 
 async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
+  // Feature parked — flip FORWARD_WITH_HUB_ENABLED in forwardHub.js to restore.
+  if (!FORWARD_WITH_HUB_ENABLED) {
+    return { ok: false, error: 'Forward with Aspera Hub is temporarily disabled.' };
+  }
   const forceDocument = !!opts.forceDocument;
   const sourceId = serviceIdForWebContents(webContents);
   const source = getService(sourceId);
@@ -7620,6 +7625,9 @@ async function waitForChatAndAttachDocument(webContents, filePath, appId = '') {
 }
 
 async function deliverForwardToTarget(targetId) {
+  if (!FORWARD_WITH_HUB_ENABLED) {
+    return { ok: false, error: 'Forward with Aspera Hub is temporarily disabled.' };
+  }
   const payload = forwardPayload;
   if (!payload) return { ok: false, error: 'Nothing to forward.' };
   const target = getService(targetId);

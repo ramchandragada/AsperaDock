@@ -60,12 +60,13 @@ test('main guest context menu follows guestContextMenuActionOrder', () => {
   assert.match(src, /action === 'pin'/);
   assert.match(src, /Summarize with Aspera AI/);
   assert.match(src, /Forward with Aspera Hub/);
+  assert.match(src, /FORWARD_WITH_HUB_ENABLED/);
   // PDF summarize feature removed — select text in the PDF preview instead.
   assert.doesNotMatch(src, /summarize-pdf/);
   assert.doesNotMatch(src, /shouldOfferPdfSummarizeMenu/);
   assert.doesNotMatch(src, /injectGuestPdfContextBridge/);
   assert.doesNotMatch(src, /runSummarizePdfFromGuest/);
   assert.doesNotMatch(src, /Summarize PDF with Aspera AI/);
-  // Forward still captures open PDF viewers.
+  // Forward capture helpers remain for when the feature is re-enabled.
   assert.match(src, /guestPdfBytesProbeJs/);
 });

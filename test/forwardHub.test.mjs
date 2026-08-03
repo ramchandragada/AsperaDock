@@ -5,6 +5,7 @@ import {
   buildArattaiDownloadUrl,
   buildForwardClipboardText,
   canOfferForward,
+  FORWARD_WITH_HUB_ENABLED,
   classifyForwardFileBytes,
   describeForwardPayload,
   extractDocumentFileName,
@@ -33,10 +34,43 @@ import {
   shouldOfferDocumentForwardMenu,
 } from '../src/forwardHub.js';
 
+test('Forward with Aspera Hub is temporarily disabled', () => {
+  assert.equal(FORWARD_WITH_HUB_ENABLED, false);
+  assert.equal(
+    canOfferForward({
+      appId: 'whatsapp',
+      hasSelection: true,
+      targetCount: 1,
+    }),
+    false,
+  );
+  assert.equal(
+    canOfferForward({
+      appId: 'arattai',
+      hasImage: true,
+      targetCount: 1,
+    }),
+    false,
+  );
+});
+
 test('forward is only for WhatsApp and Arattai with targets', () => {
   assert.equal(isForwardAppId('whatsapp'), true);
   assert.equal(isForwardAppId('arattai'), true);
   assert.equal(isForwardAppId('gmail'), false);
+  // When the feature flag is off, canOfferForward is always false (covered above).
+  // Eligibility rules below are for the re-enable path — assert flag gate first.
+  if (!FORWARD_WITH_HUB_ENABLED) {
+    assert.equal(
+      canOfferForward({
+        appId: 'whatsapp',
+        hasSelection: true,
+        targetCount: 1,
+      }),
+      false,
+    );
+    return;
+  }
   assert.equal(
     canOfferForward({
       appId: 'whatsapp',
