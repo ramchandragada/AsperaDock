@@ -2,7 +2,11 @@
 
 Marketing site for **Aspera Hub** at [asperahub.com](https://asperahub.com).
 
+<<<<<<< HEAD
 Visual style matches modern product marketing pages (layout, tokens, typography). This is a **separate product and domain** from any other Aspera apps.
+=======
+Visual style is intentionally close to the TuxGenie marketing pages (layout, tokens, typography) — but this is a **separate product and domain**. No TuxGenie branding on the live site.
+>>>>>>> origin/master
 
 Self-contained `index.html` (inline CSS/JS) plus Aspera Hub icon assets.
 
@@ -14,6 +18,7 @@ python3 -m http.server 5173
 # open http://127.0.0.1:5173
 ```
 
+<<<<<<< HEAD
 ## Deploy (GitHub Pages → asperahub.com)
 
 1. Repo **Settings → Pages → Build and deployment → Source: GitHub Actions**
@@ -24,3 +29,8 @@ python3 -m http.server 5173
 4. Pages → Custom domain: `asperahub.com` → Enforce HTTPS
 
 `website/CNAME` is already set to `asperahub.com`.
+=======
+## Deploy (Vercel / GitHub Pages)
+
+Root Directory: `website` · no build command · domain `asperahub.com`.
+>>>>>>> origin/master
