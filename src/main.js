@@ -150,6 +150,7 @@ import {
   MAX_WARM_VIEWS_CAP,
   CUSTOM_APP_ID,
   isCustomAppId,
+  canShareProfileAcrossInstances,
   getChromeMetrics,
   getAppCatalogEntry,
   defaultInstanceName,
@@ -1280,12 +1281,20 @@ async function deleteProfile(id) {
 /**
  * Pick a profile for a newly added app.
  * First copy of an app → Primary.
- * Extra copies → brand-new profile so logins stay separate (Rambox behaviour).
+ * Extra WhatsApp/Gmail/… → brand-new profile so logins stay separate.
+ * Extra Zoho CRM/One/Mail/Books → reuse existing profile so tabs share login.
  */
 function profileIdForNewApp(appId, entry) {
   const existing = (settings.serviceInstances || []).filter((i) => i.appId === appId);
   if (!existing.length) {
     return getProfile(PRIMARY_PROFILE_ID)?.id || PRIMARY_PROFILE_ID;
+  }
+  if (canShareProfileAcrossInstances(appId)) {
+    return (
+      existing[0].profileId ||
+      getProfile(PRIMARY_PROFILE_ID)?.id ||
+      PRIMARY_PROFILE_ID
+    );
   }
   const slot = existing.length + 1;
   const created = createProfile(`${entry.name} ${slot}`);
@@ -1408,7 +1417,7 @@ function nextSlot(appId) {
   return null;
 }
 
-function addService(appId, profileId = null) {
+function addService(appId, profileId = null, { startUrl = null } = {}) {
   const entry = getAppCatalogEntry(appId);
   if (!entry) return { ok: false, error: 'Unknown app' };
   if (totalAppCount() >= MAX_APPS_TOTAL) {
@@ -1431,8 +1440,9 @@ function addService(appId, profileId = null) {
   }
 
   // Same app + same profile would share one WhatsApp/Gmail login — block it.
+  // Zoho CRM/One may share a profile so multiple Hub tabs keep one login.
   // Custom URLs may share a profile (different sites, same cookies jar is fine).
-  if (!isCustomAppId(appId)) {
+  if (!isCustomAppId(appId) && !canShareProfileAcrossInstances(appId)) {
     const clash = (settings.serviceInstances || []).some(
       (i) => i.appId === appId && i.profileId === resolvedProfileId,
     );
@@ -1450,10 +1460,47 @@ function addService(appId, profileId = null) {
     { id, appId, profileId: resolvedProfileId, slot },
   ];
   const serviceOrder = [...(settings.serviceOrder || []), id];
-  settings = saveSettings({ serviceInstances: instances, serviceOrder });
+
+  let lastServiceUrls = settings.lastServiceUrls || {};
+  const initialUrl =
+    startUrl &&
+    String(startUrl).startsWith('http') &&
+    isInternalUrl(startUrl, { ...entry, id: 'pending', url: entry.url, appId })
+      ? String(startUrl)
+      : null;
+  if (initialUrl) {
+    lastServiceUrls = { ...lastServiceUrls, [id]: initialUrl };
+    lastGoodUrls.set(id, initialUrl);
+  }
+
+  settings = saveSettings({
+    serviceInstances: instances,
+    serviceOrder,
+    ...(initialUrl ? { lastServiceUrls } : {}),
+  });
   broadcastState();
   activateService(id);
   return { ok: true, id, profileId: resolvedProfileId };
+}
+
+/**
+ * Open a Zoho (or shared-profile) deep link as a new Hub app-bar tab that
+ * reuses the source app's login/session. Returns false if the dock is full
+ * or the URL is not suitable — callers may fall back to a popup.
+ */
+function openInternalLinkAsHubTab(sourceService, url) {
+  if (!sourceService?.appId || !url) return false;
+  if (!canShareProfileAcrossInstances(sourceService.appId)) return false;
+  if (!String(url).startsWith('http')) return false;
+  if (!isInternalUrl(url, sourceService)) return false;
+  if (isAuthOrLoginUrl(url)) return false;
+  if (totalAppCount() >= MAX_APPS_TOTAL) return false;
+  if (countInstances(sourceService.appId) >= MAX_INSTANCES_PER_APP) return false;
+
+  const result = addService(sourceService.appId, sourceService.profileId, {
+    startUrl: url,
+  });
+  return !!result?.ok;
 }
 
 /** Custom URLs are disabled — Aspera Hub only exposes the company catalog. */
@@ -1479,7 +1526,8 @@ function setInstanceProfile(serviceId, profileId) {
       i.id !== serviceId &&
       i.appId === inst.appId &&
       i.profileId === profileId &&
-      !isCustomAppId(inst.appId),
+      !isCustomAppId(inst.appId) &&
+      !canShareProfileAcrossInstances(inst.appId),
   );
   if (clash) {
     const entry = getAppCatalogEntry(inst.appId);
@@ -7869,8 +7917,22 @@ function attachGuestContextMenu(webContents) {
             webContents.loadURL(safeLink).catch(() => {});
             return;
           }
+          // Zoho workspace links → new Hub tab (same login), not Chrome.
+          if (
+            service &&
+            canShareProfileAcrossInstances(service.appId) &&
+            isInternalUrl(safeLink, service)
+          ) {
+            if (openInternalLinkAsHubTab(service, safeLink)) return;
+            webContents.loadURL(safeLink).catch(() => {});
+            return;
+          }
           if (shouldOpenInSystemBrowser(safeLink)) openExternalSafe(safeLink);
         },
+      });
+      template.push({
+        label: 'Open link in this tab',
+        click: () => webContents.loadURL(safeLink).catch(() => {}),
       });
       template.push({
         label: 'Copy link address',
@@ -8164,6 +8226,15 @@ function configureGuestWindowOpen(wc, service) {
         return { action: 'deny' };
       }
 
+      // Zoho CRM/One: open workspace links as Hub app-bar tabs (shared login),
+      // not floating windows or Chrome.
+      if (
+        canShareProfileAcrossInstances(service.appId) &&
+        openInternalLinkAsHubTab(service, raw)
+      ) {
+        return { action: 'deny' };
+      }
+
       return allowPopup();
     }
 
@@ -8289,6 +8360,44 @@ function attachPopupSessionAdopt(parentWc, childWindow, service) {
   setTimeout(tryAdopt, 300);
 }
 
+/**
+ * Zoho often window.opens about:blank then navigates. Fold that floating
+ * window into a Hub app-bar tab that shares the CRM/One login.
+ */
+function attachZohoPopupAdoptToHubTab(childWindow, service) {
+  if (!canShareProfileAcrossInstances(service?.appId)) return;
+
+  const childWc = childWindow.webContents;
+  let adopting = false;
+
+  const tryAdopt = () => {
+    if (adopting || childWindow.isDestroyed()) return;
+    let popupUrl = '';
+    try {
+      popupUrl = childWc.getURL();
+    } catch {
+      return;
+    }
+    if (!popupUrl.startsWith('http') || isAuthOrLoginUrl(popupUrl)) return;
+    if (!isInternalUrl(popupUrl, service)) return;
+
+    if (!openInternalLinkAsHubTab(service, popupUrl)) return;
+    adopting = true;
+    setTimeout(() => {
+      try {
+        if (!childWindow.isDestroyed()) childWindow.close();
+      } catch {
+        // ignore
+      }
+    }, 120);
+  };
+
+  childWc.on('did-navigate', tryAdopt);
+  childWc.on('did-navigate-in-page', tryAdopt);
+  childWc.on('did-finish-load', tryAdopt);
+  setTimeout(tryAdopt, 400);
+}
+
 function createViewForService(service) {
   const cfg = getAppConfig(service.id);
   const partitionSession = session.fromPartition(service.partition);
@@ -8350,6 +8459,7 @@ function createViewForService(service) {
     attachGuestContextMenu(childWc);
     attachGuestNavigationGate(childWc, service);
     attachPopupSessionAdopt(webContents, childWindow, service);
+    attachZohoPopupAdoptToHubTab(childWindow, service);
     if (isGoogleService(service)) {
       attachGoogleChromeSpoof(childWc, {
         chromeVersion: CHROME_VERSION,
@@ -8690,12 +8800,17 @@ function startUrlForService(service) {
   const memory = lastGoodUrls.get(service.id);
   const disk = (settings.lastServiceUrls || {})[service.id];
   const last = memory || disk;
-  if (
-    last &&
-    !isAuthOrLoginUrl(last) &&
-    isUrlForService(service, last)
-  ) {
-    return safeStartUrlForService(service, last);
+  if (last && !isAuthOrLoginUrl(last)) {
+    if (isUrlForService(service, last)) {
+      return safeStartUrlForService(service, last);
+    }
+    // Zoho workspace tabs may open sibling product deep links (same login).
+    if (
+      canShareProfileAcrossInstances(service.appId) &&
+      isInternalUrl(last, service)
+    ) {
+      return last;
+    }
   }
   return service.url;
 }
@@ -8704,7 +8819,11 @@ let lastUrlSaveTimer = null;
 function rememberGoodUrl(serviceId, url) {
   if (!url || !String(url).startsWith('http') || isAuthOrLoginUrl(url)) return;
   const service = getService(serviceId);
-  if (service && !isUrlForService(service, url)) return;
+  if (!service) return;
+  const allowedForService =
+    isUrlForService(service, url) ||
+    (canShareProfileAcrossInstances(service.appId) && isInternalUrl(url, service));
+  if (!allowedForService) return;
   // Never remember third-party pages that hijacked a Gmail tab.
   if (isGoogleService(service) && !isAllowedGmailTabUrl(url)) return;
   // Never persist fragile Zoho One CRM deep links — they blank after restart.
@@ -8739,11 +8858,20 @@ function hydrateLastUrls() {
       continue;
     }
     const service = getService(id);
-    if (service && !isUrlForService(service, url)) {
+    if (!service) {
       dirty = true;
       continue;
     }
-    const safe = service ? safeStartUrlForService(service, url) : url;
+    const allowed =
+      isUrlForService(service, url) ||
+      (canShareProfileAcrossInstances(service.appId) && isInternalUrl(url, service));
+    if (!allowed) {
+      dirty = true;
+      continue;
+    }
+    const safe = isUrlForService(service, url)
+      ? safeStartUrlForService(service, url)
+      : url;
     if (safe !== url) dirty = true;
     cleaned[id] = safe;
     lastGoodUrls.set(id, safe);
