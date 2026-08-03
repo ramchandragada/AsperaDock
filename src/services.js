@@ -11,8 +11,8 @@ export const MAX_APPS_TOTAL = 10;
 export const MAX_APP_NAME_LENGTH = 10;
 /** Default: 5 apps stay loaded (active + up to 4 background warm). */
 export const MAX_WARM_VIEWS_DEFAULT = 5;
-/** Hard ceiling — settings UI and runtime both clamp to this. */
-export const MAX_WARM_VIEWS_CAP = 5;
+/** Hard ceiling — settings UI and runtime both clamp to this. Users may raise above the default. */
+export const MAX_WARM_VIEWS_CAP = 7;
 
 /** Synthetic catalog id for user-defined URLs (intranet, HRMS, Jira, …). */
 export const CUSTOM_APP_ID = 'custom';
@@ -94,22 +94,6 @@ export const APP_CATALOG = [
     color: '#226DB4',
     logo: 'zoho-one',
   },
-  {
-    appId: 'chatgpt',
-    name: 'ChatGPT',
-    title: 'ChatGPT',
-    url: 'https://chatgpt.com',
-    color: '#10A37F',
-    logo: 'chatgpt',
-  },
-  {
-    appId: 'claude',
-    name: 'Claude',
-    title: 'Claude',
-    url: 'https://claude.ai',
-    color: '#D97706',
-    logo: 'claude',
-  },
 ];
 
 export function getAppCatalogEntry(appId) {
@@ -148,8 +132,6 @@ export function defaultInstanceName(entry, index) {
     whatsapp: 'WA',
     arattai: 'Arattai',
     gmail: 'Gmail',
-    chatgpt: 'GPT',
-    claude: 'Claude',
     'zoho-mail': 'ZMail',
     'zoho-crm': 'CRM',
     'zoho-books': 'Books',
@@ -185,10 +167,6 @@ export const INTERNAL_HOSTS = [
   'arattai.in',
   'whatsapp.com',
   'whatsapp.net',
-  'openai.com',
-  'chatgpt.com',
-  'claude.ai',
-  'anthropic.com',
   'accounts.youtube.com',
 ];
 

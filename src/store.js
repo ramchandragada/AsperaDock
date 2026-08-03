@@ -2,7 +2,18 @@ import { app } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { getAppCatalogEntry, isKnownAppInstance } from './services.js';
+import {
+  getAppCatalogEntry,
+  isKnownAppInstance,
+  MAX_WARM_VIEWS_CAP,
+  MAX_WARM_VIEWS_DEFAULT,
+} from './services.js';
+import { defaultShortcutsMap, migrateShortcutsMap } from './shortcutsConfig.js';
+import { sanitizePinnedPeople } from './guestInbox.js';
+import {
+  sanitizeAiDisabledProviders,
+  sanitizeAiProviderOrder,
+} from './ai/catalog.js';
 
 export const PRIMARY_PROFILE_ID = 'primary';
 
@@ -66,8 +77,12 @@ export const DEFAULTS = {
   zohoReclaimEnabled: true,
 
   // Compatibility (needs relaunch)
-  /** Off by default — GPU process often costs 100–200 MB on Linux. */
-  hardwareAcceleration: true,
+  /**
+   * GPU compositor. Default OFF on purpose — on many Linux Mint XFCE/Cinnamon
+   * PCs (esp. NVIDIA / VM / older Intel) Electron dies at launch with
+   * "GPU process isn't usable. Goodbye." Software rendering is stable.
+   */
+  hardwareAcceleration: false,
   hiDpiSupport: true,
   mediaKeys: true,
 
@@ -115,9 +130,42 @@ export const DEFAULTS = {
   updateChannel: 'stable', // stable | beta
   /** Download updates automatically in the background. */
   autoUpdateDownload: true,
-  /** Install silently on next quit (no prompt). Mandatory updates always install. */
-  autoUpdateInstall: false,
-  updateCheckMinutes: 180,
+  /** Install immediately after download (prompts for password on deb/rpm). */
+  autoUpdateInstall: true,
+  updateCheckMinutes: 30,
+
+  /**
+   * Aspera AI (BYOK) — employee skills for WhatsApp / Arattai / Gmail / Zoho Mail.
+   * API keys are stored separately via OS encryption (ai-provider-keys.json).
+   */
+  aiEnabled: true,
+  aiProvider: 'gemini', // gemini | grok | sambanova | deepseek | sarvam | openrouter | anthropic
+  aiModel: '',
+  /**
+   * Per-provider model preference.
+   * Use "auto" (or omit) to pick the best model from the provider's live list.
+   * @type {Record<string, string>}
+   */
+  aiProviderModels: {},
+  aiLanguage: 'en', // en | hi | mr
+  /**
+   * Custom Aspera AI failover sequence (provider ids).
+   * Empty / omitted → built-in default (Gemini → … → Anthropic).
+   * @type {string[]}
+   */
+  aiProviderOrder: [],
+  /**
+   * Provider ids excluded from failover (keys may still be saved).
+   * @type {string[]}
+   */
+  aiDisabledProviders: [],
+
+  /**
+   * Unpacked Chrome extensions for guest apps (WhatsApp, Arattai, …).
+   * Loaded into each profile persist: partition via session.loadExtension.
+   * @type {{ id: string, name: string, version: string, description: string, enabled: boolean, path: string, chromeId?: string }[]}
+   */
+  extensions: [],
 
   /**
    * Lean mode for refurbished / low-RAM PCs:
@@ -131,27 +179,17 @@ export const DEFAULTS = {
   linkHandling: 'block', // block | external
   spellChecker: ['en-US'],
   /** Hibernate idle background apps (keepWarm apps like WhatsApp are skipped). */
-  hibernateMinutes: 30,
+  hibernateMinutes: 45,
   /**
    * How many apps stay fully loaded for instant switching (includes active).
-   * Cap is 5 — usability first; non-warm apps load on click only.
+   * Default 5; settings may raise up to MAX_WARM_VIEWS_CAP. Non-warm apps load on click.
    */
-  maxWarmViews: 5,
+  maxWarmViews: MAX_WARM_VIEWS_DEFAULT,
   /** Legacy field — no longer parks warm apps (usability over RAM). */
-  maxResidentViews: 5,
+  maxResidentViews: MAX_WARM_VIEWS_DEFAULT,
 
-  /** Toggleable global shortcuts */
-  shortcuts: {
-    switchTab: true,
-    nextTab: true,
-    focusMode: true,
-    mute: true,
-    hibernate: true,
-    lock: true,
-    settings: true,
-    search: true,
-    backForward: true,
-  },
+  /** Customizable global shortcuts: { [id]: { enabled, accel } } */
+  shortcuts: defaultShortcutsMap(),
 
   /**
    * Named Electron session profiles (Rambox-style).
@@ -181,6 +219,12 @@ export const DEFAULTS = {
   serviceLabels: {},
   /** @type {Record<string, object>} */
   serviceConfigs: {},
+
+  /**
+   * Pinned people / groups (WhatsApp & Arattai) shown above the account strip.
+   * @type {{ id: string, serviceId: string, chatKey: string, name: string, appId?: string }[]}
+   */
+  pinnedPeople: [],
 };
 
 let cache = null;
@@ -301,12 +345,13 @@ function migrateWarmKeepAlive(settings) {
     };
   }
   if (!next.highPerfDefaultV1) {
-    // Second pass: GPU on + low-memory strictly opt-in for earlier installs.
+    // Second pass: low-memory strictly opt-in for earlier installs.
+    // Do NOT force hardwareAcceleration on — that made Aspera Hub refuse to
+    // start on Linux Mint GPUs ("GPU process isn't usable. Goodbye.").
     next = {
       ...next,
       highPerfDefaultV1: true,
       lowMemoryMode: false,
-      hardwareAcceleration: true,
       maxWarmViews: Math.max(5, Number(next.maxWarmViews) || 5),
     };
   }
@@ -350,11 +395,11 @@ function migrateWarmKeepAlive(settings) {
       displaySizingV3: true,
     };
   }
-  // Company policy: max 5 warm apps in RAM (usability-first).
+  // Historical: older caps forced lower ceilings; keep one-shot flags.
   if (!next.warmCap6V1) {
     next = {
       ...next,
-      maxWarmViews: 5,
+      maxWarmViews: MAX_WARM_VIEWS_DEFAULT,
       warmCap6V1: true,
       warmCap4V1: true,
     };
@@ -363,15 +408,68 @@ function migrateWarmKeepAlive(settings) {
     next = {
       ...next,
       warmCap5V1: true,
-      maxWarmViews: Math.min(5, Math.max(1, Number(next.maxWarmViews) || 5)),
+      maxWarmViews: Math.min(
+        5,
+        Math.max(1, Number(next.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT),
+      ),
       // Stop parking flame apps for RAM — UX wins.
-      maxResidentViews: Math.min(5, Math.max(5, Number(next.maxWarmViews) || 5)),
+      maxResidentViews: Math.min(
+        5,
+        Math.max(5, Number(next.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT),
+      ),
     };
-  } else {
-    next.maxWarmViews = Math.min(
-      5,
-      Math.max(1, Number(next.maxWarmViews) || 5),
-    );
+  }
+  // Raise hard ceiling to 7; keep each user's current value (default stays 5).
+  if (!next.warmCap7V1) {
+    next = {
+      ...next,
+      warmCap7V1: true,
+    };
+  }
+  // Performance-first rollout defaults:
+  // keep 4 background warm apps (+1 active = 5 loaded), avoid low-memory compromises.
+  // Do not force GPU on — that crashes many Linux Mint desktops at launch.
+  if (!next.performanceDefaultsV1) {
+    next = {
+      ...next,
+      performanceDefaultsV1: true,
+      lowMemoryMode: false,
+      autoUpdateEnabled: true,
+      autoUpdateDownload: true,
+      autoUpdateInstall: true,
+      updateCheckMinutes: Math.min(
+        60,
+        Math.max(30, Number(next.updateCheckMinutes) || 30),
+      ),
+    };
+  }
+  // Restore 5 warm apps (ChatGPT/Claude removed from catalog — they were the RAM spike).
+  if (!next.warmDefaultsV3) {
+    next = {
+      ...next,
+      warmDefaultsV3: true,
+      warmDefaultsV2: true,
+      maxWarmViews: MAX_WARM_VIEWS_DEFAULT,
+      maxResidentViews: MAX_WARM_VIEWS_DEFAULT,
+      hibernateMinutes: Math.max(45, Number(next.hibernateMinutes) || 45),
+    };
+  }
+  // Final clamp: default remains 5; users may raise up to MAX_WARM_VIEWS_CAP (7).
+  next.maxWarmViews = Math.min(
+    MAX_WARM_VIEWS_CAP,
+    Math.max(1, Number(next.maxWarmViews) || MAX_WARM_VIEWS_DEFAULT),
+  );
+  next.maxResidentViews = next.maxWarmViews;
+  // CRITICAL: many Linux Mint XFCE/Cinnamon PCs die at launch with Electron's
+  // "GPU process isn't usable. Goodbye." after migrations forced GPU on.
+  // One-shot disable HW accel so the dock starts again; users can re-enable
+  // in Settings → Compatibility after confirming their GPU works.
+  if (!next.linuxGpuSafeV1) {
+    next = {
+      ...next,
+      linuxGpuSafeV1: true,
+      ...(process.platform === 'linux' ? { hardwareAcceleration: false } : {}),
+    };
   }
   // Keep legacy keys so older migrations stay idempotent.
   if (!next.residentCapV1) next = { ...next, residentCapV1: true };
@@ -389,11 +487,16 @@ export function loadSettings() {
         dropRetiredApps({
           ...DEFAULTS,
           ...parsed,
-          shortcuts: { ...DEFAULTS.shortcuts, ...(parsed.shortcuts || {}) },
+          shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
           serviceLabels: parsed.serviceLabels || {},
           serviceConfigs: parsed.serviceConfigs || {},
           serviceInstances: parsed.serviceInstances || [],
           profiles: parsed.profiles,
+          pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
+          aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
+          aiDisabledProviders: sanitizeAiDisabledProviders(
+            parsed.aiDisabledProviders,
+          ),
         }),
       ),
     );
@@ -412,6 +515,20 @@ export function loadSettings() {
 
 export function saveSettings(patch) {
   cache = { ...loadSettings(), ...patch };
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'shortcuts')) {
+    cache.shortcuts = migrateShortcutsMap(patch.shortcuts || {});
+  }
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'aiProviderOrder')) {
+    cache.aiProviderOrder = sanitizeAiProviderOrder(patch.aiProviderOrder);
+  }
+  if (
+    patch &&
+    Object.prototype.hasOwnProperty.call(patch, 'aiDisabledProviders')
+  ) {
+    cache.aiDisabledProviders = sanitizeAiDisabledProviders(
+      patch.aiDisabledProviders,
+    );
+  }
   try {
     fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });
     fs.writeFileSync(settingsPath(), JSON.stringify(cache, null, 2), 'utf8');

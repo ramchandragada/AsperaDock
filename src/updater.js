@@ -28,13 +28,18 @@
  * }
  */
 
-import { app, dialog, shell, BrowserWindow } from 'electron';
+import { app, dialog, shell, BrowserWindow, Notification } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { GITHUB_UPDATE_FEED, GITHUB_SLUG } from './github.js';
 import { assertHttpsUrl } from './netTrust.js';
+import { extractWhatsNewNotes, formatUpdatePromptDetail } from './updateNotes.js';
+import {
+  formatDownloadErrorDetail,
+  isRetryableDownloadError,
+} from './updateDownloadErrors.js';
 
 /** Default feed: GitHub Releases (no custom server). */
 const DEFAULT_FEED = GITHUB_UPDATE_FEED;
@@ -45,6 +50,7 @@ let reportError = () => {};
 let beforeDialog = () => {};
 let afterDialog = () => {};
 let beforeRelaunch = () => {};
+let mainWindowProvider = () => null;
 let checkTimer = null;
 
 /** @type {{version:string, notes?:string, mandatory?:boolean, file?:object}|null} */
@@ -54,16 +60,43 @@ let busy = false;
 
 export function configureUpdater({
   getSettings,
+  getMainWindow,
   onError,
   onBeforeDialog,
   onAfterDialog,
   onBeforeRelaunch,
 } = {}) {
   if (getSettings) settingsProvider = getSettings;
+  if (getMainWindow) mainWindowProvider = getMainWindow;
   if (onError) reportError = onError;
   if (onBeforeDialog) beforeDialog = onBeforeDialog;
   if (onAfterDialog) afterDialog = onAfterDialog;
   if (onBeforeRelaunch) beforeRelaunch = onBeforeRelaunch;
+}
+
+function dialogParent() {
+  try {
+    const fromProvider = mainWindowProvider?.();
+    if (fromProvider && !fromProvider.isDestroyed()) return fromProvider;
+  } catch {
+    // ignore
+  }
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && !focused.isDestroyed()) return focused;
+  const all = BrowserWindow.getAllWindows().filter((w) => w && !w.isDestroyed());
+  return all[0] || undefined;
+}
+
+async function showUpdateBox(options) {
+  beforeDialog();
+  try {
+    const parent = dialogParent();
+    // Never pass `undefined` as the first arg — Electron treats it as options and the dialog fails.
+    if (parent) return await dialog.showMessageBox(parent, options);
+    return await dialog.showMessageBox(options);
+  } finally {
+    afterDialog();
+  }
 }
 
 function settings() {
@@ -157,24 +190,164 @@ function broadcast(event, payload = {}) {
   }
 }
 
-async function fetchManifest() {
-  const url = feedUrl();
+async function fetchJson(url) {
   const res = await fetch(url, {
     headers: {
+      Accept: 'application/json',
       'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+      'User-Agent': 'AsperaHub-Updater',
       'X-AsperaDock-Version': currentVersion(),
     },
+    cache: 'no-store',
+    redirect: 'follow',
   });
   if (!res.ok) throw new Error(`Feed responded ${res.status}`);
-  const manifest = await res.json();
+  return res.json();
+}
+
+function usingDefaultGithubFeed() {
+  return (
+    !String(settings().updateFeedUrl || '').trim() &&
+    String(settings().updateChannel || 'stable') === 'stable'
+  );
+}
+
+/** GitHub CDN can lag on /releases/latest/download — API is fresher. */
+async function fetchLatestGithubRelease() {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${GITHUB_SLUG}/releases/latest`, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'AsperaHub-Updater',
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+      },
+      cache: 'no-store',
+      redirect: 'follow',
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchLatestTagFromGithubApi() {
+  const data = await fetchLatestGithubRelease();
+  const tag = String(data?.tag_name || '')
+    .replace(/^v/, '')
+    .trim();
+  return tag || null;
+}
+
+/**
+ * When /releases/latest/download/latest.json 404s (release created before the
+ * manifest asset lands), resolve via the Releases API asset URL or tag path.
+ */
+async function fetchManifestFromGithubReleaseApi(bust) {
+  const data = await fetchLatestGithubRelease();
+  if (!data) throw new Error('GitHub Releases API unavailable');
+  const tag = String(data.tag_name || '')
+    .replace(/^v/, '')
+    .trim();
+  if (!tag) throw new Error('GitHub Releases API missing tag');
+
+  const assets = Array.isArray(data.assets) ? data.assets : [];
+  const releaseNotes = extractWhatsNewNotes(data.body || '');
+  const manifestAsset = assets.find((a) => String(a?.name || '') === 'latest.json');
+  let manifest;
+  if (manifestAsset?.browser_download_url) {
+    const url = String(manifestAsset.browser_download_url);
+    manifest = await fetchJson(`${url}${url.includes('?') ? '&' : '?'}${bust}`);
+  } else {
+    manifest = await fetchJson(
+      `https://github.com/${GITHUB_SLUG}/releases/download/v${encodeURIComponent(tag)}/latest.json?${bust}`,
+    );
+  }
+  // Prefer explicit manifest notes; fall back to GitHub release body.
+  if (manifest && !String(manifest.notes || '').trim() && releaseNotes) {
+    manifest = { ...manifest, notes: releaseNotes };
+  } else if (manifest && releaseNotes && String(manifest.notes || '').trim().length < 24) {
+    manifest = { ...manifest, notes: releaseNotes };
+  }
+  return manifest;
+}
+
+async function enrichNotesFromGithub(manifest) {
+  if (!manifest || !usingDefaultGithubFeed()) return manifest;
+  const existing = extractWhatsNewNotes(manifest.notes || '');
+  if (existing && existing.length >= 40) return { ...manifest, notes: existing };
+  try {
+    const data = await fetchLatestGithubRelease();
+    const tag = String(data?.tag_name || '')
+      .replace(/^v/, '')
+      .trim();
+    if (tag && tag !== String(manifest.version || '').trim()) return manifest;
+    const fromBody = extractWhatsNewNotes(data?.body || '');
+    if (!fromBody) return { ...manifest, notes: existing || manifest.notes || '' };
+    if (!existing || fromBody.length > existing.length) {
+      return { ...manifest, notes: fromBody };
+    }
+  } catch {
+    // ignore
+  }
+  return { ...manifest, notes: existing || manifest.notes || '' };
+}
+
+async function fetchManifest() {
+  const bust = `t=${Date.now()}&cv=${encodeURIComponent(currentVersion())}`;
+  const base = feedUrl();
+  const primaryUrl = `${base}${base.includes('?') ? '&' : '?'}${bust}`;
+  const defaultGithub = usingDefaultGithubFeed();
+
+  let manifest;
+  let primaryError;
+  try {
+    manifest = await fetchJson(primaryUrl);
+  } catch (error) {
+    primaryError = error;
+    if (!defaultGithub) throw error;
+    try {
+      manifest = await fetchManifestFromGithubReleaseApi(`t=${Date.now()}&fallback=api`);
+    } catch {
+      // Brief retry — CI often uploads latest.json a few seconds after the .deb.
+      await new Promise((resolve) => setTimeout(resolve, 1600));
+      try {
+        manifest = await fetchJson(
+          `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}&retry=1`,
+        );
+      } catch {
+        throw primaryError;
+      }
+    }
+  }
   if (!manifest || !manifest.version) throw new Error('Manifest missing version');
+
+  // Default GitHub feed only — verify against Releases API when CDN is stale.
+  if (defaultGithub) {
+    const apiVer = await fetchLatestTagFromGithubApi();
+    if (apiVer && compareVersions(apiVer, manifest.version) > 0) {
+      const tagUrl = `https://github.com/${GITHUB_SLUG}/releases/download/v${apiVer}/latest.json?${bust}`;
+      try {
+        const fresh = await fetchJson(tagUrl);
+        if (fresh?.version && compareVersions(fresh.version, manifest.version) > 0) {
+          manifest = fresh;
+        }
+      } catch {
+        // Keep CDN manifest if tag asset fetch fails.
+      }
+    }
+  }
+
+  if (!manifest?.version) throw new Error('Manifest missing version');
   return manifest;
 }
 
 /**
  * @returns {Promise<{available:boolean, version?:string, notes?:string, mandatory?:boolean, error?:string}>}
  */
-export async function checkForUpdates({ silent = true } = {}) {
+export async function checkForUpdates({ silent = true, promptOnAvailable = false } = {}) {
   // An explicit "Check for updates" always runs, even with auto-update off.
   if (silent && settings().autoUpdateEnabled === false) {
     return { available: false, disabled: true };
@@ -183,24 +356,21 @@ export async function checkForUpdates({ silent = true } = {}) {
   // Already downloaded and waiting? Re-offer it instead of doing nothing.
   if (!silent && pendingUpdate && downloadedPath && fs.existsSync(downloadedPath)) {
     clearSnooze();
-    promptReady({ force: true });
+    await promptReady({ force: true });
     return { available: true, version: pendingUpdate.version, downloaded: true };
   }
   // Dev / npm start uses package.json 0.1.0 forever — don't spam "install .deb" nags.
   if (detectPackaging() === 'dev') {
     broadcast('up-to-date', { version: `${currentVersion()} (dev)` });
     if (!silent) {
-      beforeDialog();
-      dialog
-        .showMessageBox(BrowserWindow.getAllWindows()[0], {
-          type: 'info',
-          title: 'Development build',
-          message: `You are running a development build (v${currentVersion()}).`,
-          detail:
-            'Updates apply to the installed Aspera Hub package (/usr/bin/asperadock), not this npm start session.\n\nQuit this window and launch Aspera Hub from the app menu to use the installed version.',
-          buttons: ['OK'],
-        })
-        .finally(() => afterDialog());
+      await showUpdateBox({
+        type: 'info',
+        title: 'Development build',
+        message: `You are running a development build (v${currentVersion()}).`,
+        detail:
+          'Updates apply to the installed Aspera Hub package (/usr/bin/asperadock), not this npm start session.\n\nQuit this window and launch Aspera Hub from the app menu to use the installed version.',
+        buttons: ['OK'],
+      });
     }
     return { available: false, version: currentVersion(), dev: true };
   }
@@ -212,68 +382,72 @@ export async function checkForUpdates({ silent = true } = {}) {
     // Package already on disk (manual/systemd install) but this process is stale.
     if (debVer && compareVersions(debVer, manifest.version) >= 0) {
       if (compareVersions(currentVersion(), manifest.version) < 0) {
-        beforeDialog();
-        dialog
-          .showMessageBox(BrowserWindow.getAllWindows()[0], {
-            type: 'info',
-            title: 'Update installed',
-            message: `Aspera Hub ${debVer} is installed. Restart to use it.`,
-            buttons: ['Restart now', 'Later'],
-            defaultId: 0,
-            cancelId: 1,
-          })
-          .then((r) => {
-            afterDialog();
-            if (r.response === 0) relaunchAndExit();
-            else snoozeUpdate(manifest.version);
-          })
-          .catch(() => afterDialog());
+        const r = await showUpdateBox({
+          type: 'info',
+          title: 'Update installed',
+          message: `Aspera Hub ${debVer} is installed. Restart to use it.`,
+          buttons: ['Restart now', 'Later'],
+          defaultId: 0,
+          cancelId: 1,
+        });
+        if (r.response === 0) relaunchAndExit();
+        else snoozeUpdate(manifest.version);
         return { available: false, version: debVer, pendingRelaunch: true };
       }
       broadcast('up-to-date', { version: currentVersion() });
+      if (!silent) {
+        await showUpdateBox({
+          type: 'info',
+          title: 'Aspera Hub',
+          message: 'You are up to date.',
+          detail:
+            `Running v${currentVersion()}` +
+            (debVer && debVer !== currentVersion() ? ` · package v${debVer}` : '') +
+            `\nLatest feed: v${manifest.version}`,
+          buttons: ['OK'],
+        });
+      }
       return { available: false, version: currentVersion() };
     }
     if (!newer) {
       broadcast('up-to-date', { version: currentVersion() });
       if (!silent) {
-        beforeDialog();
-        dialog
-          .showMessageBox(BrowserWindow.getAllWindows()[0], {
-            type: 'info',
-            title: 'Aspera Hub',
-            message: 'You are up to date.',
-            detail: `Version ${currentVersion()} is the latest.`,
-            buttons: ['OK'],
-          })
-          .finally(() => afterDialog());
+        await showUpdateBox({
+          type: 'info',
+          title: 'Aspera Hub',
+          message: 'You are up to date.',
+          detail: `Running v${currentVersion()}\nLatest on GitHub Releases: v${manifest.version}`,
+          buttons: ['OK'],
+        });
       }
       return { available: false, version: currentVersion() };
     }
 
-    // A manual check overrides an earlier "Later".
-    if (!silent) clearSnooze();
+    // Manual check or startup prompt overrides an earlier "Later".
+    if (!silent || promptOnAvailable) clearSnooze();
 
-    if (silent && !manifest.mandatory && isUpdateSnoozed(manifest.version)) {
+    if (silent && !promptOnAvailable && !manifest.mandatory && isUpdateSnoozed(manifest.version)) {
       broadcast('snoozed', { version: manifest.version });
       return { available: true, snoozed: true, version: manifest.version };
     }
 
-    const file = pickFileForPackaging(manifest);
+    const enriched = await enrichNotesFromGithub(manifest);
+    const file = pickFileForPackaging(enriched);
     pendingUpdate = {
-      version: manifest.version,
-      notes: manifest.notes || '',
-      mandatory: !!manifest.mandatory,
+      version: enriched.version,
+      notes: extractWhatsNewNotes(enriched.notes || '') || String(enriched.notes || ''),
+      mandatory: !!enriched.mandatory,
       file,
     };
 
     // Reuse a previously finished download only after SHA-256 re-verify.
-    const existing = await findDownloadedArtifact(manifest.version, file);
+    const existing = await findDownloadedArtifact(enriched.version, file);
     if (existing) downloadedPath = existing;
 
     broadcast('available', {
-      version: manifest.version,
-      notes: manifest.notes || '',
-      mandatory: !!manifest.mandatory,
+      version: enriched.version,
+      notes: pendingUpdate.notes,
+      mandatory: !!enriched.mandatory,
       canAutoInstall: !!file && ['appimage', 'deb', 'rpm'].includes(file.kind),
     });
 
@@ -281,45 +455,52 @@ export async function checkForUpdates({ silent = true } = {}) {
     // no UI looked like the menu item was broken (80MB+ silent fetch).
     if (!silent) {
       if (downloadedPath && fs.existsSync(downloadedPath)) {
-        promptReady({ force: true });
+        await promptReady({ force: true });
       } else if (busy) {
-        beforeDialog();
-        dialog
-          .showMessageBox(BrowserWindow.getAllWindows()[0], {
-            type: 'info',
-            title: 'Downloading update',
-            message: `Aspera Hub ${manifest.version} is already downloading.`,
-            detail: 'You will be prompted to install when the download finishes.',
-            buttons: ['OK'],
-          })
-          .finally(() => afterDialog());
+        await showUpdateBox({
+          type: 'info',
+          title: 'Downloading update',
+          message: `Aspera Hub ${enriched.version} is already downloading.`,
+          detail: formatUpdatePromptDetail({
+            version: enriched.version,
+            notes: pendingUpdate.notes,
+            phase: 'available',
+          }),
+          buttons: ['OK'],
+        });
       } else {
-        promptAvailable();
+        await promptAvailable();
       }
-    } else if (settings().autoUpdateDownload !== false && file) {
-      downloadUpdate().catch((err) => reportError('update-download', { message: String(err) }));
+    } else if (downloadedPath && fs.existsSync(downloadedPath)) {
+      // Already on disk — prompt to install (first start + while using).
+      await promptReady({ force: !!promptOnAvailable });
+    } else if (promptOnAvailable || settings().autoUpdateDownload === false) {
+      // Always tell the user an update exists on first start / while using.
+      // If auto-download is off, silent checks must still prompt (not stay quiet).
+      await promptAvailable();
+    } else if (file) {
+      downloadUpdate({ quiet: true }).catch((err) =>
+        reportError('update-download', { message: String(err) }),
+      );
     }
     return {
       available: true,
-      version: manifest.version,
-      notes: manifest.notes || '',
-      mandatory: !!manifest.mandatory,
+      version: enriched.version,
+      notes: pendingUpdate.notes,
+      mandatory: !!enriched.mandatory,
     };
   } catch (error) {
     const message = String(error?.message || error);
     broadcast('error', { message });
     reportError('update-check', { message });
     if (!silent) {
-      beforeDialog();
-      dialog
-        .showMessageBox(BrowserWindow.getAllWindows()[0], {
-          type: 'error',
-          title: 'Update check failed',
-          message: 'Could not check for updates.',
-          detail: message,
-          buttons: ['OK'],
-        })
-        .finally(() => afterDialog());
+      await showUpdateBox({
+        type: 'error',
+        title: 'Update check failed',
+        message: 'Could not check for updates.',
+        detail: message,
+        buttons: ['OK'],
+      });
     }
     return { available: false, error: message };
   }
@@ -367,30 +548,93 @@ async function assertDownloadedIntegrity(filePath = downloadedPath) {
   return filePath;
 }
 
-/** Stream-download the pending artifact, verify checksum, report progress. */
-export async function downloadUpdate() {
-  if (!pendingUpdate?.file?.url) {
-    return { ok: false, error: 'No update file available for this install type' };
-  }
-  if (busy) return { ok: false, error: 'Update already in progress' };
-  busy = true;
-
-  const { url, sha256, size } = pendingUpdate.file;
-  assertHttpsArtifactUrl(url);
-  const dest = path.join(updatesDir(), path.basename(new URL(url).pathname) || 'asperadock-update');
-  const tmp = `${dest}.part`;
-
+/**
+ * When the manifest URL 404s (publish race / CDN lag), resolve the same
+ * filename from the GitHub Releases API browser_download_url.
+ */
+async function resolveGithubAssetDownloadUrl(url) {
+  if (!usingDefaultGithubFeed()) return null;
+  let fileName = '';
   try {
-    broadcast('download-start', { version: pendingUpdate.version });
-    const res = await fetch(url);
-    if (!res.ok || !res.body) throw new Error(`Download failed ${res.status}`);
+    fileName = decodeURIComponent(path.basename(new URL(url).pathname || ''));
+  } catch {
+    fileName = '';
+  }
+  if (!fileName) return null;
+  const data = await fetchLatestGithubRelease();
+  const assets = Array.isArray(data?.assets) ? data.assets : [];
+  const hit = assets.find((a) => String(a?.name || '') === fileName);
+  const alt = String(hit?.browser_download_url || '').trim();
+  if (!alt || alt === url) return null;
+  return alt;
+}
 
-    const total = Number(res.headers.get('content-length')) || size || 0;
-    let received = 0;
-    const hash = crypto.createHash('sha256');
-    const out = fs.createWriteStream(tmp);
-    const reader = res.body.getReader();
+/** Bust CDN / proxy caches after a checksum mismatch or publish race. */
+function withCacheBust(url, nonce = Date.now()) {
+  try {
+    const u = new URL(String(url || ''));
+    u.searchParams.set('aspera_cb', String(nonce));
+    return u.toString();
+  } catch {
+    const base = String(url || '');
+    const join = base.includes('?') ? '&' : '?';
+    return `${base}${join}aspera_cb=${encodeURIComponent(String(nonce))}`;
+  }
+}
 
+async function fetchUpdateArtifact(url, { attempts = 4, cacheBust = false } = {}) {
+  let lastError = null;
+  let activeUrl = cacheBust ? withCacheBust(url) : url;
+  let triedApiFallback = false;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const res = await fetch(activeUrl, {
+        redirect: 'follow',
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/octet-stream,*/*',
+          'User-Agent': 'AsperaHub-Updater',
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        },
+      });
+      if (res.ok && res.body) return res;
+      lastError = new Error(`Download failed ${res.status}`);
+      // Release asset clobber / CDN race — wait and retry.
+      if (![404, 408, 425, 429, 500, 502, 503, 504].includes(res.status)) {
+        throw lastError;
+      }
+      // One-shot: swap to Releases API asset URL after a 404.
+      if (res.status === 404 && !triedApiFallback) {
+        triedApiFallback = true;
+        // eslint-disable-next-line no-await-in-loop
+        const alt = await resolveGithubAssetDownloadUrl(url);
+        if (alt) activeUrl = cacheBust ? withCacheBust(alt) : alt;
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (!isRetryableDownloadError(lastError.message)) {
+        throw lastError;
+      }
+    }
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => setTimeout(r, 900 * (i + 1)));
+  }
+  throw lastError || new Error('Download failed');
+}
+
+/**
+ * Stream one fetch response body to disk while hashing + reporting progress.
+ * Throws on mid-stream abort ("terminated") so callers can retry the whole file.
+ */
+async function streamResponseToFile(res, tmp, { size = 0, onProgress } = {}) {
+  const total = Number(res.headers.get('content-length')) || size || 0;
+  let received = 0;
+  const hash = crypto.createHash('sha256');
+  const out = fs.createWriteStream(tmp);
+  const reader = res.body.getReader();
+  try {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       // eslint-disable-next-line no-await-in-loop
@@ -402,47 +646,150 @@ export async function downloadUpdate() {
         // eslint-disable-next-line no-await-in-loop
         await new Promise((r) => out.once('drain', r));
       }
-      if (total) {
-        broadcast('download-progress', {
+      if (total && typeof onProgress === 'function') {
+        onProgress({
           percent: Math.round((received / total) * 100),
           received,
           total,
         });
       }
     }
-    await new Promise((resolve, reject) => {
-      out.end(() => resolve());
-      out.on('error', reject);
-    });
+  } catch (error) {
+    try {
+      reader.cancel?.();
+    } catch {
+      // ignore
+    }
+    throw error;
+  } finally {
+    try {
+      reader.releaseLock?.();
+    } catch {
+      // ignore
+    }
+  }
+  await new Promise((resolve, reject) => {
+    out.end(() => resolve());
+    out.on('error', reject);
+  });
+  if (total > 0 && received > 0 && received < total * 0.98) {
+    throw new Error(
+      `Download truncated (${received} of ${total} bytes) — connection closed early`,
+    );
+  }
+  return { hash, received, total };
+}
 
-    if (sha256) {
-      const got = hash.digest('hex');
-      if (got.toLowerCase() !== String(sha256).toLowerCase()) {
-        fs.unlinkSync(tmp);
-        throw new Error('Checksum mismatch — download rejected');
-      }
-    } else {
+/**
+ * Stream-download the pending artifact, verify checksum, report progress.
+ * @param {{ quiet?: boolean }} [opts] quiet=true for background auto-download
+ *   (no blocking error dialog — must not interrupt Forward / chat work).
+ */
+export async function downloadUpdate(opts = {}) {
+  const quiet = !!opts.quiet;
+  if (!pendingUpdate?.file?.url) {
+    return { ok: false, error: 'No update file available for this install type' };
+  }
+  if (busy) return { ok: false, error: 'Update already in progress' };
+  busy = true;
+
+  const { url, sha256, size } = pendingUpdate.file;
+  assertHttpsArtifactUrl(url);
+  const dest = path.join(updatesDir(), path.basename(new URL(url).pathname) || 'asperadock-update');
+  const tmp = `${dest}.part`;
+  const streamAttempts = 4;
+  let lastError = null;
+
+  try {
+    broadcast('download-start', { version: pendingUpdate.version });
+
+    for (let attempt = 0; attempt < streamAttempts; attempt += 1) {
       try {
-        if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-      } catch {
-        // ignore
+        try {
+          if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+        } catch {
+          // ignore
+        }
+        // After a checksum miss, bust CDN caches — publish races can serve a
+        // stale .deb against a newer latest.json (or the reverse).
+        // eslint-disable-next-line no-await-in-loop
+        const res = await fetchUpdateArtifact(url, {
+          cacheBust: attempt > 0,
+        });
+        // eslint-disable-next-line no-await-in-loop
+        const { hash } = await streamResponseToFile(res, tmp, {
+          size,
+          onProgress: (progress) => broadcast('download-progress', progress),
+        });
+
+        if (!sha256) {
+          try {
+            if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+          } catch {
+            // ignore
+          }
+          throw new Error(
+            'Update rejected — release is missing a SHA-256 checksum. Refusing to install.',
+          );
+        }
+        const got = hash.digest('hex');
+        if (got.toLowerCase() !== String(sha256).toLowerCase()) {
+          try {
+            if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+          } catch {
+            // ignore
+          }
+          const err = new Error('Checksum mismatch — download rejected');
+          err.code = 'CHECKSUM_MISMATCH';
+          throw err;
+        }
+
+        fs.renameSync(tmp, dest);
+        downloadedPath = dest;
+        busy = false;
+        broadcast('downloaded', { version: pendingUpdate.version, path: dest });
+
+        // Always prompt — users must see the update while using the app.
+        // autoUpdateInstall still applies on quit if they choose Later.
+        await promptReady();
+        return { ok: true, path: dest };
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        try {
+          if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+        } catch {
+          // ignore
+        }
+        // Missing checksum is final; mismatch may be a CDN/publish race — retry.
+        if (/missing a SHA-256/i.test(lastError.message)) {
+          throw lastError;
+        }
+        const checksumMiss =
+          lastError.code === 'CHECKSUM_MISMATCH' ||
+          /Checksum mismatch/i.test(lastError.message);
+        if (
+          !checksumMiss &&
+          (!isRetryableDownloadError(lastError.message) ||
+            attempt >= streamAttempts - 1)
+        ) {
+          throw lastError;
+        }
+        if (checksumMiss && attempt >= streamAttempts - 1) {
+          throw lastError;
+        }
+        broadcast('download-progress', {
+          percent: 0,
+          received: 0,
+          total: size || 0,
+          retrying: true,
+          attempt: attempt + 1,
+          checksumRetry: checksumMiss,
+        });
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
       }
-      throw new Error(
-        'Update rejected — release is missing a SHA-256 checksum. Refusing to install.',
-      );
     }
-
-    fs.renameSync(tmp, dest);
-    downloadedPath = dest;
-    busy = false;
-    broadcast('downloaded', { version: pendingUpdate.version, path: dest });
-
-    if (settings().autoUpdateInstall === true && !pendingUpdate.mandatory) {
-      // Silent: install on next quit (see maybeInstallOnQuit).
-    } else {
-      promptReady();
-    }
-    return { ok: true, path: dest };
+    throw lastError || new Error('Download failed');
   } catch (error) {
     busy = false;
     try {
@@ -453,16 +800,31 @@ export async function downloadUpdate() {
     const message = String(error?.message || error);
     broadcast('error', { message });
     reportError('update-download', { message });
-    beforeDialog();
-    dialog
-      .showMessageBox(BrowserWindow.getAllWindows()[0], {
+    // Background checks must not steal focus with a modal (e.g. during Forward).
+    if (!quiet) {
+      const raceHint = /Download failed 404/i.test(message)
+        ? '\n\nThe release may still be publishing. Wait a few seconds and try Check for updates again.'
+        : '';
+      await showUpdateBox({
         type: 'error',
         title: 'Update download failed',
         message: 'Could not download the update.',
-        detail: message,
+        detail: `${formatDownloadErrorDetail(message)}${raceHint}`,
         buttons: ['OK'],
-      })
-      .finally(() => afterDialog());
+      });
+    } else {
+      try {
+        if (Notification.isSupported()) {
+          new Notification({
+            title: 'Aspera Hub update',
+            body: 'Update download will retry later.',
+            silent: true,
+          }).show();
+        }
+      } catch {
+        // ignore
+      }
+    }
     return { ok: false, error: message };
   }
 }
@@ -522,7 +884,7 @@ function relaunchAndExit(execPathOverride) {
     try {
       const child = spawn(
         '/bin/sh',
-        ['-c', `sleep 1.5; exec ${shellQuote(launcher)}`],
+        ['-c', `sleep 3; exec ${shellQuote(launcher)} --disable-gpu-sandbox`],
         {
           detached: true,
           stdio: 'ignore',
@@ -561,16 +923,13 @@ export async function installUpdate({ silentOnFail = false } = {}) {
     broadcast('error', { message });
     reportError('update-install', { message });
     if (!silentOnFail) {
-      beforeDialog();
-      dialog
-        .showMessageBox(BrowserWindow.getAllWindows()[0], {
-          type: 'error',
-          title: 'Update rejected',
-          message: 'Could not verify the update package.',
-          detail: message,
-          buttons: ['OK'],
-        })
-        .finally(() => afterDialog());
+      await showUpdateBox({
+        type: 'error',
+        title: 'Update rejected',
+        message: 'Could not verify the update package.',
+        detail: message,
+        buttons: ['OK'],
+      });
     }
     return { ok: false, error: message };
   }
@@ -596,8 +955,7 @@ export async function installUpdate({ silentOnFail = false } = {}) {
         // version to catch up, then relaunch. Never claim success early.
         const applied = await waitForDebVersion(pendingUpdate?.version, 90_000);
         if (!applied) {
-          beforeDialog();
-          const choice = await dialog.showMessageBox(BrowserWindow.getAllWindows()[0], {
+          const choice = await showUpdateBox({
             type: 'info',
             title: 'Finish installing the update',
             message: `Approve the install of Aspera Hub ${pendingUpdate?.version} in your package manager.`,
@@ -609,7 +967,6 @@ export async function installUpdate({ silentOnFail = false } = {}) {
             defaultId: 0,
             cancelId: 2,
           });
-          afterDialog();
           if (choice.response === 1) {
             shell.showItemInFolder(downloadedPath);
             return { ok: false, manual: true, error: 'Waiting for manual install' };
@@ -642,21 +999,15 @@ export async function installUpdate({ silentOnFail = false } = {}) {
     broadcast('error', { message });
     reportError('update-install', { message });
     if (!silentOnFail) {
-      beforeDialog();
-      dialog
-        .showMessageBox(BrowserWindow.getAllWindows()[0], {
-          type: 'error',
-          title: 'Update failed to install',
-          message: 'Aspera Hub could not install the update automatically.',
-          detail: `${message}\n\nThe downloaded file is here:\n${downloadedPath}\n\nDouble-click the .deb to install it with your package manager, then reopen Aspera Hub.`,
-          buttons: ['Open folder', 'OK'],
-          defaultId: 0,
-        })
-        .then((r) => {
-          afterDialog();
-          if (r.response === 0) shell.showItemInFolder(downloadedPath);
-        })
-        .catch(() => afterDialog());
+      const r = await showUpdateBox({
+        type: 'error',
+        title: 'Update failed to install',
+        message: 'Aspera Hub could not install the update automatically.',
+        detail: `${message}\n\nThe downloaded file is here:\n${downloadedPath}\n\nDouble-click the .deb to install it with your package manager, then reopen Aspera Hub.`,
+        buttons: ['Open folder', 'OK'],
+        defaultId: 0,
+      });
+      if (r.response === 0) shell.showItemInFolder(downloadedPath);
     }
     return { ok: false, error: message };
   }
@@ -824,59 +1175,75 @@ function spawnSystemdRun(argv) {
   }
 }
 
-function promptAvailable() {
-  const win = BrowserWindow.getAllWindows()[0];
-  if (!win || !pendingUpdate) return;
-  beforeDialog();
-  dialog
-    .showMessageBox(win, {
+async function promptAvailable() {
+  if (!pendingUpdate) return;
+  try {
+    const r = await showUpdateBox({
       type: 'info',
       title: 'Update available',
-      message: `Aspera Hub ${pendingUpdate.version} is available.`,
-      detail: pendingUpdate.notes || 'Download now?',
+      message: `Aspera Hub ${pendingUpdate.version} is available`,
+      detail: formatUpdatePromptDetail({
+        version: pendingUpdate.version,
+        notes: pendingUpdate.notes,
+        phase: 'available',
+      }),
       buttons: ['Download', 'Later'],
       defaultId: 0,
       cancelId: 1,
-    })
-    .then((r) => {
-      afterDialog();
-      if (r.response === 0) {
-        downloadUpdate().catch((err) =>
-          reportError('update-download', { message: String(err) }),
-        );
-      } else {
-        snoozeUpdate(pendingUpdate?.version);
-      }
-    })
-    .catch(() => afterDialog());
+    });
+    if (r.response === 0) {
+      downloadUpdate({ quiet: false }).catch((err) =>
+        reportError('update-download', { message: String(err) }),
+      );
+    } else {
+      snoozeUpdate(pendingUpdate?.version);
+    }
+  } catch (error) {
+    reportError('update-prompt', { message: String(error?.message || error) });
+    // Dialog failed (focus/parent issues on some Linux sessions) — still fetch if allowed.
+    if (settings().autoUpdateDownload !== false && pendingUpdate?.file) {
+      downloadUpdate({ quiet: true }).catch((err) =>
+        reportError('update-download', { message: String(err) }),
+      );
+    }
+  }
 }
 
-function promptReady({ force = false } = {}) {
-  const win = BrowserWindow.getAllWindows()[0];
-  if (!win || !pendingUpdate) return;
+async function promptReady({ force = false } = {}) {
+  if (!pendingUpdate) return;
   if (!force && !pendingUpdate.mandatory && isUpdateSnoozed(pendingUpdate.version)) return;
   if (force) clearSnooze();
-  beforeDialog();
-  dialog
-    .showMessageBox(win, {
+  try {
+    const r = await showUpdateBox({
       type: 'info',
       title: 'Update ready',
-      message: `Aspera Hub ${pendingUpdate.version} is ready to install.`,
-      detail: pendingUpdate.mandatory
-        ? 'This is a required update and will install now.'
-        : 'Restart to apply the update.',
+      message: `Aspera Hub ${pendingUpdate.version} is ready to install`,
+      detail: formatUpdatePromptDetail({
+        version: pendingUpdate.version,
+        notes: pendingUpdate.notes,
+        phase: pendingUpdate.mandatory ? 'mandatory' : 'ready',
+      }),
       buttons: pendingUpdate.mandatory
         ? ['Install & restart']
         : ['Install & restart', 'Later'],
       defaultId: 0,
       cancelId: pendingUpdate.mandatory ? 0 : 1,
-    })
-    .then((r) => {
-      afterDialog();
-      if (r.response === 0) installUpdate();
-      else snoozeUpdate(pendingUpdate?.version);
-    })
-    .catch(() => afterDialog());
+    });
+    if (r.response === 0) {
+      installUpdate().catch((err) =>
+        reportError('update-install', { message: String(err) }),
+      );
+    } else {
+      snoozeUpdate(pendingUpdate?.version);
+    }
+  } catch (error) {
+    reportError('update-prompt', { message: String(error?.message || error) });
+    if (settings().autoUpdateInstall === true || pendingUpdate?.mandatory) {
+      installUpdate({ silentOnFail: true }).catch((err) =>
+        reportError('update-install', { message: String(err) }),
+      );
+    }
+  }
 }
 
 /** Called from before-quit: silently apply a downloaded update if configured. */
@@ -911,9 +1278,13 @@ export function startAutoUpdate() {
   stopAutoUpdate();
   if (settings().autoUpdateEnabled === false) return;
   // Kick off shortly after launch, then on an interval.
-  setTimeout(() => checkForUpdates({ silent: true }), 8000);
+  // Prompt on first start AND while using (periodic checks also prompt).
+  setTimeout(() => checkForUpdates({ silent: true, promptOnAvailable: true }), 5_000);
   const mins = Math.max(30, Number(settings().updateCheckMinutes) || CHECK_INTERVAL_MIN);
-  checkTimer = setInterval(() => checkForUpdates({ silent: true }), mins * 60_000);
+  checkTimer = setInterval(
+    () => checkForUpdates({ silent: true, promptOnAvailable: true }),
+    mins * 60_000,
+  );
   if (typeof checkTimer.unref === 'function') checkTimer.unref();
 }
 

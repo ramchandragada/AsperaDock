@@ -53,9 +53,21 @@ let reportingEnabled = true;
 
 function pkgVersion() {
   try {
+    if (app?.isReady?.() || app?.isPackaged) {
+      const v = app.getVersion?.();
+      if (v && v !== '0.0.0') return v;
+    }
+  } catch {
+    // ignore
+  }
+  try {
     return require('../package.json').version || '0.0.0';
   } catch {
-    return '0.0.0';
+    try {
+      return require('../../package.json').version || '0.0.0';
+    } catch {
+      return '0.0.0';
+    }
   }
 }
 

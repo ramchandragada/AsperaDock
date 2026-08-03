@@ -78,6 +78,22 @@ Artifacts land in `out/make/` (`.deb`, `.zip`, optionally `.rpm`). Install the `
 sudo apt install ./out/make/deb/x64/asperadock_*.deb
 ```
 
+## Linux Mint (XFCE & Cinnamon)
+
+Aspera Hub is packaged and tuned for company fleets on **Linux Mint**:
+
+| Desktop | Notes |
+|---------|--------|
+| **Cinnamon** | Best match — taskbar icon, tray, notifications, and menus work out of the box. |
+| **XFCE** (majority fleets) | Use the default **taskbar** display mode. For a tray icon, add **Status Notifier Plugin** (or Notification Area) to the XFCE panel. If floating menus look black/blank, turn on the **compositor** in Window Manager Tweaks. |
+
+Also:
+
+- Window class / `.desktop` uses `StartupWMClass=asperadock` so the panel pins the Aspera icon (not a generic one).
+- Tray uses PNG panel icons (more reliable than SVG on Mint).
+- Deb recommends `libayatana-appindicator3-1` for StatusNotifier trays.
+- Low-RAM / refurbished PCs: Settings → Performance → Low memory mode, or turn off hardware acceleration under Compatibility.
+
 ## Add / duplicate accounts
 
 Edit `src/services.js`. Copy a service block and give it a unique `id` and `partition`, for example:
