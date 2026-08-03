@@ -96,6 +96,11 @@ module.exports = {
             target: 'preload',
           },
           {
+            entry: 'src/crmLookupPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
             entry: 'src/forwardPickerPreload.js',
             config: 'vite.preload.config.mjs',
             target: 'preload',

@@ -170,6 +170,7 @@
             <button type="button" class="settings-nav-btn" data-settings-panel="startup">Startup &amp; window</button>
             <button type="button" class="settings-nav-btn" data-settings-panel="security">Security</button>
             <button type="button" class="settings-nav-btn" data-settings-panel="ai">Aspera AI</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="integrations">Integrations</button>
             <button type="button" class="settings-nav-btn" data-settings-panel="proxy">Proxy</button>
             <button type="button" class="settings-nav-btn" data-settings-panel="performance">Performance</button>
             <button type="button" class="settings-nav-btn" data-settings-panel="errors">Error reporting</button>
@@ -345,6 +346,63 @@
           <div class="row-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px;">
             <button id="ai-catch-up-btn" type="button" class="ghost-btn">Catch me up</button>
           </div>
+          </section>
+
+          <section class="settings-panel" data-panel="integrations" aria-label="Integrations" hidden>
+            <h3 class="settings-panel-title">Integrations</h3>
+            <p class="hint-text">
+              Connect Zoho CRM so you can select a keyword in any app, right-click,
+              and look up matching <strong>Deals</strong> (Stage, amount, account).
+            </p>
+            <label class="switch-row">
+              <input id="set-zoho-crm-enabled" type="checkbox" />
+              <span>Enable Zoho CRM Deals lookup</span>
+            </label>
+            <label class="field">
+              <span>Data center</span>
+              <select id="set-zoho-crm-dc">
+                <option value="in">India</option>
+                <option value="com">United States</option>
+                <option value="eu">Europe</option>
+                <option value="com.au">Australia</option>
+                <option value="jp">Japan</option>
+                <option value="ca">Canada</option>
+              </select>
+            </label>
+            <p id="zoho-crm-status" class="hint-text">Status: Not configured</p>
+            <label class="field">
+              <span>Client ID</span>
+              <input id="set-zoho-crm-client-id" type="password" autocomplete="off" placeholder="From Zoho API Console" />
+            </label>
+            <label class="field">
+              <span>Client Secret</span>
+              <input id="set-zoho-crm-client-secret" type="password" autocomplete="off" placeholder="From Zoho API Console" />
+            </label>
+            <label class="field">
+              <span>Refresh Token</span>
+              <input id="set-zoho-crm-refresh" type="password" autocomplete="off" placeholder="Paste refresh token, or use Grant code below" />
+            </label>
+            <label class="field">
+              <span>Grant code (one-time)</span>
+              <input id="set-zoho-crm-grant" type="password" autocomplete="off" placeholder="Self Client / authorization code" />
+            </label>
+            <div class="settings-inline-actions">
+              <button type="button" class="secondary" id="zoho-crm-save-btn">Save credentials</button>
+              <button type="button" class="secondary" id="zoho-crm-connect-btn">Connect with grant code</button>
+              <button type="button" class="secondary" id="zoho-crm-test-btn">Test connection</button>
+              <button type="button" class="secondary" id="zoho-crm-clear-btn">Clear</button>
+            </div>
+            <p id="zoho-crm-feedback" class="hint-text" aria-live="polite"></p>
+            <details class="settings-details">
+              <summary>Setup scopes</summary>
+              <p class="hint-text">
+                In Zoho API Console create a client with scopes
+                <code>ZohoCRM.modules.deals.READ</code> and
+                <code>ZohoSearch.securesearch.READ</code>,
+                and generate a token with <code>access_type=offline</code>.
+                Secrets stay encrypted on this PC — never paste them into chat or git.
+              </p>
+            </details>
           </section>
 
           <section class="settings-panel" data-panel="proxy" aria-label="Proxy" hidden>

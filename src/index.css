@@ -2978,3 +2978,20 @@ body.theme-dark .ghost-btn {
     grid-template-columns: 1fr;
   }
 }
+
+.settings-inline-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+}
+
+.settings-details {
+  margin-top: 10px;
+}
+
+.settings-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12.5px;
+}

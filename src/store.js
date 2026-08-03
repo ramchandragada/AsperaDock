@@ -161,6 +161,14 @@ export const DEFAULTS = {
   aiDisabledProviders: [],
 
   /**
+   * Zoho CRM Deals lookup (selection → right-click).
+   * OAuth secrets live in userData/zoho-crm-oauth.json (encrypted).
+   */
+  zohoCrmEnabled: true,
+  /** Data center: in | com | eu | com.au | jp | ca */
+  zohoCrmDc: 'in',
+
+  /**
    * Unpacked Chrome extensions for guest apps (WhatsApp, Arattai, …).
    * Loaded into each profile persist: partition via session.loadExtension.
    * @type {{ id: string, name: string, version: string, description: string, enabled: boolean, path: string, chromeId?: string }[]}

@@ -7,15 +7,29 @@ import {
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-test('selected message menu is Summarize then Forward (no Pin)', () => {
+test('selected message menu is Summarize, CRM lookup, then Forward (no Pin)', () => {
   assert.deepEqual(
     guestContextMenuActionOrder({
       hasSelection: true,
       canSummarize: true,
       canForward: true,
       canPin: true,
+      canCrmLookup: true,
     }),
-    ['summarize', 'forward'],
+    ['summarize', 'crm-lookup', 'forward'],
+  );
+});
+
+test('selection menu can be CRM-only when AI is off', () => {
+  assert.deepEqual(
+    guestContextMenuActionOrder({
+      hasSelection: true,
+      canSummarize: false,
+      canForward: false,
+      canPin: true,
+      canCrmLookup: true,
+    }),
+    ['crm-lookup'],
   );
 });
 
@@ -26,6 +40,7 @@ test('chat-list menu without selection is Pin then Forward', () => {
       canSummarize: false,
       canForward: true,
       canPin: true,
+      canCrmLookup: true,
     }),
     ['pin', 'forward'],
   );
@@ -47,8 +62,9 @@ test('menu order never includes summarize-pdf', () => {
       canSummarize: true,
       canForward: true,
       canPin: true,
+      canCrmLookup: true,
     }),
-    ['summarize', 'forward'],
+    ['summarize', 'crm-lookup', 'forward'],
   );
 });
 
@@ -99,9 +115,11 @@ test('main guest context menu follows guestContextMenuActionOrder', () => {
   assert.match(src, /guestContextMenuActionOrder/);
   assert.match(src, /canOfferHubPin/);
   assert.match(src, /action === 'summarize'/);
+  assert.match(src, /action === 'crm-lookup'/);
   assert.match(src, /action === 'forward'/);
   assert.match(src, /action === 'pin'/);
   assert.match(src, /Summarize with Aspera AI/);
+  assert.match(src, /Lookup in Zoho CRM/);
   assert.match(src, /Forward with Aspera Hub/);
   assert.match(src, /FORWARD_WITH_HUB_ENABLED/);
   // PDF summarize feature removed — select text in the PDF preview instead.

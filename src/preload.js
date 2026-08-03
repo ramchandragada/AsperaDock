@@ -55,6 +55,14 @@ contextBridge.exposeInMainWorld('asperadock', {
   aiCatchUp: (opts) => ipcRenderer.invoke('dock:ai-catch-up', opts),
   aiSummarize: (opts) => ipcRenderer.invoke('dock:ai-summarize', opts),
   aiRefine: (opts) => ipcRenderer.invoke('dock:ai-refine', opts),
+  zohoCrmStatus: () => ipcRenderer.invoke('dock:zoho-crm-status'),
+  zohoCrmSave: (payload) => ipcRenderer.invoke('dock:zoho-crm-save', payload),
+  zohoCrmClear: () => ipcRenderer.invoke('dock:zoho-crm-clear'),
+  zohoCrmTest: () => ipcRenderer.invoke('dock:zoho-crm-test'),
+  zohoCrmConnect: (payload) =>
+    ipcRenderer.invoke('dock:zoho-crm-connect', payload),
+  zohoCrmLookup: (payload) =>
+    ipcRenderer.invoke('dock:zoho-crm-lookup', payload),
   setOverlay: (open) => ipcRenderer.invoke('dock:set-overlay', open),
   setChromeSize: (size) => ipcRenderer.invoke('dock:set-chrome-size', size),
   clearNotifications: () => ipcRenderer.invoke('dock:clear-notifications'),

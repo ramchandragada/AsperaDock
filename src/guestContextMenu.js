@@ -1,7 +1,7 @@
 /**
  * Guest-page context menu action order for Aspera Hub.
  *
- * Selected message text → Summarize, then Forward (Pin is for chat rows only).
+ * Selected message text → Summarize, CRM lookup, then Forward (Pin is for chat rows only).
  * Chat list / no selection → Pin, then Forward.
  * Never offer Pin on images / media in an open chat — Pin is contacts only.
  *
@@ -10,18 +10,21 @@
  *   canSummarize?: boolean,
  *   canForward?: boolean,
  *   canPin?: boolean,
+ *   canCrmLookup?: boolean,
  * }} opts
- * @returns {('summarize'|'forward'|'pin')[]}
+ * @returns {('summarize'|'crm-lookup'|'forward'|'pin')[]}
  */
 export function guestContextMenuActionOrder({
   hasSelection = false,
   canSummarize = false,
   canForward = false,
   canPin = false,
+  canCrmLookup = false,
 } = {}) {
   const out = [];
   if (hasSelection) {
     if (canSummarize) out.push('summarize');
+    if (canCrmLookup) out.push('crm-lookup');
     if (canForward) out.push('forward');
     return out;
   }

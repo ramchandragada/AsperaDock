@@ -13,6 +13,7 @@ import {
   powerMonitor,
   clipboard,
   screen,
+  nativeTheme,
 } from 'electron';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -20,8 +21,28 @@ import { buildAppMenuHtml } from './appMenuHtml.js';
 import { buildChromeMenuHtml } from './chromeMenuHtml.js';
 import { buildNotifCenterHtml } from './notifCenterHtml.js';
 import { buildAiResultHtml } from './aiResultHtml.js';
+import { buildCrmLookupHtml } from './crmLookupHtml.js';
 import { buildForwardPickerHtml } from './forwardPickerHtml.js';
 import { buildExtensionsHtml } from './extensionsHtml.js';
+import {
+  clearZohoCrmAccessCache,
+  exchangeGrantCode,
+  searchDeals,
+  testZohoCrmConnection,
+} from './zohoCrm/client.js';
+import {
+  ZOHO_CRM_DCS,
+  ZOHO_CRM_OAUTH_SCOPES,
+  resolveZohoCrmDc,
+  sanitizeZohoCrmDc,
+} from './zohoCrm/dc.js';
+import {
+  clearZohoCrmAuth,
+  getZohoCrmAuth,
+  hasZohoCrmAuth,
+  setZohoCrmAuth,
+  zohoCrmAuthStatus,
+} from './zohoCrm/keys.js';
 import {
   arattaiFullFileUrlFromAny,
   buildForwardClipboardText,
@@ -543,6 +564,8 @@ let notifCenterWindow = null;
 let aiResultWindow = null;
 /** Context for follow-up actions on the open AI result (e.g. suggest replies). */
 let aiResultContext = null;
+/** Floating Zoho CRM Deals lookup panel. */
+let crmLookupWindow = null;
 /** Floating Forward-with-Hub account picker. */
 let forwardPickerWindow = null;
 /** @type {null | {
@@ -2041,6 +2064,19 @@ function aiResultHandle(channel, handler) {
   });
 }
 
+function crmLookupHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !crmLookupWindow ||
+      crmLookupWindow.isDestroyed() ||
+      event.sender !== crmLookupWindow.webContents
+    ) {
+      throw new Error('Unauthorized crm-lookup IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
 function forwardPickerHandle(channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
     if (
@@ -2888,6 +2924,20 @@ function closeAiResultWindow() {
   }
 }
 
+function closeCrmLookupWindow() {
+  if (!crmLookupWindow || crmLookupWindow.isDestroyed()) {
+    crmLookupWindow = null;
+    return;
+  }
+  const win = crmLookupWindow;
+  crmLookupWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
 function closeExtensionsWindow() {
   if (!extensionsWindow || extensionsWindow.isDestroyed()) {
     extensionsWindow = null;
@@ -3335,6 +3385,134 @@ function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } =
   });
 
   return { ok: true };
+}
+
+function pushCrmLookup(payload) {
+  if (!crmLookupWindow || crmLookupWindow.isDestroyed()) return;
+  try {
+    crmLookupWindow.webContents.send('crm-lookup:init', payload);
+  } catch {
+    // ignore
+  }
+}
+
+function openCrmLookupWindow({ query = '', dark = false } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeCrmLookupWindow();
+
+  const content = mainWindow.getContentBounds();
+  const margin = 10;
+  const menuW = Math.min(440, Math.max(360, Math.floor(content.width * 0.38)));
+  const menuH = Math.min(560, Math.max(320, content.height - margin * 2));
+  const pos = clampFloatPosition(
+    content.x + content.width - menuW - margin,
+    content.y + margin,
+    menuW,
+    menuH,
+  );
+
+  crmLookupWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'crmLookupPreload.js',
+    dark: !!dark,
+  });
+
+  const win = crmLookupWindow;
+  try {
+    win.setAlwaysOnTop(true, 'pop-up-menu');
+  } catch {
+    // ignore
+  }
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildCrmLookupHtml(!!dark))}`,
+  );
+  win.webContents.once('did-finish-load', () => {
+    pushCrmLookup({
+      loading: true,
+      query: String(query || ''),
+      deals: [],
+    });
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+      try {
+        win.moveTop();
+      } catch {
+        // ignore
+      }
+    }
+  });
+  win.on('closed', () => {
+    if (crmLookupWindow === win) crmLookupWindow = null;
+  });
+  return { ok: true };
+}
+
+async function lookupZohoCrmDeals(selectionText, { dark = false } = {}) {
+  const query = String(selectionText || '').replace(/\s+/g, ' ').trim();
+  if (!query) {
+    return { ok: false, error: 'Select a keyword to look up.' };
+  }
+
+  const enabled = settings.zohoCrmEnabled !== false;
+  if (!enabled) {
+    return {
+      ok: false,
+      error: 'Zoho CRM lookup is disabled in Settings → Integrations.',
+    };
+  }
+  if (!hasZohoCrmAuth()) {
+    openCrmLookupWindow({ query, dark });
+    pushCrmLookup({
+      loading: false,
+      query,
+      error:
+        'Zoho CRM is not connected. Open Settings → Integrations and add Client ID, Secret, and Refresh Token.',
+      deals: [],
+    });
+    return { ok: false, error: 'not_configured' };
+  }
+
+  openCrmLookupWindow({ query, dark });
+  try {
+    const result = await searchDeals(query, {
+      dcId: sanitizeZohoCrmDc(settings.zohoCrmDc),
+      limit: 15,
+    });
+    if (!result.ok) {
+      pushCrmLookup({
+        loading: false,
+        query: result.query || query,
+        error: result.error || 'Lookup failed.',
+        deals: [],
+      });
+      return result;
+    }
+    pushCrmLookup({
+      loading: false,
+      query: result.query || query,
+      deals: result.deals || [],
+    });
+    return result;
+  } catch (error) {
+    const message = String(error?.message || error || 'Lookup failed.');
+    pushCrmLookup({
+      loading: false,
+      query,
+      error: message,
+      deals: [],
+    });
+    return { ok: false, error: message };
+  }
 }
 
 function pushAiResult(payload) {
@@ -8456,8 +8634,11 @@ function attachGuestContextMenu(webContents) {
       isAiAllowedAppId(service.appId) &&
       settings.aiEnabled !== false
     );
+    const canCrmLookup = !!(
+      hasSelection && settings.zohoCrmEnabled !== false
+    );
 
-    // With selected message text: Summarize → Forward (Pin does not apply to a selection).
+    // With selected message text: Summarize → CRM lookup → Forward (Pin does not apply).
     // On chat-list rows (no selection, not an image): Pin → Forward.
     // Never show Pin on photos / PDF preview tiles in an open chat.
     const canPin = canOfferHubPin({
@@ -8491,6 +8672,20 @@ function attachGuestContextMenu(webContents) {
         },
       });
     };
+    const pushCrmLookupItem = () => {
+      if (!canCrmLookup) return;
+      template.push({
+        label: 'Lookup in Zoho CRM',
+        click: () => {
+          const theme = String(settings.theme || 'system');
+          const dark =
+            theme === 'dark' ||
+            theme === 'darkest' ||
+            (theme === 'system' && nativeTheme.shouldUseDarkColors);
+          lookupZohoCrmDeals(params.selectionText, { dark }).catch(() => {});
+        },
+      });
+    };
     const pushSummarizeItems = () => {
       if (!canSummarize) return;
       template.push({
@@ -8519,13 +8714,15 @@ function attachGuestContextMenu(webContents) {
       canSummarize,
       canForward,
       canPin,
+      canCrmLookup,
     })) {
       if (action === 'summarize') pushSummarizeItems();
+      else if (action === 'crm-lookup') pushCrmLookupItem();
       else if (action === 'forward') pushForwardItem();
       else if (action === 'pin') pushPinItem();
     }
 
-    if (canSummarize || canForward || canPin) {
+    if (canSummarize || canCrmLookup || canForward || canPin) {
       template.push({ type: 'separator' });
     }
 
@@ -9695,6 +9892,14 @@ function currentState() {
       sentryDsn: settings.sentryDsn ? '[configured]' : '',
       hasErrorReportGithubToken: Boolean(settings.errorReportGithubToken),
       hasSentryDsnOverride: Boolean(settings.sentryDsn),
+      zohoCrmDc: sanitizeZohoCrmDc(settings.zohoCrmDc),
+      zohoCrm: {
+        enabled: settings.zohoCrmEnabled !== false,
+        dc: sanitizeZohoCrmDc(settings.zohoCrmDc),
+        scopes: ZOHO_CRM_OAUTH_SCOPES,
+        dataCenters: ZOHO_CRM_DCS.map((d) => ({ id: d.id, label: d.label })),
+        ...zohoCrmAuthStatus(),
+      },
     },
     locked,
   };
@@ -10804,6 +11009,30 @@ aiResultHandle('ai-result:close', () => {
   closeAiResultWindow();
   return { ok: true };
 });
+crmLookupHandle('crm-lookup:copy', (_e, text) => {
+  clipboard.writeText(String(text || ''));
+  return { ok: true };
+});
+crmLookupHandle('crm-lookup:close', () => {
+  closeCrmLookupWindow();
+  return { ok: true };
+});
+crmLookupHandle('crm-lookup:open-deal', (_e, url) => {
+  const href = String(url || '').trim();
+  if (!/^https?:\/\//i.test(href)) return { ok: false, error: 'Invalid deal URL' };
+  closeCrmLookupWindow();
+  const zoho =
+    orderedServices().find((s) => s.appId === 'zoho-crm') ||
+    orderedServices().find((s) => String(s.appId || '').startsWith('zoho')) ||
+    null;
+  const opened = openUrlAsHubAppTab(href, zoho);
+  if (!opened?.ok) {
+    activateService(zoho?.id || activeServiceId);
+    const entry = views.get(zoho?.id || activeServiceId);
+    entry?.view?.webContents?.loadURL(href).catch(() => {});
+  }
+  return { ok: true };
+});
 aiResultHandle('ai-result:suggest-reply', () => runSuggestRepliesFromAiResult());
 aiResultHandle('ai-result:sync-replies', (_e, text) => {
   if (!aiResultContext) return { ok: false };
@@ -11031,6 +11260,79 @@ dockHandle('dock:ai-set-key', (_e, providerId, apiKey) => {
   broadcastState();
   return result;
 });
+dockHandle('dock:zoho-crm-status', () => ({
+  ok: true,
+  enabled: settings.zohoCrmEnabled !== false,
+  dc: sanitizeZohoCrmDc(settings.zohoCrmDc),
+  scopes: ZOHO_CRM_OAUTH_SCOPES,
+  dataCenters: ZOHO_CRM_DCS.map((d) => ({ id: d.id, label: d.label })),
+  ...zohoCrmAuthStatus(),
+}));
+dockHandle('dock:zoho-crm-save', (_e, payload) => {
+  const body = payload && typeof payload === 'object' ? payload : {};
+  const dcId = sanitizeZohoCrmDc(body.dc || body.zohoCrmDc || settings.zohoCrmDc);
+  const dc = resolveZohoCrmDc(dcId);
+  if (typeof body.enabled === 'boolean') {
+    settings = saveSettings({ zohoCrmEnabled: body.enabled, zohoCrmDc: dcId });
+  } else {
+    settings = saveSettings({ zohoCrmDc: dcId });
+  }
+  const result = setZohoCrmAuth({
+    clientId: body.clientId,
+    clientSecret: body.clientSecret,
+    refreshToken: body.refreshToken,
+    apiDomain: dc.apiDomain,
+    accountsUrl: dc.accountsUrl,
+    dcId: dc.id,
+  });
+  clearZohoCrmAccessCache();
+  broadcastState();
+  return { ok: true, ...result, dc: dcId };
+});
+dockHandle('dock:zoho-crm-clear', () => {
+  const result = clearZohoCrmAuth();
+  clearZohoCrmAccessCache();
+  broadcastState();
+  return result;
+});
+dockHandle('dock:zoho-crm-test', async () => {
+  if (settings.zohoCrmEnabled === false) {
+    return { ok: false, error: 'Zoho CRM lookup is disabled.' };
+  }
+  return testZohoCrmConnection({
+    dcId: sanitizeZohoCrmDc(settings.zohoCrmDc),
+  });
+});
+dockHandle('dock:zoho-crm-connect', async (_e, payload) => {
+  const body = payload && typeof payload === 'object' ? payload : {};
+  const dcId = sanitizeZohoCrmDc(body.dc || settings.zohoCrmDc);
+  const dc = resolveZohoCrmDc(dcId);
+  const stored = getZohoCrmAuth({ dcId });
+  try {
+    const result = await exchangeGrantCode({
+      clientId: String(body.clientId || '').trim() || stored.clientId,
+      clientSecret: String(body.clientSecret || '').trim() || stored.clientSecret,
+      code: body.code || body.grantCode,
+      accountsUrl: dc.accountsUrl,
+      apiDomain: dc.apiDomain,
+      dcId: dc.id,
+      redirectUri: body.redirectUri || '',
+    });
+    settings = saveSettings({
+      zohoCrmEnabled: true,
+      zohoCrmDc: dcId,
+    });
+    broadcastState();
+    return result;
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+});
+dockHandle('dock:zoho-crm-lookup', async (_e, payload) => {
+  const text = String(payload?.query || payload?.selectionText || '');
+  const dark = !!payload?.dark;
+  return lookupZohoCrmDeals(text, { dark });
+});
 dockHandle('dock:ai-clear-key', (_e, providerId) => {
   const id = String(providerId || '').trim();
   const result = clearAiProviderKey(id);
@@ -11253,6 +11555,9 @@ dockHandle('dock:save-settings', (_e, patch) => {
   }
   if (next.sentryDsn === '[configured]') {
     delete next.sentryDsn;
+  }
+  if (next.zohoCrmDc != null) {
+    next.zohoCrmDc = sanitizeZohoCrmDc(next.zohoCrmDc);
   }
   if (next.errorReportUrl != null) {
     const reportUrl = String(next.errorReportUrl || '').trim();

@@ -1134,6 +1134,14 @@ function fillSettingsForm() {
   set('set-ai-language', s.aiLanguage || 'en');
   aiKeyEditMode.clear();
   renderAiProviderKeys();
+  set('set-zoho-crm-enabled', s.zohoCrmEnabled !== false);
+  set('set-zoho-crm-dc', s.zohoCrmDc || s.zohoCrm?.dc || 'in');
+  paintZohoCrmStatus(s.zohoCrm);
+  set('set-zoho-crm-client-id', s.zohoCrm?.hasClientId ? '[configured]' : '');
+  set('set-zoho-crm-client-secret', s.zohoCrm?.hasClientSecret ? '[configured]' : '');
+  set('set-zoho-crm-refresh', s.zohoCrm?.hasRefreshToken ? '[configured]' : '');
+  set('set-zoho-crm-grant', '');
+  setZohoCrmFeedback('');
   set('set-proxy-mode', s.proxyMode || 'none');
   set('set-proxy-rules', s.proxyRules || '');
   set('set-proxy-bypass', s.proxyBypass ?? '<local>');
@@ -1193,6 +1201,8 @@ function readSettingsForm() {
     lockOnSystemIdle: checked('set-lock-idle'),
     aiEnabled: checked('set-ai-enabled'),
     aiLanguage: val('set-ai-language'),
+    zohoCrmEnabled: checked('set-zoho-crm-enabled'),
+    zohoCrmDc: val('set-zoho-crm-dc') || 'in',
     proxyMode: val('set-proxy-mode'),
     proxyRules: val('set-proxy-rules').trim(),
     proxyBypass: val('set-proxy-bypass').trim() || '<local>',
@@ -2056,6 +2066,82 @@ els.chromeMenu?.addEventListener('click', (event) => {
   if (action === 'about') window.asperadock.showAbout?.();
 });
 
+function paintZohoCrmStatus(status) {
+  const el = document.getElementById('zoho-crm-status');
+  if (!el) return;
+  if (status?.configured) {
+    el.textContent = `Status: Connected (${status.dc || status.apiDomain || 'ready'})`;
+  } else {
+    const parts = [];
+    if (!status?.hasClientId) parts.push('Client ID');
+    if (!status?.hasClientSecret) parts.push('Secret');
+    if (!status?.hasRefreshToken) parts.push('Refresh token');
+    el.textContent = parts.length
+      ? `Status: Not configured — missing ${parts.join(', ')}`
+      : 'Status: Not configured';
+  }
+}
+
+function setZohoCrmFeedback(text, isError = false) {
+  const el = document.getElementById('zoho-crm-feedback');
+  if (!el) return;
+  el.textContent = text || '';
+  el.style.color = isError ? '#b91c1c' : '';
+}
+
+function secretFieldValue(id) {
+  const raw = String(document.getElementById(id)?.value || '').trim();
+  if (!raw || raw === '[configured]') return '';
+  return raw;
+}
+
+async function saveZohoCrmCredentials() {
+  setZohoCrmFeedback('Saving…');
+  try {
+    const result = await window.asperadock.zohoCrmSave({
+      enabled: document.getElementById('set-zoho-crm-enabled')?.checked !== false,
+      dc: document.getElementById('set-zoho-crm-dc')?.value || 'in',
+      clientId: secretFieldValue('set-zoho-crm-client-id'),
+      clientSecret: secretFieldValue('set-zoho-crm-client-secret'),
+      refreshToken: secretFieldValue('set-zoho-crm-refresh'),
+    });
+    if (result?.ok === false) {
+      setZohoCrmFeedback(result.error || 'Could not save.', true);
+      return;
+    }
+    paintZohoCrmStatus(result);
+    setZohoCrmFeedback(result?.configured ? 'Saved.' : 'Saved — add refresh token to finish.');
+    fillSettingsForm();
+  } catch (err) {
+    setZohoCrmFeedback(String(err?.message || err), true);
+  }
+}
+
+async function connectZohoCrmGrant() {
+  const code = secretFieldValue('set-zoho-crm-grant');
+  if (!code) {
+    setZohoCrmFeedback('Paste a grant code first.', true);
+    return;
+  }
+  setZohoCrmFeedback('Exchanging grant code…');
+  try {
+    const result = await window.asperadock.zohoCrmConnect({
+      dc: document.getElementById('set-zoho-crm-dc')?.value || 'in',
+      clientId: secretFieldValue('set-zoho-crm-client-id'),
+      clientSecret: secretFieldValue('set-zoho-crm-client-secret'),
+      code,
+    });
+    if (!result?.ok) {
+      setZohoCrmFeedback(result?.error || 'Connect failed.', true);
+      return;
+    }
+    setZohoCrmFeedback('Connected — refresh token stored encrypted.');
+    fillSettingsForm();
+  } catch (err) {
+    setZohoCrmFeedback(String(err?.message || err), true);
+  }
+}
+
 els.settingsSave.addEventListener('click', async () => {
   const patch = readSettingsForm();
   if (patch.lockEnabled && patch.lockPassword === undefined && !state.settings.lockEnabled) {
@@ -2071,9 +2157,64 @@ els.settingsSave.addEventListener('click', async () => {
       alert(result.error || 'Could not save settings.');
       return;
     }
+    // Persist Zoho secrets separately (encrypted) when fields were edited.
+    const hasSecretEdits =
+      secretFieldValue('set-zoho-crm-client-id') ||
+      secretFieldValue('set-zoho-crm-client-secret') ||
+      secretFieldValue('set-zoho-crm-refresh');
+    if (hasSecretEdits) {
+      await window.asperadock.zohoCrmSave({
+        enabled: patch.zohoCrmEnabled !== false,
+        dc: patch.zohoCrmDc || 'in',
+        clientId: secretFieldValue('set-zoho-crm-client-id'),
+        clientSecret: secretFieldValue('set-zoho-crm-client-secret'),
+        refreshToken: secretFieldValue('set-zoho-crm-refresh'),
+      });
+    }
     closeSettings();
   } catch (err) {
     alert(String(err?.message || err || 'Could not save settings.'));
+  }
+});
+
+document.getElementById('zoho-crm-save-btn')?.addEventListener('click', () => {
+  saveZohoCrmCredentials().catch(() => {});
+});
+document.getElementById('zoho-crm-connect-btn')?.addEventListener('click', () => {
+  connectZohoCrmGrant().catch(() => {});
+});
+document.getElementById('zoho-crm-test-btn')?.addEventListener('click', async () => {
+  setZohoCrmFeedback('Testing…');
+  try {
+    await window.asperadock.saveSettings({
+      zohoCrmEnabled: document.getElementById('set-zoho-crm-enabled')?.checked !== false,
+      zohoCrmDc: document.getElementById('set-zoho-crm-dc')?.value || 'in',
+    });
+    if (
+      secretFieldValue('set-zoho-crm-client-id') ||
+      secretFieldValue('set-zoho-crm-client-secret') ||
+      secretFieldValue('set-zoho-crm-refresh')
+    ) {
+      await saveZohoCrmCredentials();
+    }
+    const result = await window.asperadock.zohoCrmTest();
+    if (!result?.ok) {
+      setZohoCrmFeedback(result?.error || 'Test failed.', true);
+      return;
+    }
+    setZohoCrmFeedback(result.message || 'Connected.');
+  } catch (err) {
+    setZohoCrmFeedback(String(err?.message || err), true);
+  }
+});
+document.getElementById('zoho-crm-clear-btn')?.addEventListener('click', async () => {
+  if (!confirm('Clear Zoho CRM credentials from this PC?')) return;
+  try {
+    await window.asperadock.zohoCrmClear();
+    setZohoCrmFeedback('Cleared.');
+    fillSettingsForm();
+  } catch (err) {
+    setZohoCrmFeedback(String(err?.message || err), true);
   }
 });
 
