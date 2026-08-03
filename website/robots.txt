@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://asperahub.com/sitemap.xml
