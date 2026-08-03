@@ -6,6 +6,7 @@ import {
   resolveLinkHandling,
   shouldOpenUnknownExternally,
   shouldOpenInternalAsHubTab,
+  shouldOpenAsHubTab,
   shouldAskLinkHandling,
   rememberModeForChoice,
 } from '../src/linkHandling.js';
@@ -17,29 +18,32 @@ test('normalizeLinkHandling accepts known modes', () => {
   assert.equal(normalizeLinkHandling('hub-tab'), 'hub-tab');
   assert.equal(normalizeLinkHandling('ask'), 'ask');
   assert.equal(normalizeLinkHandling('default', 'external'), 'external');
-  assert.equal(normalizeLinkHandling('nope', 'block'), 'block');
+  assert.equal(normalizeLinkHandling('nope', 'hub-tab'), 'hub-tab');
 });
 
-test('resolveLinkHandling prefers per-app over global', () => {
+test('resolveLinkHandling is Hub-wide (ignores per-app overrides)', () => {
   assert.equal(resolveLinkHandling({ linkHandling: null }, 'external'), 'external');
   assert.equal(resolveLinkHandling({ linkHandling: 'default' }, 'hub-tab'), 'hub-tab');
-  assert.equal(resolveLinkHandling({ linkHandling: 'hub-tab' }, 'block'), 'hub-tab');
-  assert.equal(resolveLinkHandling({ linkHandling: 'block' }, 'external'), 'block');
-  assert.equal(resolveLinkHandling({ linkHandling: 'ask' }, 'block'), 'ask');
+  // Per-app hub-tab must NOT override a global block — one experience for all apps.
+  assert.equal(resolveLinkHandling({ linkHandling: 'hub-tab' }, 'block'), 'block');
+  assert.equal(resolveLinkHandling({ linkHandling: 'block' }, 'external'), 'external');
+  assert.equal(resolveLinkHandling({ linkHandling: 'ask' }, 'hub-tab'), 'hub-tab');
 });
 
-test('shouldOpenUnknownExternally only for external and hub-tab', () => {
+test('shouldOpenUnknownExternally only for external', () => {
   assert.equal(shouldOpenUnknownExternally('block'), false);
   assert.equal(shouldOpenUnknownExternally('external'), true);
-  assert.equal(shouldOpenUnknownExternally('hub-tab'), true);
+  assert.equal(shouldOpenUnknownExternally('hub-tab'), false);
   assert.equal(shouldOpenUnknownExternally('ask'), false);
 });
 
-test('shouldOpenInternalAsHubTab only for hub-tab', () => {
+test('shouldOpenAsHubTab / shouldOpenInternalAsHubTab only for hub-tab', () => {
   assert.equal(shouldOpenInternalAsHubTab('block'), false);
   assert.equal(shouldOpenInternalAsHubTab('external'), false);
   assert.equal(shouldOpenInternalAsHubTab('hub-tab'), true);
   assert.equal(shouldOpenInternalAsHubTab('ask'), false);
+  assert.equal(shouldOpenAsHubTab('hub-tab'), true);
+  assert.equal(shouldOpenAsHubTab('ask'), false);
 });
 
 test('shouldAskLinkHandling only for ask', () => {

@@ -12,6 +12,7 @@ const ICO = {
   sync: svg(
     '<path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.7-3"/><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.7 3"/><path d="M21 3.5V9h-5.5"/><path d="M3 20.5V15h5.5"/>',
   ),
+  close: svg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
 };
 
 export function buildAppMenuHtml(dark = false) {
@@ -103,6 +104,25 @@ export function buildAppMenuHtml(dark = false) {
   }
   .toggle input:checked { background: #2563eb; }
   .toggle input:checked::after { transform: translateX(16px); }
+  .danger {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    box-sizing: border-box;
+    margin-top: 4px;
+    padding: 9px 12px;
+    border: 0;
+    border-radius: 10px;
+    background: ${dark ? 'rgba(220,38,38,0.18)' : 'rgba(220,38,38,0.1)'};
+    color: ${dark ? '#fca5a5' : '#b91c1c'};
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    text-align: left;
+  }
+  .danger:hover { background: ${dark ? 'rgba(220,38,38,0.28)' : 'rgba(220,38,38,0.16)'}; }
+  .danger svg { flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -119,6 +139,7 @@ export function buildAppMenuHtml(dark = false) {
     <label class="toggle"><span>Sound</span><input id="sound" type="checkbox" /></label>
     <label class="toggle"><span>Notifications</span><input id="notifications" type="checkbox" /></label>
     <label class="toggle"><span>Keep warm in memory</span><input id="warm" type="checkbox" /></label>
+    <button type="button" class="danger" id="close-tab">${ICO.close}<span id="close-label">Close tab</span></button>
   </div>
   <script>
     const api = window.appMenuApi;
@@ -132,10 +153,16 @@ export function buildAppMenuHtml(dark = false) {
       document.getElementById('sound').checked = !!data.sound;
       document.getElementById('notifications').checked = !!data.notifications;
       document.getElementById('warm').checked = !!data.warm;
+      const closeLabel = document.getElementById('close-label');
+      if (closeLabel) {
+        closeLabel.textContent =
+          data.linkTab || data.isCustom ? 'Close tab' : 'Remove app';
+      }
     });
     document.getElementById('home').onclick = () => api.action('home');
     document.getElementById('edit').onclick = () => api.action('edit');
     document.getElementById('reload').onclick = () => api.action('reload');
+    document.getElementById('close-tab').onclick = () => api.action('close');
     bindToggle('enabled', 'enabled');
     bindToggle('sound', 'sound');
     bindToggle('notifications', 'notifications');

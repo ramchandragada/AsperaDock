@@ -53,6 +53,15 @@ clear_stale_singleton
 
 FLAGS="--no-sandbox --disable-gpu-sandbox --disable-gpu --disable-software-rasterizer --class=asperadock"
 
+# Mint Wayland + newer Chromium: prefer X11 backend (avoids fatal Wayland reset).
+# Harmless on pure X11 sessions.
+case "${XDG_SESSION_TYPE:-}:${WAYLAND_DISPLAY:-}" in
+  wayland:*|*:wayland*)
+    FLAGS="$FLAGS --ozone-platform=x11"
+    export ELECTRON_OZONE_PLATFORM_HINT=x11
+    ;;
+esac
+
 # From a terminal: show output so it does not look "stuck".
 # From the menu/desktop: keep a log file.
 if [ -t 1 ]; then

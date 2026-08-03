@@ -13,3 +13,4 @@ scripts/preview-bar.html
 scripts/*.png
 scripts/rambox-frames/
 scripts/error-inbox/
+.electron-zips/

@@ -8,8 +8,9 @@ Threat model: company desktop dock embedding third-party web apps. Trust the doc
 - **Guests:** `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`.
 - **Lock:** scrypt (`scrypt$salt$hash`); legacy SHA-256 accepted until unlock upgrades.
 - **Updates:** HTTPS feed + HTTPS artifacts; SHA-256 required on download, cache reuse, and install.
-- **openExternal:** only `http:`, `https:`, `mailto:`.
+- **openExternal:** only `http:`, `https:`, `mailto:` via `openExternalSafe` (no raw `shell.openExternal`).
 - **Settings IPC:** allowlisted keys; `allowPageInjection` / `allowGuestDevTools` / vendor kill switches blocked unless `ASPERADOCK_ADMIN=1`.
+- **Page injection:** runtime requires **both** `allowPageInjection: true` in settings **and** `ASPERADOCK_ADMIN=1`. Editing `settings.json` alone is not enough. Stylish URLs must be HTTPS.
 - **Guest navigation:** fail-closed; block `file:`, `javascript:`, and other non-web schemes.
 - **Fuses:** `RunAsNode` off, cookie encryption on, asar integrity + OnlyLoadAppFromAsar on, **GrantFileProtocolExtraPrivileges off** (chrome via `asperadock://`).
 - **Root:** packaged start as root is refused.

@@ -292,20 +292,36 @@ function makeAppTab(service, index) {
   btn.tabIndex = 0;
   btn.dataset.id = service.id;
   btn.style.setProperty('--app-accent', service.color || '#64748b');
-  btn.dataset.tooltip = service.title || service.name;
+  const fromLabel = service.sourceName
+    ? `Link from ${service.sourceName}`
+    : service.linkTab || service.isCustom
+      ? 'Opened from link'
+      : '';
+  btn.dataset.tooltip = fromLabel
+    ? `${service.title || service.name} · ${fromLabel}`
+    : service.title || service.name;
   btn.setAttribute(
     'aria-label',
-    `${service.title || service.name}${index < 9 ? ` — Ctrl+${index + 1}` : ''}`,
+    `${btn.dataset.tooltip}${index < 9 ? ` — Ctrl+${index + 1}` : ''}`,
   );
   if (service.id === state.activeServiceId) btn.classList.add('active');
   if (state.warmIds.includes(service.id)) btn.classList.add('warm');
   else btn.classList.add('sleep');
   if (cfg.enabled === false) btn.classList.add('disabled');
   if (muted) btn.classList.add('muted');
+  if (service.linkTab || service.isCustom) btn.classList.add('link-tab');
 
   const iconStack = document.createElement('span');
   iconStack.className = 'app-icon-stack';
   const logo = makeAppIcon(service);
+
+  if (service.linkTab || service.isCustom) {
+    const linkMark = document.createElement('span');
+    linkMark.className = 'app-mark link-mark';
+    linkMark.title = fromLabel || 'Opened from link';
+    linkMark.innerHTML = icon('link');
+    logo.appendChild(linkMark);
+  }
 
   if (unread > 0 && cfg.displayUnreadInTab !== false) {
     const badge = document.createElement('span');
@@ -347,6 +363,20 @@ function makeAppTab(service, index) {
     btn.appendChild(label);
   }
 
+  // Close control — always for temporary Hub link tabs; hover for other apps.
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'app-tab-close';
+  closeBtn.title = service.linkTab || service.isCustom ? 'Close tab' : 'Remove app';
+  closeBtn.setAttribute('aria-label', closeBtn.title);
+  closeBtn.textContent = '×';
+  closeBtn.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    closeAppTab(service);
+  });
+  btn.appendChild(closeBtn);
+
   btn.addEventListener('click', () => {
     if (dragDidMove) {
       dragDidMove = false;
@@ -363,6 +393,13 @@ function makeAppTab(service, index) {
     event.preventDefault();
     btn.click();
   });
+  btn.addEventListener('auxclick', (event) => {
+    // Middle-click closes the tab (browser convention).
+    if (event.button !== 1) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeAppTab(service);
+  });
   btn.addEventListener('contextmenu', (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -370,6 +407,20 @@ function makeAppTab(service, index) {
   });
   bindAppTabDrag(btn, service);
   return btn;
+}
+
+async function closeAppTab(service) {
+  if (!service?.id) return;
+  const isLink = !!(service.linkTab || service.isCustom);
+  if (
+    !isLink &&
+    !confirm(
+      `Remove ${service.title || service.name}? Login data for this instance stays until you clear the session.`,
+    )
+  ) {
+    return;
+  }
+  await window.asperadock.removeService(service.id);
 }
 
 function renderApps() {
@@ -612,7 +663,12 @@ function renderNotificationCenter() {
 let lastChromeReport = '';
 function reportChromeSize() {
   if (!els.topBar) return;
-  const top = Math.round(els.topBar.getBoundingClientRect().height);
+  let top = Math.round(els.topBar.getBoundingClientRect().height);
+  // Find bar is fixed under the top bar; push the guest down so Ctrl+F stays visible.
+  if (els.findBar && !els.findBar.classList.contains('hidden')) {
+    const findH = Math.round(els.findBar.getBoundingClientRect().height) || 48;
+    top += findH + 12;
+  }
   const key = `0:0:${top}`;
   if (key === lastChromeReport) return;
   lastChromeReport = key;
@@ -1099,7 +1155,7 @@ function fillSettingsForm() {
   set('set-hw-accel', s.hardwareAcceleration === true);
   set('set-hidpi', s.hiDpiSupport !== false);
   set('set-media-keys', s.mediaKeys !== false);
-  set('set-links', s.linkHandling || 'block');
+  set('set-links', s.linkHandling || 'hub-tab');
   set(
     'set-spell',
     Array.isArray(s.spellChecker) ? s.spellChecker[0] : s.spellChecker || 'en-US',
@@ -1444,9 +1500,6 @@ function openEditApp(id) {
   if (!cfg.spellChecker) spell.value = 'default';
   else spell.value = Array.isArray(cfg.spellChecker) ? cfg.spellChecker[0] : cfg.spellChecker;
 
-  const links = document.getElementById('ea-links');
-  links.value = cfg.linkHandling || 'default';
-
   fillProfileSelect(service.profileId);
   els.editAppModal.classList.remove('hidden');
   syncOverlayFromModals();
@@ -1474,7 +1527,6 @@ function closeEditApp() {
 async function saveEditApp() {
   if (!editServiceId) return;
   const spellVal = document.getElementById('ea-spell').value;
-  const linkVal = document.getElementById('ea-links').value;
   const patch = {
     name: (els.editAppName.value || '').trim().slice(0, 10),
     title: (els.editAppName.value || '').trim().slice(0, 10),
@@ -1496,7 +1548,8 @@ async function saveEditApp() {
     forceMobile: document.getElementById('ea-mobile').checked,
     preventBasicAuth: document.getElementById('ea-no-basic-auth').checked,
     spellChecker: spellVal === 'default' ? null : [spellVal],
-    linkHandling: linkVal === 'default' ? null : linkVal,
+    // One Hub-wide link rule — clear any old per-app override.
+    linkHandling: null,
   };
   const urlInput = document.getElementById('ea-url');
   const service = getServiceById(editServiceId);
@@ -2012,15 +2065,31 @@ els.settingsSave.addEventListener('click', async () => {
       return;
     }
   }
-  await window.asperadock.saveSettings(patch);
-  closeSettings();
+  try {
+    const result = await window.asperadock.saveSettings(patch);
+    if (result && result.ok === false) {
+      alert(result.error || 'Could not save settings.');
+      return;
+    }
+    closeSettings();
+  } catch (err) {
+    alert(String(err?.message || err || 'Could not save settings.'));
+  }
 });
 
 els.shortcutsSave.addEventListener('click', async () => {
   stopShortcutCapture({ restore: true });
   if (!validateShortcutsForm()) return;
-  await window.asperadock.saveSettings(readShortcutsForm());
-  closeShortcuts();
+  try {
+    const result = await window.asperadock.saveSettings(readShortcutsForm());
+    if (result && result.ok === false) {
+      alert(result.error || 'Could not save shortcuts.');
+      return;
+    }
+    closeShortcuts();
+  } catch (err) {
+    alert(String(err?.message || err || 'Could not save shortcuts.'));
+  }
 });
 els.shortcutsClose.addEventListener('click', () => {
   stopShortcutCapture({ restore: false });
@@ -2095,6 +2164,11 @@ window.asperadock.onFindResult?.((data) => {
 window.asperadock.onSyncOverlay?.(syncOverlayFromModals);
 window.asperadock.onOpenEditApp?.((id) => {
   if (id) openEditApp(id);
+});
+window.asperadock.onConfirmRemoveApp?.((id) => {
+  const service = (state.services || []).find((s) => s.id === id);
+  if (!service) return;
+  closeAppTab(service);
 });
 window.asperadock.onChromeAction?.(handleChromeAction);
 window.asperadock.onOpenAiSettings?.(openAiSettings);
@@ -2262,7 +2336,9 @@ function openFindBar() {
   els.findBar.classList.remove('hidden');
   els.findInput.value = '';
   els.findStatus.textContent = '';
+  lastChromeReport = '';
   requestAnimationFrame(() => {
+    reportChromeSize();
     els.findInput?.focus();
     els.findInput?.select();
   });
@@ -2272,6 +2348,8 @@ function closeFindBar() {
   els.findBar?.classList.add('hidden');
   window.asperadock.stopFind?.();
   els.findStatus.textContent = '';
+  lastChromeReport = '';
+  requestAnimationFrame(reportChromeSize);
 }
 
 async function runFind({ findNext = false, forward = true } = {}) {

@@ -14,10 +14,10 @@
       <header id="top-bar" class="app-bar app-bar-top">
         <div class="app-bar-main">
           <nav id="apps-top" class="apps-track" aria-label="Apps"></nav>
-          <div class="chrome-brand" title="Aspera">
-            <img id="chrome-wordmark" class="chrome-wordmark" alt="Aspera" draggable="false" />
-          </div>
           <div class="chrome-actions">
+            <div class="chrome-brand" title="Aspera">
+              <img id="chrome-wordmark" class="chrome-wordmark" alt="Aspera" draggable="false" />
+            </div>
             <button id="lock-btn" type="button" class="icon-btn lock-btn" title="Lock Aspera Hub (Ctrl+Shift+L)" aria-label="Lock Aspera Hub"></button>
             <button id="add-app-btn" type="button" class="icon-btn add-app-btn" title="Add app"></button>
             <span class="chrome-divider" aria-hidden="true"></span>
@@ -453,8 +453,10 @@
             <span>Update channel</span>
             <select id="set-update-channel">
               <option value="stable">Stable (GitHub latest release)</option>
-              <option value="beta">Beta</option>
             </select>
+            <p class="hint-text">
+              Stable only — the beta feed is not published. Custom feed URL still works for internal mirrors.
+            </p>
           </label>
           <label class="field">
             <span>Update feed URL (optional override)</span>
@@ -496,19 +498,17 @@
 
           <details class="defaults-block" open>
             <summary>Default app settings</summary>
-            <p class="hint-text">Applied to new apps. Individual apps can override these via right-click → Edit.</p>
+            <p class="hint-text">These apply the same way to every app (WhatsApp, Arattai, Gmail, Zoho, Books, …).</p>
             <label class="field">
               <span>Link handling</span>
               <select id="set-links">
-                <option value="block">In-app for known hosts (recommended)</option>
-                <option value="hub-tab">Known hosts → new Hub tab</option>
+                <option value="hub-tab">Links → new Hub tab (top bar)</option>
+                <option value="block">In-app for known hosts</option>
                 <option value="external">Unknown links → system browser</option>
                 <option value="ask">Ask every time</option>
               </select>
               <p class="hint-text">
-                “New Hub tab” is best for Zoho CRM (calls/leads in side-by-side tabs).
-                “Ask every time” prompts browser vs Hub tab (optional remember per app — change later via right-click → Edit).
-                Zoho One/CRM always keep required login popups in-dock so Sales doesn’t blank.
+                One rule for the whole Hub. “New Hub tab” = real top app-bar tab (right of your last app) — never a floating popup. “Ask” can remember for all apps.
               </p>
             </label>
             <label class="field">
@@ -676,19 +676,10 @@
           </section>
           <section>
             <h3>Link handling</h3>
-            <label class="field">
-              <select id="ea-links">
-                <option value="default">Default (global)</option>
-                <option value="block">In-app for known hosts</option>
-                <option value="hub-tab">Known hosts → new Hub tab</option>
-                <option value="external">Unknown links → system browser</option>
-                <option value="ask">Ask every time</option>
-              </select>
-              <p class="hint-text">
-                For Zoho CRM, choose “new Hub tab” so leads/calls open as Hub tabs instead of Chrome.
-                “Ask every time” can remember your choice for this app.
-              </p>
-            </label>
+            <p class="hint-text">
+              Same for every app — change it in Settings → Default app settings → Link handling.
+              (Per-app link overrides were removed so WhatsApp, Arattai, Gmail, Zoho, etc. cannot diverge.)
+            </p>
           </section>
           <section>
             <h3>Hibernate</h3>

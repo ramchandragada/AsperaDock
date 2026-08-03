@@ -40,6 +40,12 @@ import {
   formatDownloadErrorDetail,
   isRetryableDownloadError,
 } from './updateDownloadErrors.js';
+import {
+  compareVersions,
+  resolveUpdateFeedUrl,
+} from './updateFeedResolve.js';
+
+export { compareVersions, resolveUpdateFeedUrl } from './updateFeedResolve.js';
 
 /** Default feed: GitHub Releases (no custom server). */
 const DEFAULT_FEED = GITHUB_UPDATE_FEED;
@@ -119,19 +125,12 @@ function updatesDir() {
 }
 
 function feedUrl() {
-  const channel = String(settings().updateChannel || 'stable');
-  const custom = String(settings().updateFeedUrl || '').replace(/\/+$/, '');
-  if (custom) {
-    const file = channel && channel !== 'stable' ? `${channel}.json` : 'latest.json';
-    return `${custom}/${file}`;
-  }
-  // GitHub Releases: stable → …/releases/latest/download/latest.json
-  // beta → …/releases/download/beta/beta.json (floating "beta" tag)
-  if (channel && channel !== 'stable') {
-    return `https://github.com/${GITHUB_SLUG}/releases/download/${channel}/${channel}.json`;
-  }
-  return `${DEFAULT_FEED}/latest.json`;
+  return resolveUpdateFeedUrl(settings(), DEFAULT_FEED);
 }
+
+/**
+ * Pure feed URL resolver — see updateFeedResolve.js (re-exported).
+ */
 
 /** appimage | deb | rpm | dev | unknown */
 export function detectPackaging() {
@@ -146,25 +145,6 @@ export function detectPackaging() {
     return 'deb';
   }
   return 'unknown';
-}
-
-/** Compare semver-ish strings. Returns 1 if a>b, -1 if a<b, 0 equal. */
-export function compareVersions(a, b) {
-  const parse = (v) =>
-    String(v || '0')
-      .replace(/^v/, '')
-      .split('-')[0]
-      .split('.')
-      .map((n) => Number.parseInt(n, 10) || 0);
-  const pa = parse(a);
-  const pb = parse(b);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
-    const da = pa[i] || 0;
-    const db = pb[i] || 0;
-    if (da > db) return 1;
-    if (da < db) return -1;
-  }
-  return 0;
 }
 
 function pickFileForPackaging(manifest) {

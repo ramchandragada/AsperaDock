@@ -6,12 +6,14 @@ name: Deploy Aspera Hub
 
 on:
   push:
-    branches: [master, main, 'cursor/**']
+    branches: [master, main]
     paths-ignore:
       # Website/docs-only pushes must not stamp a new .deb release.
       - 'website/**'
       - '.github/workflows/website.yml'
       - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
   workflow_dispatch:
     inputs:
       notes:

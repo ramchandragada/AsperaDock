@@ -384,9 +384,10 @@ body.layout-top .app-bar-top {
   align-items: center;
   gap: var(--apps-gap);
   overflow-x: auto;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: min(100%, calc(100vw - 360px));
+  /* Leave room for brand + lock + utility cluster on the right */
+  max-width: none;
   padding: 2px 4px;
   scrollbar-width: none;
 }
@@ -396,20 +397,21 @@ body.layout-top .app-bar-top {
 }
 
 .chrome-brand {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 110px;
-  padding: 0 10px;
+  min-width: 0;
+  padding: 0 6px 0 2px;
+  margin-right: 2px;
   pointer-events: none;
 }
 
 .chrome-wordmark {
   display: block;
-  height: clamp(26px, calc(var(--top-bar) * 0.4), 36px);
+  height: clamp(22px, calc(var(--top-bar) * 0.34), 30px);
   width: auto;
-  max-width: min(180px, 24vw);
+  max-width: 120px;
   object-fit: contain;
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
@@ -418,13 +420,14 @@ body.layout-top .app-bar-top {
 .chrome-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 2px 0 10px;
-  margin-left: 0;
+  gap: 2px;
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  padding: 0 2px 0 4px;
+  margin-left: 4px;
   border-left: none;
   height: auto;
   align-self: center;
-  flex-shrink: 0;
 }
 
 .chrome-divider {
@@ -744,6 +747,80 @@ body.layout-right .app-tab.drop-after {
     border-color 0.16s var(--ease),
     box-shadow 0.16s var(--ease),
     transform 0.16s var(--ease);
+}
+
+.app-tab-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text);
+  font: 700 14px/1 "Segoe UI", Ubuntu, Cantarell, sans-serif;
+  cursor: pointer;
+  opacity: 0;
+  display: grid;
+  place-items: center;
+  z-index: 2;
+}
+.app-tab:hover .app-tab-close,
+.app-tab.active .app-tab-close,
+.app-tab.link-tab .app-tab-close {
+  opacity: 1;
+}
+.app-tab-close:hover {
+  background: #dc2626;
+  color: #fff;
+}
+body.theme-dark .app-tab-close {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* Link tabs: source-app icon + distinct frame so they aren’t confused with the live app. */
+.app-tab.link-tab {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--app-accent) 55%, transparent);
+}
+.app-tab.link-tab.active {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--app-accent) 80%, transparent);
+}
+.app-tab.link-tab .app-icon.has-logo {
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--app-accent) 35%, transparent);
+}
+.app-tab.link-tab .app-icon.has-logo svg,
+.app-tab.link-tab .app-icon.has-logo .app-logo-img {
+  opacity: 0.92;
+  transform: scale(0.9);
+  transform-origin: center;
+}
+.app-mark.link-mark {
+  right: -3px;
+  bottom: -3px;
+  left: auto;
+  top: auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--chrome-1, #fff);
+  color: var(--app-accent, #2563eb);
+  border: 1px solid color-mix(in srgb, var(--app-accent) 45%, transparent);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.18);
+}
+.app-mark.link-mark svg {
+  width: 10px;
+  height: 10px;
+}
+body.theme-dark .app-mark.link-mark {
+  background: #111827;
+  color: #93c5fd;
 }
 
 body.density-normal .app-tab {

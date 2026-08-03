@@ -65,7 +65,7 @@ export const DEFAULTS = {
   // Security
   lockEnabled: false,
   lockPasswordHash: '',
-  /** When false (default), ignore injectJs / stylishUrl from the UI. */
+  /** When true *and* ASPERADOCK_ADMIN=1, allow injectJs / stylishUrl. */
   allowPageInjection: false,
   /** When false (default), guest DevTools are blocked in packaged builds. */
   allowGuestDevTools: false,
@@ -175,9 +175,10 @@ export const DEFAULTS = {
    */
   lowMemoryMode: false,
 
-  // Defaults for apps (overridden per-app via right-click Edit)
+  // Defaults for apps (spell/hibernate can still be per-app via Edit)
   // block | external | hub-tab | ask — see src/linkHandling.js
-  linkHandling: 'block',
+  // ONE Hub-wide rule for every app (never a floating popup).
+  linkHandling: 'hub-tab',
   spellChecker: ['en-US'],
   /** Hibernate idle background apps (keepWarm apps like WhatsApp are skipped). */
   hibernateMinutes: 45,
@@ -249,6 +250,44 @@ function dropRetiredApps(settings) {
     lastActiveServiceId: kept.has(settings.lastActiveServiceId)
       ? settings.lastActiveServiceId
       : null,
+  };
+}
+
+/**
+ * One Hub-wide link rule: promote old per-app hub-tab choices to global,
+ * clear per-app overrides so WhatsApp/Arattai/Gmail/Zoho cannot diverge.
+ * Also force update channel to stable (beta feed is unpublished).
+ */
+function migrateUnifyLinkHandling(settings) {
+  const configs = { ...(settings.serviceConfigs || {}) };
+  let anyHubTab = settings.linkHandling === 'hub-tab';
+  let cleared = false;
+  for (const [id, cfg] of Object.entries(configs)) {
+    if (!cfg || typeof cfg !== 'object') continue;
+    if (cfg.linkHandling === 'hub-tab') anyHubTab = true;
+    if (cfg.linkHandling != null && cfg.linkHandling !== '') {
+      configs[id] = { ...cfg, linkHandling: null };
+      cleared = true;
+    }
+  }
+  const nextGlobal =
+    anyHubTab || !settings.linkHandling || settings.linkHandling === 'block'
+      ? 'hub-tab'
+      : settings.linkHandling;
+  const channel = String(settings.updateChannel || 'stable');
+  const nextChannel = channel === 'stable' ? 'stable' : 'stable';
+  if (
+    nextGlobal === settings.linkHandling &&
+    !cleared &&
+    channel === nextChannel
+  ) {
+    return settings;
+  }
+  return {
+    ...settings,
+    linkHandling: nextGlobal,
+    updateChannel: nextChannel,
+    serviceConfigs: configs,
   };
 }
 
@@ -484,21 +523,23 @@ export function loadSettings() {
     const raw = fs.readFileSync(settingsPath(), 'utf8');
     const parsed = JSON.parse(raw);
     cache = migrateWarmKeepAlive(
-      migrateProfiles(
-        dropRetiredApps({
-          ...DEFAULTS,
-          ...parsed,
-          shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
-          serviceLabels: parsed.serviceLabels || {},
-          serviceConfigs: parsed.serviceConfigs || {},
-          serviceInstances: parsed.serviceInstances || [],
-          profiles: parsed.profiles,
-          pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
-          aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
-          aiDisabledProviders: sanitizeAiDisabledProviders(
-            parsed.aiDisabledProviders,
-          ),
-        }),
+      migrateUnifyLinkHandling(
+        migrateProfiles(
+          dropRetiredApps({
+            ...DEFAULTS,
+            ...parsed,
+            shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
+            serviceLabels: parsed.serviceLabels || {},
+            serviceConfigs: parsed.serviceConfigs || {},
+            serviceInstances: parsed.serviceInstances || [],
+            profiles: parsed.profiles,
+            pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
+            aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
+            aiDisabledProviders: sanitizeAiDisabledProviders(
+              parsed.aiDisabledProviders,
+            ),
+          }),
+        ),
       ),
     );
     // Persist migration so partitions/profileIds are stable next launch.

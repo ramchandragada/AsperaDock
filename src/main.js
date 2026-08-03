@@ -201,6 +201,28 @@ import {
   updateReadyForQuit,
 } from './updater.js';
 import { initSentryMain } from './sentryMain.js';
+import {
+  configureGuestWindowOpen as configureGuestWindowOpenImpl,
+  attachGuestNavigationGate as attachGuestNavigationGateImpl,
+} from './guestNavigation.js';
+import {
+  PORTAL_STALE_MS,
+  PORTAL_RELOAD_COOLDOWN_MS,
+  PORTAL_RELOAD_COOLDOWN_SALES_MS,
+  PORTAL_HEALTH_CHECK_MS,
+  PORTAL_HEALTH_RETRY_MS,
+  ZOHO_SALES_RECOVERY_DELAYS_MS,
+  shouldRunPortalBlankRecovery,
+  portalHealthCheckDelays,
+} from './guestIdleRecovery.js';
+import {
+  hibernateMsFromSettings,
+  defaultKeepWarmForApp,
+} from './guestLifecycle.js';
+import {
+  isPageInjectionEnabled,
+  normalizeStylishHttpsUrl,
+} from './pageInjection.js';
 import { openExternalSafe } from './safeShell.js';
 import {
   registerChromeScheme,
@@ -223,7 +245,7 @@ import {
 import {
   resolveLinkHandling,
   shouldOpenUnknownExternally,
-  shouldOpenInternalAsHubTab,
+  shouldOpenAsHubTab,
   shouldAskLinkHandling,
   normalizeLinkHandling,
   rememberModeForChoice,
@@ -262,6 +284,15 @@ if (process.platform === 'linux') {
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('disable-software-rasterizer');
   app.commandLine.appendSwitch('class', 'asperadock');
+  // Wayland compositors (Mint + newer Electron) can FATAL on reset;
+  // prefer XWayland unless the user already chose a platform.
+  if (
+    !app.commandLine.hasSwitch('ozone-platform') &&
+    !process.env.ELECTRON_OZONE_PLATFORM_HINT &&
+    (process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland')
+  ) {
+    app.commandLine.appendSwitch('ozone-platform', 'x11');
+  }
   try {
     app.disableHardwareAcceleration();
   } catch {
@@ -700,33 +731,13 @@ function syncAllGuestPerfModes() {
   }
 }
 
-/** SPAs that need an unthrottled first boot (then stay full-speed if warm). */
+/**
+ * SPAs that need an unthrottled first boot (then stay full-speed if warm).
+ */
 function isHeavyPortalApp(service) {
   const id = service?.appId;
   return id === 'zoho-one' || id === 'arattai' || id === 'zoho-crm';
 }
-
-/**
- * Auto blank-pane recovery is only needed for Zoho portal spaces.
- * Arattai can look "blank enough" during fast tab restores and was getting
- * unnecessary reloads on every switch.
- */
-function shouldRunPortalBlankRecovery(service) {
-  const id = service?.appId;
-  return id === 'zoho-one' || id === 'zoho-crm';
-}
-
-/**
- * Zoho portals: only recover when the content pane is actually blank.
- * Never blind-reload warm apps after tab switches or short idle — that is what
- * made "warm" feel cold (full reload every time you came back).
- */
-const PORTAL_STALE_MS = 10 * 60_000;
-const PORTAL_RELOAD_COOLDOWN_MS = 20_000;
-const PORTAL_RELOAD_COOLDOWN_SALES_MS = 8000;
-const PORTAL_HEALTH_CHECK_MS = 3500;
-const PORTAL_HEALTH_RETRY_MS = 6500;
-const ZOHO_SALES_RECOVERY_DELAYS_MS = [1500, 3500, 5500, 8000];
 
 function touchPortalPresence(entry) {
   if (entry) entry.lastPresenceAt = Date.now();
@@ -1061,11 +1072,8 @@ function recoverActiveGuestAfterAway(reason = 'idle', idleMs = 0) {
     }, delay);
   };
 
-  checkAt(450, false);
-  checkAt(1200, true);
-  // Very long idle (screensaver / lunch): if still blank, reload once more.
-  if (awayMs >= 15 * 60_000 || reason === 'power-resume') {
-    checkAt(2800, true);
+  for (const delay of portalHealthCheckDelays(awayMs, reason)) {
+    checkAt(delay, delay >= 1200);
   }
 
   markUserActive();
@@ -1189,8 +1197,7 @@ function getAppConfig(id) {
   // Messaging sessions die if hibernated mid-pairing — keep them warm by default
   // unless the user explicitly turned keepWarm off.
   const messagingDefault =
-    (appId === 'whatsapp' || appId === 'arattai') &&
-    stored.keepWarm === undefined
+    defaultKeepWarmForApp(appId) && stored.keepWarm === undefined
       ? { keepWarm: true }
       : {};
   return mergeAppConfig({ ...messagingDefault, ...stored });
@@ -1201,6 +1208,12 @@ function saveAppConfig(id, patch) {
   const next = mergeAppConfig({ ...prev, ...patch });
   const serviceConfigs = { ...(settings.serviceConfigs || {}), [id]: next };
   settings = saveSettings({ serviceConfigs });
+  // Keep live view's service snapshot in sync (linkHandling, etc.).
+  const entry = views.get(id);
+  if (entry) {
+    const fresh = getService(id);
+    if (fresh) entry.service = fresh;
+  }
   return next;
 }
 
@@ -1321,6 +1334,12 @@ function resolveInstance(inst) {
     const url = String(inst.url || '').trim();
     if (!url.startsWith('http')) return null;
     const name = clampAppName(inst.name || entry.name);
+    const sourceAppId = String(inst.sourceAppId || '').trim() || null;
+    const sourceEntry = sourceAppId ? getAppCatalogEntry(sourceAppId) : null;
+    // Prefer source app branding (WhatsApp, Gmail, …) so link tabs match origin.
+    const logo = sourceEntry?.logo || inst.logo || 'custom';
+    const color = sourceEntry?.color || inst.color || entry.color;
+    const sourceName = sourceEntry?.name || sourceEntry?.title || '';
     return {
       id: inst.id,
       appId: CUSTOM_APP_ID,
@@ -1330,12 +1349,15 @@ function resolveInstance(inst) {
       partition: partitionForInstance(inst),
       profileId: profile?.id || PRIMARY_PROFILE_ID,
       profileName: profile?.name || 'Primary',
-      color: inst.color || entry.color,
-      logo: 'custom',
+      color,
+      logo,
       keepWarm: false,
       slot,
       config,
       isCustom: true,
+      linkTab: !!inst.linkTab,
+      sourceAppId,
+      sourceName,
     };
   }
 
@@ -1524,10 +1546,15 @@ function openInternalLinkAsHubTab(sourceService, url) {
   return !!result?.ok;
 }
 
-/** Effective link-handling mode for a guest app (per-app override or global). */
-function effectiveLinkHandling(service) {
-  const cfg = service?.config || getAppConfig(service?.id);
-  return resolveLinkHandling(cfg, settings.linkHandling || 'block');
+/** Effective link-handling mode — same Hub-wide rule for every app. */
+function effectiveLinkHandling(_service) {
+  return resolveLinkHandling(null, settings.linkHandling || 'hub-tab');
+}
+
+/** Live service record (config/logo may change after the view was created). */
+function liveService(service) {
+  if (!service?.id) return service;
+  return getService(service.id) || service;
 }
 
 /** Open a third-party URL in the OS browser only when the mode allows it. */
@@ -1537,41 +1564,186 @@ function openUnknownExternalIfAllowed(service, url) {
   return openExternalSafe(url);
 }
 
-/** Avoid stacking chooser dialogs when many links fire at once. */
-let linkAskInFlight = false;
+/** Extra temporary link tabs allowed beyond the normal 10-app bar. */
+const LINK_TAB_OVERFLOW = 4;
+
+function tabNameFromUrl(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./i, '');
+    const parts = host.split('.').filter(Boolean);
+    // Prefer meaningful label: w.meta.me → meta, flexiloans.com → flexiloans
+    let raw = parts[0] || 'Link';
+    if (parts.length >= 2 && raw.length <= 2) raw = parts[1];
+    const label = String(raw).replace(/[^a-zA-Z0-9_-]/g, '');
+    return clampAppName(label || 'Link');
+  } catch {
+    return 'Link';
+  }
+}
+
+function listLinkTabInstances() {
+  return (settings.serviceInstances || []).filter(
+    (i) => i?.linkTab && isCustomAppId(i.appId),
+  );
+}
 
 /**
- * Open a URL in an in-Hub popup that shares the app session
- * (fallback when a new app-bar tab is not possible).
+ * Open any http(s) URL as a real Hub app-bar tab (right of existing apps).
+ * Zoho shared-login deep links reuse the source profile; other links become
+ * temporary custom tabs (recyclable when the bar is full).
  */
-function openUrlAsHubPopup(service, url) {
-  if (!service || !url || !String(url).startsWith('http')) return false;
-  const win = new BrowserWindow({
-    autoHideMenuBar: true,
-    width: 1024,
-    height: 720,
-    parent: mainWindow || undefined,
-    webPreferences: guestWebPreferences(service),
+function openUrlAsHubAppTab(url, sourceService = null) {
+  const href = String(url || '').trim();
+  if (!href.startsWith('http')) {
+    return { ok: false, error: 'Invalid link' };
+  }
+  if (isForbiddenGuestNavigation(href)) {
+    return { ok: false, error: 'This link cannot be opened in Hub' };
+  }
+
+  // Zoho CRM/One/… shared workspace tabs.
+  if (openInternalLinkAsHubTab(sourceService, href)) {
+    return { ok: true, kind: 'shared' };
+  }
+
+  // Reuse an existing link tab for the same URL.
+  const existing = orderedServices().find(
+    (s) =>
+      s.isCustom &&
+      s.url &&
+      String(s.url).split('#')[0] === href.split('#')[0],
+  );
+  if (existing) {
+    const lastServiceUrls = {
+      ...(settings.lastServiceUrls || {}),
+      [existing.id]: href,
+    };
+    settings = saveSettings({ lastServiceUrls });
+    lastGoodUrls.set(existing.id, href);
+    activateService(existing.id);
+    const wc = views.get(existing.id)?.view?.webContents;
+    if (wc && !wc.isDestroyed()) wc.loadURL(href).catch(() => {});
+    return { ok: true, id: existing.id, kind: 'reuse' };
+  }
+
+  const maxLinkDock = MAX_APPS_TOTAL + LINK_TAB_OVERFLOW;
+  // Only recycle after all overflow slots are full — keep up to LINK_TAB_OVERFLOW
+  // Hub link tabs open at once (same or different apps).
+  if (totalAppCount() >= maxLinkDock) {
+    const victims = listLinkTabInstances();
+    if (!victims.length) {
+      return {
+        ok: false,
+        error: `App bar is full (${MAX_APPS_TOTAL} apps + ${LINK_TAB_OVERFLOW} link tabs). Close a link tab or remove an app.`,
+      };
+    }
+    removeService(victims[0].id);
+  }
+
+  if (totalAppCount() >= maxLinkDock) {
+    return {
+      ok: false,
+      error: `App bar is full. Close a link tab or remove an app.`,
+    };
+  }
+
+  const slot = nextSlot(CUSTOM_APP_ID);
+  if (!slot) {
+    return { ok: false, error: 'Too many link tabs open' };
+  }
+
+  const id = `${CUSTOM_APP_ID}-${slot}-${Date.now().toString(36)}`;
+  const name = tabNameFromUrl(href);
+  const profileId =
+    getProfile(PRIMARY_PROFILE_ID)?.id || PRIMARY_PROFILE_ID;
+  const sourceAppId = sourceService?.appId || null;
+  const sourceEntry = sourceAppId ? getAppCatalogEntry(sourceAppId) : null;
+  const instances = [
+    ...(settings.serviceInstances || []),
+    {
+      id,
+      appId: CUSTOM_APP_ID,
+      profileId,
+      slot,
+      url: href,
+      name,
+      title: name,
+      linkTab: true,
+      sourceAppId,
+      logo: sourceEntry?.logo || 'custom',
+      color: sourceEntry?.color || '#3D5A80',
+    },
+  ];
+  const serviceOrder = [...(settings.serviceOrder || []), id];
+  const lastServiceUrls = {
+    ...(settings.lastServiceUrls || {}),
+    [id]: href,
+  };
+  settings = saveSettings({
+    serviceInstances: instances,
+    serviceOrder,
+    lastServiceUrls,
+    serviceConfigs: {
+      ...(settings.serviceConfigs || {}),
+      [id]: {
+        ...mergeAppConfig((settings.serviceConfigs || {})[id]),
+        // Inside a link tab, browse freely — don’t re-ask on every redirect.
+        linkHandling: 'block',
+        keepWarm: false,
+      },
+    },
   });
-  trackServicePopup(service.id, win);
-  const childWc = win.webContents;
-  // Intentionally no navigation gate: the user chose to open this URL in Hub.
-  // Nested window.open still follows the app linkHandling via the handler below.
-  configureGuestWindowOpen(childWc, service);
-  attachGuestContextMenu(childWc);
-  win.loadURL(url).catch(() => {});
-  return true;
+  lastGoodUrls.set(id, href);
+  broadcastState();
+  activateService(id);
+  // Ensure the target loads even if activate raced before lastServiceUrls hydrated.
+  const entry = views.get(id);
+  const wc = entry?.view?.webContents;
+  if (wc && !wc.isDestroyed()) {
+    const current = (() => {
+      try {
+        return wc.getURL();
+      } catch {
+        return '';
+      }
+    })();
+    if (!current || current === 'about:blank' || !current.startsWith('http')) {
+      wc.loadURL(href).catch(() => {});
+    }
+  }
+  return { ok: true, id, kind: 'link-tab' };
 }
+
+/** Serialize ask-mode chooser dialogs (never drop rapid clicks). */
+const linkAskQueue = [];
+let linkAskBusy = false;
 
 /**
  * Rambox-style chooser: browser vs Hub tab, optional remember for this app.
  * Always deny/prevent the original navigation first, then call this async.
  */
-async function promptAndApplyLinkChoice(service, url, webContents) {
+function promptAndApplyLinkChoice(service, url, webContents) {
   const href = String(url || '');
   if (!href.startsWith('http')) return;
-  if (linkAskInFlight) return;
-  linkAskInFlight = true;
+  linkAskQueue.push({ service, url: href, webContents });
+  void drainLinkAskQueue();
+}
+
+async function drainLinkAskQueue() {
+  if (linkAskBusy) return;
+  linkAskBusy = true;
+  try {
+    while (linkAskQueue.length) {
+      const job = linkAskQueue.shift();
+      await runLinkAskDialog(job.service, job.url, job.webContents);
+    }
+  } finally {
+    linkAskBusy = false;
+    if (linkAskQueue.length) void drainLinkAskQueue();
+  }
+}
+
+async function runLinkAskDialog(service, href, webContents) {
   try {
     const detail =
       href.length > 480 ? `${href.slice(0, 477)}…` : href;
@@ -1583,7 +1755,7 @@ async function promptAndApplyLinkChoice(service, url, webContents) {
       title: 'Open link',
       message: 'How should Aspera Hub open this link?',
       detail,
-      checkboxLabel: 'Do this for this app always',
+      checkboxLabel: 'Do this for all apps always',
       checkboxChecked: false,
       noLink: true,
     };
@@ -1593,8 +1765,8 @@ async function promptAndApplyLinkChoice(service, url, webContents) {
     if (result.response === 2) return;
 
     const choice = result.response === 0 ? 'browser' : 'hub-tab';
-    if (result.checkboxChecked && service?.id) {
-      saveAppConfig(service.id, {
+    if (result.checkboxChecked) {
+      settings = saveSettings({
         linkHandling: rememberModeForChoice(choice),
       });
       broadcastState();
@@ -1605,25 +1777,32 @@ async function promptAndApplyLinkChoice(service, url, webContents) {
       return;
     }
 
-    if (openInternalLinkAsHubTab(service, href)) return;
-    if (webContents && !webContents.isDestroyed() && isInternalUrl(href, service)) {
-      webContents.loadURL(href).catch(() => {});
-      return;
+    // Real app-bar tab (never a floating popup window).
+    const opened = openUrlAsHubAppTab(href, service);
+    if (!opened.ok) {
+      const errBox = {
+        type: 'warning',
+        buttons: ['OK'],
+        title: 'Could not open Hub tab',
+        message: opened.error || 'App bar is full.',
+      };
+      if (mainWindow) await dialog.showMessageBox(mainWindow, errBox);
+      else await dialog.showMessageBox(errBox);
     }
-    openUrlAsHubPopup(service, href);
   } catch (err) {
     reportError('link-ask-failed', {
       message: String(err?.message || err),
       url: href.slice(0, 200),
     }).catch(() => {});
-  } finally {
-    linkAskInFlight = false;
   }
 }
 
 /**
  * Handle an outbound / new-window http link according to linkHandling.
  * Returns true when the caller should deny/preventDefault (already handled).
+ *
+ * Rule (all apps the same): “Hub tab” always means a real top app-bar tab —
+ * never a floating BrowserWindow.
  */
 function handleOutboundOrNewWindowLink(service, url, webContents) {
   const href = String(url || '');
@@ -1633,13 +1812,22 @@ function handleOutboundOrNewWindowLink(service, url, webContents) {
     void promptAndApplyLinkChoice(service, href, webContents);
     return true;
   }
-  if (isInternalUrl(href, service)) {
-    if (
-      shouldOpenInternalAsHubTab(mode) &&
-      openInternalLinkAsHubTab(service, href)
-    ) {
-      return true;
+  if (shouldOpenAsHubTab(mode)) {
+    const opened = openUrlAsHubAppTab(href, service);
+    if (!opened.ok && opened.error) {
+      const errBox = {
+        type: 'warning',
+        buttons: ['OK'],
+        defaultId: 0,
+        title: 'Could not open Hub tab',
+        message: opened.error,
+      };
+      if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+      else dialog.showMessageBox(errBox).catch(() => {});
     }
+    return true;
+  }
+  if (isInternalUrl(href, service)) {
     return false;
   }
   openUnknownExternalIfAllowed(service, href);
@@ -1731,10 +1919,9 @@ function removeService(id) {
 }
 
 function hibernateMs() {
-  const mins = isLowMemoryMode()
-    ? Math.min(3, Math.max(1, Number(settings.hibernateMinutes) || 2))
-    : Math.max(1, Number(settings.hibernateMinutes) || 2);
-  return mins * 60_000;
+  return hibernateMsFromSettings(settings.hibernateMinutes, {
+    lowMemoryMode: isLowMemoryMode(),
+  });
 }
 
 function maxWarm() {
@@ -2849,7 +3036,7 @@ function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
   closeAppContextMenu();
 
   const menuW = 236;
-  const menuH = 292;
+  const menuH = 340;
   const content = mainWindow.getContentBounds();
   const pos = clampFloatPosition(
     content.x + (Number(x) || 0),
@@ -2876,6 +3063,7 @@ function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
   const pushState = () => {
     if (!win || win.isDestroyed() || appMenuServiceId !== serviceId) return;
     const latest = getAppConfig(serviceId);
+    const svc = getService(serviceId);
     win.webContents.send('app-menu:init', {
       serviceId,
       name: service.name || service.defaultName || 'App',
@@ -2883,6 +3071,8 @@ function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
       sound: latest.allowSounds !== false,
       notifications: latest.allowNotifications !== false,
       warm: latest.keepWarm === true,
+      linkTab: !!svc?.linkTab,
+      isCustom: !!svc?.isCustom,
     });
   };
 
@@ -3929,6 +4119,17 @@ async function handleAppMenuAction(type, value) {
   if (type === 'edit') {
     closeAppContextMenu();
     mainWindow?.webContents.send('dock:open-edit-app', id);
+    return { ok: true };
+  }
+  if (type === 'close') {
+    closeAppContextMenu();
+    const svc = getService(id);
+    // Link tabs close immediately; permanent apps confirm in the shell.
+    if (svc?.linkTab || svc?.isCustom) {
+      removeService(id);
+      return { ok: true };
+    }
+    mainWindow?.webContents.send('dock:confirm-remove-app', id);
     return { ok: true };
   }
   if (type === 'enabled') {
@@ -5199,8 +5400,10 @@ function markAllReadWithoutNotifySpam() {
 
 function applyMuteState() {
   for (const [id, entry] of views.entries()) {
+    const wc = entry?.view?.webContents;
+    if (!wc || wc.isDestroyed()) continue;
     const cfg = getAppConfig(id);
-    entry.view.webContents.setAudioMuted(settings.muted || !cfg.allowSounds);
+    wc.setAudioMuted(settings.muted || !cfg.allowSounds);
   }
 }
 
@@ -5440,16 +5643,18 @@ function configureSession(partitionSession, partitionKey) {
     if (settings.downloadPath) {
       item.setSavePath(path.join(settings.downloadPath, item.getFilename()));
     } else {
-      // "Ask every time" — blank download path in Settings.
-      const picked = dialog.showSaveDialogSync(mainWindow || undefined, {
-        title: 'Save download',
-        defaultPath: path.join(app.getPath('downloads'), item.getFilename()),
-      });
-      if (!picked) {
-        item.cancel();
-        return;
+      // Ask every time — use Electron's async save dialog (never Sync: it freezes Hub).
+      try {
+        item.setSaveDialogOptions({
+          title: 'Save download',
+          defaultPath: path.join(app.getPath('downloads'), item.getFilename()),
+        });
+      } catch {
+        // Older Electron: fall back to downloads folder without blocking the UI.
+        item.setSavePath(
+          path.join(app.getPath('downloads'), item.getFilename()),
+        );
       }
-      item.setSavePath(picked);
     }
     item.once('done', (_e, state) => {
       if (state !== 'completed') return;
@@ -8052,6 +8257,9 @@ function attachGuestContextMenu(webContents) {
 
     const safeLink = sanitizeForwardLinkURL(params.linkURL);
     if (safeLink) {
+      const live = liveService(service);
+      const isLinkTabGuest = !!(live?.isCustom || live?.linkTab);
+      const linkIsInternal = live ? isInternalUrl(safeLink, live) : false;
       template.push({
         label: 'Open link',
         click: () => {
@@ -8060,16 +8268,71 @@ function attachGuestContextMenu(webContents) {
             webContents.loadURL(safeLink).catch(() => {});
             return;
           }
-          if (handleOutboundOrNewWindowLink(service, safeLink, webContents)) {
+          if (handleOutboundOrNewWindowLink(live, safeLink, webContents)) {
             return;
           }
           webContents.loadURL(safeLink).catch(() => {});
         },
       });
-      template.push({
-        label: 'Open link in this tab',
-        click: () => webContents.loadURL(safeLink).catch(() => {}),
-      });
+      // Never replace WhatsApp/Arattai/etc. with a third-party site via this
+      // menu — that looked like “Open in tab” but covered the messenger.
+      // Link tabs (and same-app URLs) may navigate in place.
+      if (isLinkTabGuest || linkIsInternal) {
+        template.push({
+          label: 'Open link in this tab',
+          click: () => {
+            if (isForbiddenGuestNavigation(safeLink)) return;
+            webContents.loadURL(safeLink).catch(() => {});
+          },
+        });
+      } else {
+        template.push({
+          label: 'Open in Hub tab',
+          click: () => {
+            if (isForbiddenGuestNavigation(safeLink)) return;
+            if (isGoogleService(live)) {
+              const outbound = extractGoogleOutboundUrl(safeLink);
+              if (outbound) {
+                if (
+                  mustKeepGoogleUrlInApp(outbound) ||
+                  isGoogleOwnedUrl(outbound)
+                ) {
+                  webContents.loadURL(outbound).catch(() => {});
+                  return;
+                }
+                handleOutboundOrNewWindowLink(live, outbound, webContents);
+                return;
+              }
+              if (!isAllowedGmailTabUrl(safeLink)) {
+                handleOutboundOrNewWindowLink(live, safeLink, webContents);
+                return;
+              }
+              webContents.loadURL(safeLink).catch(() => {});
+              return;
+            }
+            if (
+              mustKeepGoogleUrlInApp(safeLink) ||
+              (isAuthOrLoginUrl(safeLink) && isGoogleOwnedUrl(safeLink))
+            ) {
+              webContents.loadURL(safeLink).catch(() => {});
+              return;
+            }
+            // Force a real top-bar tab (ignore temporary external/block modes).
+            const opened = openUrlAsHubAppTab(safeLink, live);
+            if (!opened.ok && opened.error) {
+              const errBox = {
+                type: 'warning',
+                buttons: ['OK'],
+                defaultId: 0,
+                title: 'Could not open Hub tab',
+                message: opened.error,
+              };
+              if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+              else dialog.showMessageBox(errBox).catch(() => {});
+            }
+          },
+        });
+      }
       template.push({
         label: 'Copy link address',
         click: () => clipboard.writeText(safeLink),
@@ -8288,145 +8551,35 @@ function attachGuestContextMenu(webContents) {
  * Genuine external links go to the OS browser when linkHandling allows it;
  * internal popups (Zoho CRM child windows, SSO, about:blank) stay in Hub.
  *
- * Per-app / global linkHandling:
+ * Per-app / global linkHandling (same for every app):
  * - block:    known hosts in Hub; unknown blocked
  * - external: known in Hub; unknown → system browser
- * - hub-tab:  known → new Hub tab when possible; unknown → system browser
+ * - hub-tab:  outbound/new-window → new top app-bar tab (never a floating popup)
  * - ask:      chooser (browser vs Hub tab; optional remember for this app)
  *
  * Gmail: never load google.com/url?q=… or third-party sites into the Gmail tab.
  */
+function guestNavigationApi() {
+  return {
+    liveService,
+    isGoogleService,
+    startUrlForService,
+    handleOutboundOrNewWindowLink,
+    guestWebPreferences,
+  };
+}
+
 function configureGuestWindowOpen(wc, service) {
-  const googleish = isGoogleService(service);
-
-  const allowPopup = () => ({
-    action: 'allow',
-    overrideBrowserWindowOptions: {
-      autoHideMenuBar: true,
-      width: 1024,
-      height: 720,
-      webPreferences: guestWebPreferences(service),
-    },
-  });
-
-  wc.setWindowOpenHandler(({ url }) => {
-    const raw = String(url || '');
-    // Zoho One CRM / SPA portals boot child frames via about:blank first.
-    if (!raw || raw === 'about:blank' || raw.startsWith('about:blank')) {
-      return allowPopup();
-    }
-
-    if (raw.startsWith('http')) {
-      if (googleish) {
-        const outbound = extractGoogleOutboundUrl(raw);
-        if (outbound) {
-          if (mustKeepGoogleUrlInApp(outbound) || isGoogleOwnedUrl(outbound)) {
-            wc.loadURL(outbound).catch(() => {});
-            return { action: 'deny' };
-          }
-          handleOutboundOrNewWindowLink(service, outbound, wc);
-          return { action: 'deny' };
-        }
-        if (isGoogleOwnedUrl(raw) && !isAllowedGmailTabUrl(raw)) {
-          wc.loadURL(startUrlForService(service) || service.url).catch(() => {});
-          return { action: 'deny' };
-        }
-        if (!isAllowedGmailTabUrl(raw)) {
-          handleOutboundOrNewWindowLink(service, raw, wc);
-          return { action: 'deny' };
-        }
-        wc.loadURL(raw).catch(() => {});
-        return { action: 'deny' };
-      }
-
-      if (isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) {
-        return allowPopup();
-      }
-      if (mustKeepGoogleUrlInApp(raw)) {
-        return allowPopup();
-      }
-
-      // Ask / hub-tab / external for new-window http links.
-      if (handleOutboundOrNewWindowLink(service, raw, wc)) {
-        return { action: 'deny' };
-      }
-
-      return allowPopup();
-    }
-
-    if (raw.startsWith('blob:') || raw.startsWith('data:')) {
-      return allowPopup();
-    }
-
-    return { action: 'deny' };
-  });
+  configureGuestWindowOpenImpl(wc, service, guestNavigationApi());
 }
 
 /**
- * Main-frame navigation gate for a guest. Gmail stays on mail/accounts only.
+ * Main-frame (+ iframe) navigation gate for a guest.
+ * Gmail stays on mail/accounts only. Messaging apps never navigate away into
+ * third-party sites in-place — those become Hub tabs / browser per settings.
  */
 function attachGuestNavigationGate(webContents, service) {
-  const gate = (event, url) => {
-    if (isForbiddenGuestNavigation(url)) {
-      event.preventDefault();
-      return;
-    }
-    if (!String(url || '').startsWith('http')) return;
-
-    if (isGoogleService(service)) {
-      const outbound = extractGoogleOutboundUrl(url);
-      if (outbound) {
-        event.preventDefault();
-        if (mustKeepGoogleUrlInApp(outbound) || isGoogleOwnedUrl(outbound)) {
-          webContents.loadURL(outbound).catch(() => {});
-          return;
-        }
-        handleOutboundOrNewWindowLink(service, outbound, webContents);
-        return;
-      }
-      if (isGoogleOwnedUrl(url) && !isAllowedGmailTabUrl(url)) {
-        event.preventDefault();
-        webContents.loadURL(startUrlForService(service) || service.url).catch(() => {});
-        return;
-      }
-      if (!isAllowedGmailTabUrl(url)) {
-        event.preventDefault();
-        handleOutboundOrNewWindowLink(service, url, webContents);
-        return;
-      }
-      return;
-    }
-
-    if (isAuthOrLoginUrl(url) && isGoogleOwnedUrl(url)) return;
-    if (mustKeepGoogleUrlInApp(url)) return;
-
-    if (isInternalUrl(url, service)) return;
-    // Unknown host: ask, open externally, or block — never leave the guest blank.
-    event.preventDefault();
-    if (isGoogleOwnedUrl(url)) return;
-    handleOutboundOrNewWindowLink(service, url, webContents);
-  };
-
-  webContents.on('will-navigate', gate);
-  webContents.on('will-redirect', gate);
-
-  webContents.on('did-navigate', (_event, url) => {
-    if (!isGoogleService(service)) return;
-    if (!url || !String(url).startsWith('http')) return;
-    if (isAllowedGmailTabUrl(url)) return;
-    const outbound = extractGoogleOutboundUrl(url);
-    if (outbound) {
-      if (mustKeepGoogleUrlInApp(outbound) || isGoogleOwnedUrl(outbound)) {
-        // keep in Hub
-      } else {
-        handleOutboundOrNewWindowLink(service, outbound, webContents);
-      }
-    } else if (!isGoogleOwnedUrl(url)) {
-      handleOutboundOrNewWindowLink(service, url, webContents);
-    }
-    const home = startUrlForService(service);
-    webContents.loadURL(home).catch(() => {});
-  });
+  attachGuestNavigationGateImpl(webContents, service, guestNavigationApi());
 }
 
 /** If a Google auth popup becomes the full inbox, move it into the dock tab. */
@@ -8476,7 +8629,7 @@ function attachPopupSessionAdopt(parentWc, childWindow, service) {
 function attachZohoPopupAdoptToHubTab(childWindow, service) {
   if (!canShareProfileAcrossInstances(service?.appId)) return;
   // Only fold popups into Hub tabs when linkHandling is hub-tab.
-  if (!shouldOpenInternalAsHubTab(effectiveLinkHandling(service))) return;
+  if (!shouldOpenAsHubTab(effectiveLinkHandling(service))) return;
 
   const childWc = childWindow.webContents;
   let adopting = false;
@@ -8630,22 +8783,25 @@ function createViewForService(service) {
     refreshBadge();
     broadcastState();
     const live = getAppConfig(service.id);
-    if (settings.allowPageInjection && live.injectCss && live.injectCss.trim()) {
+    if (isPageInjectionEnabled(settings) && live.injectCss && live.injectCss.trim()) {
       try {
         await webContents.insertCSS(live.injectCss);
       } catch {
         // ignore
       }
     }
-    if (settings.allowPageInjection && live.stylishUrl && /^https?:\/\//i.test(live.stylishUrl.trim())) {
+    const stylishHttps = isPageInjectionEnabled(settings)
+      ? normalizeStylishHttpsUrl(live.stylishUrl)
+      : null;
+    if (stylishHttps) {
       try {
-        const res = await fetch(live.stylishUrl.trim());
+        const res = await fetch(stylishHttps);
         if (res.ok) await webContents.insertCSS(await res.text());
       } catch {
         // ignore
       }
     }
-    if (settings.allowPageInjection && live.injectJs && live.injectJs.trim()) {
+    if (isPageInjectionEnabled(settings) && live.injectJs && live.injectJs.trim()) {
       try {
         await webContents.executeJavaScript(live.injectJs, true);
       } catch {
@@ -8911,6 +9067,13 @@ function startUrlForService(service) {
   const memory = lastGoodUrls.get(service.id);
   const disk = (settings.lastServiceUrls || {})[service.id];
   const last = memory || disk;
+  // Link / custom tabs may browse any https host (redirects from wa.me, bit.ly, …).
+  if (service?.isCustom) {
+    if (last && String(last).startsWith('http') && !isAuthOrLoginUrl(last)) {
+      return last;
+    }
+    return service.url;
+  }
   if (last && !isAuthOrLoginUrl(last)) {
     if (isUrlForService(service, last)) {
       return safeStartUrlForService(service, last);
@@ -8932,6 +9095,7 @@ function rememberGoodUrl(serviceId, url) {
   const service = getService(serviceId);
   if (!service) return;
   const allowedForService =
+    service.isCustom ||
     isUrlForService(service, url) ||
     (canShareProfileAcrossInstances(service.appId) && isInternalUrl(url, service));
   if (!allowedForService) return;
@@ -8974,13 +9138,16 @@ function hydrateLastUrls() {
       continue;
     }
     const allowed =
+      service.isCustom ||
       isUrlForService(service, url) ||
       (canShareProfileAcrossInstances(service.appId) && isInternalUrl(url, service));
     if (!allowed) {
       dirty = true;
       continue;
     }
-    const safe = isUrlForService(service, url)
+    const safe = service.isCustom
+      ? url
+      : isUrlForService(service, url)
       ? safeStartUrlForService(service, url)
       : url;
     if (safe !== url) dirty = true;
@@ -9201,6 +9368,26 @@ function activateService(id) {
   });
   setGuestHubActiveFlag(wc, true);
 
+  // Recover blank Hub link tabs (redirect was previously cancelled mid-load).
+  if (service.isCustom && wc && !wc.isDestroyed()) {
+    try {
+      const cur = String(wc.getURL() || '');
+      const target = startUrlForService(service) || service.url;
+      if (
+        target &&
+        target.startsWith('http') &&
+        (!cur ||
+          cur === 'about:blank' ||
+          cur.startsWith('chrome-error://') ||
+          cur === 'chrome://blank/')
+      ) {
+        wc.loadURL(target).catch(() => {});
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   if (wasStale && !wc.isLoading()) {
     try {
       entry.__lastStaleReloadAt = Date.now();
@@ -9276,7 +9463,9 @@ function activateByOffset(offset) {
 function toggleFocusMode() {
   settings = saveSettings({ focusMode: !settings.focusMode });
   for (const [id, entry] of views.entries()) {
-    applyFocusMode(entry.view.webContents, id);
+    const wc = entry?.view?.webContents;
+    if (!wc || wc.isDestroyed()) continue;
+    applyFocusMode(wc, id);
   }
   refreshBadge();
   broadcastState();
@@ -9309,7 +9498,13 @@ function reloadActive() {
     activateService(activeServiceId);
     return;
   }
-  entry.view.webContents.reload();
+  const wc = entry.view?.webContents;
+  if (!wc || wc.isDestroyed()) {
+    hibernateService(activeServiceId, { force: true });
+    activateService(activeServiceId);
+    return;
+  }
+  wc.reload();
 }
 
 function applyWindowPrefs() {
@@ -10648,7 +10843,7 @@ extensionsHandle('extensions:install-package', async () => {
 });
 extensionsHandle('extensions:open-webstore', async (_e, input) => {
   const url = chromeWebStoreUrl(input);
-  await shell.openExternal(url);
+  openExternalSafe(url);
   return { ok: true, url };
 });
 extensionsHandle('extensions:load-unpacked', async () => {
@@ -10788,11 +10983,17 @@ dockHandle('dock:toggle-keep-warm', (_e, id) => toggleKeepWarm(id));
 dockHandle('dock:save-app-config', (_e, id, incoming) => {
   if (!getService(id)) return { ok: false, error: 'Not found' };
   const patch = { ...(incoming || {}) };
-  // Company default: block page injection unless explicitly enabled.
-  if (!settings.allowPageInjection) {
+  // Company default: injection only with allowPageInjection AND ASPERADOCK_ADMIN=1.
+  if (!isPageInjectionEnabled(settings)) {
     delete patch.injectJs;
     delete patch.injectCss;
     delete patch.stylishUrl;
+  } else if (patch.stylishUrl != null) {
+    const httpsUrl = normalizeStylishHttpsUrl(patch.stylishUrl);
+    if (String(patch.stylishUrl || '').trim() && !httpsUrl) {
+      return { ok: false, error: 'Stylish URL must be HTTPS' };
+    }
+    patch.stylishUrl = httpsUrl || '';
   }
 
   if (patch.profileId != null) {
@@ -10985,7 +11186,13 @@ dockHandle('dock:save-settings', (_e, patch) => {
     next.lockPasswordHash = '';
   }
   if (next.linkHandling != null) {
-    next.linkHandling = normalizeLinkHandling(next.linkHandling, 'block');
+    next.linkHandling = normalizeLinkHandling(next.linkHandling, 'hub-tab');
+  }
+  if (next.updateChannel != null && next.updateChannel !== 'stable') {
+    // Beta feed is unpublished on GitHub — keep custom mirrors via updateFeedUrl.
+    if (!String(next.updateFeedUrl || settings.updateFeedUrl || '').trim()) {
+      next.updateChannel = 'stable';
+    }
   }
   // Low-memory mode clamps warm/hibernate and turns GPU off (relaunch needed).
   // Keep at least 2 warm slots so multi-WhatsApp switching still works.
@@ -11030,13 +11237,19 @@ dockHandle('dock:save-settings', (_e, patch) => {
   initSentryMain(settings);
   layoutActiveView();
   for (const [id, entry] of views.entries()) {
-    applyFocusMode(entry.view.webContents, id);
+    const wc = entry?.view?.webContents;
+    if (!wc || wc.isDestroyed()) continue;
+    applyFocusMode(wc, id);
     const cfg = getAppConfig(id);
     const langs = cfg.spellChecker || settings.spellChecker || ['en-US'];
-    entry.view.webContents.session.setSpellCheckerLanguages(
-      Array.isArray(langs) && langs.length ? langs : ['en-US'],
-    );
-    entry.view.webContents.setAudioMuted(settings.muted || !cfg.allowSounds);
+    try {
+      wc.session.setSpellCheckerLanguages(
+        Array.isArray(langs) && langs.length ? langs : ['en-US'],
+      );
+      wc.setAudioMuted(settings.muted || !cfg.allowSounds);
+    } catch {
+      // ignore destroyed session races
+    }
   }
   refreshBadge();
   broadcastState();

@@ -9,6 +9,8 @@ module.exports = {
     appBundleId: 'app.asperadock.desktop',
     // Stylized Aspera "A" only — not the full wordmark.
     icon: './assets/icon',
+    // Prefer local Electron zip when registry downloads fail (Mint office nets).
+    electronZipDir: './.electron-zips',
     extraResource: [
       './assets/icon.png',
       './assets/icon-16.png',

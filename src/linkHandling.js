@@ -1,16 +1,17 @@
 /**
- * Link handling modes (global + per-app).
+ * Link handling modes — ONE Hub-wide rule for every app
+ * (WhatsApp, Arattai, Gmail, Zoho, Books, …). No per-app overrides.
  *
- * - block:    known/internal hosts stay in Hub; unknown links stay blocked
+ * - block:    known/internal hosts stay in the current app; unknown blocked
  * - external: known stay in Hub; unknown → system browser
- * - hub-tab:  known/internal → prefer new Hub tab (shared-login apps);
- *             unknown → system browser
- * - ask:      prompt (browser vs Hub tab) + optional “remember for this app”
+ * - hub-tab:  outbound / new-window http(s) → new Hub app-bar tab
+ *             (top bar, right of the last app — never a floating popup)
+ * - ask:      prompt (browser vs Hub tab) + optional “remember for Hub”
  */
 
 export const LINK_HANDLING_MODES = ['block', 'external', 'hub-tab', 'ask'];
 
-export function normalizeLinkHandling(value, fallback = 'block') {
+export function normalizeLinkHandling(value, fallback = 'hub-tab') {
   if (value == null || value === '' || value === 'default') return fallback;
   const v = String(value);
   if (LINK_HANDLING_MODES.includes(v)) return v;
@@ -18,25 +19,30 @@ export function normalizeLinkHandling(value, fallback = 'block') {
 }
 
 /**
- * @param {{ linkHandling?: string|null }} [appConfig]
+ * Resolve effective mode. Per-app config is ignored so every app matches Settings.
+ * @param {{ linkHandling?: string|null }} [_appConfig] unused (kept for call-site compat)
  * @param {string} [globalLinkHandling]
  */
-export function resolveLinkHandling(appConfig, globalLinkHandling = 'block') {
-  const global = normalizeLinkHandling(globalLinkHandling, 'block');
-  const perApp = appConfig?.linkHandling;
-  if (perApp == null || perApp === '' || perApp === 'default') return global;
-  return normalizeLinkHandling(perApp, global);
+export function resolveLinkHandling(_appConfig, globalLinkHandling = 'hub-tab') {
+  return normalizeLinkHandling(globalLinkHandling, 'hub-tab');
 }
 
-/** Unknown / third-party http(s) links may leave Hub without prompting. */
+/** Unknown links may leave Hub without prompting (browser only). */
 export function shouldOpenUnknownExternally(mode) {
-  const m = normalizeLinkHandling(mode, 'block');
-  return m === 'external' || m === 'hub-tab';
+  return normalizeLinkHandling(mode, 'block') === 'external';
 }
 
-/** Internal window.open / Open link should become a Hub app-bar tab. */
-export function shouldOpenInternalAsHubTab(mode) {
+/**
+ * Outbound / new-window links should become a Hub app-bar tab
+ * (same behavior for every catalog app).
+ */
+export function shouldOpenAsHubTab(mode) {
   return normalizeLinkHandling(mode, 'block') === 'hub-tab';
+}
+
+/** @deprecated Use shouldOpenAsHubTab — kept for older call sites/tests. */
+export function shouldOpenInternalAsHubTab(mode) {
+  return shouldOpenAsHubTab(mode);
 }
 
 /** Prompt before opening outbound / new-window links. */

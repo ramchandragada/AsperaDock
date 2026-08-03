@@ -108,6 +108,11 @@ contextBridge.exposeInMainWorld('asperadock', {
     ipcRenderer.on('dock:open-edit-app', listener);
     return () => ipcRenderer.removeListener('dock:open-edit-app', listener);
   },
+  onConfirmRemoveApp: (callback) => {
+    const listener = (_event, id) => callback(id);
+    ipcRenderer.on('dock:confirm-remove-app', listener);
+    return () => ipcRenderer.removeListener('dock:confirm-remove-app', listener);
+  },
   onChromeAction: (callback) => {
     const listener = (_event, action) => callback(action);
     ipcRenderer.on('dock:chrome-action', listener);
