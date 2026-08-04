@@ -8843,11 +8843,39 @@ function attachGuestContextMenu(webContents) {
         role: 'cut',
         enabled: editable && hasSelection && params.editFlags?.canCut !== false,
       });
-      template.push({
-        label: 'Copy',
-        role: 'copy',
-        enabled: hasSelection && params.editFlags?.canCopy !== false,
-      });
+      const canCopySelection =
+        hasSelection && params.editFlags?.canCopy !== false;
+      if (canSummarize && canCopySelection) {
+        // Same outcome as "Aspera AI…" — copy selection, then open the clipboard AI panel.
+        template.push({
+          label: 'Copy',
+          click: () => {
+            const text = String(params.selectionText || '').trim();
+            if (text) clipboard.writeText(text);
+            try {
+              webContents.copy();
+            } catch {
+              // selectionText write above is enough if native copy fails
+            }
+            const theme = String(settings.theme || 'system');
+            const dark =
+              theme === 'dark' ||
+              theme === 'darkest' ||
+              (theme === 'system' && nativeTheme.shouldUseDarkColors);
+            openAsperaAiInbox({
+              dark,
+              skill: editable ? 'refine' : 'summarize',
+              pasteText: text,
+            });
+          },
+        });
+      } else {
+        template.push({
+          label: 'Copy',
+          role: 'copy',
+          enabled: canCopySelection,
+        });
+      }
       template.push({
         label: 'Paste',
         role: 'paste',
