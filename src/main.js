@@ -8794,6 +8794,8 @@ function attachGuestContextMenu(webContents) {
     };
     const pushSummarizeItems = () => {
       if (!canSummarize) return;
+      // One entry only: open the clipboard AI panel (seed from selection if present).
+      // Plain "Copy" below stays native for paste-between-chats / images / files.
       template.push({
         label: 'Aspera AI…',
         click: () => {
@@ -8802,14 +8804,23 @@ function attachGuestContextMenu(webContents) {
             theme === 'dark' ||
             theme === 'darkest' ||
             (theme === 'system' && nativeTheme.shouldUseDarkColors);
-          let pasteText = '';
-          try {
-            pasteText = clipboard.readText() || '';
-          } catch {
-            pasteText = '';
+          const selected = hasSelection
+            ? String(params.selectionText || '').trim()
+            : '';
+          if (selected) {
+            try {
+              clipboard.writeText(selected);
+            } catch {
+              // ignore
+            }
           }
-          if (!pasteText && hasSelection) {
-            pasteText = String(params.selectionText || '');
+          let pasteText = selected;
+          if (!pasteText) {
+            try {
+              pasteText = clipboard.readText() || '';
+            } catch {
+              pasteText = '';
+            }
           }
           openAsperaAiInbox({
             dark,
@@ -8818,31 +8829,6 @@ function attachGuestContextMenu(webContents) {
           });
         },
       });
-      // Separate from plain Copy — so normal chat paste / images / files stay untouched.
-      if (hasSelection && params.editFlags?.canCopy !== false) {
-        template.push({
-          label: 'Copy to Aspera AI…',
-          click: () => {
-            const text = String(params.selectionText || '').trim();
-            if (text) clipboard.writeText(text);
-            try {
-              webContents.copy();
-            } catch {
-              // clipboard.writeText above is enough if native copy fails
-            }
-            const theme = String(settings.theme || 'system');
-            const dark =
-              theme === 'dark' ||
-              theme === 'darkest' ||
-              (theme === 'system' && nativeTheme.shouldUseDarkColors);
-            openAsperaAiInbox({
-              dark,
-              skill: editable ? 'refine' : 'summarize',
-              pasteText: text,
-            });
-          },
-        });
-      }
     };
     for (const action of guestContextMenuActionOrder({
       hasSelection,
