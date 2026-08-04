@@ -3626,6 +3626,34 @@ function openAiResultWindow({ title, meta, dark = false, initialPayload = null }
   return { ok: true };
 }
 
+/** Reuse the open AI panel when Run is clicked — never spawn a second popup. */
+function ensureAiResultWindow({ title, meta, dark = false, loadingText = 'Working…' } = {}) {
+  const payload = {
+    title: title || 'Aspera AI',
+    meta: meta || '',
+    loading: true,
+    text: loadingText,
+    mode: 'working',
+  };
+  if (aiResultWindow && !aiResultWindow.isDestroyed()) {
+    pushAiResult(payload);
+    try {
+      if (!aiResultWindow.isVisible()) aiResultWindow.show();
+      aiResultWindow.focus();
+      aiResultWindow.moveTop();
+    } catch {
+      // ignore
+    }
+    return { ok: true, reused: true };
+  }
+  return openAiResultWindow({
+    title,
+    meta,
+    dark,
+    initialPayload: payload,
+  });
+}
+
 /**
  * Same on every app: clipboard inbox → Run → Copy result → user pastes back.
  * Does not read guest DOM — only system clipboard + pasted text.
@@ -3655,20 +3683,34 @@ function openAsperaAiInbox({ dark = false, skill = 'summarize', pasteText = null
           }
         })();
 
-  return openAiResultWindow({
+  const inboxPayload = {
     title: 'Aspera AI',
     meta: 'Copy → click Aspera logo → paste → Run → paste back',
+    mode: 'inbox',
+    skill: skill === 'refine' || skill === 'suggest-reply' ? skill : 'summarize',
+    pasteText: seed,
+    hint: seed
+      ? 'Clipboard loaded. Choose a skill and Run — or edit the text first.'
+      : 'Copy text in any app → click the Aspera logo → paste here → Run → copy result back.',
+  };
+
+  if (aiResultWindow && !aiResultWindow.isDestroyed()) {
+    pushAiResult(inboxPayload);
+    try {
+      if (!aiResultWindow.isVisible()) aiResultWindow.show();
+      aiResultWindow.focus();
+      aiResultWindow.moveTop();
+    } catch {
+      // ignore
+    }
+    return { ok: true, reused: true };
+  }
+
+  return openAiResultWindow({
+    title: 'Aspera AI',
+    meta: inboxPayload.meta,
     dark,
-    initialPayload: {
-      title: 'Aspera AI',
-      meta: 'Copy → click Aspera logo → paste → Run → paste back',
-      mode: 'inbox',
-      skill: skill === 'refine' || skill === 'suggest-reply' ? skill : 'summarize',
-      pasteText: seed,
-      hint: seed
-        ? 'Clipboard loaded. Choose a skill and Run — or edit the text first.'
-        : 'Copy text in any app → click the Aspera logo → paste here → Run → copy result back.',
-    },
+    initialPayload: inboxPayload,
   });
 }
 
@@ -4128,12 +4170,15 @@ async function runAsperaAiSkill(
   const skillTitle = asperaAiSkillTitle(skill);
   const routeHint = routeOrder.map((p) => p.name).join(' → ');
   const metaLang =
-    skill === 'summarize' || skill === 'refine' ? 'EN · HI · MR' : langLabel;
+    skill === 'summarize' || skill === 'refine' || skill === 'suggest-reply'
+      ? 'EN · HI · MR'
+      : langLabel;
 
-  openAiResultWindow({
+  ensureAiResultWindow({
     title: `Aspera AI · ${skillTitle}`,
     meta: `Auto · ${routeHint} · ${metaLang}`,
     dark,
+    loadingText: 'Working…',
   });
 
   try {
@@ -11124,6 +11169,7 @@ aiResultHandle('ai-result:run-clipboard', async (_e, payload) => {
     dark: !!body.dark,
   });
 });
+aiResultHandle('ai-result:new-paste', () => openAsperaAiInbox({ dark: false }));
 crmLookupHandle('crm-lookup:copy', (_e, text) => {
   clipboard.writeText(String(text || ''));
   return { ok: true };

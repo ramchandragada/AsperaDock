@@ -156,12 +156,17 @@ export function buildAiResultHtml(dark = false) {
       </p>
     </div>
     <div class="work-pane" id="work-pane">
+    <div class="toolbar" id="result-actions">
+      <button type="button" class="btn" id="new-paste-any">New paste</button>
+      <span class="hint">Same window — paste new text to run again</span>
+    </div>
     <div class="toolbar" id="reply-bar">
       <button type="button" class="btn primary" id="suggest-reply">Suggest replies (EN · HI · MR)</button>
-      <span class="hint" id="reply-hint">Rough drafts for this message — edit before you copy</span>
+      <span class="hint" id="reply-hint">Rough drafts — copy and paste into the app yourself</span>
     </div>
     <div class="toolbar" id="refine-bar">
       <button type="button" class="btn" id="refine-again">Refine again (EN · HI · MR)</button>
+      <button type="button" class="btn" id="new-paste">New paste</button>
       <span class="hint" id="refine-hint">Pick English, Hindi, or Marathi — then Copy and paste yourself</span>
     </div>
     <div class="scroll" id="scroll">
@@ -576,11 +581,15 @@ export function buildAiResultHtml(dark = false) {
       const loading = !!data?.loading;
       const isInbox = mode === 'inbox';
       const isRefine = mode === 'refine';
+      const resultActions = document.getElementById('result-actions');
 
       inbox.classList.toggle('show', isInbox);
       workPane.classList.toggle('hide', isInbox);
       copyBtn.style.display = isInbox ? 'none' : '';
       resultFoot.hidden = true;
+      if (resultActions) {
+        resultActions.classList.toggle('show', !isInbox && !loading);
+      }
 
       if (isInbox) {
         if (data?.pasteText != null) inboxText.value = String(data.pasteText || '');
@@ -695,6 +704,15 @@ export function buildAiResultHtml(dark = false) {
       inboxStatus.textContent = 'Cleared. Paste text from any app, then Run.';
       inboxText.focus();
     };
+    async function goNewPaste() {
+      if (api.newPaste) await api.newPaste();
+    }
+    document.getElementById('new-paste')?.addEventListener('click', () => {
+      goNewPaste().catch(() => {});
+    });
+    document.getElementById('new-paste-any')?.addEventListener('click', () => {
+      goNewPaste().catch(() => {});
+    });
     inboxRun.onclick = async () => {
       const text = String(inboxText.value || '').trim();
       if (!text) {

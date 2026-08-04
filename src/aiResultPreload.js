@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('aiResultApi', {
   close: () => ipcRenderer.invoke('ai-result:close'),
   readClipboard: () => ipcRenderer.invoke('ai-result:read-clipboard'),
   runClipboard: (payload) => ipcRenderer.invoke('ai-result:run-clipboard', payload),
+  newPaste: () => ipcRenderer.invoke('ai-result:new-paste'),
   suggestReply: () => ipcRenderer.invoke('ai-result:suggest-reply'),
   syncReplies: (text) => ipcRenderer.invoke('ai-result:sync-replies', text),
   reviseReply: (payload) => ipcRenderer.invoke('ai-result:revise-reply', payload),
