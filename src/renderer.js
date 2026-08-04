@@ -27,6 +27,8 @@ const els = {
   appsTop: document.getElementById('apps-top'),
   lockBtn: document.getElementById('lock-btn'),
   addAppBtn: document.getElementById('add-app-btn'),
+  navBackBtn: document.getElementById('nav-back-btn'),
+  navForwardBtn: document.getElementById('nav-forward-btn'),
   emptyState: document.getElementById('empty-state'),
   emptyAddBtn: document.getElementById('empty-add-btn'),
   focusBtn: document.getElementById('focus-btn'),
@@ -203,6 +205,8 @@ function paintToolbarIcons() {
   if (els.menuBtn) els.menuBtn.innerHTML = asperaAppIconSvg(24);
   if (els.lockBtn) els.lockBtn.innerHTML = icon('lock');
   if (els.addAppBtn) els.addAppBtn.innerHTML = icon('plus');
+  if (els.navBackBtn) els.navBackBtn.innerHTML = icon('back');
+  if (els.navForwardBtn) els.navForwardBtn.innerHTML = icon('forward');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
   if (els.appMenuEdit) els.appMenuEdit.innerHTML = icon('settings');
   if (els.appMenuHome) els.appMenuHome.innerHTML = icon('home');
@@ -236,6 +240,7 @@ let state = {
   totalUnread: 0,
   settings: {},
   locked: false,
+  nav: { canGoBack: false, canGoForward: false },
 };
 
 let draft = {};
@@ -472,6 +477,14 @@ function renderChromeActions() {
       : 'Open Downloads folder';
   }
 
+  const nav = state.nav || {};
+  if (els.navBackBtn) {
+    els.navBackBtn.disabled = !nav.canGoBack || state.locked;
+  }
+  if (els.navForwardBtn) {
+    els.navForwardBtn.disabled = !nav.canGoForward || state.locked;
+  }
+
   const total = state.totalUnread || 0;
   if (total > 0) {
     els.globalBadge.classList.remove('hidden');
@@ -480,6 +493,12 @@ function renderChromeActions() {
     els.globalBadge.classList.add('hidden');
   }
   renderHubRails();
+}
+
+async function navigateActive(action) {
+  const id = state?.activeServiceId;
+  if (!id || state.locked) return;
+  await window.asperadock.appNavigate?.(id, action);
 }
 
 function makeHubChip({
@@ -2067,6 +2086,8 @@ els.settingsModal?.querySelector('.settings-nav')?.addEventListener('click', (ev
 els.lockBtn?.addEventListener('click', () => {
   lockHubFromUi();
 });
+els.navBackBtn?.addEventListener('click', () => navigateActive('back'));
+els.navForwardBtn?.addEventListener('click', () => navigateActive('forward'));
 els.addAppBtn.addEventListener('click', openAppsSettings);
 els.emptyAddBtn.addEventListener('click', openAppsSettings);
 
@@ -2079,6 +2100,8 @@ els.chromeMenu?.addEventListener('click', (event) => {
   if (action === 'focus') window.asperadock.toggleFocus?.();
   if (action === 'mute') window.asperadock.toggleMute?.();
   if (action === 'reload') window.asperadock.reloadActive();
+  if (action === 'back') navigateActive('back');
+  if (action === 'forward') navigateActive('forward');
   if (action === 'home') {
     const id = state?.activeServiceId;
     if (id) window.asperadock.appNavigate?.(id, 'home');
@@ -2732,6 +2755,10 @@ async function boot() {
   window.asperadock.onState((next) => {
     state = next;
     render();
+  });
+  window.asperadock.onNavState?.((nav) => {
+    state = { ...state, nav: nav || { canGoBack: false, canGoForward: false } };
+    renderChromeActions();
   });
 }
 

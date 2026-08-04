@@ -1148,6 +1148,19 @@ body.theme-dark .chip:hover {
   font-size: 13px;
 }
 
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  transform: none;
+  background: transparent;
+}
+
+.icon-btn:disabled:hover {
+  background: transparent;
+  color: inherit;
+  transform: none;
+}
+
 .icon-btn svg {
   width: 17px;
   height: 17px;

@@ -25,6 +25,9 @@
               <img id="chrome-wordmark" class="chrome-wordmark" alt="" draggable="false" />
               <span class="chrome-brand-ai-hint" aria-hidden="true">AI</span>
             </button>
+            <button id="nav-back-btn" type="button" class="icon-btn nav-btn" title="Back (Alt+Left)" aria-label="Back" disabled></button>
+            <button id="nav-forward-btn" type="button" class="icon-btn nav-btn" title="Forward (Alt+Right)" aria-label="Forward" disabled></button>
+            <span class="chrome-divider" aria-hidden="true"></span>
             <button id="lock-btn" type="button" class="icon-btn lock-btn" title="Lock Aspera Hub (Ctrl+Shift+L)" aria-label="Lock Aspera Hub"></button>
             <button id="add-app-btn" type="button" class="icon-btn add-app-btn" title="Add app"></button>
             <span class="chrome-divider" aria-hidden="true"></span>
@@ -82,6 +85,12 @@
                 <hr />
                 <div class="chrome-menu-section" role="group" aria-label="Current app">
                   <div class="chrome-menu-section-title">Current app</div>
+                  <button type="button" data-action="back" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="back"></span> Back
+                  </button>
+                  <button type="button" data-action="forward" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="forward"></span> Forward
+                  </button>
                   <button type="button" data-action="reload" class="chrome-menu-item">
                     <span class="chrome-menu-ico" data-ico="reload"></span> Reload
                   </button>

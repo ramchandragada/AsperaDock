@@ -94,6 +94,11 @@ contextBridge.exposeInMainWorld('asperadock', {
     ipcRenderer.on('dock:state', listener);
     return () => ipcRenderer.removeListener('dock:state', listener);
   },
+  onNavState: (callback) => {
+    const listener = (_event, nav) => callback(nav);
+    ipcRenderer.on('dock:nav-state', listener);
+    return () => ipcRenderer.removeListener('dock:nav-state', listener);
+  },
   onOpenSettings: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('dock:open-settings', listener);

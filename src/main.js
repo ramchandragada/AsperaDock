@@ -4654,6 +4654,26 @@ function handleChromeMenuAction(type) {
     toggleMute();
     return { ok: true };
   }
+  if (type === 'back') {
+    if (activeServiceId) {
+      const wc = views.get(activeServiceId)?.view?.webContents;
+      if (wc && !wc.isDestroyed() && wc.canGoBack()) {
+        wc.goBack();
+        scheduleActiveNavStatePush();
+      }
+    }
+    return { ok: true };
+  }
+  if (type === 'forward') {
+    if (activeServiceId) {
+      const wc = views.get(activeServiceId)?.view?.webContents;
+      if (wc && !wc.isDestroyed() && wc.canGoForward()) {
+        wc.goForward();
+        scheduleActiveNavStatePush();
+      }
+    }
+    return { ok: true };
+  }
   if (type === 'reload') {
     if (activeServiceId) {
       const wc = views.get(activeServiceId)?.view?.webContents;
@@ -9467,9 +9487,11 @@ function createViewForService(service) {
     reclaimZohoHome(webContents, service, url, {
       enabled: settings.zohoReclaimEnabled !== false,
     });
+    if (service.id === activeServiceId) pushActiveNavState();
   });
   webContents.on('did-navigate-in-page', (_event, url) => {
     rememberGoodUrl(service.id, url);
+    if (service.id === activeServiceId) pushActiveNavState();
     // Zoho One Sales/Finance/HR are in-page space switches — CRM often blanks here.
     if (
       shouldRunPortalBlankRecovery(service) &&
@@ -10164,7 +10186,30 @@ function currentState() {
       },
     },
     locked,
+    nav: activeNavState(),
   };
+}
+
+function activeNavState() {
+  const wc = activeServiceId
+    ? views.get(activeServiceId)?.view?.webContents
+    : null;
+  if (!wc || wc.isDestroyed()) {
+    return { canGoBack: false, canGoForward: false };
+  }
+  return {
+    canGoBack: wc.canGoBack(),
+    canGoForward: wc.canGoForward(),
+  };
+}
+
+function pushActiveNavState() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('dock:nav-state', activeNavState());
+}
+
+function scheduleActiveNavStatePush() {
+  setTimeout(() => pushActiveNavState(), 80);
 }
 
 function broadcastState() {
@@ -10185,14 +10230,20 @@ function runMatchedShortcut(hit) {
   if (hit.action === 'back') {
     if (activeServiceId) {
       const wc = views.get(activeServiceId)?.view.webContents;
-      if (wc?.canGoBack()) wc.goBack();
+      if (wc?.canGoBack()) {
+        wc.goBack();
+        scheduleActiveNavStatePush();
+      }
     }
     return true;
   }
   if (hit.action === 'forward') {
     if (activeServiceId) {
       const wc = views.get(activeServiceId)?.view.webContents;
-      if (wc?.canGoForward()) wc.goForward();
+      if (wc?.canGoForward()) {
+        wc.goForward();
+        scheduleActiveNavStatePush();
+      }
     }
     return true;
   }
@@ -11923,9 +11974,13 @@ dockHandle('dock:app-navigate', (_e, id, action) => {
     if (action === 'home' || action === 'reload') return { ok: true };
   }
   const wc = entry.view.webContents;
-  if (action === 'back' && wc.canGoBack()) wc.goBack();
-  else if (action === 'forward' && wc.canGoForward()) wc.goForward();
-  else if (action === 'reload') wc.reload();
+  if (action === 'back' && wc.canGoBack()) {
+    wc.goBack();
+    scheduleActiveNavStatePush();
+  } else if (action === 'forward' && wc.canGoForward()) {
+    wc.goForward();
+    scheduleActiveNavStatePush();
+  } else if (action === 'reload') wc.reload();
   else if (action === 'home') {
     const service = getService(id);
     if (service) wc.loadURL(startUrlForService(service) || service.url);

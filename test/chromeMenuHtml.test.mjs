@@ -20,6 +20,8 @@ test('chrome menu keeps required actions and unique icons for settings vs update
     'search',
     'aspera-ai',
     'catch-up',
+    'back',
+    'forward',
     'settings',
     'ai-settings',
     'lock',
