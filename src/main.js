@@ -1858,8 +1858,23 @@ async function runLinkAskDialog(service, href, webContents) {
 function handleOutboundOrNewWindowLink(service, url, webContents) {
   const href = String(url || '');
   if (!href.startsWith('http')) return false;
-  // Zoho Books should behave like a normal in-app tab: first-party links stay
-  // in the current Books view instead of spawning a new Hub top-bar tab.
+  // Temporary Hub link tabs (opened from WhatsApp/Arattai/etc.): keep login and
+  // redirects in the same tab. Spawning another top-bar tab mid-login leaves
+  // the original Canva/site tab blank after auth.
+  if (service?.isCustom || service?.linkTab) {
+    if (
+      (isAuthOrLoginUrl(href) && isGoogleOwnedUrl(href)) ||
+      mustKeepGoogleUrlInApp(href)
+    ) {
+      return false;
+    }
+    if (webContents && !webContents.isDestroyed()) {
+      webContents.loadURL(href).catch(() => {});
+      return true;
+    }
+    return false;
+  }
+  // Zoho CRM/Books: first-party links stay in the current app tab.
   if (
     (service?.appId === 'zoho-books' || service?.appId === 'zoho-crm') &&
     isInternalUrl(href, service) &&
@@ -9044,6 +9059,49 @@ function attachPopupSessionAdopt(parentWc, childWindow, service) {
 }
 
 /**
+ * WhatsApp/Arattai Hub link tabs (Canva, etc.): OAuth often finishes in a
+ * floating popup while the dock tab stays blank. Fold the post-login page
+ * back into the same Hub tab.
+ */
+function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
+  if (!(service?.isCustom || service?.linkTab)) return;
+  if (!parentWc || parentWc.isDestroyed()) return;
+
+  const childWc = childWindow.webContents;
+  let adopting = false;
+
+  const tryAdopt = () => {
+    if (adopting || childWindow.isDestroyed() || parentWc.isDestroyed()) return;
+    let popupUrl = '';
+    try {
+      popupUrl = childWc.getURL();
+    } catch {
+      return;
+    }
+    if (!popupUrl.startsWith('http') || isAuthOrLoginUrl(popupUrl)) return;
+    if (mustKeepGoogleUrlInApp(popupUrl)) return;
+
+    adopting = true;
+    parentWc.loadURL(popupUrl).catch(() => {});
+    rememberGoodUrl(service.id, popupUrl);
+    setTimeout(() => {
+      try {
+        if (!childWindow.isDestroyed()) childWindow.close();
+      } catch {
+        // ignore
+      }
+    }, 150);
+  };
+
+  childWc.on('did-navigate', tryAdopt);
+  childWc.on('did-navigate-in-page', tryAdopt);
+  childWc.on('did-finish-load', tryAdopt);
+  childWc.on('page-title-updated', tryAdopt);
+  setTimeout(tryAdopt, 300);
+  setTimeout(tryAdopt, 1200);
+}
+
+/**
  * Zoho often window.opens about:blank then navigates. Fold that floating
  * window into a Hub app-bar tab that shares the CRM/One login.
  */
@@ -9165,6 +9223,7 @@ function createViewForService(service) {
     attachGuestContextMenu(childWc);
     attachGuestNavigationGate(childWc, service);
     attachPopupSessionAdopt(webContents, childWindow, service);
+    attachLinkTabPopupAdopt(webContents, childWindow, service);
     attachZohoPopupAdoptToHubTab(webContents, childWindow, service);
     if (isGoogleService(service)) {
       attachGoogleChromeSpoof(childWc, {

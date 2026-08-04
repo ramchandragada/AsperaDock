@@ -53,6 +53,20 @@ export function configureGuestWindowOpen(wc, service, api) {
     }
 
     if (raw.startsWith('http')) {
+      // Temporary Hub link tabs (WhatsApp/Arattai → Canva, etc.): never spawn
+      // another top-bar tab for login/redirects. Keep browsing in this tab,
+      // except Google auth popups which need a real window.
+      if (live?.isCustom || live?.linkTab) {
+        if (isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) {
+          return allowPopup();
+        }
+        if (mustKeepGoogleUrlInApp(raw)) {
+          return allowPopup();
+        }
+        wc.loadURL(raw).catch(() => {});
+        return { action: 'deny' };
+      }
+
       if (isGoogleService(live)) {
         const outbound = extractGoogleOutboundUrl(raw);
         if (outbound) {
