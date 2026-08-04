@@ -87,18 +87,48 @@ export function extractGoogleOutboundUrl(url) {
   }
 }
 
-/** Any first-party Google URL (google.com / googleusercontent.com / gstatic.com). */
+/** Any first-party Google URL (incl. YouTube accounts, APIs, country TLDs). */
 export function isGoogleOwnedUrl(url) {
   try {
     const host = new URL(String(url || '')).hostname.toLowerCase();
-    return (
+    if (
       host === 'google.com' ||
       host.endsWith('.google.com') ||
       host === 'googleusercontent.com' ||
       host.endsWith('.googleusercontent.com') ||
       host === 'gstatic.com' ||
-      host.endsWith('.gstatic.com')
-    );
+      host.endsWith('.gstatic.com') ||
+      host === 'googleapis.com' ||
+      host.endsWith('.googleapis.com') ||
+      host === 'youtube.com' ||
+      host.endsWith('.youtube.com') ||
+      host === 'ggpht.com' ||
+      host.endsWith('.ggpht.com') ||
+      host === 'withgoogle.com' ||
+      host.endsWith('.withgoogle.com') ||
+      host === 'gmail.com' ||
+      host.endsWith('.gmail.com')
+    ) {
+      return true;
+    }
+    // Country Google TLDs used during SSO (google.co.in, google.co.uk, …).
+    if (/^google\.co(\.[a-z]{2})?$/.test(host) || /^([a-z0-9-]+\.)+google\.co(\.[a-z]{2})?$/.test(host)) {
+      return true;
+    }
+    if (/^google\.[a-z]{2}$/.test(host) || /^([a-z0-9-]+\.)+google\.[a-z]{2}$/.test(host)) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/** OAuth client hosts must open as real popups — never as Hub link tabs / main Gmail. */
+export function isGoogleOauthClientUrl(url) {
+  try {
+    const host = new URL(String(url || '')).hostname.toLowerCase();
+    return host.endsWith('.apps.googleusercontent.com');
   } catch {
     return false;
   }
@@ -110,11 +140,13 @@ export function isGoogleOwnedUrl(url) {
  * the familiar "400. That’s an error." Google robot page.
  */
 export function mustKeepGoogleUrlInApp(url) {
-  if (!url || !isGoogleOwnedUrl(url)) return false;
+  if (!url) return false;
   try {
     const u = new URL(String(url));
     const host = u.hostname.toLowerCase();
     const path = u.pathname.toLowerCase();
+    if (host.endsWith('.apps.googleusercontent.com')) return true;
+    if (!isGoogleOwnedUrl(url)) return false;
     if (host === 'accounts.google.com' || host.endsWith('.accounts.google.com')) {
       return true;
     }
@@ -175,6 +207,8 @@ export function isAllowedGmailTabUrl(url) {
     if (host === 'accounts.youtube.com') return true;
     if (host === 'contacts.google.com') return true;
     if (host === 'ogs.google.com') return true;
+    // OAuth client IDs (e.g. 2507573.apps.googleusercontent.com) need a popup.
+    if (host.endsWith('.apps.googleusercontent.com')) return false;
     // Attachment previews / downloads
     if (host.endsWith('.googleusercontent.com') || host === 'googleusercontent.com') return true;
     // Google Drive / Docs viewers (linked files in emails)

@@ -290,6 +290,7 @@ import {
   isGoogleOwnedUrl,
   mustKeepGoogleUrlInApp,
   isSameEcosystemUrl,
+  isGoogleOauthClientUrl,
   shouldOpenInSystemBrowser,
 } from './guestNav.js';
 import {
@@ -1856,9 +1857,10 @@ async function runLinkAskDialog(service, href, webContents) {
  * Rule (all apps the same): “Hub tab” always means a real top app-bar tab —
  * never a floating BrowserWindow.
  */
-function handleOutboundOrNewWindowLink(service, url, webContents) {
+function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
   const href = String(url || '');
   if (!href.startsWith('http')) return false;
+  const allowHubTab = opts.allowHubTab === true;
   // Temporary Hub link tabs (opened from WhatsApp/Arattai/etc.): keep login and
   // redirects in the same tab. Spawning another top-bar tab mid-login leaves
   // the original Canva/site tab blank after auth.
@@ -1876,14 +1878,13 @@ function handleOutboundOrNewWindowLink(service, url, webContents) {
     return false;
   }
   // Catalog apps (Gmail/Zoho/…): same-ecosystem URLs never become Hub link tabs.
-  // That stopped Zoho cdn-in tabs and Gmail blank branded tabs. True third-party
-  // links (WhatsApp → Canva, Gmail email links) still use hub-tab / browser below.
   if (!(service?.isCustom || service?.linkTab) && isSameEcosystemUrl(service, href)) {
     if (
+      isGoogleOauthClientUrl(href) ||
       (isAuthOrLoginUrl(href) && isGoogleOwnedUrl(href)) ||
       mustKeepGoogleUrlInApp(href)
     ) {
-      return false;
+      return false; // real popup
     }
     if (isGoogleService(service) && !isAllowedGmailTabUrl(href)) {
       return false; // allow popup / stay; do not Hub-tab Google side UIs
@@ -1899,6 +1900,12 @@ function handleOutboundOrNewWindowLink(service, url, webContents) {
       return true;
     }
     return false;
+  }
+  // Gmail sign-in / SSO must never spawn Hub link tabs (e.g. 2507573.apps…).
+  // Only explicit email-link unwraps pass allowHubTab: true.
+  if (isGoogleService(service) && !(service?.isCustom || service?.linkTab) && !allowHubTab) {
+    if (shouldOpenInSystemBrowser(href)) openExternalSafe(href);
+    return true;
   }
   const mode = effectiveLinkHandling(service);
   if (shouldAskLinkHandling(mode)) {

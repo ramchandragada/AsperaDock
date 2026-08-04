@@ -5,6 +5,7 @@ import {
   isZohoOwnedUrl,
   isAllowedGmailTabUrl,
   isGoogleOwnedUrl,
+  isGoogleOauthClientUrl,
 } from '../src/guestNav.js';
 
 test('Gmail treats Google hosts as same ecosystem (no surprise Hub tabs)', () => {
@@ -30,4 +31,21 @@ test('Gmail allowlist covers common Workspace hosts Gmail opens', () => {
   assert.equal(isAllowedGmailTabUrl('https://meet.google.com/abc-defg-hij'), true);
   assert.equal(isAllowedGmailTabUrl('https://chat.google.com/'), true);
   assert.equal(isGoogleOwnedUrl('https://calendar.google.com/'), true);
+});
+
+test('OAuth client hosts are Google-owned but not Gmail-main-frame URLs', () => {
+  const oauth = 'https://2507573.apps.googleusercontent.com/gsi/button';
+  assert.equal(isGoogleOwnedUrl(oauth), true);
+  assert.equal(isGoogleOauthClientUrl(oauth), true);
+  assert.equal(isAllowedGmailTabUrl(oauth), false);
+  assert.equal(
+    isSameEcosystemUrl({ appId: 'gmail', url: 'https://mail.google.com' }, oauth),
+    true,
+  );
+});
+
+test('YouTube accounts and google.co.in count as Google-owned for SSO', () => {
+  assert.equal(isGoogleOwnedUrl('https://accounts.youtube.com/accounts/SetOSID'), true);
+  assert.equal(isGoogleOwnedUrl('https://accounts.google.co.in/signin'), true);
+  assert.equal(isGoogleOwnedUrl('https://www.googleapis.com/oauth2/v1/userinfo'), true);
 });
