@@ -10,6 +10,7 @@ import {
   isGoogleOwnedUrl,
   mustKeepGoogleUrlInApp,
   isAllowedGmailTabUrl,
+  isSameEcosystemUrl,
 } from './guestNav.js';
 
 /**
@@ -67,27 +68,25 @@ export function configureGuestWindowOpen(wc, service, api) {
         return { action: 'deny' };
       }
 
-      // Zoho Books/CRM: keep first-party window.opens in the same app tab.
-      // Never dump arbitrary iframe/CDN/third-party URLs into the main frame
-      // (that caused continuous reload + blank Books pane).
-      if (live?.appId === 'zoho-books' || live?.appId === 'zoho-crm') {
+      // Catalog apps: same-ecosystem window.opens stay in-app (or auth popup).
+      // Never spawn surprise Hub link tabs for Google/Zoho/first-party URLs.
+      if (!(live?.isCustom || live?.linkTab) && isSameEcosystemUrl(live, raw)) {
         if ((isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) || mustKeepGoogleUrlInApp(raw)) {
           return allowPopup();
         }
-        if (isInternalUrl(raw, live)) {
-          try {
-            const cur = String(wc.getURL() || '');
-            if (cur.split('#')[0] === raw.split('#')[0]) {
-              return { action: 'deny' };
-            }
-          } catch {
-            // ignore
-          }
-          wc.loadURL(raw).catch(() => {});
-          return { action: 'deny' };
+        if (isGoogleService(live) && !isAllowedGmailTabUrl(raw)) {
+          // Calendar/Meet/Drive side UIs — real popup, not a top-bar tab.
+          return allowPopup();
         }
-        // Non-Zoho targets: do not spawn Hub link tabs from Books/CRM.
-        handleOutboundOrNewWindowLink(live, raw, wc);
+        try {
+          const cur = String(wc.getURL() || '');
+          if (cur.split('#')[0] === raw.split('#')[0]) {
+            return { action: 'deny' };
+          }
+        } catch {
+          // ignore
+        }
+        wc.loadURL(raw).catch(() => {});
         return { action: 'deny' };
       }
 
@@ -95,15 +94,23 @@ export function configureGuestWindowOpen(wc, service, api) {
         const outbound = extractGoogleOutboundUrl(raw);
         if (outbound) {
           if (mustKeepGoogleUrlInApp(outbound) || isGoogleOwnedUrl(outbound)) {
-            wc.loadURL(outbound).catch(() => {});
+            if (isAllowedGmailTabUrl(outbound)) {
+              wc.loadURL(outbound).catch(() => {});
+            } else {
+              return allowPopup();
+            }
             return { action: 'deny' };
           }
+          // True third-party from an email link → Hub tab / browser per settings.
           handleOutboundOrNewWindowLink(live, outbound, wc);
           return { action: 'deny' };
         }
-        if (isGoogleOwnedUrl(raw) && !isAllowedGmailTabUrl(raw)) {
-          wc.loadURL(startUrlForService(live) || live.url).catch(() => {});
-          return { action: 'deny' };
+        if (isGoogleOwnedUrl(raw)) {
+          if (isAllowedGmailTabUrl(raw)) {
+            wc.loadURL(raw).catch(() => {});
+            return { action: 'deny' };
+          }
+          return allowPopup();
         }
         if (!isAllowedGmailTabUrl(raw)) {
           handleOutboundOrNewWindowLink(live, raw, wc);
@@ -230,22 +237,11 @@ export function attachGuestNavigationGate(webContents, service, api) {
     if (isGoogleService(live)) {
       if (isAllowedGmailTabUrl(url)) return;
       const home = startUrlForService(live) || live.url;
-      const outbound = extractGoogleOutboundUrl(url);
-      if (outbound) {
-        if (mustKeepGoogleUrlInApp(outbound) || isGoogleOwnedUrl(outbound)) {
-          webContents.loadURL(outbound).catch(() => {});
-          return;
-        }
-        handleOutboundOrNewWindowLink(live, outbound, webContents);
+      // Never spawn Hub link tabs from a completed main-frame navigation —
+      // that left blank Gmail-branded tabs. Reclaim inbox only.
+      if (home && home.split('#')[0] !== String(url).split('#')[0]) {
         webContents.loadURL(home).catch(() => {});
-        return;
       }
-      if (isGoogleOwnedUrl(url)) {
-        webContents.loadURL(home).catch(() => {});
-        return;
-      }
-      handleOutboundOrNewWindowLink(live, url, webContents);
-      webContents.loadURL(home).catch(() => {});
       return;
     }
 
@@ -253,9 +249,8 @@ export function attachGuestNavigationGate(webContents, service, api) {
     if (isAuthOrLoginUrl(url) && isGoogleOwnedUrl(url)) return;
     if (mustKeepGoogleUrlInApp(url)) return;
     const home = startUrlForService(live) || live.url;
-    // Zoho Books/CRM: reclaim home only — do not open a Hub link tab and do
-    // not loadURL(url)+loadURL(home) (continuous reload / blank pane).
-    if (live?.appId === 'zoho-books' || live?.appId === 'zoho-crm') {
+    // Catalog apps: if we somehow left the app, reclaim home — never Hub-tab.
+    if (!(live?.isCustom || live?.linkTab)) {
       if (home && home.split('#')[0] !== String(url).split('#')[0]) {
         webContents.loadURL(home).catch(() => {});
       }

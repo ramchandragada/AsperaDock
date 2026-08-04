@@ -289,6 +289,7 @@ import {
   isAllowedGmailTabUrl,
   isGoogleOwnedUrl,
   mustKeepGoogleUrlInApp,
+  isSameEcosystemUrl,
   shouldOpenInSystemBrowser,
 } from './guestNav.js';
 import {
@@ -1874,11 +1875,20 @@ function handleOutboundOrNewWindowLink(service, url, webContents) {
     }
     return false;
   }
-  // Zoho Books/CRM: first-party links stay in the same app tab.
-  // Non-Zoho targets must NOT become Hub link tabs (that created cdn-in tabs)
-  // and must NOT be loadURL'd into the main frame (that reload-looped Books).
-  if (service?.appId === 'zoho-books' || service?.appId === 'zoho-crm') {
-    if (isInternalUrl(href, service) && webContents && !webContents.isDestroyed()) {
+  // Catalog apps (Gmail/Zoho/…): same-ecosystem URLs never become Hub link tabs.
+  // That stopped Zoho cdn-in tabs and Gmail blank branded tabs. True third-party
+  // links (WhatsApp → Canva, Gmail email links) still use hub-tab / browser below.
+  if (!(service?.isCustom || service?.linkTab) && isSameEcosystemUrl(service, href)) {
+    if (
+      (isAuthOrLoginUrl(href) && isGoogleOwnedUrl(href)) ||
+      mustKeepGoogleUrlInApp(href)
+    ) {
+      return false;
+    }
+    if (isGoogleService(service) && !isAllowedGmailTabUrl(href)) {
+      return false; // allow popup / stay; do not Hub-tab Google side UIs
+    }
+    if (webContents && !webContents.isDestroyed()) {
       try {
         const cur = String(webContents.getURL() || '');
         if (cur.split('#')[0] === href.split('#')[0]) return true;
@@ -1888,14 +1898,7 @@ function handleOutboundOrNewWindowLink(service, url, webContents) {
       webContents.loadURL(href).catch(() => {});
       return true;
     }
-    if (
-      (isAuthOrLoginUrl(href) && isGoogleOwnedUrl(href)) ||
-      mustKeepGoogleUrlInApp(href)
-    ) {
-      return false;
-    }
-    if (shouldOpenInSystemBrowser(href)) openExternalSafe(href);
-    return true;
+    return false;
   }
   const mode = effectiveLinkHandling(service);
   if (shouldAskLinkHandling(mode)) {

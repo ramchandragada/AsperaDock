@@ -177,10 +177,14 @@ export function isAllowedGmailTabUrl(url) {
     if (host === 'ogs.google.com') return true;
     // Attachment previews / downloads
     if (host.endsWith('.googleusercontent.com') || host === 'googleusercontent.com') return true;
-    // Google Drive viewer (linked files in emails)
+    // Google Drive / Docs viewers (linked files in emails)
     if (host === 'drive.google.com' || host === 'docs.google.com') return true;
-    // Rare Gmail chrome frames
+    if (host === 'sheets.google.com' || host === 'slides.google.com') return true;
+    // Rare Gmail chrome frames / Workspace shell
     if (host === 'workspace.google.com') return true;
+    if (host === 'chat.google.com' || host === 'mail.google.com') return true;
+    if (host === 'calendar.google.com') return true;
+    if (host === 'meet.google.com') return true;
     return false;
   } catch {
     return false;
@@ -192,6 +196,38 @@ export function isAllowedGmailTabUrl(url) {
  * often paint a blank white pane when restored as a cold start URL. Prefer the
  * portal home and let the user open Sales → CRM again (session stays signed in).
  */
+/** Zoho first-party hosts (Books/CRM/Mail/One CDN/SSO). */
+export function isZohoOwnedUrl(url) {
+  try {
+    const host = new URL(String(url || '')).hostname.toLowerCase();
+    return (
+      host === 'zoho.com' ||
+      host.endsWith('.zoho.com') ||
+      host === 'zoho.in' ||
+      host.endsWith('.zoho.in') ||
+      host.includes('zohocdn.') ||
+      host.includes('zohostatic.') ||
+      host.includes('zohopublic.') ||
+      host.includes('zohowebstatic.')
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Same product/ecosystem as the catalog app — must stay in that Hub tab
+ * (or a real auth popup). Never becomes a surprise top-bar link tab.
+ */
+export function isSameEcosystemUrl(service, url) {
+  if (!service || !url) return false;
+  if (isInternalUrl(url, service)) return true;
+  const appId = String(service.appId || '');
+  if (appId === 'gmail' && isGoogleOwnedUrl(url)) return true;
+  if (appId.startsWith('zoho') && isZohoOwnedUrl(url)) return true;
+  return false;
+}
+
 export function isFragileZohoOneDeepUrl(url) {
   try {
     const path = new URL(String(url || '')).pathname.toLowerCase();
