@@ -265,12 +265,13 @@ export function isZohoAssetHost(url) {
 }
 
 /**
- * Zoho CRM multi-screen workflows (deal/lead/call) need shared-login Hub
- * tabs — like WhatsApp/Arattai third-party links. Books stays in-place to
- * avoid CDN/blank reload loops.
+ * Zoho CRM / Books multi-screen workflows need shared-login Hub tabs —
+ * like WhatsApp/Arattai third-party links. CDN/auth URLs stay out of the
+ * app bar (those caused blank/reload loops when mistaken for deep links).
  */
-export function shouldOpenZohoCrmDeepLinkAsHubTab(service, url) {
-  if (!service || String(service.appId || '') !== 'zoho-crm') return false;
+export function shouldOpenZohoSharedDeepLinkAsHubTab(service, url) {
+  const appId = String(service?.appId || '');
+  if (appId !== 'zoho-crm' && appId !== 'zoho-books') return false;
   const href = String(url || '');
   if (!href.startsWith('http')) return false;
   if (isAuthOrLoginUrl(href)) return false;
@@ -279,11 +280,16 @@ export function shouldOpenZohoCrmDeepLinkAsHubTab(service, url) {
   return true;
 }
 
+/** @deprecated Use shouldOpenZohoSharedDeepLinkAsHubTab */
+export function shouldOpenZohoCrmDeepLinkAsHubTab(service, url) {
+  return shouldOpenZohoSharedDeepLinkAsHubTab(service, url);
+}
+
 /**
  * Same product/ecosystem as the catalog app — must stay in that Hub tab
  * (or a real auth popup). Never becomes a surprise top-bar link tab.
- * Exception: Zoho CRM deep links may open as shared Hub tabs (see
- * shouldOpenZohoCrmDeepLinkAsHubTab).
+ * Exception: Zoho CRM/Books deep links may open as shared Hub tabs (see
+ * shouldOpenZohoSharedDeepLinkAsHubTab).
  */
 export function isSameEcosystemUrl(service, url) {
   if (!service || !url) return false;

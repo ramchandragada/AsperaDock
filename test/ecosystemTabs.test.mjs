@@ -4,6 +4,7 @@ import {
   isSameEcosystemUrl,
   isZohoOwnedUrl,
   isZohoAssetHost,
+  shouldOpenZohoSharedDeepLinkAsHubTab,
   shouldOpenZohoCrmDeepLinkAsHubTab,
   isAllowedGmailTabUrl,
   isGoogleOwnedUrl,
@@ -29,59 +30,74 @@ test('Zoho Books/CRM treat Zoho hosts as same ecosystem', () => {
   assert.equal(isSameEcosystemUrl(books, 'https://www.canva.com'), false);
 });
 
-test('Zoho CRM deep links may open as shared Hub tabs; assets and auth may not', () => {
+test('Zoho CRM and Books deep links may open as shared Hub tabs; assets and auth may not', () => {
   const crm = { appId: 'zoho-crm', url: 'https://crm.zoho.in/' };
+  const books = { appId: 'zoho-books', url: 'https://books.zoho.in/' };
   assert.equal(
-    shouldOpenZohoCrmDeepLinkAsHubTab(
+    shouldOpenZohoSharedDeepLinkAsHubTab(
       crm,
       'https://crm.zoho.in/crm/org123/tab/Leads/456',
     ),
     true,
   );
   assert.equal(
-    shouldOpenZohoCrmDeepLinkAsHubTab(crm, 'https://accounts.zoho.in/signin'),
+    shouldOpenZohoSharedDeepLinkAsHubTab(
+      books,
+      'https://books.zoho.in/app/invoice/12345',
+    ),
+    true,
+  );
+  assert.equal(
+    shouldOpenZohoSharedDeepLinkAsHubTab(crm, 'https://accounts.zoho.in/signin'),
     false,
   );
   assert.equal(
-    shouldOpenZohoCrmDeepLinkAsHubTab(
-      crm,
-      'https://static.zohocdn.com/crm/images/x.png',
+    shouldOpenZohoSharedDeepLinkAsHubTab(
+      books,
+      'https://static.zohocdn.com/books/images/x.png',
     ),
     false,
   );
   assert.equal(isZohoAssetHost('https://css.zohostatic.com/books/x.css'), true);
   assert.equal(
-    shouldOpenZohoCrmDeepLinkAsHubTab(
-      { appId: 'zoho-books', url: 'https://books.zoho.in/' },
-      'https://books.zoho.in/app/invoice/1',
+    shouldOpenZohoSharedDeepLinkAsHubTab(
+      { appId: 'zoho-mail', url: 'https://mail.zoho.in/' },
+      'https://mail.zoho.in/zm/',
     ),
     false,
   );
+  // Alias kept for older call sites.
+  assert.equal(
+    shouldOpenZohoCrmDeepLinkAsHubTab(
+      books,
+      'https://books.zoho.in/app/invoice/1',
+    ),
+    true,
+  );
 });
 
-test('main wires Zoho CRM Hub-tab open for window.open and popup adopt', () => {
+test('main wires Zoho CRM/Books Hub-tab open for window.open and popup adopt', () => {
   const src = readFileSync(
     fileURLToPath(new URL('../src/main.js', import.meta.url)),
     'utf8',
   );
-  assert.match(src, /shouldOpenZohoCrmDeepLinkAsHubTab/);
-  assert.match(src, /tryOpenZohoCrmHubTab/);
+  assert.match(src, /shouldOpenZohoSharedDeepLinkAsHubTab/);
+  assert.match(src, /tryOpenZohoSharedHubTab/);
   assert.match(src, /openInternalLinkAsHubTab/);
-  // Books still folds into the parent tab; CRM does not.
-  assert.match(src, /service\?\.appId === 'zoho-books'/);
+  // Books no longer folds into the parent tab.
   assert.doesNotMatch(
     src,
-    /service\?\.appId === 'zoho-books' \|\| service\?\.appId === 'zoho-crm'/,
+    /service\?\.appId === 'zoho-books' &&\s*\n\s*parentWc/,
   );
 });
 
-test('guestNavigation offers Zoho CRM Hub-tab path on same-ecosystem opens', () => {
+test('guestNavigation offers Zoho shared Hub-tab path on same-ecosystem opens', () => {
   const src = readFileSync(
     fileURLToPath(new URL('../src/guestNavigation.js', import.meta.url)),
     'utf8',
   );
-  assert.match(src, /shouldOpenZohoCrmDeepLinkAsHubTab/);
-  assert.match(src, /tryOpenZohoCrmHubTab/);
+  assert.match(src, /shouldOpenZohoSharedDeepLinkAsHubTab/);
+  assert.match(src, /tryOpenZohoSharedHubTab/);
 });
 
 test('Gmail allowlist covers common Workspace hosts Gmail opens', () => {
