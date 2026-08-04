@@ -1507,7 +1507,7 @@ body.theme-dark .settings-banner {
 .switch-row > span {
   min-width: 0;
   flex: 1;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .menu-bar-setting span {
@@ -1528,7 +1528,8 @@ body.theme-dark .settings-banner {
   color: var(--muted);
   font-size: 11px;
   font-weight: 400;
-  margin-top: 2px;
+  margin-top: 4px;
+  line-height: 1.35;
 }
 
 .menu-bar-setting kbd {
