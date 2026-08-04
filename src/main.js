@@ -1874,9 +1874,16 @@ function handleOutboundOrNewWindowLink(service, url, webContents) {
     }
     return false;
   }
-  // Zoho CRM/Books: first-party links stay in the current app tab.
+  // Zoho Books: keep navigation in the same Books tab (no surprise link tabs).
+  if (service?.appId === 'zoho-books' && webContents && !webContents.isDestroyed()) {
+    if (!((isAuthOrLoginUrl(href) && isGoogleOwnedUrl(href)) || mustKeepGoogleUrlInApp(href))) {
+      webContents.loadURL(href).catch(() => {});
+      return true;
+    }
+  }
+  // Zoho CRM: first-party links stay in the current CRM tab.
   if (
-    (service?.appId === 'zoho-books' || service?.appId === 'zoho-crm') &&
+    service?.appId === 'zoho-crm' &&
     isInternalUrl(href, service) &&
     webContents &&
     !webContents.isDestroyed()

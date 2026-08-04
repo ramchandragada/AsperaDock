@@ -67,6 +67,15 @@ export function configureGuestWindowOpen(wc, service, api) {
         return { action: 'deny' };
       }
 
+      // Zoho Books should always stay in one app tab.
+      if (live?.appId === 'zoho-books') {
+        if ((isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) || mustKeepGoogleUrlInApp(raw)) {
+          return allowPopup();
+        }
+        wc.loadURL(raw).catch(() => {});
+        return { action: 'deny' };
+      }
+
       if (isGoogleService(live)) {
         const outbound = extractGoogleOutboundUrl(raw);
         if (outbound) {
