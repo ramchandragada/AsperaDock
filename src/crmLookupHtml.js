@@ -28,50 +28,54 @@ export function buildCrmLookupHtml(dark = false) {
   html, body {
     margin:0; padding:0; width:100%; height:100%;
     background:transparent; overflow:hidden;
-    font:500 13px/1.45 "Segoe UI","Ubuntu","Cantarell",sans-serif;
+    font:500 12.5px/1.3 "Segoe UI","Ubuntu","Cantarell",sans-serif;
     color:${text}; user-select:text;
   }
   .shell {
-    margin:4px; width:calc(100% - 8px); height:calc(100% - 8px); box-sizing:border-box;
-    background:${bg}; border:1px solid ${border}; border-radius:14px;
-    box-shadow:0 12px 40px rgba(15,23,42,0.22); padding:14px 14px 12px;
-    display:flex; flex-direction:column; gap:10px; min-height:0;
+    margin:3px; width:calc(100% - 6px); height:calc(100% - 6px); box-sizing:border-box;
+    background:${bg}; border:1px solid ${border}; border-radius:12px;
+    box-shadow:0 12px 40px rgba(15,23,42,0.22); padding:10px 10px 8px;
+    display:flex; flex-direction:column; gap:7px; min-height:0;
   }
-  .head { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; flex:0 0 auto; }
+  .head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; flex:0 0 auto; }
   .head-copy { min-width:0; flex:1 1 auto; }
-  .head strong { font-size:16px; font-weight:700; letter-spacing:-0.01em; }
-  .meta { color:${muted}; font-size:12px; font-weight:500; margin-top:2px; }
-  .head-actions { display:flex; gap:6px; flex:0 0 auto; flex-wrap:wrap; justify-content:flex-end; }
+  .head strong { font-size:15px; font-weight:700; letter-spacing:-0.01em; }
+  .meta { color:${muted}; font-size:11.5px; font-weight:500; margin-top:1px; }
+  .head-actions { display:flex; gap:5px; flex:0 0 auto; flex-wrap:wrap; justify-content:flex-end; }
   .btn {
-    border:0; border-radius:8px; padding:7px 11px; font:inherit; font-size:12px; font-weight:700;
+    border:0; border-radius:7px; padding:5px 9px; font:inherit; font-size:11.5px; font-weight:700;
     cursor:pointer; background:${card}; color:inherit;
   }
   .btn.primary { background:${accent}; color:#fff; }
   .btn:disabled { opacity:0.55; cursor:default; }
   .toolbar {
-    display:none; flex:0 0 auto; gap:6px; flex-wrap:wrap;
+    display:none; flex:0 0 auto; gap:5px; flex-wrap:wrap;
   }
   .toolbar.show { display:flex; }
-  .body { flex:1 1 auto; min-height:0; overflow:auto; display:grid; gap:8px; padding-right:2px; }
+  .body { flex:1 1 auto; min-height:0; overflow:auto; display:grid; gap:6px; padding-right:2px; align-content:start; }
   .empty, .error, .loading {
-    margin:0; padding:24px 14px; border-radius:10px; background:${soft};
-    color:${muted}; text-align:center; font-size:13px;
+    margin:0; padding:18px 12px; border-radius:8px; background:${soft};
+    color:${muted}; text-align:center; font-size:12.5px;
   }
   .error { color:#b91c1c; }
   .deal {
-    display:grid; gap:8px; padding:11px; border-radius:12px;
+    display:grid; gap:5px; padding:8px 9px; border-radius:9px;
     background:${card}; border:1px solid ${border};
   }
-  .deal-top { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
-  .deal-name { font-size:13.5px; font-weight:700; min-width:0; }
+  .deal-top { display:flex; align-items:flex-start; justify-content:space-between; gap:6px; }
+  .deal-name { font-size:13px; font-weight:700; min-width:0; line-height:1.25; }
   .stage {
-    flex:0 0 auto; border-radius:999px; padding:3px 9px;
-    background:${accent}; color:#fff; font-size:11px; font-weight:700;
-    max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    flex:0 0 auto; border-radius:999px; padding:2px 7px;
+    background:${accent}; color:#fff; font-size:10.5px; font-weight:700;
+    max-width:130px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
-  .fields { display:grid; gap:3px; color:${muted}; font-size:12px; }
+  .fields {
+    display:grid; grid-template-columns:1fr 1fr; gap:1px 10px;
+    color:${muted}; font-size:11.5px; line-height:1.35;
+  }
   .fields b { color:${text}; font-weight:600; }
-  .actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .fields .span-2 { grid-column:1 / -1; }
+  .actions { display:flex; gap:5px; flex-wrap:wrap; }
 </style>
 </head>
 <body>
@@ -167,16 +171,16 @@ export function buildCrmLookupHtml(dark = false) {
       }
       toolbar.classList.add('show');
       body.innerHTML = deals.map((deal, index) => {
+        // Stage is shown as the badge — skip it here. Prefer paired meta rows.
         const fields = [];
-        if (deal.stage) fields.push('<div>Stage: <b>' + esc(deal.stage) + '</b></div>');
         if (deal.createdTime) fields.push('<div>Created: <b>' + esc(deal.createdTime) + '</b></div>');
-        if (deal.state) fields.push('<div>State: <b>' + esc(deal.state) + '</b></div>');
-        if (deal.premise) fields.push('<div>Premise: <b>' + esc(deal.premise) + '</b></div>');
-        if (deal.accountName) fields.push('<div>Account: <b>' + esc(deal.accountName) + '</b></div>');
-        if (deal.amount != null) fields.push('<div>Amount: <b>' + esc(money(deal.amount)) + '</b></div>');
         if (deal.closingDate) fields.push('<div>Close: <b>' + esc(deal.closingDate) + '</b></div>');
-        if (deal.ownerName) fields.push('<div>Owner: <b>' + esc(deal.ownerName) + '</b></div>');
+        if (deal.amount != null) fields.push('<div>Amount: <b>' + esc(money(deal.amount)) + '</b></div>');
         if (deal.probability != null) fields.push('<div>Probability: <b>' + esc(deal.probability) + '%</b></div>');
+        if (deal.state) fields.push('<div>State: <b>' + esc(deal.state) + '</b></div>');
+        if (deal.ownerName) fields.push('<div>Owner: <b>' + esc(deal.ownerName) + '</b></div>');
+        if (deal.premise) fields.push('<div class="span-2">Premise: <b>' + esc(deal.premise) + '</b></div>');
+        if (deal.accountName) fields.push('<div class="span-2">Account: <b>' + esc(deal.accountName) + '</b></div>');
         const stage = deal.stage || 'No stage';
         return '<article class="deal">' +
           '<div class="deal-top">' +

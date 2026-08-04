@@ -3432,8 +3432,17 @@ function openCrmLookupWindow({ query = '', dark = false } = {}) {
 
   const content = mainWindow.getContentBounds();
   const margin = 10;
-  const menuW = Math.min(440, Math.max(360, Math.floor(content.width * 0.38)));
-  const menuH = Math.min(560, Math.max(320, content.height - margin * 2));
+  // Mint/Cinnamon: size to work area (excludes panel/taskbar), not a tiny fixed max.
+  const display = screen.getDisplayNearestPoint({
+    x: mainWindow.getBounds().x,
+    y: mainWindow.getBounds().y,
+  });
+  const waH = display?.workArea?.height || 800;
+  const menuW = Math.min(480, Math.max(380, Math.floor(content.width * 0.4)));
+  const menuH = Math.max(
+    420,
+    Math.min(Math.floor(waH * 0.88), content.height - margin * 2),
+  );
   const pos = clampFloatPosition(
     content.x + content.width - menuW - margin,
     content.y + margin,
