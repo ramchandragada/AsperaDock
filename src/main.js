@@ -26,7 +26,6 @@ import { buildForwardPickerHtml } from './forwardPickerHtml.js';
 import { buildExtensionsHtml } from './extensionsHtml.js';
 import {
   isWhatsAppSafeMode,
-  maxWhatsAppInstances,
   whatsappAutomationBlocked,
   whatsappSafeModeBlockedMessage,
 } from './whatsappSafeMode.js';
@@ -205,6 +204,7 @@ import {
   defaultInstanceName,
   defaultInstanceTitle,
   clampAppName,
+  buildAppProfileName,
 } from './services.js';
 import {
   loadSettings,
@@ -1351,17 +1351,17 @@ async function deleteProfile(id) {
 }
 
 /**
- * Pick a profile for a newly added app.
- * First copy of an app → Primary.
- * Extra WhatsApp/Gmail/… → brand-new profile so logins stay separate.
- * Extra Zoho CRM/One/Mail/Books → reuse existing profile so tabs share login.
+ * Auto-assign a dedicated profile named like "WhatsApp 1" / "Gmail 2".
+ * First copy and extras each get their own partition (separate logins).
+ * Zoho suite tabs share one profile so workspace login stays linked.
  */
 function profileIdForNewApp(appId, entry) {
   const existing = (settings.serviceInstances || []).filter((i) => i.appId === appId);
-  if (!existing.length) {
-    return getProfile(PRIMARY_PROFILE_ID)?.id || PRIMARY_PROFILE_ID;
-  }
   if (canShareProfileAcrossInstances(appId)) {
+    if (!existing.length) {
+      const created = createProfile(buildAppProfileName(entry.name, 1));
+      return created.profile.id;
+    }
     return (
       existing[0].profileId ||
       getProfile(PRIMARY_PROFILE_ID)?.id ||
@@ -1369,7 +1369,7 @@ function profileIdForNewApp(appId, entry) {
     );
   }
   const slot = existing.length + 1;
-  const created = createProfile(`${entry.name} ${slot}`);
+  const created = createProfile(buildAppProfileName(entry.name, slot));
   return created.profile.id;
 }
 
@@ -1506,17 +1506,6 @@ function addService(appId, profileId = null, { startUrl = null } = {}) {
   }
   if (countInstances(appId) >= MAX_INSTANCES_PER_APP) {
     return { ok: false, error: `Max ${MAX_INSTANCES_PER_APP} ${entry.name} apps` };
-  }
-  if (appId === 'whatsapp') {
-    const waMax = maxWhatsAppInstances(settings);
-    if (countInstances('whatsapp') >= waMax) {
-      return {
-        ok: false,
-        error: isWhatsAppSafeMode(settings)
-          ? 'WhatsApp Safe Mode allows only 1 WhatsApp tab. Turn it off in Settings → Security to add more.'
-          : `Max ${waMax} WhatsApp apps`,
-      };
-    }
   }
   const slot = nextSlot(appId);
   if (!slot) {
@@ -9917,10 +9906,7 @@ function currentState() {
       locked: p.id === PRIMARY_PROFILE_ID,
     })),
     catalog: APP_CATALOG.map((a) => {
-      const max =
-        a.appId === 'whatsapp'
-          ? maxWhatsAppInstances(settings)
-          : MAX_INSTANCES_PER_APP;
+      const max = MAX_INSTANCES_PER_APP;
       const count = countInstances(a.appId);
       return {
         ...a,
@@ -9936,7 +9922,7 @@ function currentState() {
       maxPerApp: MAX_INSTANCES_PER_APP,
       maxNameLength: MAX_APP_NAME_LENGTH,
       totalApps: totalAppCount(),
-      whatsappMax: maxWhatsAppInstances(settings),
+      whatsappMax: MAX_INSTANCES_PER_APP,
       whatsappSafeMode: isWhatsAppSafeMode(settings),
     },
     appVersion: app.getVersion(),

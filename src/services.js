@@ -34,6 +34,17 @@ export function canShareProfileAcrossInstances(appId) {
   );
 }
 
+/**
+ * Auto profile label when adding an app instance, e.g. "WhatsApp 1", "Gmail 2".
+ * @param {string} appName
+ * @param {number} slot
+ */
+export function buildAppProfileName(appName, slot) {
+  const base = String(appName || 'App').trim() || 'App';
+  const n = Math.max(1, Number(slot) || 1);
+  return `${base} ${n}`;
+}
+
 /** @typedef {{
  *   appId: string,
  *   name: string,

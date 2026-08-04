@@ -4,11 +4,10 @@ import {
   isWhatsAppSafeMode,
   isWhatsAppAppId,
   whatsappAutomationBlocked,
-  maxWhatsAppInstances,
   whatsappSafeModeBlockedMessage,
   WHATSAPP_APP_ID,
 } from '../src/whatsappSafeMode.js';
-import { MAX_INSTANCES_PER_APP } from '../src/services.js';
+import { buildAppProfileName } from '../src/services.js';
 
 test('WhatsApp Safe Mode defaults ON when settings missing or unset', () => {
   assert.equal(isWhatsAppSafeMode(null), true);
@@ -38,13 +37,12 @@ test('automation blocked only for WhatsApp when Safe Mode is on', () => {
   assert.equal(whatsappAutomationBlocked(null, 'whatsapp'), true);
 });
 
-test('max WhatsApp instances is 1 in Safe Mode, otherwise catalog max', () => {
-  assert.equal(maxWhatsAppInstances({ whatsappSafeMode: true }), 1);
-  assert.equal(maxWhatsAppInstances({}), 1);
-  assert.equal(
-    maxWhatsAppInstances({ whatsappSafeMode: false }),
-    MAX_INSTANCES_PER_APP,
-  );
+test('buildAppProfileName uses App N labels', () => {
+  assert.equal(buildAppProfileName('WhatsApp', 1), 'WhatsApp 1');
+  assert.equal(buildAppProfileName('WhatsApp', 2), 'WhatsApp 2');
+  assert.equal(buildAppProfileName('Arattai', 1), 'Arattai 1');
+  assert.equal(buildAppProfileName('Gmail', 3), 'Gmail 3');
+  assert.equal(buildAppProfileName('', 1), 'App 1');
 });
 
 test('blocked message mentions Safe Mode and Settings', () => {
