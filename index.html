@@ -15,9 +15,16 @@
         <div class="app-bar-main">
           <nav id="apps-top" class="apps-track" aria-label="Apps"></nav>
           <div class="chrome-actions">
-            <div class="chrome-brand" title="Aspera">
-              <img id="chrome-wordmark" class="chrome-wordmark" alt="Aspera" draggable="false" />
-            </div>
+            <button
+              type="button"
+              id="aspera-ai-btn"
+              class="chrome-brand"
+              title="Aspera AI — copy text in an app, then click here to paste and run"
+              aria-label="Open Aspera AI"
+            >
+              <img id="chrome-wordmark" class="chrome-wordmark" alt="" draggable="false" />
+              <span class="chrome-brand-ai-hint" aria-hidden="true">AI</span>
+            </button>
             <button id="lock-btn" type="button" class="icon-btn lock-btn" title="Lock Aspera Hub (Ctrl+Shift+L)" aria-label="Lock Aspera Hub"></button>
             <button id="add-app-btn" type="button" class="icon-btn add-app-btn" title="Add app"></button>
             <span class="chrome-divider" aria-hidden="true"></span>

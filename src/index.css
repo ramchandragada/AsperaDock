@@ -398,13 +398,42 @@ body.layout-top .app-bar-top {
 
 .chrome-brand {
   flex: 0 0 auto;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   min-width: 0;
-  padding: 0 6px 0 2px;
-  margin-right: 2px;
-  pointer-events: none;
+  margin: 0 2px 0 0;
+  padding: 4px 8px 4px 4px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  line-height: 0;
+  pointer-events: auto;
+  transition:
+    background 0.15s var(--ease),
+    border-color 0.15s var(--ease);
+}
+
+.chrome-brand:hover,
+.chrome-brand:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  outline: none;
+}
+
+.chrome-brand-ai-hint {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .chrome-wordmark {
@@ -415,6 +444,7 @@ body.layout-top .app-bar-top {
   object-fit: contain;
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+  pointer-events: none;
 }
 
 .chrome-actions {

@@ -34,6 +34,7 @@ const els = {
   freeRamBtn: null,
   reloadBtn: null,
   menuBtn: document.getElementById('menu-btn'),
+  asperaAiBtn: document.getElementById('aspera-ai-btn'),
   chromeMenu: document.getElementById('app-chrome-menu'),
   downloadsBtn: document.getElementById('downloads-btn'),
   extensionsBtn: document.getElementById('extensions-btn'),
@@ -2047,6 +2048,15 @@ els.checkUpdatesBtn?.addEventListener('click', () => {
 els.menuBtn.addEventListener('click', (event) => {
   event.stopPropagation();
   toggleChromeMenu();
+});
+els.asperaAiBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  closeChromeMenu();
+  closeAppMenu();
+  window.asperadock.aiOpenInbox?.({
+    dark: document.body.classList.contains('theme-dark'),
+    skill: 'summarize',
+  });
 });
 els.settingsClose.addEventListener('click', closeSettings);
 els.settingsModal?.querySelector('.settings-nav')?.addEventListener('click', (event) => {

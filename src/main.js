@@ -3657,17 +3657,17 @@ function openAsperaAiInbox({ dark = false, skill = 'summarize', pasteText = null
 
   return openAiResultWindow({
     title: 'Aspera AI',
-    meta: 'Copy → paste here → copy result → paste back (same on every app)',
+    meta: 'Copy → click Aspera logo → paste → Run → paste back',
     dark,
     initialPayload: {
       title: 'Aspera AI',
-      meta: 'Copy → paste here → copy result → paste back (same on every app)',
+      meta: 'Copy → click Aspera logo → paste → Run → paste back',
       mode: 'inbox',
       skill: skill === 'refine' || skill === 'suggest-reply' ? skill : 'summarize',
       pasteText: seed,
       hint: seed
         ? 'Clipboard loaded. Choose a skill and Run — or edit the text first.'
-        : 'Same on every app: copy in the tab → paste here → Run → copy result → paste back.',
+        : 'Copy text in any app → click the Aspera logo → paste here → Run → copy result back.',
     },
   });
 }
@@ -8731,11 +8731,7 @@ function attachGuestContextMenu(webContents) {
         alwaysOnMessaging: true,
       })
     );
-    const canSummarize = !!(
-      service &&
-      isAiAllowedAppId(service.appId) &&
-      settings.aiEnabled !== false
-    );
+    const canSummarize = false; // Aspera AI opens from the bar wordmark — not right-click.
     const canCrmLookup = !!(
       hasSelection && settings.zohoCrmEnabled !== false
     );
@@ -8793,42 +8789,7 @@ function attachGuestContextMenu(webContents) {
       });
     };
     const pushSummarizeItems = () => {
-      if (!canSummarize) return;
-      // One entry only: open the clipboard AI panel (seed from selection if present).
-      // Plain "Copy" below stays native for paste-between-chats / images / files.
-      template.push({
-        label: 'Aspera AI…',
-        click: () => {
-          const theme = String(settings.theme || 'system');
-          const dark =
-            theme === 'dark' ||
-            theme === 'darkest' ||
-            (theme === 'system' && nativeTheme.shouldUseDarkColors);
-          const selected = hasSelection
-            ? String(params.selectionText || '').trim()
-            : '';
-          if (selected) {
-            try {
-              clipboard.writeText(selected);
-            } catch {
-              // ignore
-            }
-          }
-          let pasteText = selected;
-          if (!pasteText) {
-            try {
-              pasteText = clipboard.readText() || '';
-            } catch {
-              pasteText = '';
-            }
-          }
-          openAsperaAiInbox({
-            dark,
-            skill: editable ? 'refine' : 'summarize',
-            pasteText,
-          });
-        },
-      });
+      // Intentionally empty — Aspera AI is opened from the top-bar wordmark.
     };
     for (const action of guestContextMenuActionOrder({
       hasSelection,
