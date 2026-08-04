@@ -3509,8 +3509,9 @@ function openCrmLookupWindow({ query = '', dark = false } = {}) {
   });
 
   const win = crmLookupWindow;
+  // Child of Hub only — never system-wide always-on-top (Mint/Cinnamon).
   try {
-    win.setAlwaysOnTop(true, 'pop-up-menu');
+    win.setAlwaysOnTop(false);
   } catch {
     // ignore
   }
@@ -3642,9 +3643,11 @@ function openAiResultWindow({ title, meta, dark = false, initialPayload = null }
 
   const win = aiResultWindow;
   attachAiResultContextMenu(win.webContents);
-  // Always paint above the guest WhatsApp/Arattai WebContentsView.
+  // Stay above Hub guests via parent: mainWindow — do NOT use system
+  // alwaysOnTop (pop-up-menu). On Mint/Cinnamon that floats above Cursor
+  // and every other app until closed.
   try {
-    win.setAlwaysOnTop(true, 'pop-up-menu');
+    win.setAlwaysOnTop(false);
   } catch {
     // ignore
   }
