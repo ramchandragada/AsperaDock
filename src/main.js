@@ -1858,6 +1858,17 @@ async function runLinkAskDialog(service, href, webContents) {
 function handleOutboundOrNewWindowLink(service, url, webContents) {
   const href = String(url || '');
   if (!href.startsWith('http')) return false;
+  // Zoho Books should behave like a normal in-app tab: first-party links stay
+  // in the current Books view instead of spawning a new Hub top-bar tab.
+  if (
+    service?.appId === 'zoho-books' &&
+    isInternalUrl(href, service) &&
+    webContents &&
+    !webContents.isDestroyed()
+  ) {
+    webContents.loadURL(href).catch(() => {});
+    return true;
+  }
   const mode = effectiveLinkHandling(service);
   if (shouldAskLinkHandling(mode)) {
     void promptAndApplyLinkChoice(service, href, webContents);
@@ -9036,7 +9047,7 @@ function attachPopupSessionAdopt(parentWc, childWindow, service) {
  * Zoho often window.opens about:blank then navigates. Fold that floating
  * window into a Hub app-bar tab that shares the CRM/One login.
  */
-function attachZohoPopupAdoptToHubTab(childWindow, service) {
+function attachZohoPopupAdoptToHubTab(parentWc, childWindow, service) {
   if (!canShareProfileAcrossInstances(service?.appId)) return;
   // Only fold popups into Hub tabs when linkHandling is hub-tab.
   if (!shouldOpenAsHubTab(effectiveLinkHandling(service))) return;
@@ -9055,6 +9066,20 @@ function attachZohoPopupAdoptToHubTab(childWindow, service) {
     if (!popupUrl.startsWith('http') || isAuthOrLoginUrl(popupUrl)) return;
     if (!isInternalUrl(popupUrl, service)) return;
 
+    // Zoho Books opens several first-party pages in popups; keep those in the
+    // same Books tab so users don't get surprise extra tabs in the app bar.
+    if (service?.appId === 'zoho-books' && parentWc && !parentWc.isDestroyed()) {
+      parentWc.loadURL(popupUrl).catch(() => {});
+      adopting = true;
+      setTimeout(() => {
+        try {
+          if (!childWindow.isDestroyed()) childWindow.close();
+        } catch {
+          // ignore
+        }
+      }, 120);
+      return;
+    }
     if (!openInternalLinkAsHubTab(service, popupUrl)) return;
     adopting = true;
     setTimeout(() => {
@@ -9136,7 +9161,7 @@ function createViewForService(service) {
     attachGuestContextMenu(childWc);
     attachGuestNavigationGate(childWc, service);
     attachPopupSessionAdopt(webContents, childWindow, service);
-    attachZohoPopupAdoptToHubTab(childWindow, service);
+    attachZohoPopupAdoptToHubTab(webContents, childWindow, service);
     if (isGoogleService(service)) {
       attachGoogleChromeSpoof(childWc, {
         chromeVersion: CHROME_VERSION,
