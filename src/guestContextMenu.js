@@ -22,8 +22,9 @@ export function guestContextMenuActionOrder({
   canCrmLookup = false,
 } = {}) {
   const out = [];
+  // Same Aspera AI clipboard panel on every app (with or without a selection).
+  if (canSummarize) out.push('summarize');
   if (hasSelection) {
-    if (canSummarize) out.push('summarize');
     if (canCrmLookup) out.push('crm-lookup');
     if (canForward) out.push('forward');
     return out;

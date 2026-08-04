@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('asperadock', {
   aiCatchUp: (opts) => ipcRenderer.invoke('dock:ai-catch-up', opts),
   aiSummarize: (opts) => ipcRenderer.invoke('dock:ai-summarize', opts),
   aiRefine: (opts) => ipcRenderer.invoke('dock:ai-refine', opts),
+  aiOpenInbox: (opts) => ipcRenderer.invoke('dock:ai-open-inbox', opts),
   zohoCrmStatus: () => ipcRenderer.invoke('dock:zoho-crm-status'),
   zohoCrmSave: (payload) => ipcRenderer.invoke('dock:zoho-crm-save', payload),
   zohoCrmClear: () => ipcRenderer.invoke('dock:zoho-crm-clear'),

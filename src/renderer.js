@@ -1844,8 +1844,8 @@ function handleChromeAction(action) {
       dark: document.body.classList.contains('theme-dark'),
     });
   }
-  if (action === 'summarize') {
-    window.asperadock.aiSummarize?.({
+  if (action === 'aspera-ai' || action === 'summarize') {
+    window.asperadock.aiOpenInbox?.({
       dark: document.body.classList.contains('theme-dark'),
     });
   }

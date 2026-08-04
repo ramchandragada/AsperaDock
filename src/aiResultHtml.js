@@ -99,6 +99,28 @@ export function buildAiResultHtml(dark = false) {
   }
   .refine-lang textarea:focus { outline:2px solid #2563eb55; border-color:#2563eb; }
   .refine-lang-actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .inbox {
+    display:none; flex-direction:column; gap:12px; flex:1 1 auto; min-height:0;
+  }
+  .inbox.show { display:flex; }
+  .inbox textarea {
+    width:100%; box-sizing:border-box; flex:1 1 auto; min-height:160px; resize:vertical;
+    border:1px solid ${border}; border-radius:12px; padding:12px 14px;
+    font:inherit; font-size:15px; line-height:1.55; color:inherit; background:${inputBg};
+  }
+  .inbox textarea:focus { outline:2px solid #2563eb55; border-color:#2563eb; }
+  .inbox-skills {
+    display:flex; flex-direction:column; gap:8px; flex:0 0 auto;
+    padding:10px 12px; border-radius:10px; background:${card};
+  }
+  .inbox-skills label {
+    display:flex; align-items:center; gap:8px; font-size:14px; font-weight:600; cursor:pointer;
+  }
+  .inbox-foot {
+    color:${muted}; font-size:12px; font-weight:600; line-height:1.4; flex:0 0 auto;
+  }
+  .work-pane { display:flex; flex-direction:column; gap:12px; flex:1 1 auto; min-height:0; }
+  .work-pane.hide { display:none; }
 </style>
 </head>
 <body>
@@ -113,13 +135,34 @@ export function buildAiResultHtml(dark = false) {
         <button type="button" class="btn" id="close">Close</button>
       </div>
     </header>
+    <div class="inbox" id="inbox">
+      <div class="section-label">Your text (paste from any app)</div>
+      <textarea id="inbox-text" placeholder="Copy text in WhatsApp, Arattai, Gmail, or Zoho Mail — then paste here (Ctrl+V)."></textarea>
+      <div class="actions">
+        <button type="button" class="btn" id="inbox-paste">Paste from clipboard</button>
+        <button type="button" class="btn" id="inbox-clear">Clear</button>
+      </div>
+      <div class="inbox-skills" role="radiogroup" aria-label="Aspera AI skill">
+        <div class="section-label">What do you need?</div>
+        <label><input type="radio" name="inbox-skill" value="summarize" checked /> Summarize</label>
+        <label><input type="radio" name="inbox-skill" value="refine" /> Refine draft</label>
+        <label><input type="radio" name="inbox-skill" value="suggest-reply" /> Suggest reply</label>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn primary" id="inbox-run">Run Aspera AI</button>
+      </div>
+      <p class="inbox-foot" id="inbox-status">
+        Same on every app: copy → paste here → copy result → paste back. Hub never sends for you.
+      </p>
+    </div>
+    <div class="work-pane" id="work-pane">
     <div class="toolbar" id="reply-bar">
       <button type="button" class="btn primary" id="suggest-reply">Suggest replies (EN · HI · MR)</button>
       <span class="hint" id="reply-hint">Rough drafts for this message — edit before you copy</span>
     </div>
     <div class="toolbar" id="refine-bar">
       <button type="button" class="btn" id="refine-again">Refine again (EN · HI · MR)</button>
-      <span class="hint" id="refine-hint">Pick English, Hindi, or Marathi for the send box</span>
+      <span class="hint" id="refine-hint">Pick English, Hindi, or Marathi — then Copy and paste yourself</span>
     </div>
     <div class="scroll" id="scroll">
       <div class="section-label" id="summary-label" hidden>Summary · EN · HI · MR</div>
@@ -135,12 +178,22 @@ export function buildAiResultHtml(dark = false) {
         <div class="replies-editor" id="replies-editor" hidden></div>
         <div class="body" id="replies" hidden></div>
       </div>
+      <p class="inbox-foot" id="result-foot" hidden>
+        Next: Copy result, then paste into the app yourself. Hub will not auto-send.
+      </p>
+    </div>
     </div>
   </div>
   <script>
     const api = window.aiResultApi;
     const body = document.getElementById('body');
     const copyBtn = document.getElementById('copy');
+    const inbox = document.getElementById('inbox');
+    const workPane = document.getElementById('work-pane');
+    const inboxText = document.getElementById('inbox-text');
+    const inboxStatus = document.getElementById('inbox-status');
+    const inboxRun = document.getElementById('inbox-run');
+    const resultFoot = document.getElementById('result-foot');
     const replyBar = document.getElementById('reply-bar');
     const refineBar = document.getElementById('refine-bar');
     const refineWrap = document.getElementById('refine-wrap');
@@ -165,6 +218,29 @@ export function buildAiResultHtml(dark = false) {
     let syncTimer = null;
     let refineSyncTimer = null;
     let renderSeq = 0;
+
+    function selectedInboxSkill() {
+      const el = document.querySelector('input[name="inbox-skill"]:checked');
+      return el ? el.value : 'summarize';
+    }
+
+    function setInboxSkill(skill) {
+      const id = skill === 'refine' || skill === 'suggest-reply' ? skill : 'summarize';
+      const el = document.querySelector('input[name="inbox-skill"][value="' + id + '"]');
+      if (el) el.checked = true;
+    }
+
+    async function pasteClipboardIntoInbox() {
+      try {
+        const text = await api.readClipboard();
+        if (text) inboxText.value = text;
+        inboxStatus.textContent = text
+          ? 'Clipboard pasted. Choose a skill and Run.'
+          : 'Clipboard is empty — copy text in the app first, then paste here.';
+      } catch (err) {
+        inboxStatus.textContent = String(err?.message || err || 'Could not read clipboard.');
+      }
+    }
 
     const REFINE_LANGS = [
       { id: 'en', heading: '## English', label: 'English' },
@@ -332,7 +408,7 @@ export function buildAiResultHtml(dark = false) {
 
         const copyOne = document.createElement('button');
         copyOne.type = 'button';
-        copyOne.className = 'btn small';
+        copyOne.className = 'btn small primary';
         copyOne.textContent = 'Copy';
         copyOne.onclick = async () => {
           const t = String(ta.value || '').trim();
@@ -342,30 +418,6 @@ export function buildAiResultHtml(dark = false) {
           setTimeout(() => { copyOne.textContent = 'Copy'; }, 1000);
         };
 
-        const useBtn = document.createElement('button');
-        useBtn.type = 'button';
-        useBtn.className = 'btn small primary';
-        useBtn.textContent = 'Use in send box';
-        useBtn.onclick = async () => {
-          const t = String(ta.value || '').trim();
-          if (!t) {
-            setRefineStatus('Type or refine text in ' + section.label + ' first.');
-            return;
-          }
-          useBtn.disabled = true;
-          setRefineStatus('Putting ' + section.label + ' into the send box…');
-          try {
-            const result = await api.useInCompose({ text: t, language: section.id });
-            if (result?.ok) return;
-            setRefineStatus(String(result?.error || 'Copied — paste into the send box with Ctrl+V.'));
-          } catch (err) {
-            setRefineStatus(String(err?.message || err || 'Could not update send box.'));
-          } finally {
-            useBtn.disabled = !String(ta.value || '').trim();
-          }
-        };
-
-        actions.appendChild(useBtn);
         actions.appendChild(copyOne);
         wrap.appendChild(ta);
         wrap.appendChild(actions);
@@ -522,7 +574,24 @@ export function buildAiResultHtml(dark = false) {
       latestReplies = String(data?.repliesText || '');
       const err = !!data?.error;
       const loading = !!data?.loading;
+      const isInbox = mode === 'inbox';
       const isRefine = mode === 'refine';
+
+      inbox.classList.toggle('show', isInbox);
+      workPane.classList.toggle('hide', isInbox);
+      copyBtn.style.display = isInbox ? 'none' : '';
+      resultFoot.hidden = true;
+
+      if (isInbox) {
+        if (data?.pasteText != null) inboxText.value = String(data.pasteText || '');
+        if (data?.skill) setInboxSkill(data.skill);
+        inboxStatus.textContent =
+          data?.hint ||
+          'Same on every app: copy → paste here → copy result → paste back. Hub never sends for you.';
+        inboxRun.disabled = false;
+        copyBtn.disabled = true;
+        return;
+      }
 
       if (isRefine && !loading && !err) {
         body.hidden = true;
@@ -543,6 +612,7 @@ export function buildAiResultHtml(dark = false) {
         setRefineStatus('');
         summaryLabel.hidden = true;
         copyBtn.textContent = 'Copy all';
+        resultFoot.hidden = false;
       } else {
         body.hidden = false;
         refineWrap.classList.remove('show');
@@ -555,13 +625,14 @@ export function buildAiResultHtml(dark = false) {
         if (isRefine && (loading || err)) {
           setRefineStatus('');
         }
+        if (!loading && !err && latestSummary) resultFoot.hidden = false;
       }
 
       const showReplyToolbar = !!(data?.canSuggestReply && !loading && !err && !isRefine);
       replyBar.classList.toggle('show', showReplyToolbar);
       refineBar.classList.toggle('show', !!(isRefine && !loading && !err));
       refineAgainBtn.disabled = isRefine ? !anyRefineText() : true;
-      refineHint.textContent = 'Edit any language, then Use in send box for that version';
+      refineHint.textContent = 'Edit any language, then Copy and paste into the app yourself';
 
       suggestBtn.disabled = !!data?.repliesLoading;
       suggestBtn.textContent = latestReplies || data?.repliesError
@@ -571,7 +642,7 @@ export function buildAiResultHtml(dark = false) {
         ? 'Writing reply drafts…'
         : latestReplies
           ? 'Edit, add, or revise any reply, then Copy'
-          : 'Rough drafts for this message — you can edit before sending';
+          : 'Rough drafts — copy and paste into the app yourself';
 
       if (isRefine) {
         repliesWrap.classList.remove('show');
@@ -598,6 +669,7 @@ export function buildAiResultHtml(dark = false) {
         }
         renderEditor();
         latestReplies = serializeReplies(sections);
+        resultFoot.hidden = false;
       } else if (data?.repliesError) {
         repliesWrap.classList.add('show');
         setStatus('');
@@ -614,6 +686,38 @@ export function buildAiResultHtml(dark = false) {
         || err
         || loading;
     });
+
+    document.getElementById('inbox-paste').onclick = () => {
+      pasteClipboardIntoInbox().catch(() => {});
+    };
+    document.getElementById('inbox-clear').onclick = () => {
+      inboxText.value = '';
+      inboxStatus.textContent = 'Cleared. Paste text from any app, then Run.';
+      inboxText.focus();
+    };
+    inboxRun.onclick = async () => {
+      const text = String(inboxText.value || '').trim();
+      if (!text) {
+        inboxStatus.textContent = 'Paste text first (copy from the app, then Ctrl+V here).';
+        inboxText.focus();
+        return;
+      }
+      inboxRun.disabled = true;
+      inboxStatus.textContent = 'Running Aspera AI…';
+      try {
+        const result = await api.runClipboard({
+          skill: selectedInboxSkill(),
+          text,
+        });
+        if (result?.ok === false) {
+          inboxStatus.textContent = String(result.error || 'Could not run Aspera AI.');
+          inboxRun.disabled = false;
+        }
+      } catch (err) {
+        inboxStatus.textContent = String(err?.message || err || 'Could not run Aspera AI.');
+        inboxRun.disabled = false;
+      }
+    };
 
     refineAgainBtn.onclick = async () => {
       refineAgainBtn.disabled = true;

@@ -46,6 +46,18 @@ test('chat-list menu without selection is Pin then Forward', () => {
   );
 });
 
+test('chat-list can open Aspera AI clipboard panel without a selection', () => {
+  assert.deepEqual(
+    guestContextMenuActionOrder({
+      hasSelection: false,
+      canSummarize: true,
+      canForward: true,
+      canPin: true,
+    }),
+    ['summarize', 'pin', 'forward'],
+  );
+});
+
 test('menu order never includes summarize-pdf', () => {
   assert.deepEqual(
     guestContextMenuActionOrder({
@@ -118,7 +130,7 @@ test('main guest context menu follows guestContextMenuActionOrder', () => {
   assert.match(src, /action === 'crm-lookup'/);
   assert.match(src, /action === 'forward'/);
   assert.match(src, /action === 'pin'/);
-  assert.match(src, /Summarize with Aspera AI/);
+  assert.match(src, /Aspera AI…/);
   assert.match(src, /Lookup in Zoho CRM/);
   assert.match(src, /Forward with Aspera Hub/);
   assert.match(src, /FORWARD_WITH_HUB_ENABLED/);
@@ -128,6 +140,7 @@ test('main guest context menu follows guestContextMenuActionOrder', () => {
   assert.doesNotMatch(src, /injectGuestPdfContextBridge/);
   assert.doesNotMatch(src, /runSummarizePdfFromGuest/);
   assert.doesNotMatch(src, /Summarize PDF with Aspera AI/);
+  assert.doesNotMatch(src, /Summarize with Aspera AI/);
   // Forward capture helpers remain for when the feature is re-enabled.
   assert.match(src, /guestPdfBytesProbeJs/);
 });

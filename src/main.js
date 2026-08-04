@@ -3550,7 +3550,7 @@ function pushAiResult(payload) {
   }
 }
 
-function openAiResultWindow({ title, meta, dark = false } = {}) {
+function openAiResultWindow({ title, meta, dark = false, initialPayload = null } = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
 
   closeAppContextMenu();
@@ -3594,6 +3594,10 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
     `data:text/html;charset=utf-8,${encodeURIComponent(buildAiResultHtml(!!dark))}`,
   );
   win.webContents.once('did-finish-load', () => {
+    if (initialPayload && typeof initialPayload === 'object') {
+      pushAiResult(initialPayload);
+      return;
+    }
     pushAiResult({
       title: title || 'Aspera AI',
       meta: meta || '',
@@ -3620,6 +3624,52 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
     }
   });
   return { ok: true };
+}
+
+/**
+ * Same on every app: clipboard inbox → Run → Copy result → user pastes back.
+ * Does not read guest DOM — only system clipboard + pasted text.
+ */
+function openAsperaAiInbox({ dark = false, skill = 'summarize', pasteText = null } = {}) {
+  if (settings.aiEnabled === false) {
+    return { ok: false, error: 'Aspera AI is turned off in Settings.' };
+  }
+  const { routeOrder } = aiSettingsSnapshot();
+  if (!routeOrder.length) {
+    mainWindow?.webContents.send('dock:chrome-action', 'settings');
+    mainWindow?.webContents.send('dock:open-ai-settings');
+    return {
+      ok: false,
+      error: 'Add at least one AI API key in Settings → Aspera AI.',
+    };
+  }
+
+  const seed =
+    pasteText != null
+      ? String(pasteText)
+      : (() => {
+          try {
+            return clipboard.readText() || '';
+          } catch {
+            return '';
+          }
+        })();
+
+  return openAiResultWindow({
+    title: 'Aspera AI',
+    meta: 'Copy → paste here → copy result → paste back (same on every app)',
+    dark,
+    initialPayload: {
+      title: 'Aspera AI',
+      meta: 'Copy → paste here → copy result → paste back (same on every app)',
+      mode: 'inbox',
+      skill: skill === 'refine' || skill === 'suggest-reply' ? skill : 'summarize',
+      pasteText: seed,
+      hint: seed
+        ? 'Clipboard loaded. Choose a skill and Run — or edit the text first.'
+        : 'Same on every app: copy in the tab → paste here → Run → copy result → paste back.',
+    },
+  });
 }
 
 /** Right-click Copy / Select all inside the floating AI result panel. */
@@ -4044,7 +4094,8 @@ function activeAiService() {
 function asperaAiSkillTitle(skill) {
   if (skill === 'catch-up') return 'Catch me up';
   if (skill === 'refine') return 'Refine draft';
-  return 'Summarize selection';
+  if (skill === 'suggest-reply') return 'Suggest reply';
+  return 'Summarize';
 }
 
 function cleanAiPlainText(text) {
@@ -4097,47 +4148,37 @@ async function runAsperaAiSkill(
     if (skill === 'catch-up') {
       const items = collectCatchUpItems();
       prompt = promptForSkill('catch-up', { items, language });
-    } else if (skill === 'summarize') {
-      const service = activeAiService();
-      if (!service) {
+    } else if (skill === 'summarize' || skill === 'suggest-reply') {
+      // Clipboard-first on every app — never scrape guest DOM for the source text.
+      const text = String(selectionText || '').trim();
+      if (!text) {
         throw new Error(
-          'Summarize works only in WhatsApp, Arattai, Gmail, or Zoho Mail. Open one of those apps first.',
+          'Paste text into Aspera AI first (copy from any app, then paste here).',
         );
       }
-      const text = String(selectionText || (await getActiveSelectionText()) || '').trim();
-      if (!text) {
-        throw new Error('Select text in the app first, then run Summarize.');
-      }
+      const service = activeAiService();
       summarizeSelection = text;
-      summarizeAppName = service.name || service.defaultName || service.appId;
-      // Human-like context: a few messages above the selection in the open thread.
-      summarizePriorMessages = await getNearbyPriorMessages({
-        selectionText: text,
-        clickX,
-        clickY,
-      });
+      summarizeAppName =
+        service?.name || service?.defaultName || service?.appId || 'Clipboard';
+      summarizePriorMessages = [];
       prompt = promptForSkill('summarize', {
         text,
         appName: summarizeAppName,
-        priorMessages: summarizePriorMessages,
+        priorMessages: [],
       });
     } else if (skill === 'refine') {
-      const service = activeAiService();
-      if (!service) {
-        throw new Error(
-          'Refine works only in WhatsApp, Arattai, Gmail, or Zoho Mail. Open one of those apps first.',
-        );
-      }
-      refineServiceId = service.id;
-      refineHasComposeTarget = await markActiveComposeTarget(service.id);
-      const text = String(selectionText || (await getActiveSelectionText()) || '').trim();
+      const text = String(selectionText || '').trim();
       if (!text) {
         throw new Error(
-          'Select the text in the send box first, then choose Refine with Aspera AI.',
+          'Paste a draft into Aspera AI first (copy from the send box, then paste here).',
         );
       }
+      const service = activeAiService();
+      refineServiceId = service?.id || '';
+      refineHasComposeTarget = false;
       refineSelection = text;
-      refineAppName = service.name || service.defaultName || service.appId;
+      refineAppName =
+        service?.name || service?.defaultName || service?.appId || 'Clipboard';
       prompt = promptForSkill('refine', {
         text,
         appName: refineAppName,
@@ -4154,7 +4195,7 @@ async function runAsperaAiSkill(
       refineSections = parseRefinedDrafts(result.text);
       resultText = serializeRefinedDrafts(refineSections);
     }
-    if (skill === 'summarize') {
+    if (skill === 'summarize' || skill === 'suggest-reply') {
       aiResultContext = {
         skill: 'summarize',
         selectionText: summarizeSelection,
@@ -4172,7 +4213,7 @@ async function runAsperaAiSkill(
         originalComposeText: refineSelection,
         appName: refineAppName,
         serviceId: refineServiceId,
-        hasComposeTarget: refineHasComposeTarget,
+        hasComposeTarget: false,
         dark: !!dark,
         refinedText: resultText,
         refineSections,
@@ -4191,15 +4232,18 @@ async function runAsperaAiSkill(
       meta: `${result.providerName} · ${result.model} · ${metaLang}${priorMeta}`,
       text: resultText,
       loading: false,
-      mode: skill === 'refine' ? 'refine' : skill === 'summarize' ? 'summarize' : 'catch-up',
-      showTrilingual: skill === 'summarize',
-      canSuggestReply: skill === 'summarize',
-      canUseInCompose: skill === 'refine',
+      mode: skill === 'refine' ? 'refine' : skill === 'catch-up' ? 'catch-up' : 'summarize',
+      showTrilingual: skill === 'summarize' || skill === 'suggest-reply',
+      canSuggestReply: skill === 'summarize' || skill === 'suggest-reply',
+      canUseInCompose: false,
       canRefineAgain: skill === 'refine',
       refineSections: refineSections || undefined,
       repliesText: '',
-      repliesLoading: false,
+      repliesLoading: skill === 'suggest-reply',
     });
+    if (skill === 'suggest-reply') {
+      runSuggestRepliesFromAiResult().catch(() => {});
+    }
     return {
       ok: true,
       text: resultText,
@@ -4478,8 +4522,8 @@ function handleChromeMenuAction(type) {
     runAsperaAiSkill('catch-up', { dark }).catch(() => {});
     return { ok: true };
   }
-  if (type === 'summarize') {
-    runAsperaAiSkill('summarize', { dark: false }).catch(() => {});
+  if (type === 'aspera-ai' || type === 'summarize') {
+    openAsperaAiInbox({ dark: false, skill: 'summarize' });
     return { ok: true };
   }
   if (type === 'ai-settings') {
@@ -8688,11 +8732,9 @@ function attachGuestContextMenu(webContents) {
       })
     );
     const canSummarize = !!(
-      hasSelection &&
       service &&
       isAiAllowedAppId(service.appId) &&
-      settings.aiEnabled !== false &&
-      !whatsappAutomationBlocked(settings, service.appId)
+      settings.aiEnabled !== false
     );
     const canCrmLookup = !!(
       hasSelection && settings.zohoCrmEnabled !== false
@@ -8753,25 +8795,30 @@ function attachGuestContextMenu(webContents) {
     const pushSummarizeItems = () => {
       if (!canSummarize) return;
       template.push({
-        label: 'Summarize with Aspera AI',
+        label: 'Aspera AI…',
         click: () => {
-          runAsperaAiSkill('summarize', {
-            selectionText: String(params.selectionText || ''),
-            clickX: Number(params.x) || 0,
-            clickY: Number(params.y) || 0,
-          }).catch(() => {});
+          const theme = String(settings.theme || 'system');
+          const dark =
+            theme === 'dark' ||
+            theme === 'darkest' ||
+            (theme === 'system' && nativeTheme.shouldUseDarkColors);
+          // Prefer what the user already copied; selection is only a seed if clipboard empty.
+          let pasteText = '';
+          try {
+            pasteText = clipboard.readText() || '';
+          } catch {
+            pasteText = '';
+          }
+          if (!pasteText && hasSelection) {
+            pasteText = String(params.selectionText || '');
+          }
+          openAsperaAiInbox({
+            dark,
+            skill: editable ? 'refine' : 'summarize',
+            pasteText,
+          });
         },
       });
-      if (editable) {
-        template.push({
-          label: 'Refine with Aspera AI',
-          click: () => {
-            runAsperaAiSkill('refine', {
-              selectionText: String(params.selectionText || ''),
-            }).catch(() => {});
-          },
-        });
-      }
     };
     for (const action of guestContextMenuActionOrder({
       hasSelection,
@@ -11085,6 +11132,27 @@ aiResultHandle('ai-result:close', () => {
   closeAiResultWindow();
   return { ok: true };
 });
+aiResultHandle('ai-result:read-clipboard', () => {
+  try {
+    return clipboard.readText() || '';
+  } catch {
+    return '';
+  }
+});
+aiResultHandle('ai-result:run-clipboard', async (_e, payload) => {
+  const body = payload && typeof payload === 'object' ? payload : {};
+  const skillRaw = String(body.skill || 'summarize');
+  const skill =
+    skillRaw === 'refine' || skillRaw === 'suggest-reply' ? skillRaw : 'summarize';
+  const text = String(body.text || '').trim();
+  if (!text) {
+    return { ok: false, error: 'Paste text first.' };
+  }
+  return runAsperaAiSkill(skill, {
+    selectionText: text,
+    dark: !!body.dark,
+  });
+});
 crmLookupHandle('crm-lookup:copy', (_e, text) => {
   clipboard.writeText(String(text || ''));
   return { ok: true };
@@ -11597,11 +11665,12 @@ dockHandle('dock:ai-reset-route', () =>
 dockHandle('dock:ai-catch-up', (_e, opts) =>
   runAsperaAiSkill('catch-up', opts || {}),
 );
+dockHandle('dock:ai-open-inbox', (_e, opts) => openAsperaAiInbox(opts || {}));
 dockHandle('dock:ai-summarize', (_e, opts) =>
-  runAsperaAiSkill('summarize', opts || {}),
+  openAsperaAiInbox({ ...(opts || {}), skill: 'summarize' }),
 );
 dockHandle('dock:ai-refine', (_e, opts) =>
-  runAsperaAiSkill('refine', opts || {}),
+  openAsperaAiInbox({ ...(opts || {}), skill: 'refine' }),
 );
 dockHandle('dock:toggle-keep-warm', (_e, id) => toggleKeepWarm(id));
 dockHandle('dock:save-app-config', (_e, id, incoming) => {

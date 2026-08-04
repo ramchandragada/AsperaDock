@@ -73,8 +73,8 @@ export const CHROME_MENU_SECTIONS = [
     id: 'ai',
     title: 'Aspera AI',
     items: [
+      { action: 'aspera-ai', label: 'Aspera AI…' },
       { action: 'catch-up', label: 'Catch me up' },
-      { action: 'summarize', label: 'Summarize selection' },
       { action: 'ai-settings', label: 'AI settings' },
     ],
   },
@@ -118,6 +118,7 @@ const ACTION_ICON = {
   focus: ICO.focus,
   mute: ICO.unmute,
   'catch-up': ICO.list,
+  'aspera-ai': ICO.spark,
   summarize: ICO.spark,
   'ai-settings': ICO.aiSettings,
   reload: ICO.reload,
