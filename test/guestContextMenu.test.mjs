@@ -131,6 +131,7 @@ test('main guest context menu follows guestContextMenuActionOrder', () => {
   assert.match(src, /action === 'forward'/);
   assert.match(src, /action === 'pin'/);
   assert.match(src, /Aspera AI…/);
+  assert.match(src, /Copy to Aspera AI…/);
   assert.match(src, /Lookup in Zoho CRM/);
   assert.match(src, /Forward with Aspera Hub/);
   assert.match(src, /FORWARD_WITH_HUB_ENABLED/);

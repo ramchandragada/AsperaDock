@@ -8802,7 +8802,6 @@ function attachGuestContextMenu(webContents) {
             theme === 'dark' ||
             theme === 'darkest' ||
             (theme === 'system' && nativeTheme.shouldUseDarkColors);
-          // Prefer what the user already copied; selection is only a seed if clipboard empty.
           let pasteText = '';
           try {
             pasteText = clipboard.readText() || '';
@@ -8819,6 +8818,31 @@ function attachGuestContextMenu(webContents) {
           });
         },
       });
+      // Separate from plain Copy — so normal chat paste / images / files stay untouched.
+      if (hasSelection && params.editFlags?.canCopy !== false) {
+        template.push({
+          label: 'Copy to Aspera AI…',
+          click: () => {
+            const text = String(params.selectionText || '').trim();
+            if (text) clipboard.writeText(text);
+            try {
+              webContents.copy();
+            } catch {
+              // clipboard.writeText above is enough if native copy fails
+            }
+            const theme = String(settings.theme || 'system');
+            const dark =
+              theme === 'dark' ||
+              theme === 'darkest' ||
+              (theme === 'system' && nativeTheme.shouldUseDarkColors);
+            openAsperaAiInbox({
+              dark,
+              skill: editable ? 'refine' : 'summarize',
+              pasteText: text,
+            });
+          },
+        });
+      }
     };
     for (const action of guestContextMenuActionOrder({
       hasSelection,
@@ -8843,39 +8867,11 @@ function attachGuestContextMenu(webContents) {
         role: 'cut',
         enabled: editable && hasSelection && params.editFlags?.canCut !== false,
       });
-      const canCopySelection =
-        hasSelection && params.editFlags?.canCopy !== false;
-      if (canSummarize && canCopySelection) {
-        // Same outcome as "Aspera AI…" — copy selection, then open the clipboard AI panel.
-        template.push({
-          label: 'Copy',
-          click: () => {
-            const text = String(params.selectionText || '').trim();
-            if (text) clipboard.writeText(text);
-            try {
-              webContents.copy();
-            } catch {
-              // selectionText write above is enough if native copy fails
-            }
-            const theme = String(settings.theme || 'system');
-            const dark =
-              theme === 'dark' ||
-              theme === 'darkest' ||
-              (theme === 'system' && nativeTheme.shouldUseDarkColors);
-            openAsperaAiInbox({
-              dark,
-              skill: editable ? 'refine' : 'summarize',
-              pasteText: text,
-            });
-          },
-        });
-      } else {
-        template.push({
-          label: 'Copy',
-          role: 'copy',
-          enabled: canCopySelection,
-        });
-      }
+      template.push({
+        label: 'Copy',
+        role: 'copy',
+        enabled: hasSelection && params.editFlags?.canCopy !== false,
+      });
       template.push({
         label: 'Paste',
         role: 'paste',
