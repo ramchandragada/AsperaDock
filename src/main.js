@@ -1861,7 +1861,7 @@ function handleOutboundOrNewWindowLink(service, url, webContents) {
   // Zoho Books should behave like a normal in-app tab: first-party links stay
   // in the current Books view instead of spawning a new Hub top-bar tab.
   if (
-    service?.appId === 'zoho-books' &&
+    (service?.appId === 'zoho-books' || service?.appId === 'zoho-crm') &&
     isInternalUrl(href, service) &&
     webContents &&
     !webContents.isDestroyed()
@@ -9066,9 +9066,13 @@ function attachZohoPopupAdoptToHubTab(parentWc, childWindow, service) {
     if (!popupUrl.startsWith('http') || isAuthOrLoginUrl(popupUrl)) return;
     if (!isInternalUrl(popupUrl, service)) return;
 
-    // Zoho Books opens several first-party pages in popups; keep those in the
-    // same Books tab so users don't get surprise extra tabs in the app bar.
-    if (service?.appId === 'zoho-books' && parentWc && !parentWc.isDestroyed()) {
+    // Zoho CRM/Books open first-party pages in popups during normal usage.
+    // Keep those in the same app tab to avoid surprise extra top-bar tabs.
+    if (
+      (service?.appId === 'zoho-books' || service?.appId === 'zoho-crm') &&
+      parentWc &&
+      !parentWc.isDestroyed()
+    ) {
       parentWc.loadURL(popupUrl).catch(() => {});
       adopting = true;
       setTimeout(() => {
