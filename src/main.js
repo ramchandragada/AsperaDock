@@ -1874,21 +1874,27 @@ function handleOutboundOrNewWindowLink(service, url, webContents) {
     }
     return false;
   }
-  // Zoho Books: keep navigation in the same Books tab (no surprise link tabs).
-  if (service?.appId === 'zoho-books' && webContents && !webContents.isDestroyed()) {
-    if (!((isAuthOrLoginUrl(href) && isGoogleOwnedUrl(href)) || mustKeepGoogleUrlInApp(href))) {
+  // Zoho Books/CRM: first-party links stay in the same app tab.
+  // Non-Zoho targets must NOT become Hub link tabs (that created cdn-in tabs)
+  // and must NOT be loadURL'd into the main frame (that reload-looped Books).
+  if (service?.appId === 'zoho-books' || service?.appId === 'zoho-crm') {
+    if (isInternalUrl(href, service) && webContents && !webContents.isDestroyed()) {
+      try {
+        const cur = String(webContents.getURL() || '');
+        if (cur.split('#')[0] === href.split('#')[0]) return true;
+      } catch {
+        // ignore
+      }
       webContents.loadURL(href).catch(() => {});
       return true;
     }
-  }
-  // Zoho CRM: first-party links stay in the current CRM tab.
-  if (
-    service?.appId === 'zoho-crm' &&
-    isInternalUrl(href, service) &&
-    webContents &&
-    !webContents.isDestroyed()
-  ) {
-    webContents.loadURL(href).catch(() => {});
+    if (
+      (isAuthOrLoginUrl(href) && isGoogleOwnedUrl(href)) ||
+      mustKeepGoogleUrlInApp(href)
+    ) {
+      return false;
+    }
+    if (shouldOpenInSystemBrowser(href)) openExternalSafe(href);
     return true;
   }
   const mode = effectiveLinkHandling(service);

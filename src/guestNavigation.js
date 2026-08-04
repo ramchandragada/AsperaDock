@@ -67,12 +67,27 @@ export function configureGuestWindowOpen(wc, service, api) {
         return { action: 'deny' };
       }
 
-      // Zoho Books should always stay in one app tab.
-      if (live?.appId === 'zoho-books') {
+      // Zoho Books/CRM: keep first-party window.opens in the same app tab.
+      // Never dump arbitrary iframe/CDN/third-party URLs into the main frame
+      // (that caused continuous reload + blank Books pane).
+      if (live?.appId === 'zoho-books' || live?.appId === 'zoho-crm') {
         if ((isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) || mustKeepGoogleUrlInApp(raw)) {
           return allowPopup();
         }
-        wc.loadURL(raw).catch(() => {});
+        if (isInternalUrl(raw, live)) {
+          try {
+            const cur = String(wc.getURL() || '');
+            if (cur.split('#')[0] === raw.split('#')[0]) {
+              return { action: 'deny' };
+            }
+          } catch {
+            // ignore
+          }
+          wc.loadURL(raw).catch(() => {});
+          return { action: 'deny' };
+        }
+        // Non-Zoho targets: do not spawn Hub link tabs from Books/CRM.
+        handleOutboundOrNewWindowLink(live, raw, wc);
         return { action: 'deny' };
       }
 
@@ -187,6 +202,16 @@ export function attachGuestNavigationGate(webContents, service, api) {
       const live = liveService(service);
       if (live?.isCustom || live?.linkTab) return;
       if (isGoogleService(live)) return;
+      // Zoho SPAs load many cross-origin iframes (CDN, widgets). Never promote
+      // those into Hub tabs or the main frame — that blank/reload-loops Books.
+      if (
+        live?.appId === 'zoho-books' ||
+        live?.appId === 'zoho-crm' ||
+        live?.appId === 'zoho-one' ||
+        live?.appId === 'zoho-mail'
+      ) {
+        return;
+      }
       if (isInternalUrl(url, live)) return;
       if (isAuthOrLoginUrl(url) && isGoogleOwnedUrl(url)) return;
       if (mustKeepGoogleUrlInApp(url)) return;
@@ -228,6 +253,14 @@ export function attachGuestNavigationGate(webContents, service, api) {
     if (isAuthOrLoginUrl(url) && isGoogleOwnedUrl(url)) return;
     if (mustKeepGoogleUrlInApp(url)) return;
     const home = startUrlForService(live) || live.url;
+    // Zoho Books/CRM: reclaim home only — do not open a Hub link tab and do
+    // not loadURL(url)+loadURL(home) (continuous reload / blank pane).
+    if (live?.appId === 'zoho-books' || live?.appId === 'zoho-crm') {
+      if (home && home.split('#')[0] !== String(url).split('#')[0]) {
+        webContents.loadURL(home).catch(() => {});
+      }
+      return;
+    }
     handleOutboundOrNewWindowLink(live, url, webContents);
     if (home && home !== url) webContents.loadURL(home).catch(() => {});
   });
