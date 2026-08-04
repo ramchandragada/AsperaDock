@@ -481,7 +481,7 @@ body.layout-top .app-bar-top {
   height: 18px;
 }
 
-/* Back / Forward — larger, grouped, easy to spot */
+/* Back / Forward — larger, grouped, easy to spot (always on dark company bar) */
 .app-bar-top .nav-history {
   display: inline-flex;
   align-items: center;
@@ -490,26 +490,16 @@ body.layout-top .app-bar-top {
   margin: 0 2px 0 6px;
   padding: 3px;
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
-}
-
-body.theme-light .app-bar-top .nav-history {
-  background: rgba(15, 23, 42, 0.06);
-  border-color: rgba(15, 23, 42, 0.1);
-  box-shadow: none;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
 }
 
 .app-bar-top .nav-btn {
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  color: #fff;
-}
-
-body.theme-light .app-bar-top .nav-btn {
-  color: var(--text);
+  color: var(--bar-fg);
 }
 
 .app-bar-top .nav-btn svg {
@@ -519,19 +509,14 @@ body.theme-light .app-bar-top .nav-btn {
 }
 
 .app-bar-top .nav-btn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.2);
   color: #fff;
   transform: translateY(-1px);
 }
 
-body.theme-light .app-bar-top .nav-btn:hover:not(:disabled) {
-  background: rgba(15, 23, 42, 0.1);
-  color: var(--text);
-}
-
 .app-bar-top .nav-btn:disabled {
-  opacity: 0.45;
-  color: inherit;
+  opacity: 0.55;
+  color: var(--bar-fg-muted);
 }
 
 .app-bar-top .icon-btn:hover {
