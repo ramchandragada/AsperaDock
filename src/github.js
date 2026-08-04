@@ -10,7 +10,10 @@ export const GITHUB_OWNER = 'ramchandragada';
 export const GITHUB_REPO = 'AsperaDock';
 export const GITHUB_SLUG = `${GITHUB_OWNER}/${GITHUB_REPO}`;
 
-/** Base URL clients fetch: …/releases/latest/download/latest.json */
+/**
+ * Base URL clients fetch: …/releases/latest/download/latest.json
+ * Repo must be public — private release assets return HTTP 404 to unauthenticated PCs.
+ */
 export const GITHUB_UPDATE_FEED = `https://github.com/${GITHUB_SLUG}/releases/latest/download`;
 
 /** Issues API for auto error reports (needs a fine-grained PAT with Issues: Write). */

@@ -8,6 +8,16 @@ Recommended stack:
 | App updates (+ Electron) | **GitHub Releases** (via Actions) |
 | Crash / freeze reports | **Sentry** (`zarpat/asperadock`) |
 
+## Public repository required for auto-update
+
+Office PCs fetch updates **without a GitHub token** from:
+
+`https://github.com/ramchandragada/AsperaDock/releases/latest/download/latest.json`
+
+That URL (and the `.deb` it points at) must be world-readable. Keep this repository **public**. If the repo is private, unauthenticated clients get HTTP **404** and show “Update check failed / Feed responded 404”.
+
+Do **not** flip visibility back to private unless you first ship a different public feed URL into every installed Hub (manual `.deb` once per PC, or a new default feed + fleet reinstall).
+
 ## Continuous deploy
 
 Every push to `master` / `main` that touches app code runs **Deploy Aspera Hub**:

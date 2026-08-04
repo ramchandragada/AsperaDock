@@ -10,7 +10,7 @@
  *
  * In CI: set GH_TOKEN / GITHUB_TOKEN (Actions provides this automatically).
  *
- * Clients fetch:
+ * Clients fetch (repo must stay public — private releases 404 without a token):
  *   https://github.com/ramchandragada/AsperaDock/releases/latest/download/latest.json
  *
  * Publish flow (avoids update 404 races):
