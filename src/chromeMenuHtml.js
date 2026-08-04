@@ -31,8 +31,8 @@ const ICO = {
     '<path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.7-3M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.7 3"/><path d="M21 3.5V9h-5.5"/><path d="M3 20.5V15h5.5"/>',
   ),
   home: svg('<path d="m3 11 9-8 9 8"/><path d="M5 10v10h5v-5h4v5h5V10"/>'),
-  back: svg('<path d="M15 18 9 12l6-6"/>'),
-  forward: svg('<path d="m9 18 6-6-6-6"/>'),
+  back: svg('<path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>'),
+  forward: svg('<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>'),
   ram: svg(
     '<rect x="4" y="4" width="16" height="16" rx="2.5"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M15 2v2M9 2v2M15 20v2M9 20v2M2 15h2M2 9h2M20 15h2M20 9h2"/>',
   ),

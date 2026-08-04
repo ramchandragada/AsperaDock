@@ -19,8 +19,8 @@ const GLYPHS = {
     '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
   plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
   trash: '<path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/>',
-  back: '<path d="M15 18 9 12l6-6"/>',
-  forward: '<path d="m9 18 6-6-6-6"/>',
+  back: '<path d="M19 12H5"/><path d="m12 19-7-7 7-7"/>',
+  forward: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
   home: '<path d="m3 11 9-8 9 8"/><path d="M5 10v10h5v-5h4v5h5V10"/>',
   bolt: '<path d="M13 2 4 14h7l-1 8 10-12h-7l1-8z"/>',
   flame:
