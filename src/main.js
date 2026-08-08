@@ -97,7 +97,11 @@ import {
   sanitizeForwardLinkURL,
   shouldForwardAsDocument,
 } from './forwardHub.js';
-import { uniqueDownloadPath } from './downloadPath.js';
+import {
+  releaseDownloadPath,
+  resolveSavePathAfterPrompt,
+  uniqueDownloadPath,
+} from './downloadPath.js';
 import { linuxUsesOpaqueOverlays } from './linuxDesktop.js';
 import {
   clearMessagingLeftSearchJs,
@@ -632,6 +636,9 @@ let hubClipboardBeforeStage = null;
 /** Recent guest downloads (user tapped Download) — reused by Forward. */
 const recentGuestDownloads = [];
 const RECENT_DOWNLOAD_MAX = 40;
+/** Dedupe double will-download from one preview click (same URL + name). */
+let lastGuestDownloadDedupeKey = '';
+let lastGuestDownloadDedupeAt = 0;
 
 function beginForwardExtraSwallow(ms = FORWARD_EXTRA_SWALLOW_MS) {
   forwardExtraSwallowUntil = Math.max(forwardExtraSwallowUntil, Date.now() + ms);
@@ -668,7 +675,7 @@ function swallowForwardExtraDownload(item) {
   }
 }
 
-function promptGuestDownloadSave(item, defaultPath) {
+function promptGuestDownloadSave(item, defaultPath, downloadName = '') {
   try {
     item.pause();
   } catch {
@@ -676,46 +683,82 @@ function promptGuestDownloadSave(item, defaultPath) {
   }
   const parent =
     mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  try {
+    if (parent) {
+      if (parent.isMinimized()) parent.restore();
+      parent.show();
+      parent.focus();
+      parent.moveTop?.();
+    }
+  } catch {
+    // ignore
+  }
+  const suggested = String(defaultPath || '').trim();
+  const intendedName =
+    String(downloadName || '').trim() ||
+    item.getFilename?.() ||
+    path.basename(suggested) ||
+    'download';
+
+  const finishWithPath = (pickedPath) => {
+    // Drop the dialog suggestion reservation before resolving the final path
+    // so the suggested unique name is not treated as already taken.
+    releaseDownloadPath(suggested);
+    const finalPath = resolveSavePathAfterPrompt(pickedPath, intendedName);
+    try {
+      item.setSavePath(finalPath);
+      item.resume();
+    } catch {
+      try {
+        item.setSavePath(finalPath || suggested);
+        item.resume();
+      } catch {
+        releaseDownloadPath(finalPath);
+        releaseDownloadPath(suggested);
+        return;
+      }
+    }
+  };
+
+  const cancelItem = () => {
+    releaseDownloadPath(suggested);
+    try {
+      item.cancel();
+    } catch {
+      // ignore
+    }
+  };
+
   dialog
     .showSaveDialog(parent, {
       title: 'Save download',
-      defaultPath,
+      defaultPath: suggested,
+      buttonLabel: 'Save',
+      nameFieldLabel: 'File name:',
+      properties: ['createDirectory'],
     })
     .then(({ canceled, filePath }) => {
       if (canceled || !filePath) {
-        try {
-          item.cancel();
-        } catch {
-          // ignore
-        }
+        cancelItem();
         return;
       }
-      try {
-        item.setSavePath(filePath);
-        item.resume();
-      } catch {
-        try {
-          item.setSavePath(defaultPath);
-          item.resume();
-        } catch {
-          // ignore
-        }
-      }
+      finishWithPath(filePath);
     })
     .catch(() => {
       try {
         item.setSaveDialogOptions({
           title: 'Save download',
-          defaultPath,
+          defaultPath: suggested,
+          buttonLabel: 'Save',
           ...(parent ? { window: parent } : {}),
         });
         item.resume();
+        item.once?.('done', () => releaseDownloadPath(suggested));
       } catch {
         try {
-          item.setSavePath(defaultPath);
-          item.resume();
+          finishWithPath(suggested);
         } catch {
-          // ignore
+          cancelItem();
         }
       }
     });
@@ -6399,22 +6442,55 @@ function configureSession(partitionSession, partitionKey) {
       return;
     }
 
+    // One click can emit two DownloadItems (preview + real). A second Save
+    // dialog reuses GTK's sticky last filename — Maharashtra then "replaces"
+    // into Karnataka.pdf. Cancel near-duplicate prompts.
+    const downloadName = item.getFilename() || 'download';
+    const downloadUrl = typeof item.getURL === 'function' ? item.getURL() : '';
+    const dedupeKey = `${downloadUrl}|${downloadName}|${item.getTotalBytes?.() || 0}`;
+    const now = Date.now();
+    if (
+      dedupeKey &&
+      dedupeKey === lastGuestDownloadDedupeKey &&
+      now - lastGuestDownloadDedupeAt < 2_000
+    ) {
+      try {
+        item.cancel();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    lastGuestDownloadDedupeKey = dedupeKey;
+    lastGuestDownloadDedupeAt = now;
+
     const downloadDir = String(settings.downloadPath || '').trim();
-    const downloadName = item.getFilename();
+    let savePathClaimed = '';
     if (downloadDir) {
-      item.setSavePath(uniqueDownloadPath(downloadDir, downloadName));
+      savePathClaimed = uniqueDownloadPath(downloadDir, downloadName);
+      item.setSavePath(savePathClaimed);
     } else {
       const defaultPath = uniqueDownloadPath(
         app.getPath('downloads'),
         downloadName,
       );
-      promptGuestDownloadSave(item, defaultPath);
+      savePathClaimed = defaultPath;
+      promptGuestDownloadSave(item, defaultPath, downloadName);
     }
     item.once('done', (_e, state) => {
+      const savePath = item.getSavePath?.() || savePathClaimed;
+      releaseDownloadPath(savePath);
+      releaseDownloadPath(savePathClaimed);
       if (state !== 'completed') return;
-      const savePath = item.getSavePath();
-      rememberGuestDownload(savePath, item.getFilename?.() || path.basename(savePath));
-      if (settings.openFolderOnDownload) shell.showItemInFolder(savePath);
+      rememberGuestDownload(
+        savePath,
+        item.getFilename?.() || path.basename(savePath),
+      );
+      // After Save As, opening the folder is redundant and Thunar can cover
+      // the next Save dialog on XFCE — only auto-open for fixed download dirs.
+      if (settings.openFolderOnDownload && downloadDir) {
+        shell.showItemInFolder(savePath);
+      }
       if (settings.openFileOnDownload) shell.openPath(savePath);
     });
   });
