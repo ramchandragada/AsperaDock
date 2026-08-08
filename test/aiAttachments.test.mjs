@@ -5,6 +5,7 @@ import {
   classifyAiAttachment,
   normalizeImageMime,
   pdfTextIsUsable,
+  resolvePdfjsUrls,
   validateAiAttachmentMeta,
 } from '../src/ai/attachments.js';
 import {
@@ -63,6 +64,13 @@ test('normalizeImageMime maps jpg aliases', () => {
 test('pdfTextIsUsable rejects tiny extracts', () => {
   assert.equal(pdfTextIsUsable('hi'), false);
   assert.equal(pdfTextIsUsable('x'.repeat(80)), true);
+});
+
+test('resolvePdfjsUrls finds node_modules builds', async () => {
+  const urls = await resolvePdfjsUrls();
+  assert.match(urls.moduleUrl, /pdf\.mjs$/);
+  assert.match(urls.workerSrc, /pdf\.worker\.mjs$/);
+  assert.match(urls.moduleUrl, /^file:/);
 });
 
 test('attachment summarize prompts stay trilingual', () => {

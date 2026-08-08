@@ -84,9 +84,35 @@ export function validateAiAttachmentMeta(input = {}) {
 }
 
 /**
+ * Resolve pdf.js module + worker URLs.
+ * Packaged builds load from `resources/pdfjs-runtime` (extraResource);
+ * dev/tests resolve from node_modules.
+ * @param {{ pdfjsDir?: string }} [opts]
+ */
+export async function resolvePdfjsUrls(opts = {}) {
+  const path = await import('node:path');
+  const { pathToFileURL } = await import('node:url');
+  const dir = String(opts.pdfjsDir || '').trim();
+  if (dir) {
+    return {
+      moduleUrl: pathToFileURL(path.join(dir, 'pdf.mjs')).href,
+      workerSrc: pathToFileURL(path.join(dir, 'pdf.worker.mjs')).href,
+    };
+  }
+  const { createRequire } = await import('node:module');
+  const require = createRequire(import.meta.url);
+  const modulePath = require.resolve('pdfjs-dist/legacy/build/pdf.mjs');
+  const workerPath = require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs');
+  return {
+    moduleUrl: pathToFileURL(modulePath).href,
+    workerSrc: pathToFileURL(workerPath).href,
+  };
+}
+
+/**
  * Extract plain text from a PDF buffer (first N pages).
  * @param {Buffer|Uint8Array} buffer
- * @param {{ maxPages?: number, maxChars?: number }} [opts]
+ * @param {{ maxPages?: number, maxChars?: number, pdfjsDir?: string }} [opts]
  */
 export async function extractPdfText(buffer, opts = {}) {
   const maxPages = Math.max(1, Number(opts.maxPages) || AI_ATTACH_PDF_MAX_PAGES);
@@ -99,20 +125,10 @@ export async function extractPdfText(buffer, opts = {}) {
   const data = new Uint8Array(src.byteLength);
   data.set(src);
 
-  const { createRequire } = await import('node:module');
-  const { pathToFileURL } = await import('node:url');
-  const require = createRequire(import.meta.url);
-
-  // pdfjs-dist v4 legacy build works in Node / Electron main with a workerSrc.
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  try {
-    const workerPath = require.resolve(
-      'pdfjs-dist/legacy/build/pdf.worker.mjs',
-    );
-    pdfjs.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
-  } catch {
-    // Packaged asar may still resolve; if not, getDocument may fail and caller falls back.
-  }
+  const { moduleUrl, workerSrc } = await resolvePdfjsUrls(opts);
+  // Dynamic file URL — keeps pdfjs out of the Vite main bundle / asar.
+  const pdfjs = await import(moduleUrl);
+  pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
 
   const loadingTask = pdfjs.getDocument({
     data,

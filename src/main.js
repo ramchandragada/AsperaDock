@@ -4771,6 +4771,18 @@ function clearAiInboxAttachment() {
   aiInboxAttachment = null;
 }
 
+/** Packaged: resources/pdfjs-runtime; dev: resolve via node_modules. */
+function aiPdfjsRuntimeDir() {
+  try {
+    if (app.isPackaged) {
+      return path.join(process.resourcesPath, 'pdfjs-runtime');
+    }
+  } catch {
+    // ignore
+  }
+  return '';
+}
+
 function aiAttachmentPublicMeta(att = aiInboxAttachment) {
   if (!att) return null;
   return {
@@ -4872,7 +4884,9 @@ async function runAsperaAiSkill(
       if (att.kind === 'pdf') {
         let extracted = { text: '', pagesRead: 0, numPages: 0 };
         try {
-          extracted = await extractPdfText(att.buffer);
+          extracted = await extractPdfText(att.buffer, {
+            pdfjsDir: aiPdfjsRuntimeDir() || undefined,
+          });
         } catch (err) {
           extracted = { text: '', pagesRead: 0, numPages: 0, error: err };
         }
