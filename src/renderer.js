@@ -29,16 +29,18 @@ const els = {
   addAppBtn: document.getElementById('add-app-btn'),
   navBackBtn: document.getElementById('nav-back-btn'),
   navForwardBtn: document.getElementById('nav-forward-btn'),
+  navReloadBtn: document.getElementById('nav-reload-btn'),
   emptyState: document.getElementById('empty-state'),
   emptyAddBtn: document.getElementById('empty-add-btn'),
   focusBtn: document.getElementById('focus-btn'),
   muteBtn: document.getElementById('mute-btn'),
   freeRamBtn: null,
-  reloadBtn: null,
+  reloadBtn: document.getElementById('nav-reload-btn'),
   menuBtn: document.getElementById('menu-btn'),
   asperaAiBtn: document.getElementById('aspera-ai-btn'),
   chromeMenu: document.getElementById('app-chrome-menu'),
   downloadsBtn: document.getElementById('downloads-btn'),
+  webSearchBtn: document.getElementById('web-search-btn'),
   extensionsBtn: document.getElementById('extensions-btn'),
   checkUpdatesBtn: document.getElementById('check-updates-btn'),
   searchBtn: document.getElementById('search-btn'),
@@ -202,11 +204,13 @@ function paintToolbarIcons() {
   if (els.downloadsBtn) els.downloadsBtn.innerHTML = icon('download');
   if (els.extensionsBtn) els.extensionsBtn.innerHTML = icon('puzzle');
   if (els.checkUpdatesBtn) els.checkUpdatesBtn.innerHTML = icon('sync');
+  if (els.webSearchBtn) els.webSearchBtn.innerHTML = icon('search');
   if (els.menuBtn) els.menuBtn.innerHTML = asperaAppIconSvg(24);
   if (els.lockBtn) els.lockBtn.innerHTML = icon('lock');
   if (els.addAppBtn) els.addAppBtn.innerHTML = icon('plus');
   if (els.navBackBtn) els.navBackBtn.innerHTML = icon('back');
   if (els.navForwardBtn) els.navForwardBtn.innerHTML = icon('forward');
+  if (els.navReloadBtn) els.navReloadBtn.innerHTML = icon('reload');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
   if (els.appMenuEdit) els.appMenuEdit.innerHTML = icon('settings');
   if (els.appMenuHome) els.appMenuHome.innerHTML = icon('home');
@@ -484,6 +488,9 @@ function renderChromeActions() {
   if (els.navForwardBtn) {
     els.navForwardBtn.disabled = !nav.canGoForward || state.locked;
   }
+  if (els.navReloadBtn) {
+    els.navReloadBtn.disabled = !!state.locked || !state.activeServiceId;
+  }
 
   const total = state.totalUnread || 0;
   if (total > 0) {
@@ -683,12 +690,8 @@ function renderNotificationCenter() {
 let lastChromeReport = '';
 function reportChromeSize() {
   if (!els.topBar) return;
-  let top = Math.round(els.topBar.getBoundingClientRect().height);
-  // Find bar is fixed under the top bar; push the guest down so Ctrl+F stays visible.
-  if (els.findBar && !els.findBar.classList.contains('hidden')) {
-    const findH = Math.round(els.findBar.getBoundingClientRect().height) || 48;
-    top += findH + 12;
-  }
+  // Find is a floating child window above the guest — never resize chrome for it.
+  const top = Math.round(els.topBar.getBoundingClientRect().height);
   const key = `0:0:${top}`;
   if (key === lastChromeReport) return;
   lastChromeReport = key;
@@ -1852,6 +1855,10 @@ async function lockHubFromUi() {
 }
 
 function handleChromeAction(action) {
+  if (action === 'web-search') {
+    openWebSearch();
+    return;
+  }
   if (action === 'search') openSearch();
   if (action === 'settings') openSettings();
   if (action === 'ai-settings') openAiSettings();
@@ -2077,6 +2084,12 @@ els.asperaAiBtn?.addEventListener('click', (event) => {
     skill: 'summarize',
   });
 });
+els.webSearchBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  closeChromeMenu();
+  closeAppMenu();
+  openWebSearch();
+});
 els.settingsClose.addEventListener('click', closeSettings);
 els.settingsModal?.querySelector('.settings-nav')?.addEventListener('click', (event) => {
   const btn = event.target.closest('[data-settings-panel]');
@@ -2088,6 +2101,9 @@ els.lockBtn?.addEventListener('click', () => {
 });
 els.navBackBtn?.addEventListener('click', () => navigateActive('back'));
 els.navForwardBtn?.addEventListener('click', () => navigateActive('forward'));
+els.navReloadBtn?.addEventListener('click', () => {
+  window.asperadock.reloadActive?.();
+});
 els.addAppBtn.addEventListener('click', openAppsSettings);
 els.emptyAddBtn.addEventListener('click', openAppsSettings);
 
@@ -2370,14 +2386,6 @@ window.asperadock.onOpenAppsSettings?.(openAppsSettings);
 window.asperadock.onOpenProfiles?.(openProfiles);
 window.asperadock.onOpenSearch?.(openSearch);
 window.asperadock.onOpenFind?.(openFindBar);
-window.asperadock.onFindResult?.((data) => {
-  if (!els.findStatus || !data) return;
-  if (!data.matches) {
-    els.findStatus.textContent = '0/0';
-    return;
-  }
-  els.findStatus.textContent = `${data.activeMatchOrdinal || 0}/${data.matches}`;
-});
 window.asperadock.onSyncOverlay?.(syncOverlayFromModals);
 window.asperadock.onOpenEditApp?.((id) => {
   if (id) openEditApp(id);
@@ -2549,46 +2557,28 @@ els.customAppUrl?.addEventListener('keydown', (event) => {
 });
 
 function openFindBar() {
-  if (!els.findBar) return;
-  els.findBar.classList.remove('hidden');
-  els.findInput.value = '';
-  els.findStatus.textContent = '';
-  lastChromeReport = '';
-  requestAnimationFrame(() => {
-    reportChromeSize();
-    els.findInput?.focus();
-    els.findInput?.select();
+  // Keep legacy in-page bar hidden — guest WebContentsView covers it, so Find
+  // is a floating popup that does not push the page down.
+  els.findBar?.classList.add('hidden');
+  window.asperadock.openFindBar?.({
+    dark: document.body.classList.contains('theme-dark'),
   });
 }
 
 function closeFindBar() {
   els.findBar?.classList.add('hidden');
-  window.asperadock.stopFind?.();
-  els.findStatus.textContent = '';
-  lastChromeReport = '';
-  requestAnimationFrame(reportChromeSize);
+  window.asperadock.closeFindBar?.();
 }
 
-async function runFind({ findNext = false, forward = true } = {}) {
-  const text = els.findInput?.value || '';
-  await window.asperadock.findInPage?.(text, { findNext, forward });
-  els.findStatus.textContent = text ? 'Searching…' : '';
+function openWebSearch() {
+  window.asperadock.openWebSearch?.({
+    dark: document.body.classList.contains('theme-dark'),
+  });
 }
 
-els.findClose?.addEventListener('click', closeFindBar);
-els.findNext?.addEventListener('click', () => runFind({ findNext: true, forward: true }));
-els.findPrev?.addEventListener('click', () => runFind({ findNext: true, forward: false }));
-els.findInput?.addEventListener('input', () => runFind({ findNext: false }));
-els.findInput?.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    runFind({ findNext: true, forward: !event.shiftKey });
-  }
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    closeFindBar();
-  }
-});
+function closeWebSearch() {
+  window.asperadock.closeWebSearch?.();
+}
 
 els.editAppModal.addEventListener('click', (event) => {
   if (event.target === els.editAppModal) closeEditApp();
@@ -2596,8 +2586,8 @@ els.editAppModal.addEventListener('click', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
-    if (!els.findBar?.classList.contains('hidden')) closeFindBar();
-    else if (!els.customAppModal?.classList.contains('hidden')) closeCustomAppModal();
+    // Floating Find handles Escape in its own window / guest shortcut path.
+    if (!els.customAppModal?.classList.contains('hidden')) closeCustomAppModal();
     else if (!els.profileNameModal?.classList.contains('hidden')) closeProfileNameModal(null);
     else if (!els.profilesModal?.classList.contains('hidden')) closeProfiles();
     else if (!els.editAppModal.classList.contains('hidden')) closeEditApp();
@@ -2605,6 +2595,8 @@ document.addEventListener('keydown', (event) => {
     else if (!els.settingsModal.classList.contains('hidden')) closeSettings();
     else if (!els.searchModal.classList.contains('hidden')) closeSearch();
     else {
+      closeFindBar();
+      closeWebSearch();
       closeChromeMenu();
       closeNotificationCenter();
       closeAppMenu();

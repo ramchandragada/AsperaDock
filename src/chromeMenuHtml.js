@@ -66,6 +66,7 @@ export const CHROME_MENU_SECTIONS = [
     id: 'presence',
     title: 'Presence',
     items: [
+      { action: 'web-search', label: 'Web search' },
       { action: 'search', label: 'Quick search' },
       { action: 'focus', label: 'Focus mode', id: 'focus-item' },
       { action: 'mute', label: 'Mute', id: 'mute-item' },
@@ -118,6 +119,7 @@ export const CHROME_MENU_SECTIONS = [
 ];
 
 const ACTION_ICON = {
+  'web-search': ICO.search,
   search: ICO.search,
   focus: ICO.focus,
   mute: ICO.unmute,

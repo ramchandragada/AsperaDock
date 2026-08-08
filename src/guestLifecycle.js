@@ -24,8 +24,15 @@ export function hibernateMsFromSettings(minutes, opts = {}) {
 
 /**
  * Whether an app id should default to keepWarm when unset.
+ * Messaging + Zoho form apps — switching away must not wipe drafts.
  * @param {string} appId
  */
 export function defaultKeepWarmForApp(appId) {
-  return appId === 'whatsapp' || appId === 'arattai';
+  return (
+    appId === 'whatsapp' ||
+    appId === 'arattai' ||
+    appId === 'zoho-crm' ||
+    appId === 'zoho-one' ||
+    appId === 'zoho-books'
+  );
 }

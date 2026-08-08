@@ -19,6 +19,12 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { buildAppMenuHtml } from './appMenuHtml.js';
 import { buildChromeMenuHtml } from './chromeMenuHtml.js';
+import { buildFindBarHtml } from './findBarHtml.js';
+import { buildWebSearchHtml } from './webSearchHtml.js';
+import {
+  resolveWebSearchInput,
+  webSearchTabName,
+} from './webSearch.js';
 import { buildNotifCenterHtml } from './notifCenterHtml.js';
 import { buildAiResultHtml } from './aiResultHtml.js';
 import { buildCrmLookupHtml } from './crmLookupHtml.js';
@@ -96,6 +102,12 @@ import {
   sanitizeForwardLinkURL,
   shouldForwardAsDocument,
 } from './forwardHub.js';
+import {
+  releaseDownloadPath,
+  resolveSavePathAfterPrompt,
+  uniqueDownloadPath,
+} from './downloadPath.js';
+import { linuxUsesOpaqueOverlays } from './linuxDesktop.js';
 import {
   clearMessagingLeftSearchJs,
   composeReplyJs,
@@ -292,6 +304,8 @@ import {
   isSameEcosystemUrl,
   isGoogleOauthClientUrl,
   shouldOpenInSystemBrowser,
+  shouldOpenZohoSharedDeepLinkAsHubTab,
+  isZohoAssetHost,
 } from './guestNav.js';
 import {
   resolveLinkHandling,
@@ -583,6 +597,18 @@ let appMenuWindow = null;
 let appMenuServiceId = null;
 /** Floating chrome (Aspera) menu — same overlay approach. */
 let chromeMenuWindow = null;
+/** Floating Find-in-page popup (above WebContentsView — no guest resize). */
+let findBarWindow = null;
+/** Last find query so Ctrl+F reopens with the same text selected. */
+let findBarLastQuery = '';
+/** Bumped on every find/clear so late found-in-page cannot re-paint highlights. */
+let findBarSession = 0;
+/** Chromium findInPage request id — ignore stale replies from earlier keystrokes. */
+let findBarRequestId = 0;
+/** Floating Google Web-search popup. */
+let webSearchWindow = null;
+/** Last web-search query so Ctrl+K reopens with the same text selected. */
+let webSearchLastQuery = '';
 /** Floating notification center. */
 let notifCenterWindow = null;
 /** Floating Aspera AI result panel. */
@@ -609,11 +635,11 @@ let forwardPayload = null;
 /** One-shot download hijack used while capturing a document to forward. */
 let pendingForwardDownload = null;
 /**
- * While > now, every guest download is saved silently (no Save dialog).
- * Needed because PDF preview Forward often fires 2–3 DownloadItems; only the
- * first fills pendingForwardDownload — extras used to pop "Save download".
+ * Brief tail after Forward hijack completes — swallow duplicate DownloadItems
+ * from the same preview click only. Must NOT block normal user downloads.
  */
-let forwardCaptureSilentUntil = 0;
+let forwardExtraSwallowUntil = 0;
+const FORWARD_EXTRA_SWALLOW_MS = 2_000;
 /** Bumped to cancel in-flight Forward Ctrl+V waits (prevents paste into later chats). */
 let forwardPasteGeneration = 0;
 /** Text Hub last wrote to the system clipboard for Forward (for restore + sanitize). */
@@ -623,17 +649,132 @@ let hubClipboardBeforeStage = null;
 /** Recent guest downloads (user tapped Download) — reused by Forward. */
 const recentGuestDownloads = [];
 const RECENT_DOWNLOAD_MAX = 40;
+/** Dedupe double will-download from one preview click (same URL + name). */
+let lastGuestDownloadDedupeKey = '';
+let lastGuestDownloadDedupeAt = 0;
 
-function beginForwardCaptureWindow(ms = 20_000) {
-  forwardCaptureSilentUntil = Math.max(forwardCaptureSilentUntil, Date.now() + ms);
+function beginForwardExtraSwallow(ms = FORWARD_EXTRA_SWALLOW_MS) {
+  forwardExtraSwallowUntil = Math.max(forwardExtraSwallowUntil, Date.now() + ms);
 }
 
-function endForwardCaptureWindow() {
-  forwardCaptureSilentUntil = 0;
+function endForwardExtraSwallow() {
+  forwardExtraSwallowUntil = 0;
 }
 
-function isForwardCaptureSilentActive() {
-  return !!pendingForwardDownload || Date.now() < forwardCaptureSilentUntil;
+function shouldSwallowForwardExtraDownload() {
+  return Date.now() < forwardExtraSwallowUntil;
+}
+
+function swallowForwardExtraDownload(item) {
+  try {
+    item.cancel();
+  } catch {
+    try {
+      const dump = path.join(
+        forwardTempDir(),
+        `fwd-extra-${Date.now()}-${sanitizeForwardFilename(item.getFilename() || 'bin')}`,
+      );
+      item.setSavePath(dump);
+      item.once('done', () => {
+        try {
+          fs.unlinkSync(dump);
+        } catch {
+          // ignore
+        }
+      });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function promptGuestDownloadSave(item, defaultPath, downloadName = '') {
+  try {
+    item.pause();
+  } catch {
+    // ignore — older builds may not support pause
+  }
+  const parent =
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  try {
+    if (parent) {
+      if (parent.isMinimized()) parent.restore();
+      parent.show();
+      parent.focus();
+      parent.moveTop?.();
+    }
+  } catch {
+    // ignore
+  }
+  const suggested = String(defaultPath || '').trim();
+  const intendedName =
+    String(downloadName || '').trim() ||
+    item.getFilename?.() ||
+    path.basename(suggested) ||
+    'download';
+
+  const finishWithPath = (pickedPath) => {
+    // Drop the dialog suggestion reservation before resolving the final path
+    // so the suggested unique name is not treated as already taken.
+    releaseDownloadPath(suggested);
+    const finalPath = resolveSavePathAfterPrompt(pickedPath, intendedName);
+    try {
+      item.setSavePath(finalPath);
+      item.resume();
+    } catch {
+      try {
+        item.setSavePath(finalPath || suggested);
+        item.resume();
+      } catch {
+        releaseDownloadPath(finalPath);
+        releaseDownloadPath(suggested);
+        return;
+      }
+    }
+  };
+
+  const cancelItem = () => {
+    releaseDownloadPath(suggested);
+    try {
+      item.cancel();
+    } catch {
+      // ignore
+    }
+  };
+
+  dialog
+    .showSaveDialog(parent, {
+      title: 'Save download',
+      defaultPath: suggested,
+      buttonLabel: 'Save',
+      nameFieldLabel: 'File name:',
+      properties: ['createDirectory'],
+    })
+    .then(({ canceled, filePath }) => {
+      if (canceled || !filePath) {
+        cancelItem();
+        return;
+      }
+      finishWithPath(filePath);
+    })
+    .catch(() => {
+      try {
+        item.setSaveDialogOptions({
+          title: 'Save download',
+          defaultPath: suggested,
+          buttonLabel: 'Save',
+          ...(parent ? { window: parent } : {}),
+        });
+        item.resume();
+        item.once?.('done', () => releaseDownloadPath(suggested));
+      } catch {
+        try {
+          finishWithPath(suggested);
+        } catch {
+          cancelItem();
+        }
+      }
+    });
 }
 /** Floating Chrome-like Extensions manager. */
 let extensionsWindow = null;
@@ -895,6 +1036,73 @@ function isMessagingApp(service) {
   return id === 'whatsapp' || id === 'arattai';
 }
 
+/** Defer inbox scrape while PDF/media preview is open (common in group chats). */
+const scrapeDeferTimers = new Map();
+const SCRAPE_DEFER_MS = 5_000;
+
+function guestMediaViewerOpenJs() {
+  return `(() => {
+    if (document.querySelector('embed[type="application/pdf"], object[type="application/pdf"], .pdfViewer, #viewer')) {
+      return true;
+    }
+    const roots = [];
+    const dialog = document.querySelector('[role="dialog"]');
+    if (dialog) roots.push(dialog);
+    const viewer = document.querySelector(
+      '[data-testid="media-viewer"], [data-testid="media-viewer-modal"], #media-viewer, .media-viewer',
+    );
+    if (viewer) roots.push(viewer);
+    for (const root of roots) {
+      if (root.querySelector('embed, object, iframe, canvas, video, img[src^="blob:"]')) return true;
+      const label = (root.getAttribute('aria-label') || root.textContent || '').slice(0, 240);
+      if (/\\bPDF\\b|application\\/pdf|document preview/i.test(label)) return true;
+    }
+    return false;
+  })()`;
+}
+
+function serviceHasBlobPreviewPopup(serviceId) {
+  const set = servicePopups.get(serviceId);
+  if (!set?.size) return false;
+  for (const win of set) {
+    try {
+      if (win.isDestroyed?.()) continue;
+      const url = String(win.webContents?.getURL?.() || '');
+      if (/^blob:|^data:/i.test(url)) return true;
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+}
+
+async function serviceIsBusyWithMediaViewer(serviceId) {
+  if (serviceHasBlobPreviewPopup(serviceId)) return true;
+  const wc = views.get(serviceId)?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return false;
+  try {
+    return await wc.executeJavaScript(guestMediaViewerOpenJs(), true);
+  } catch {
+    return false;
+  }
+}
+
+function scheduleDeferredInboxScrape(service, run) {
+  const key = String(service?.id || '');
+  if (!key || scrapeDeferTimers.has(key)) return;
+  scrapeDeferTimers.set(
+    key,
+    setTimeout(async () => {
+      scrapeDeferTimers.delete(key);
+      if (await serviceIsBusyWithMediaViewer(key)) {
+        scheduleDeferredInboxScrape(service, run);
+        return;
+      }
+      run();
+    }, SCRAPE_DEFER_MS),
+  );
+}
+
 /** WhatsApp/Arattai QR or phone-link screens — never reload these. */
 async function guestLooksLikeLoginOrPairing(webContents, service) {
   if (!webContents || webContents.isDestroyed()) return false;
@@ -996,6 +1204,11 @@ async function runActiveGuestSurfaceHealthCheck(id, { fromPoll = false } = {}) {
   }
 
   if (await guestLooksLikeLoginOrPairing(wc, service)) {
+    entry.__surfaceBlankStrikes = 0;
+    return;
+  }
+
+  if (isMessagingApp(service) && (await serviceIsBusyWithMediaViewer(id))) {
     entry.__surfaceBlankStrikes = 0;
     return;
   }
@@ -1247,13 +1460,13 @@ function getAppConfig(id) {
   const raw = getRawInstance(id);
   const appId = raw?.appId || id;
   const stored = (settings.serviceConfigs || {})[id] || {};
-  // Messaging sessions die if hibernated mid-pairing — keep them warm by default
-  // unless the user explicitly turned keepWarm off.
-  const messagingDefault =
+  // Messaging + Zoho form apps stay warm by default unless the user turned
+  // keepWarm off — otherwise switching tabs wiped unsaved CRM/Books drafts.
+  const warmDefault =
     defaultKeepWarmForApp(appId) && stored.keepWarm === undefined
       ? { keepWarm: true }
       : {};
-  return mergeAppConfig({ ...messagingDefault, ...stored });
+  return mergeAppConfig({ ...warmDefault, ...stored });
 }
 
 function saveAppConfig(id, patch) {
@@ -1590,6 +1803,7 @@ function openInternalLinkAsHubTab(sourceService, url) {
   if (!String(url).startsWith('http')) return false;
   if (!isInternalUrl(url, sourceService)) return false;
   if (isAuthOrLoginUrl(url)) return false;
+  if (isZohoAssetHost(url)) return false;
   if (totalAppCount() >= MAX_APPS_TOTAL) return false;
   if (countInstances(sourceService.appId) >= MAX_INSTANCES_PER_APP) return false;
 
@@ -1645,7 +1859,7 @@ function listLinkTabInstances() {
  * Zoho shared-login deep links reuse the source profile; other links become
  * temporary custom tabs (recyclable when the bar is full).
  */
-function openUrlAsHubAppTab(url, sourceService = null) {
+function openUrlAsHubAppTab(url, sourceService = null, opts = {}) {
   const href = String(url || '').trim();
   if (!href.startsWith('http')) {
     return { ok: false, error: 'Invalid link' };
@@ -1706,7 +1920,10 @@ function openUrlAsHubAppTab(url, sourceService = null) {
   }
 
   const id = `${CUSTOM_APP_ID}-${slot}-${Date.now().toString(36)}`;
-  const name = tabNameFromUrl(href);
+  const preferredName = String(opts?.tabName || '').trim();
+  const name = preferredName
+    ? clampAppName(preferredName)
+    : tabNameFromUrl(href);
   const profileId =
     getProfile(PRIMARY_PROFILE_ID)?.id || PRIMARY_PROFILE_ID;
   const sourceAppId = sourceService?.appId || null;
@@ -1877,7 +2094,8 @@ function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
     }
     return false;
   }
-  // Catalog apps (Gmail/Zoho/…): same-ecosystem URLs never become Hub link tabs.
+  // Catalog apps (Gmail/Zoho/…): same-ecosystem URLs stay in-tab — except Zoho
+  // CRM/Books/One deep links, which open as shared-login Hub tabs (multi-screen).
   if (!(service?.isCustom || service?.linkTab) && isSameEcosystemUrl(service, href)) {
     if (
       isGoogleOauthClientUrl(href) ||
@@ -1896,6 +2114,15 @@ function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
       } catch {
         // ignore
       }
+    }
+    if (
+      shouldOpenZohoSharedDeepLinkAsHubTab(service, href) &&
+      shouldOpenAsHubTab(effectiveLinkHandling(service)) &&
+      openInternalLinkAsHubTab(service, href)
+    ) {
+      return true;
+    }
+    if (webContents && !webContents.isDestroyed()) {
       webContents.loadURL(href).catch(() => {});
       return true;
     }
@@ -2110,6 +2337,32 @@ function chromeMenuHandle(channel, handler) {
   });
 }
 
+function findBarHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !findBarWindow ||
+      findBarWindow.isDestroyed() ||
+      event.sender !== findBarWindow.webContents
+    ) {
+      throw new Error('Unauthorized find-bar IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
+function webSearchHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !webSearchWindow ||
+      webSearchWindow.isDestroyed() ||
+      event.sender !== webSearchWindow.webContents
+    ) {
+      throw new Error('Unauthorized web-search IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
 function notifCenterHandle(channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
     if (
@@ -2257,13 +2510,19 @@ function parkGuestView(entry, viewId = null) {
   }
 }
 
-/** Detach non-warm guests; park warm ones off-screen (still visible to Chromium). */
+/**
+ * Park warm + recently-used tabs off-screen (keeps Zoho/CRM SPAs alive on
+ * Mint XFCE). Only detach truly stale non-warm guests.
+ */
 function parkBackgroundViews(exceptId = null) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   for (const [viewId, entry] of views.entries()) {
     if (viewId === exceptId) continue;
-    if (isKeepWarmService(viewId)) parkGuestView(entry, viewId);
-    else detachGuestView(entry.view);
+    if (isKeepWarmService(viewId) || !isEvictableBackground(viewId, entry)) {
+      parkGuestView(entry, viewId);
+    } else {
+      detachGuestView(entry.view);
+    }
   }
 }
 
@@ -2967,6 +3226,244 @@ function closeChromeMenuWindow() {
   }
 }
 
+function closeFindBarWindow({ clear = true } = {}) {
+  if (clear) {
+    try {
+      stopFindInActivePage();
+    } catch {
+      // ignore
+    }
+  }
+  if (!findBarWindow || findBarWindow.isDestroyed()) {
+    findBarWindow = null;
+    return;
+  }
+  const win = findBarWindow;
+  findBarWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+  // Return keyboard focus to the active guest after closing the popup.
+  try {
+    focusActiveContents();
+  } catch {
+    // ignore
+  }
+}
+
+function isFindBarOpen() {
+  return !!(findBarWindow && !findBarWindow.isDestroyed());
+}
+
+function closeWebSearchWindow() {
+  if (!webSearchWindow || webSearchWindow.isDestroyed()) {
+    webSearchWindow = null;
+    return;
+  }
+  const win = webSearchWindow;
+  webSearchWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+  try {
+    focusActiveContents();
+  } catch {
+    // ignore
+  }
+}
+
+function isWebSearchOpen() {
+  return !!(webSearchWindow && !webSearchWindow.isDestroyed());
+}
+
+/**
+ * Floating Google Web-search popup (Aspera AI / Find pattern).
+ * Enter opens results in a Hub link tab — WhatsApp stays put.
+ */
+function openWebSearchWindow({ dark = null } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  if (isWebSearchOpen()) {
+    try {
+      webSearchWindow.show();
+      webSearchWindow.focus();
+      webSearchWindow.webContents.focus();
+      webSearchWindow.webContents.send('web-search:init', {
+        query: webSearchLastQuery,
+      });
+    } catch {
+      // ignore
+    }
+    return { ok: true, focused: true };
+  }
+
+  closeFindBarWindow({ clear: false });
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAppContextMenu();
+
+  const barW = 480;
+  const barH = 132;
+  const content = mainWindow.getContentBounds();
+  const chromeTop = Math.max(48, Number(effectiveMetrics().top) || 78);
+  const rawX = content.x + Math.max(12, Math.floor((content.width - barW) / 2));
+  const rawY = content.y + chromeTop + 10;
+  const pos = clampFloatPosition(rawX, rawY, barW, barH);
+  const darkNow =
+    typeof dark === 'boolean' ? dark : !!nativeTheme.shouldUseDarkColors;
+
+  webSearchWindow = createFloatBrowserWindow({
+    width: barW,
+    height: barH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'webSearchPreload.js',
+    dark: darkNow,
+  });
+
+  const win = webSearchWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildWebSearchHtml(darkNow))}`,
+  );
+
+  win.webContents.once('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    win.webContents.send('web-search:init', { query: webSearchLastQuery });
+  });
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return;
+    win.show();
+    try {
+      if (typeof win.moveTop === 'function') win.moveTop();
+    } catch {
+      // ignore
+    }
+    win.focus();
+    try {
+      win.webContents.focus();
+    } catch {
+      // ignore
+    }
+    setTimeout(() => {
+      if (win.isDestroyed()) return;
+      try {
+        win.focus();
+        win.webContents.focus();
+      } catch {
+        // ignore
+      }
+    }, 40);
+  });
+  win.on('closed', () => {
+    if (webSearchWindow === win) webSearchWindow = null;
+  });
+
+  return { ok: true };
+}
+
+function runWebSearch(text) {
+  const query = String(text || '');
+  webSearchLastQuery = query.trim();
+  const href = resolveWebSearchInput(query);
+  if (!href) return { ok: false, error: 'Empty search' };
+  const result = openUrlAsHubAppTab(href, null, {
+    tabName: webSearchTabName(query),
+  });
+  closeWebSearchWindow();
+  return result;
+}
+
+/**
+ * Floating Find popup above the guest. In-page HTML cannot paint over
+ * WebContentsView, so we must not push the page down to reveal a chrome bar.
+ */
+function openFindBarWindow({ dark = null } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  if (isFindBarOpen()) {
+    try {
+      findBarWindow.show();
+      findBarWindow.focus();
+      findBarWindow.webContents.focus();
+      findBarWindow.webContents.send('find-bar:init', {
+        query: findBarLastQuery,
+      });
+    } catch {
+      // ignore
+    }
+    return { ok: true, focused: true };
+  }
+
+  closeWebSearchWindow();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAppContextMenu();
+
+  const barW = 360;
+  const barH = 56;
+  const content = mainWindow.getContentBounds();
+  const chromeTop = Math.max(48, Number(effectiveMetrics().top) || 78);
+  const rawX = content.x + content.width - barW - 12;
+  const rawY = content.y + chromeTop + 8;
+  const pos = clampFloatPosition(rawX, rawY, barW, barH);
+  const darkNow =
+    typeof dark === 'boolean' ? dark : !!nativeTheme.shouldUseDarkColors;
+
+  findBarWindow = createFloatBrowserWindow({
+    width: barW,
+    height: barH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'findBarPreload.js',
+    dark: darkNow,
+  });
+
+  const win = findBarWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildFindBarHtml(darkNow))}`,
+  );
+
+  win.webContents.once('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    win.webContents.send('find-bar:init', { query: findBarLastQuery });
+  });
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return;
+    win.show();
+    // XFCE / Cinnamon focus-stealing: raise + focus so typing works immediately.
+    try {
+      if (typeof win.moveTop === 'function') win.moveTop();
+    } catch {
+      // ignore
+    }
+    win.focus();
+    try {
+      win.webContents.focus();
+    } catch {
+      // ignore
+    }
+    setTimeout(() => {
+      if (win.isDestroyed()) return;
+      try {
+        win.focus();
+        win.webContents.focus();
+      } catch {
+        // ignore
+      }
+    }, 40);
+  });
+  // Do NOT close on blur — user clicks the page to read match highlights.
+  win.on('closed', () => {
+    if (findBarWindow === win) findBarWindow = null;
+  });
+
+  return { ok: true };
+}
+
 function closeNotifCenterWindow() {
   if (!notifCenterWindow || notifCenterWindow.isDestroyed()) {
     notifCenterWindow = null;
@@ -3080,6 +3577,7 @@ function stageHubForwardClipboard(write) {
 function closeAllFloatMenus() {
   closeAppContextMenu();
   closeChromeMenuWindow();
+  closeFindBarWindow({ clear: true });
   closeNotifCenterWindow();
   closeAiResultWindow();
   closeForwardPickerWindow();
@@ -3098,19 +3596,6 @@ function clampFloatPosition(screenX, screenY, menuW, menuH) {
   return { x: Math.round(x), y: Math.round(y) };
 }
 
-/** Linux Mint XFCE (and similar) without a compositor paint transparent windows badly. */
-function linuxUsesOpaqueOverlays() {
-  if (process.platform !== 'linux') return false;
-  const de = `${process.env.XDG_CURRENT_DESKTOP || ''} ${process.env.DESKTOP_SESSION || ''} ${process.env.GDMSESSION || ''}`.toLowerCase();
-  return (
-    de.includes('xfce') ||
-    de.includes('xubuntu') ||
-    de.includes('lxde') ||
-    de.includes('lxqt') ||
-    de.includes('openbox')
-  );
-}
-
 function createFloatBrowserWindow({
   width,
   height,
@@ -3119,6 +3604,7 @@ function createFloatBrowserWindow({
   preload,
   dark = false,
 }) {
+  // Mint XFCE / MATE (weak compositor): opaque. Cinnamon / Ubuntu GNOME: transparent OK.
   const opaque = linuxUsesOpaqueOverlays();
   const win = new BrowserWindow({
     parent: mainWindow,
@@ -3331,11 +3817,12 @@ function buildNotifCenterData() {
   return buildNotifCenterDataSync([]);
 }
 
-async function scrapeUnreadChatsForService(service) {
+async function scrapeUnreadChatsForService(service, { allowDefer = true } = {}) {
   if (!service || !isInboxAppId(service.appId)) return [];
   if (whatsappAutomationBlocked(settings, service.appId)) return [];
   const wc = views.get(service.id)?.view?.webContents;
   if (!wc || wc.isDestroyed()) return [];
+  if (allowDefer && (await serviceIsBusyWithMediaViewer(service.id))) return [];
   try {
     const result = await wc.executeJavaScript(scrapeMessagingInboxJs(), true);
     const at = Date.now();
@@ -4640,6 +5127,10 @@ function handleChromeMenuAction(type) {
   }
   if (type === 'extensions') {
     openExtensionsWindow({ dark: false });
+    return { ok: true };
+  }
+  if (type === 'web-search') {
+    openWebSearchWindow();
     return { ok: true };
   }
   if (type === 'search') {
@@ -6067,84 +6558,93 @@ function configureSession(partitionSession, partitionKey) {
 
   partitionSession.on('will-download', (_event, item) => {
     // Silent capture for Forward-with-Hub (must not show Save dialog).
-    // Keep hijacking for the whole capture window — preview Download often
-    // fires multiple items; only the first should fulfill the promise.
-    if (isForwardCaptureSilentActive()) {
-      const pending = pendingForwardDownload;
-      if (pending) {
-        pendingForwardDownload = null;
-        try {
-          const hinted = String(pending.fileName || '').trim();
-          const rawName = hinted || item.getFilename() || 'document.bin';
-          const name = sanitizeForwardFilename(
-            rawName,
-            extensionOf(rawName) || 'bin',
-          );
-          const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
-          item.setSavePath(savePath);
-          item.once('done', (_e, state) => {
-            if (state === 'completed') {
-              rememberGuestDownload(savePath, name);
-              pending.resolve(item.getSavePath());
-            } else {
-              pending.reject(new Error(`Download ${state}`));
-            }
-          });
-        } catch (error) {
-          try {
-            item.cancel();
-          } catch {
-            // ignore
-          }
-          pending.reject(error);
-        }
-        return;
-      }
-      // Extra download during Forward capture — swallow silently (no Save dialog).
+    const pending = pendingForwardDownload;
+    if (pending) {
+      pendingForwardDownload = null;
       try {
-        item.cancel();
-      } catch {
+        const hinted = String(pending.fileName || '').trim();
+        const rawName = hinted || item.getFilename() || 'document.bin';
+        const name = sanitizeForwardFilename(
+          rawName,
+          extensionOf(rawName) || 'bin',
+        );
+        const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
+        item.setSavePath(savePath);
+        item.once('done', (_e, state) => {
+          if (state === 'completed') {
+            rememberGuestDownload(savePath, name);
+            pending.resolve(item.getSavePath());
+          } else {
+            pending.reject(new Error(`Download ${state}`));
+          }
+        });
+      } catch (error) {
         try {
-          const dump = path.join(
-            forwardTempDir(),
-            `fwd-extra-${Date.now()}-${sanitizeForwardFilename(item.getFilename() || 'bin')}`,
-          );
-          item.setSavePath(dump);
-          item.once('done', () => {
-            try {
-              fs.unlinkSync(dump);
-            } catch {
-              // ignore
-            }
-          });
+          item.cancel();
         } catch {
           // ignore
         }
+        pending.reject(error);
       }
+      // Swallow duplicate DownloadItems from the same preview click briefly.
+      beginForwardExtraSwallow();
       return;
     }
 
-    if (settings.downloadPath) {
-      item.setSavePath(path.join(settings.downloadPath, item.getFilename()));
-    } else {
-      // Ask every time — use Electron's async save dialog (never Sync: it freezes Hub).
+    if (shouldSwallowForwardExtraDownload()) {
+      swallowForwardExtraDownload(item);
+      return;
+    }
+
+    // One click can emit two DownloadItems (preview + real). A second Save
+    // dialog reuses GTK's sticky last filename — Maharashtra then "replaces"
+    // into Karnataka.pdf. Cancel near-duplicate prompts.
+    const downloadName = item.getFilename() || 'download';
+    const downloadUrl = typeof item.getURL === 'function' ? item.getURL() : '';
+    const dedupeKey = `${downloadUrl}|${downloadName}|${item.getTotalBytes?.() || 0}`;
+    const now = Date.now();
+    if (
+      dedupeKey &&
+      dedupeKey === lastGuestDownloadDedupeKey &&
+      now - lastGuestDownloadDedupeAt < 2_000
+    ) {
       try {
-        item.setSaveDialogOptions({
-          title: 'Save download',
-          defaultPath: path.join(app.getPath('downloads'), item.getFilename()),
-        });
+        item.cancel();
       } catch {
-        // Older Electron: fall back to downloads folder without blocking the UI.
-        item.setSavePath(
-          path.join(app.getPath('downloads'), item.getFilename()),
-        );
+        // ignore
       }
+      return;
+    }
+    lastGuestDownloadDedupeKey = dedupeKey;
+    lastGuestDownloadDedupeAt = now;
+
+    const downloadDir = String(settings.downloadPath || '').trim();
+    let savePathClaimed = '';
+    if (downloadDir) {
+      savePathClaimed = uniqueDownloadPath(downloadDir, downloadName);
+      item.setSavePath(savePathClaimed);
+    } else {
+      const defaultPath = uniqueDownloadPath(
+        app.getPath('downloads'),
+        downloadName,
+      );
+      savePathClaimed = defaultPath;
+      promptGuestDownloadSave(item, defaultPath, downloadName);
     }
     item.once('done', (_e, state) => {
+      const savePath = item.getSavePath?.() || savePathClaimed;
+      releaseDownloadPath(savePath);
+      releaseDownloadPath(savePathClaimed);
       if (state !== 'completed') return;
-      const savePath = item.getSavePath();
-      rememberGuestDownload(savePath, item.getFilename?.() || path.basename(savePath));
-      if (settings.openFolderOnDownload) shell.showItemInFolder(savePath);
+      rememberGuestDownload(
+        savePath,
+        item.getFilename?.() || path.basename(savePath),
+      );
+      // After Save As, opening the folder is redundant and Thunar can cover
+      // the next Save dialog on XFCE — only auto-open for fixed download dirs.
+      if (settings.openFolderOnDownload && downloadDir) {
+        shell.showItemInFolder(savePath);
+      }
       if (settings.openFileOnDownload) shell.openPath(savePath);
     });
   });
@@ -6780,7 +7280,6 @@ function clickWebContentsAt(webContents, x, y) {
 }
 
 function armForwardDownload(fileName = '', timeoutMs = 12_000) {
-  beginForwardCaptureWindow(Math.max(timeoutMs + 2_000, 8_000));
   return new Promise((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(() => {
@@ -6795,9 +7294,7 @@ function armForwardDownload(fileName = '', timeoutMs = 12_000) {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        // Keep silent window briefly so duplicate DownloadItems from the same
-        // preview click cannot open the Save dialog.
-        beginForwardCaptureWindow(4_000);
+        beginForwardExtraSwallow();
         resolve(filePath);
       },
       reject: (error) => {
@@ -6814,6 +7311,7 @@ function disarmForwardDownload(downloadPromise) {
   if (pendingForwardDownload) {
     const pending = pendingForwardDownload;
     pendingForwardDownload = null;
+    endForwardExtraSwallow();
     try {
       pending.reject(new Error('cancelled'));
     } catch {
@@ -6991,8 +7489,6 @@ async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', 
     return { ok: false, error: 'Chat view is gone.' };
   }
 
-  beginForwardCaptureWindow(25_000);
-
   let clickPoints = Array.isArray(points) ? points.filter((p) => p && p.x >= 0 && p.y >= 0) : [];
   if (!clickPoints.length) {
     try {
@@ -7017,7 +7513,7 @@ async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', 
     try {
       const filePath = await downloadPromise;
       if (filePath) {
-        beginForwardCaptureWindow(4_000);
+        beginForwardExtraSwallow();
         return { ok: true, filePath };
       }
     } catch {
@@ -7068,7 +7564,7 @@ async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', 
       try {
         const filePath = await downloadPromise;
         if (filePath) {
-          beginForwardCaptureWindow(4_000);
+          beginForwardExtraSwallow();
           return { ok: true, filePath };
         }
       } catch {
@@ -7093,7 +7589,6 @@ function downloadForwardFile(webContents, url, fileName = '') {
       reject(new Error('No downloadable document URL.'));
       return;
     }
-    beginForwardCaptureWindow(50_000);
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
@@ -7107,7 +7602,7 @@ function downloadForwardFile(webContents, url, fileName = '') {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        beginForwardCaptureWindow(4_000);
+        beginForwardExtraSwallow();
         resolve(filePath);
       },
       reject: (error) => {
@@ -7282,7 +7777,6 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
 
   if (documentHint) {
     // Entire document capture must stay silent — no "Save download" dialogs.
-    beginForwardCaptureWindow(45_000);
     const hintedName = sanitizeForwardFilename(
       candidateName || 'document.pdf',
       extensionOf(candidateName) || extensionOf(candidateUrl) || 'pdf',
@@ -7294,91 +7788,86 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
       arattaiFullFileUrlFromAny(String(params.linkURL || ''), ctx.chatId) ||
       arattaiFullFileUrlFromAny(srcURL, ctx.chatId);
 
-    try {
-      // 0) PDF already open in Adobe / WhatsApp preview — read bytes (no Download click).
-      if (!filePath) {
-        const viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
-        if (viewer.ok) filePath = viewer.filePath;
-      }
+    // 0) PDF already open in Adobe / WhatsApp preview — read bytes (no Download click).
+    if (!filePath) {
+      const viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
+      if (viewer.ok) filePath = viewer.filePath;
+    }
 
-      // 1) User already downloaded this file in chat — reuse it.
-      if (!filePath) {
-        const recentPath = matchRecentDownload(
-          recentGuestDownloads,
-          hintedName,
-          ctx.nearbyText || candidateName,
-        );
-        if (recentPath && fs.existsSync(recentPath)) {
-          try {
-            const dest = path.join(
-              forwardTempDir(),
-              `${Date.now()}-${path.basename(recentPath)}`,
-            );
-            fs.copyFileSync(recentPath, dest);
-            filePath = dest;
-          } catch (error) {
-            console.warn('[forward] reuse recent download failed', error);
-          }
-        }
-      }
-
-      // 2) Arattai UDS via session cookies (more reliable than downloadURL).
-      if (!filePath && arattaiUrl) {
-        const fetched = await fetchArattaiDocumentViaSession(
-          webContents,
-          arattaiUrl,
-          hintedName,
-        );
-        if (fetched.ok) filePath = fetched.filePath;
-        else {
-          try {
-            filePath = await downloadForwardFile(webContents, arattaiUrl, hintedName);
-          } catch (error) {
-            console.warn('[forward] Arattai document URL download failed', error);
-          }
-        }
-      }
-
-      // 3) Direct URL download when we have a real document link (not image/blob thumbs).
-      if (
-        !filePath &&
-        candidateUrl &&
-        !/^data:image\//i.test(candidateUrl) &&
-        !/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(candidateUrl) &&
-        !/webdownload/i.test(candidateUrl)
-      ) {
+    // 1) User already downloaded this file in chat — reuse it.
+    if (!filePath) {
+      const recentPath = matchRecentDownload(
+        recentGuestDownloads,
+        hintedName,
+        ctx.nearbyText || candidateName,
+      );
+      if (recentPath && fs.existsSync(recentPath)) {
         try {
-          filePath = await downloadForwardFile(webContents, candidateUrl, hintedName);
+          const dest = path.join(
+            forwardTempDir(),
+            `${Date.now()}-${path.basename(recentPath)}`,
+          );
+          fs.copyFileSync(recentPath, dest);
+          filePath = dest;
         } catch (error) {
-          console.warn('[forward] document URL download failed', error);
+          console.warn('[forward] reuse recent download failed', error);
         }
       }
+    }
 
-      // 4) Click download control; extras during capture window are cancelled silently.
-      if (!filePath) {
-        const ui = await tryCaptureDocumentByUiDownload(
-          webContents,
-          params.x,
-          params.y,
-          hintedName,
-          ctx.downloadPoints,
-        );
-        if (ui.ok && ui.filePath) filePath = ui.filePath;
-        else console.warn('[forward] UI document download failed', ui.error);
+    // 2) Arattai UDS via session cookies (more reliable than downloadURL).
+    if (!filePath && arattaiUrl) {
+      const fetched = await fetchArattaiDocumentViaSession(
+        webContents,
+        arattaiUrl,
+        hintedName,
+      );
+      if (fetched.ok) filePath = fetched.filePath;
+      else {
+        try {
+          filePath = await downloadForwardFile(webContents, arattaiUrl, hintedName);
+        } catch (error) {
+          console.warn('[forward] Arattai document URL download failed', error);
+        }
       }
+    }
 
-      // 5) Retry session fetch after UI click (Arattai may warm the file).
-      if (!filePath && arattaiUrl) {
-        const fetched = await fetchArattaiDocumentViaSession(
-          webContents,
-          arattaiUrl,
-          hintedName,
-        );
-        if (fetched.ok) filePath = fetched.filePath;
+    // 3) Direct URL download when we have a real document link (not image/blob thumbs).
+    if (
+      !filePath &&
+      candidateUrl &&
+      !/^data:image\//i.test(candidateUrl) &&
+      !/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(candidateUrl) &&
+      !/webdownload/i.test(candidateUrl)
+    ) {
+      try {
+        filePath = await downloadForwardFile(webContents, candidateUrl, hintedName);
+      } catch (error) {
+        console.warn('[forward] document URL download failed', error);
       }
-    } finally {
-      // Keep a short silence tail so late duplicate DownloadItems cannot open Save.
-      beginForwardCaptureWindow(3_500);
+    }
+
+    // 4) Click download control; duplicate DownloadItems are swallowed briefly.
+    if (!filePath) {
+      const ui = await tryCaptureDocumentByUiDownload(
+        webContents,
+        params.x,
+        params.y,
+        hintedName,
+        ctx.downloadPoints,
+      );
+      if (ui.ok && ui.filePath) filePath = ui.filePath;
+      else console.warn('[forward] UI document download failed', ui.error);
+    }
+
+    // 5) Retry session fetch after UI click (Arattai may warm the file).
+    if (!filePath && arattaiUrl) {
+      const fetched = await fetchArattaiDocumentViaSession(
+        webContents,
+        arattaiUrl,
+        hintedName,
+      );
+      if (fetched.ok) filePath = fetched.filePath;
     }
 
     if (filePath && fs.existsSync(filePath)) {
@@ -8761,6 +9250,7 @@ function attachGuestContextMenu(webContents) {
       // Never replace WhatsApp/Arattai/etc. with a third-party site via this
       // menu — that looked like “Open in tab” but covered the messenger.
       // Link tabs (and same-app URLs) may navigate in place.
+      // Zoho CRM/Books/One also offer Hub tab so lead/deal links can multi-screen.
       if (isLinkTabGuest || linkIsInternal) {
         template.push({
           label: 'Open link in this tab',
@@ -8769,7 +9259,11 @@ function attachGuestContextMenu(webContents) {
             webContents.loadURL(safeLink).catch(() => {});
           },
         });
-      } else {
+      }
+      if (
+        !isLinkTabGuest &&
+        (!linkIsInternal || shouldOpenZohoSharedDeepLinkAsHubTab(live, safeLink))
+      ) {
         template.push({
           label: 'Open in Hub tab',
           click: () => {
@@ -8800,6 +9294,10 @@ function attachGuestContextMenu(webContents) {
             ) {
               webContents.loadURL(safeLink).catch(() => {});
               return;
+            }
+            // Zoho shared deep links reuse the same profile/session.
+            if (shouldOpenZohoSharedDeepLinkAsHubTab(live, safeLink)) {
+              if (openInternalLinkAsHubTab(live, safeLink)) return;
             }
             // Force a real top-bar tab (ignore temporary external/block modes).
             const opened = openUrlAsHubAppTab(safeLink, live);
@@ -9048,6 +9546,10 @@ function guestNavigationApi() {
     startUrlForService,
     handleOutboundOrNewWindowLink,
     guestWebPreferences,
+    tryOpenZohoSharedHubTab: (svc, url) => {
+      if (!shouldOpenAsHubTab(effectiveLinkHandling(svc))) return false;
+      return openInternalLinkAsHubTab(svc, url);
+    },
   };
 }
 
@@ -9169,25 +9671,9 @@ function attachZohoPopupAdoptToHubTab(parentWc, childWindow, service) {
     }
     if (!popupUrl.startsWith('http') || isAuthOrLoginUrl(popupUrl)) return;
     if (!isInternalUrl(popupUrl, service)) return;
+    if (isZohoAssetHost(popupUrl)) return;
 
-    // Zoho CRM/Books open first-party pages in popups during normal usage.
-    // Keep those in the same app tab to avoid surprise extra top-bar tabs.
-    if (
-      (service?.appId === 'zoho-books' || service?.appId === 'zoho-crm') &&
-      parentWc &&
-      !parentWc.isDestroyed()
-    ) {
-      parentWc.loadURL(popupUrl).catch(() => {});
-      adopting = true;
-      setTimeout(() => {
-        try {
-          if (!childWindow.isDestroyed()) childWindow.close();
-        } catch {
-          // ignore
-        }
-      }, 120);
-      return;
-    }
+    // Zoho CRM/Books/One deep links → shared-login Hub tabs (same profile).
     if (!openInternalLinkAsHubTab(service, popupUrl)) return;
     adopting = true;
     setTimeout(() => {
@@ -9265,8 +9751,13 @@ function createViewForService(service) {
   webContents.on('did-create-window', (childWindow) => {
     const childWc = childWindow.webContents;
     trackServicePopup(service.id, childWindow);
-    configureGuestWindowOpen(childWc, service);
     attachGuestContextMenu(childWc);
+    watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
+
+    // WhatsApp/Arattai PDF and photo previews are read-only blob windows.
+    if (isMessagingApp(service)) return;
+
+    configureGuestWindowOpen(childWc, service);
     attachGuestNavigationGate(childWc, service);
     attachPopupSessionAdopt(webContents, childWindow, service);
     attachLinkTabPopupAdopt(webContents, childWindow, service);
@@ -9278,7 +9769,6 @@ function createViewForService(service) {
         enabled: settings.googleSpoofEnabled !== false,
       }).catch(() => {});
     }
-    watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
   });
 
   webContents.on('console-message', (event, level, message) => {
@@ -9316,37 +9806,44 @@ function createViewForService(service) {
     if (next > previous && next > baseline) {
       if (entry) entry.__titleCountBaseline = next;
       // Prefer per-chat cards with last-message preview over a bare "N unread".
-      scrapeUnreadChatsForService(service)
-        .then((chats) => {
-          if (chats.length) {
-            chats.slice(0, 8).forEach((chat, index) => {
-              emitServiceNotification(service, {
-                title: chat.name,
-                body:
-                  chat.preview ||
-                  (chat.unread > 1
-                    ? `${chat.unread} unread messages`
-                    : 'New message'),
-                fromTitleCount: false,
-                // One desktop toast; the rest fill the in-app center.
-                showOs: index === 0,
+      const runScrape = () => {
+        scrapeUnreadChatsForService(service, { allowDefer: false })
+          .then((chats) => {
+            if (chats.length) {
+              chats.slice(0, 8).forEach((chat, index) => {
+                emitServiceNotification(service, {
+                  title: chat.name,
+                  body:
+                    chat.preview ||
+                    (chat.unread > 1
+                      ? `${chat.unread} unread messages`
+                      : 'New message'),
+                  fromTitleCount: false,
+                  // One desktop toast; the rest fill the in-app center.
+                  showOs: index === 0,
+                });
               });
+              return;
+            }
+            emitServiceNotification(service, {
+              title: service.title || service.name,
+              body: `${next} unread`,
+              fromTitleCount: true,
             });
-            return;
-          }
-          emitServiceNotification(service, {
-            title: service.title || service.name,
-            body: `${next} unread`,
-            fromTitleCount: true,
+          })
+          .catch(() => {
+            emitServiceNotification(service, {
+              title: service.title || service.name,
+              body: `${next} unread`,
+              fromTitleCount: true,
+            });
           });
-        })
-        .catch(() => {
-          emitServiceNotification(service, {
-            title: service.title || service.name,
-            body: `${next} unread`,
-            fromTitleCount: true,
-          });
-        });
+      };
+      serviceIsBusyWithMediaViewer(service.id).then((busy) => {
+        if (busy) scheduleDeferredInboxScrape(service, runScrape);
+        else runScrape();
+      });
+      return;
     }
   });
 
@@ -9507,6 +10004,12 @@ function createViewForService(service) {
   });
   webContents.on('did-finish-load', () => {
     try {
+      // Guest reload must not resurrect sticky yellow find marks from a prior session.
+      if (!isFindBarOpen()) {
+        findBarLastQuery = '';
+        findBarRequestId = 0;
+        clearGuestFindHighlights(webContents);
+      }
       const url = webContents.getURL();
       rememberGoodUrl(service.id, url);
       if (isGoogleService(service)) noteGoogleMarketingLanding(service.id, url);
@@ -9539,10 +10042,48 @@ function createViewForService(service) {
 
   attachShortcuts(webContents);
   webContents.on('found-in-page', (_event, result) => {
-    mainWindow?.webContents.send('dock:find-result', {
-      activeMatchOrdinal: result.activeMatchOrdinal,
-      matches: result.matches,
-    });
+    // User cleared the query (or closed Find) while this request was in flight —
+    // do not keep yellow matches painted on the guest page.
+    if (!findBarLastQuery) {
+      clearGuestFindHighlights(webContents);
+      if (isFindBarOpen()) {
+        try {
+          findBarWindow.webContents.send('find-bar:result', {
+            activeMatchOrdinal: 0,
+            matches: 0,
+          });
+        } catch {
+          // ignore
+        }
+      }
+      return;
+    }
+    // Typing "aspera" fires find("a"), find("as"), … — a late reply for "a"
+    // must not win after the full-string search (that painted every letter a).
+    if (
+      findBarRequestId &&
+      result?.requestId &&
+      result.requestId !== findBarRequestId
+    ) {
+      return;
+    }
+    const matches = Number(result?.matches) || 0;
+    if (matches <= 0) {
+      // Zero-match queries must not leave the previous query's yellow marks.
+      clearGuestFindHighlights(webContents);
+    }
+    const payload = {
+      activeMatchOrdinal: matches ? result.activeMatchOrdinal || 0 : 0,
+      matches,
+    };
+    mainWindow?.webContents.send('dock:find-result', payload);
+    if (isFindBarOpen()) {
+      try {
+        findBarWindow.webContents.send('find-bar:result', payload);
+      } catch {
+        // ignore
+      }
+    }
   });
   webContents.loadURL(startUrlForService(service));
 
@@ -9741,9 +10282,15 @@ function flushAllSessionCookies() {
   }
 }
 
-/** Warm status is chosen per app by the user; catalog type has no priority. */
+/** Warm status — includes catalog defaults (WhatsApp / Zoho) when unset. */
 function isKeepWarmService(id) {
   return getAppConfig(id).keepWarm === true;
+}
+
+/** User flame-marked keepWarm only (for the warm-slot quota). */
+function isExplicitKeepWarm(id) {
+  const stored = (settings.serviceConfigs || {})[id] || {};
+  return stored.keepWarm === true;
 }
 
 function warmSelectionLimit() {
@@ -9757,13 +10304,49 @@ function selectedWarmIds() {
     .map((service) => service.id);
 }
 
+function explicitWarmIds() {
+  return orderedServices()
+    .filter((service) => service.config?.enabled !== false && isExplicitKeepWarm(service.id))
+    .map((service) => service.id);
+}
+
 function reconcileWarmSelections() {
-  const selected = selectedWarmIds();
+  // Only demote user flame marks — never persist keepWarm:false over catalog defaults
+  // (that used to wipe Zoho CRM draft retention after Settings save).
+  const selected = explicitWarmIds();
   const limit = warmSelectionLimit();
   for (const id of selected.slice(limit)) {
     saveAppConfig(id, { keepWarm: false });
-    if (id !== activeServiceId) hibernateService(id);
+    if (id !== activeServiceId && !defaultKeepWarmForApp(getService(id)?.appId)) {
+      hibernateService(id);
+    }
   }
+}
+
+/**
+ * Recently used non-warm tabs stay resident so form drafts survive tab
+ * switches (e.g. CRM ↔ WhatsApp). Idle hibernate still unloads later.
+ * Low-memory Mint PCs skip the grace so RAM stays tight.
+ */
+function residentGraceMs() {
+  if (isLowMemoryMode()) return 0;
+  return 20 * 60_000;
+}
+
+function isEvictableBackground(id, entry) {
+  if (!id || id === activeServiceId) return false;
+  if (isKeepWarmService(id)) return false;
+  const grace = residentGraceMs();
+  if (!grace) return true;
+  const last = Number(entry?.lastUsed) || 0;
+  if (last && Date.now() - last < grace) return false;
+  return true;
+}
+
+function listEvictableBackground() {
+  return [...views.entries()]
+    .filter(([viewId, entry]) => isEvictableBackground(viewId, entry))
+    .sort((a, b) => (a[1].lastUsed || 0) - (b[1].lastUsed || 0));
 }
 
 /** Background wake — loads without stealing the active tab. */
@@ -9772,10 +10355,8 @@ function softWakeService(id) {
   const service = getService(id);
   if (!service || service.config?.enabled === false) return false;
 
-  // Never park warm apps. Only drop non-warm background views for budget.
-  const evictable = [...views.entries()]
-    .filter(([viewId]) => viewId !== activeServiceId && !isKeepWarmService(viewId))
-    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+  // Never park warm apps. Only drop stale non-warm background views for budget.
+  const evictable = listEvictableBackground();
   while (views.size >= maxWarm() && evictable.length) {
     const [victimId] = evictable.shift();
     hibernateService(victimId);
@@ -9825,10 +10406,8 @@ function softWakeKeepWarmApps(exceptId = null) {
 
 function enforceResidentLimit() {
   // Usability first: never park flame/keepWarm apps for RAM.
-  // Only unload non-warm background guests beyond the warm budget.
-  const evictable = [...views.entries()]
-    .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
-    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+  // Only unload stale non-warm background guests beyond the warm budget.
+  const evictable = listEvictableBackground();
 
   while (views.size > maxWarm() && evictable.length) {
     const [id] = evictable.shift();
@@ -9837,9 +10416,7 @@ function enforceResidentLimit() {
 }
 
 function enforceWarmLimit() {
-  const evictable = [...views.entries()]
-    .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
-    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+  const evictable = listEvictableBackground();
 
   while (views.size > maxWarm() && evictable.length) {
     const [id] = evictable.shift();
@@ -9855,7 +10432,8 @@ function toggleKeepWarm(id) {
   const enabled = !isKeepWarmService(id);
   if (enabled) {
     const limit = warmSelectionLimit();
-    if (selectedWarmIds().length >= limit) {
+    // Quota applies to user flame marks; catalog defaults (WA/Zoho) stay free.
+    if (explicitWarmIds().length >= limit) {
       return {
         ok: false,
         error:
@@ -9919,6 +10497,13 @@ function activateService(id) {
 
   const previousId = activeServiceId;
   parkBackgroundViews(id);
+  // Reused warm CRM/Books tabs must NOT run blank-recovery reload — that wiped
+  // lead forms ~3–4s after switching back (false “blank” on white forms).
+  const reusedLiveView = (() => {
+    const existing = views.get(id);
+    const existingWc = existing?.view?.webContents;
+    return !!(existingWc && !existingWc.isDestroyed());
+  })();
   const entry = ensureLiveView(service);
   const keepWarm = isKeepWarmService(id);
   // Blind stale-reload destroyed warm Zoho/Arattai after ~90s away.
@@ -9971,8 +10556,8 @@ function activateService(id) {
     } catch {
       // ignore
     }
-  } else if (shouldRunPortalBlankRecovery(service)) {
-    // Delayed blank checks only — do not reload a healthy warm tab.
+  } else if (shouldRunPortalBlankRecovery(service) && !reusedLiveView) {
+    // Cold start only — never reload a parked CRM form that looked “blank”.
     schedulePortalHealthChecks(id);
     if (service.appId === 'zoho-one') {
       try {
@@ -9989,9 +10574,11 @@ function activateService(id) {
   scheduleActiveGuestSurfaceChecks(id);
   entry.__parked = false;
 
-  // Only user-selected apps remain loaded after switching away.
-  if (previousId && previousId !== id && !isKeepWarmService(previousId)) {
-    hibernateService(previousId);
+  // Keep the previous tab resident (parked/detached) so form drafts survive.
+  // Idle hibernate + warm-budget eviction (with grace) reclaim RAM later.
+  if (previousId && previousId !== id) {
+    const prev = views.get(previousId);
+    if (prev) prev.lastUsed = Date.now();
   }
 
   if (!overlayOpen) {
@@ -10079,6 +10666,28 @@ function reloadActive() {
     hibernateService(activeServiceId, { force: true });
     activateService(activeServiceId);
     return;
+  }
+  // Hard reload during WhatsApp/Arattai QR / login can sign the user out.
+  try {
+    const url = String(wc.getURL() || '');
+    const title = String(wc.getTitle() || '');
+    if (
+      isAuthOrLoginUrl(url) ||
+      /scan|log\s*in|qr code|link with phone|stay logged in/i.test(title)
+    ) {
+      repaintActiveGuestView({ reason: 'reload-guard-login' });
+      return;
+    }
+  } catch {
+    // ignore and fall through to reload
+  }
+  // Drop find markers before reload — some builds keep them across soft reloads.
+  if (isFindBarOpen()) {
+    closeFindBarWindow({ clear: true });
+  } else {
+    findBarLastQuery = '';
+    findBarRequestId = 0;
+    clearGuestFindHighlights(wc);
   }
   wc.reload();
 }
@@ -10275,6 +10884,28 @@ function attachShortcuts(webContents) {
 
     const key = String(input.key || '').toLowerCase();
 
+    // Escape closes the floating Find / Web-search popups from the guest page.
+    if (key === 'escape' && isWebSearchOpen()) {
+      event.preventDefault();
+      closeWebSearchWindow();
+      return;
+    }
+    if (key === 'escape' && isFindBarOpen()) {
+      event.preventDefault();
+      closeFindBarWindow({ clear: true });
+      return;
+    }
+
+    // Find bar closed: any typing in WhatsApp/Arattai must kill leftover yellow
+    // find-in-page paint (users search chat names in the left pane, not Ctrl+F).
+    if (!isFindBarOpen() && !input.control && !input.alt && !input.meta) {
+      try {
+        webContents.stopFindInPage('clearSelection');
+      } catch {
+        // ignore
+      }
+    }
+
     // Always-on reload (not user-remappable — reserved).
     if (input.control && !input.alt && !input.meta && key === 'r' && !input.shift) {
       event.preventDefault();
@@ -10289,6 +10920,7 @@ function attachShortcuts(webContents) {
       'nextTab',
       'settings',
       'search',
+      'webSearch',
       'find',
       'print',
       'focusMode',
@@ -10301,6 +10933,17 @@ function attachShortcuts(webContents) {
       const entry = map[id];
       const hit = matchShortcut(entry, input);
       if (!hit) continue;
+      // Never steal Ctrl+K from WhatsApp / Arattai chat search — even if the
+      // user still has an old Web-search binding on Control+K.
+      if (id === 'webSearch') {
+        const accel = String(entry.accel || '').toLowerCase();
+        const svc = getService(activeServiceId);
+        const messaging =
+          svc?.appId === 'whatsapp' || svc?.appId === 'arattai';
+        if (messaging && /control\+k|commandorcontrol\+k/.test(accel)) {
+          return;
+        }
+      }
       event.preventDefault();
       if (id === 'settings') {
         mainWindow?.webContents.send('dock:open-settings');
@@ -10310,8 +10953,12 @@ function attachShortcuts(webContents) {
         mainWindow?.webContents.send('dock:open-search');
         return;
       }
+      if (id === 'webSearch') {
+        openWebSearchWindow();
+        return;
+      }
       if (id === 'find') {
-        mainWindow?.webContents.send('dock:open-find');
+        openFindBarWindow();
         return;
       }
       if (id === 'print') {
@@ -10510,26 +11157,129 @@ function changeZoom(delta = 0, exact = null) {
   }
 }
 
+function clearGuestFindHighlights(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  findBarRequestId = 0;
+  // clearSelection removes Chromium find markers; call twice — some Linux
+  // builds keep the yellow paint after a single stop while a find is in flight.
+  for (let i = 0; i < 2; i++) {
+    try {
+      webContents.stopFindInPage('clearSelection');
+    } catch {
+      // ignore
+    }
+  }
+  // Nuclear: start an impossible find then stop — forces Chromium to drop
+  // orphaned markers that survive a bare stopFindInPage on WebContentsView.
+  try {
+    webContents.findInPage('\uFFFF\uFFFE\uFFFF', {
+      forward: true,
+      findNext: false,
+    });
+  } catch {
+    // ignore
+  }
+  try {
+    webContents.stopFindInPage('clearSelection');
+  } catch {
+    // ignore
+  }
+  // Drop any leftover caret/selection some Chromium builds leave painted.
+  try {
+    webContents
+      .executeJavaScript(
+        `(() => { try { window.getSelection()?.removeAllRanges(); } catch (e) {} })();`,
+        true,
+      )
+      .catch(() => {});
+  } catch {
+    // ignore
+  }
+}
+
 function findInActivePage(text, options = {}) {
   const webContents = views.get(activeServiceId)?.view.webContents;
   if (!webContents || webContents.isDestroyed()) return { ok: false };
-  const query = String(text || '');
+
+  // Never paint find marks while the Find popup is closed (chat-list search
+  // in Arattai/WhatsApp is a different feature — yellow marks confuse users).
+  if (!isFindBarOpen()) {
+    findBarLastQuery = '';
+    findBarRequestId = 0;
+    clearGuestFindHighlights(webContents);
+    return { ok: false, error: 'Find bar closed' };
+  }
+
+  const query = String(text || '').trim() ? String(text || '') : '';
+  findBarLastQuery = query;
+  const session = ++findBarSession;
+  const findNext = !!options.findNext;
+
   if (!query) {
-    webContents.stopFindInPage('clearSelection');
+    clearGuestFindHighlights(webContents);
+    // A prior findInPage can still emit found-in-page after clear and
+    // re-paint yellow matches — stop again on the next ticks.
+    setTimeout(() => {
+      if (session !== findBarSession) return;
+      clearGuestFindHighlights(webContents);
+    }, 0);
+    setTimeout(() => {
+      if (session !== findBarSession) return;
+      clearGuestFindHighlights(webContents);
+    }, 50);
+    setTimeout(() => {
+      if (session !== findBarSession) return;
+      clearGuestFindHighlights(webContents);
+    }, 150);
     return { ok: true, cleared: true };
   }
-  webContents.findInPage(query, {
+
+  // New query (not Next/Prev): cancel any in-flight find for "a" before
+  // starting "aspera", otherwise the late "a" paint sticks forever.
+  if (!findNext) {
+    try {
+      webContents.stopFindInPage('clearSelection');
+    } catch {
+      // ignore
+    }
+  }
+
+  const requestId = webContents.findInPage(query, {
     forward: options.forward !== false,
-    findNext: !!options.findNext,
+    findNext,
     matchCase: !!options.matchCase,
   });
-  return { ok: true };
+  findBarRequestId = Number(requestId) || 0;
+  return { ok: true, requestId: findBarRequestId };
 }
 
 function stopFindInActivePage() {
-  const webContents = views.get(activeServiceId)?.view.webContents;
-  if (!webContents || webContents.isDestroyed()) return { ok: false };
-  webContents.stopFindInPage('clearSelection');
+  findBarLastQuery = '';
+  findBarRequestId = 0;
+  findBarSession += 1;
+  const session = findBarSession;
+  // Clear on the active guest and every live guest — highlights can linger on
+  // a view that was active when Find started if the user switched tabs.
+  const targets = new Set();
+  const active = views.get(activeServiceId)?.view?.webContents;
+  if (active) targets.add(active);
+  for (const entry of views.values()) {
+    const wc = entry?.view?.webContents;
+    if (wc && !wc.isDestroyed()) targets.add(wc);
+  }
+  for (const wc of targets) clearGuestFindHighlights(wc);
+  setTimeout(() => {
+    if (session !== findBarSession) return;
+    for (const wc of targets) {
+      if (!wc.isDestroyed()) clearGuestFindHighlights(wc);
+    }
+  }, 80);
+  setTimeout(() => {
+    if (session !== findBarSession) return;
+    for (const wc of targets) {
+      if (!wc.isDestroyed()) clearGuestFindHighlights(wc);
+    }
+  }, 200);
   return { ok: true };
 }
 
@@ -10683,7 +11433,12 @@ function installApplicationMenu() {
         {
           label: 'Find…',
           accelerator: 'CommandOrControl+F',
-          click: () => mainWindow?.webContents.send('dock:open-find'),
+          click: () => openFindBarWindow(),
+        },
+        {
+          label: 'Web search…',
+          accelerator: 'CommandOrControl+E',
+          click: () => openWebSearchWindow(),
         },
       ],
     },
@@ -11220,6 +11975,36 @@ dockHandle('dock:find-in-page', (_e, text, options) =>
   findInActivePage(text, options || {}),
 );
 dockHandle('dock:stop-find', () => stopFindInActivePage());
+dockHandle('dock:open-find-bar', (_e, payload) =>
+  openFindBarWindow({
+    dark: typeof payload?.dark === 'boolean' ? payload.dark : null,
+  }),
+);
+dockHandle('dock:close-find-bar', () => {
+  closeFindBarWindow({ clear: true });
+  return { ok: true };
+});
+dockHandle('dock:open-web-search', (_e, payload) =>
+  openWebSearchWindow({
+    dark: typeof payload?.dark === 'boolean' ? payload.dark : null,
+  }),
+);
+dockHandle('dock:close-web-search', () => {
+  closeWebSearchWindow();
+  return { ok: true };
+});
+findBarHandle('find-bar:find', (_e, text, options) =>
+  findInActivePage(text, options || {}),
+);
+findBarHandle('find-bar:close', () => {
+  closeFindBarWindow({ clear: true });
+  return { ok: true };
+});
+webSearchHandle('web-search:go', (_e, text) => runWebSearch(text));
+webSearchHandle('web-search:close', () => {
+  closeWebSearchWindow();
+  return { ok: true };
+});
 dockHandle('dock:print-active', () => printActivePage());
 dockHandle('dock:remove-service', (_e, id) => removeService(id));
 dockHandle('dock:create-profile', (_e, name) => createProfile(name));
