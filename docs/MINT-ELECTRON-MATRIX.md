@@ -1,28 +1,50 @@
-# Electron / Mint smoke matrix (Phase 4)
+# Electron / Mint + Ubuntu smoke matrix
 
-Use this checklist on a **Linux Mint + Cinnamon** office PC after any Electron major bump.
+Use this checklist on **Linux Mint XFCE**, **Linux Mint Cinnamon**, and **Ubuntu** after Electron bumps or Hub releases that touch guests, overlays, or downloads.
+
 Local installs only until every row is green.
 
-| Check | How | Pass? |
-|-------|-----|-------|
-| Version title | Window title shows expected Hub version | |
-| Tray | Quit / Show from tray; icon visible | |
-| GPU off | Settings lean/low-memory or `--disable-gpu` still launches | |
-| no-sandbox | Packaged `/usr/bin/asperadock` starts (company default) | |
-| WhatsApp | Open chat, pin person, badge count | |
-| Arattai | Open chat; link → Hub top-bar tab | |
-| Gmail | Stay in inbox; outbound link → Hub tab / ask | |
-| Zoho CRM / One | Login survives; deep link Hub tab | |
-| Downloads | Save dialog does not freeze other apps | |
-| Find in page | Ctrl+F bar visible above guest | |
-| Updater | Help → Check for updates (stable feed) | |
-| Hibernate / wake | Background app wakes on click without blank pane | |
+| Check | How | XFCE | Cinnamon | Ubuntu |
+|-------|-----|------|----------|--------|
+| Version title | Window title shows expected Hub version | | | |
+| Launch (GPU off) | Packaged `/usr/bin/asperadock` starts; wrapper uses `--disable-gpu` | | | |
+| no-sandbox | Company default launcher starts without chrome-sandbox | | | |
+| Tray | Quit / Show from tray; icon visible (StatusNotifier) | | | |
+| Opaque menus | App menu + chrome menu paint solid (not black) on XFCE | | | |
+| Floating Find | Ctrl+F popup above guest; type immediately; page does **not** jump | | | |
+| Downloads | Save once; no false “file exists”; dialog not behind Hub | | | |
+| PDF preview | Open PDF in busy group chat; loads without long jank | | | |
+| Tab retention | Fill Zoho CRM form → switch WhatsApp → return → drafts kept | | | |
+| Reload button | Top-bar Reload refreshes active tab; QR/login not hard-reloaded | | | |
+| WhatsApp | Open chat, pin person, badge count | | | |
+| Arattai | Open chat; link → Hub top-bar tab | | | |
+| Gmail | Stay in inbox; outbound link → Hub tab / ask | | | |
+| Zoho CRM / One | Login survives; deep link Hub tab | | | |
+| Hibernate / wake | Idle unload after timer; warm apps switch without blank pane | | | |
+| Alt-tab blank | Leave Hub 30+ min, return — guest repaints (not permanently blank) | | | |
+| Updater | Help → Check for updates (stable feed) | | | |
 
-## Status (2026-08-03)
+## Desktop notes
 
-| Electron | Result on this Mint/Wayland PC |
-|----------|--------------------------------|
-| **37.10.3** | Known good (ship this until Phase 4 re-tried) |
-| **42.8.0** | **Failed** — Wayland fatal: `Connection reset by peer` / `Failed to shutdown` in `startup.log`. Reverted in v0.4.59. |
+| Desktop | Overlay style | Notes |
+|---------|---------------|--------|
+| **Mint XFCE** | Opaque floats (`linuxUsesOpaqueOverlays`) | Weak/no compositor — transparent windows go black. Park warm guests off-screen (never `setVisible(false)`). |
+| **Mint Cinnamon** | Transparent floats OK | Compositor on. Same park/keepWarm paths. |
+| **Ubuntu GNOME** | Transparent floats OK | Prefer X11 (`--ozone-platform=x11`) when session is Wayland. |
 
-Do **not** bump Electron again without a full matrix pass on Mint Cinnamon (X11 and Wayland if used). Never ship an Electron bump the same day as navigation-policy changes without that pass.
+## Electron status
+
+| Electron | Result |
+|----------|--------|
+| **37.10.3** | Known good — ship this until matrix re-pass |
+| **42.x** | **Failed** on Mint/Wayland (`Connection reset by peer`). Do not bump without full matrix. |
+
+## Packaged Linux flags (always)
+
+Wrapper (`packaging/asperadock-wrapper.sh`) and early `main.js` switches:
+
+- `--no-sandbox`
+- `--disable-gpu` / `--disable-gpu-sandbox`
+- `--ozone-platform=x11` when Wayland is detected
+
+Do **not** bump Electron the same day as navigation-policy or guest-lifecycle changes without a Mint XFCE + Cinnamon pass.

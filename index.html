@@ -25,9 +25,17 @@
               <img id="chrome-wordmark" class="chrome-wordmark" alt="" draggable="false" />
               <span class="chrome-brand-ai-hint" aria-hidden="true">AI</span>
             </button>
+            <button
+              type="button"
+              id="web-search-btn"
+              class="icon-btn"
+              title="Web search — Google (Ctrl+E)"
+              aria-label="Web search"
+            ></button>
             <div class="nav-history" role="group" aria-label="Page history">
               <button id="nav-back-btn" type="button" class="icon-btn nav-btn" title="Back (Alt+Left)" aria-label="Back" disabled></button>
               <button id="nav-forward-btn" type="button" class="icon-btn nav-btn" title="Forward (Alt+Right)" aria-label="Forward" disabled></button>
+              <button id="nav-reload-btn" type="button" class="icon-btn nav-btn" title="Reload (Ctrl+R)" aria-label="Reload"></button>
             </div>
             <span class="chrome-divider" aria-hidden="true"></span>
             <button id="lock-btn" type="button" class="icon-btn lock-btn" title="Lock Aspera Hub (Ctrl+Shift+L)" aria-label="Lock Aspera Hub"></button>
@@ -61,6 +69,9 @@
               <div id="app-chrome-menu" class="chrome-menu hidden" role="menu" aria-label="Aspera Hub menu">
                 <div class="chrome-menu-section" role="group" aria-label="Presence">
                   <div class="chrome-menu-section-title">Presence</div>
+                  <button type="button" data-action="web-search" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="search"></span> Web search
+                  </button>
                   <button type="button" data-action="search" class="chrome-menu-item">
                     <span class="chrome-menu-ico" data-ico="search"></span> Quick search
                   </button>
@@ -486,12 +497,12 @@
           <label class="field">
             <span>Hibernate after (minutes)</span>
             <input id="set-hibernate" type="number" min="1" max="120" />
-            <p class="hint-text">Unselected apps unload when you switch away. This timer applies to other idle background activity.</p>
+            <p class="hint-text">Recently used tabs stay loaded when you switch away so form drafts are kept. Idle tabs unload after this many minutes.</p>
           </label>
           <label class="field">
             <span>Max warm apps in RAM</span>
             <input id="set-max-warm" type="number" min="1" max="7" />
-            <p class="hint-text">Warm apps stay fully loaded for instant switching (includes the active tab). Default is 5; you can raise up to 7 in Settings. Flame-mark background apps within that limit. Non-warm apps load only when you click them.</p>
+            <p class="hint-text">Warm apps stay fully loaded for instant switching (includes the active tab). Default is 5; you can raise up to 7 in Settings. Flame-mark background apps within that limit. Other recently used tabs also stay resident briefly so CRM/Books drafts are not wiped.</p>
           </label>
           <label class="switch-row">
             <input id="set-consumption" type="checkbox" />
