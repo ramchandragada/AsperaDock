@@ -40,9 +40,12 @@ test('hibernateMsFromSettings respects low-memory cap', () => {
   assert.equal(hibernateMsFromSettings(0, { lowMemoryMode: true }), 2 * 60_000);
 });
 
-test('defaultKeepWarmForApp messaging only', () => {
+test('defaultKeepWarmForApp messaging and Zoho form apps', () => {
   assert.equal(defaultKeepWarmForApp('whatsapp'), true);
   assert.equal(defaultKeepWarmForApp('arattai'), true);
+  assert.equal(defaultKeepWarmForApp('zoho-crm'), true);
+  assert.equal(defaultKeepWarmForApp('zoho-one'), true);
+  assert.equal(defaultKeepWarmForApp('zoho-books'), true);
   assert.equal(defaultKeepWarmForApp('gmail'), false);
 });
 
