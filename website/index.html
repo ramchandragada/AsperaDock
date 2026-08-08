@@ -2,17 +2,25 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="description" content="Aspera Hub — free forever Linux workspace for WhatsApp, Arattai, Gmail & Zoho. Warm/cold RAM control, Hub pins, Forward, Aspera AI (EN·HI·MR), lock, tray, and SHA-256 updates. Debian/Ubuntu/Mint.">
 <meta name="author" content="Aspera Technologies">
+<meta name="format-detection" content="telephone=no">
+<meta name="color-scheme" content="light">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Aspera Hub">
 <meta property="og:title" content="Aspera Hub — one workspace for WhatsApp, Gmail & Zoho on Linux">
 <meta property="og:description" content="Free forever Linux workspace: warm/cold apps, isolated logins, Hub pins, Forward, Aspera AI, lock & tray. asperahub.com">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://asperahub.com/">
 <meta property="og:image" content="https://opengraph.githubassets.com/1/ramchandragada/AsperaDock">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="theme-color" content="#f8f7ff">
 <link rel="icon" type="image/png" sizes="64x64" href="favicon-64.png">
 <link rel="icon" type="image/png" href="assets/icon.png">
+<link rel="apple-touch-icon" href="assets/icon.png">
 <link rel="canonical" href="https://asperahub.com/">
 <title>Aspera Hub — one warm workspace for Linux</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -28,18 +36,22 @@
   --r:12px;--r-lg:18px;--fd:'Space Grotesk',sans-serif;--fb:'Inter',sans-serif;--fm:'JetBrains Mono',monospace;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth}
-body{font-family:var(--fb);background:var(--bg);color:var(--t1);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%;text-size-adjust:100%}
+body{font-family:var(--fb);background:var(--bg);color:var(--t1);line-height:1.6;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow-x:hidden;min-height:100vh;min-height:100dvh}
+body.nav-open{overflow:hidden;touch-action:none}
 h1,h2,h3{font-family:var(--fd);font-weight:700;letter-spacing:-.02em}
 .mono{font-family:var(--fm)}
 a{color:inherit}
-img{max-width:100%}
-.container{max-width:1140px;margin:0 auto;padding:0 24px}
+img{max-width:100%;height:auto}
+svg{max-width:100%}
+button,a,.btn,.copy,.hb,.faq summary{-webkit-tap-highlight-color:transparent}
+.container{max-width:1140px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left)) 0 max(16px,env(safe-area-inset-right));padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right))}
+@supports (padding:max(0px)){.container{padding-left:max(24px,env(safe-area-inset-left));padding-right:max(24px,env(safe-area-inset-right))}}
 .sec{padding:88px 0}
 .grad{background:linear-gradient(135deg,var(--green),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .fade{opacity:0;transform:translateY(20px);transition:opacity .55s ease,transform .55s ease}
 .fade.vis{opacity:1;transform:translateY(0)}
-.btn{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;border-radius:10px;font-weight:600;font-size:14px;text-decoration:none;border:none;cursor:pointer;transition:all .2s}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:12px 22px;min-height:44px;border-radius:10px;font-weight:600;font-size:14px;text-decoration:none;border:none;cursor:pointer;transition:all .2s;touch-action:manipulation}
 .btn svg{width:17px;height:17px}
 .btn-p{background:var(--green);color:#fff;box-shadow:0 4px 14px -4px rgba(99,102,241,.45)}
 .btn-p:hover{background:var(--green-2);transform:translateY(-2px);box-shadow:0 12px 30px -8px rgba(99,102,241,.55)}
@@ -48,19 +60,23 @@ img{max-width:100%}
 .pill{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--border);border-radius:20px;padding:5px 12px;font-size:12px;font-weight:500;color:var(--t2);transition:all .2s}
 .pill-g{background:rgba(99,102,241,.08);border-color:rgba(99,102,241,.25);color:var(--green-2)}
 /* NAV */
-.nav{position:sticky;top:0;z-index:100;background:rgba(248,247,255,.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border)}
-.nav-in{max-width:1140px;margin:0 auto;padding:0 24px;height:60px;display:flex;align-items:center;justify-content:space-between;gap:24px}
+.nav{position:sticky;top:0;z-index:100;background:rgba(248,247,255,.92);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding-top:env(safe-area-inset-top)}
+.nav-in{max-width:1140px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left)) 0 max(16px,env(safe-area-inset-right));height:60px;display:flex;align-items:center;justify-content:space-between;gap:12px}
 .nav-logo{display:flex;align-items:center;gap:10px;text-decoration:none;flex-shrink:0}
 .nav-links{display:flex;align-items:center;gap:24px;flex:1;justify-content:center}
 .nav-links a{color:var(--t2);text-decoration:none;font-size:14px;font-weight:500;transition:color .15s}
 .nav-links a:hover{color:var(--t1)}
 .nav-links a.active{color:var(--green-2);font-weight:600}
 .nav-btns{display:flex;gap:10px;flex-shrink:0}
-.hb{display:none;flex-direction:column;gap:5px;cursor:pointer;padding:8px;border:none;background:none}
+.hb{display:none;flex-direction:column;justify-content:center;gap:5px;cursor:pointer;padding:10px;min-width:44px;min-height:44px;border:none;background:none;border-radius:8px;touch-action:manipulation}
+.hb:hover{background:rgba(15,23,42,.05)}
 .hb span{display:block;width:20px;height:2px;background:var(--t2);border-radius:2px;transition:all .25s}
-.mob{display:none;position:absolute;top:60px;left:0;right:0;background:var(--surface);border-bottom:1px solid var(--border);padding:14px 24px;flex-direction:column;gap:2px;z-index:99}
+.hb[aria-expanded="true"] span:nth-child(1){transform:translateY(7px) rotate(45deg)}
+.hb[aria-expanded="true"] span:nth-child(2){opacity:0}
+.hb[aria-expanded="true"] span:nth-child(3){transform:translateY(-7px) rotate(-45deg)}
+.mob{display:none;position:absolute;top:calc(60px + env(safe-area-inset-top));left:0;right:0;max-height:calc(100dvh - 60px - env(safe-area-inset-top));overflow-y:auto;-webkit-overflow-scrolling:touch;background:var(--surface);border-bottom:1px solid var(--border);padding:8px max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left));flex-direction:column;gap:2px;z-index:99;box-shadow:0 16px 40px -20px rgba(15,23,42,.25)}
 .mob.open{display:flex}
-.mob a{color:var(--t2);text-decoration:none;font-size:15px;font-weight:500;padding:12px 0;border-bottom:1px solid var(--border)}
+.mob a{color:var(--t2);text-decoration:none;font-size:16px;font-weight:500;padding:14px 4px;min-height:48px;display:flex;align-items:center;border-bottom:1px solid var(--border)}
 .mob a:last-child{border-bottom:none}
 /* HERO */
 .hero{padding:74px 0 84px;position:relative;overflow:hidden;background:radial-gradient(ellipse 70% 55% at 12% -10%,rgba(99,102,241,.18) 0%,transparent 55%),radial-gradient(ellipse 55% 45% at 88% 110%,rgba(245,158,11,.12) 0%,transparent 55%),var(--bg)}
@@ -174,9 +190,9 @@ img{max-width:100%}
 .term{background:#1a1d2e;border:1px solid #2d3046;border-radius:var(--r-lg);overflow:hidden;box-shadow:0 24px 60px -26px rgba(99,102,241,.4)}
 .term-hd{display:flex;align-items:center;gap:7px;padding:11px 15px;border-bottom:1px solid #2d3046;background:#13162a}
 .term-hd .t{font-family:var(--fm);font-size:12px;color:#8b90b5;margin-left:6px}
-.copy{margin-left:auto;font-family:var(--fb);font-size:12.5px;font-weight:600;color:#c7cbef;background:rgba(99,102,241,.16);border:1px solid rgba(99,102,241,.3);border-radius:8px;padding:5px 12px;cursor:pointer;transition:.15s}
+.copy{margin-left:auto;font-family:var(--fb);font-size:12.5px;font-weight:600;color:#c7cbef;background:rgba(99,102,241,.16);border:1px solid rgba(99,102,241,.3);border-radius:8px;padding:8px 14px;min-height:36px;cursor:pointer;transition:.15s;touch-action:manipulation}
 .copy:hover{background:rgba(99,102,241,.28);color:#fff}
-.term pre{margin:0;padding:18px 20px;font-family:var(--fm);font-size:13px;line-height:1.9;color:#e6e8ff;overflow-x:auto;white-space:pre}
+.term pre{margin:0;padding:18px 20px;font-family:var(--fm);font-size:13px;line-height:1.9;color:#e6e8ff;overflow-x:auto;-webkit-overflow-scrolling:touch;white-space:pre;tab-size:2}
 .term .c{color:#6b7099}.term .g{color:#a5b4fc;font-weight:600}.term .v{color:#fbbf24}
 .note{max-width:760px;margin:18px auto 0;font-size:14px;color:var(--t2);text-align:center}
 .note b{color:var(--t1);font-weight:600}
@@ -185,7 +201,7 @@ img{max-width:100%}
 .faq{max-width:780px;margin:0 auto}
 .faq details{background:#fff;border:1px solid var(--border);border-radius:var(--r);margin-bottom:11px;overflow:hidden;transition:border-color .15s}
 .faq details[open]{border-color:var(--bh)}
-.faq summary{cursor:pointer;list-style:none;padding:17px 20px;font-family:var(--fd);font-weight:700;font-size:16px;color:var(--t1);display:flex;justify-content:space-between;align-items:center;gap:14px}
+.faq summary{cursor:pointer;list-style:none;padding:17px 20px;min-height:52px;font-family:var(--fd);font-weight:700;font-size:16px;color:var(--t1);display:flex;justify-content:space-between;align-items:center;gap:14px;touch-action:manipulation}
 .faq summary::-webkit-details-marker{display:none}
 .faq summary::after{content:'+';color:var(--green-2);font-size:22px;font-weight:700;line-height:1}
 .faq details[open] summary::after{content:'\2212'}
@@ -209,12 +225,74 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
 .foot-bottom a:hover{color:var(--green-2)}
 @media(max-width:860px){.foot-grid{grid-template-columns:1fr 1fr;gap:24px}}
 @media(max-width:500px){.foot-grid{grid-template-columns:1fr}}
-/* responsive (mirror main site) */
+/* responsive — phones, tablets, desktops, foldables, landscape */
+@media(max-width:1100px){
+  .sec{padding:72px 0}
+}
 @media(max-width:900px){
   .nav-links{display:none}
   .hb{display:flex}
-  .hero-grid{grid-template-columns:1fr;gap:44px}
+  .hero-grid{grid-template-columns:1fr;gap:40px}
   .hero-sub{max-width:none}
+  .hero{padding:48px 0 56px}
+  .stats{gap:18px}
+  .cta{padding:40px 22px}
+}
+@media(max-width:720px){
+  .nav-btns{display:none}
+  .sec{padding:56px 0}
+  .hero-ctas{flex-direction:column;align-items:stretch}
+  .hero-ctas .btn{width:100%}
+  .cta .hero-ctas{align-items:stretch}
+  .stats{gap:14px 22px}
+  .stats span:first-child{font-size:20px}
+  .rail .word,.rail .utils{display:none}
+  .tcard{padding:22px}
+  .lim{padding:18px 16px}
+  .foot-bottom{flex-direction:column;align-items:flex-start;text-align:left}
+  .key-row{grid-template-columns:1fr;gap:6px}
+}
+@media(max-width:520px){
+  .wbody{grid-template-columns:96px 1fr;height:240px}
+  .chip-float{display:none}
+  .hero-h1{font-size:clamp(30px,9vw,40px);letter-spacing:-1px}
+  .hero-tag{font-size:11px}
+  .sec-head{margin-bottom:32px}
+  .sh{letter-spacing:-.5px}
+  .term pre{font-size:12px;padding:14px 14px;line-height:1.75}
+  .faq summary{font-size:15px;padding:15px 16px}
+  .faq .ans{padding:0 16px 16px;font-size:14px}
+  .nav-logo span{font-size:16px}
+  .app{width:30px;height:30px;border-radius:8px}
+  .app svg{width:15px;height:15px}
+}
+@media(max-width:380px){
+  .wbody{grid-template-columns:1fr;height:auto}
+  .side{display:none}
+  .chat{min-height:220px}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+}
+@media(max-height:500px) and (orientation:landscape){
+  .hero{padding:28px 0 36px}
+  .sec{padding:40px 0}
+  .mob{max-height:calc(100dvh - 52px - env(safe-area-inset-top))}
+}
+@media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  .fade{opacity:1;transform:none;transition:none}
+  .btn,.feat,.achip{transition:none}
+  .btn:hover,.feat:hover,.achip:hover{transform:none}
+}
+@media(prefers-contrast:more){
+  :root{--border:#94a3b8;--t2:#1e293b}
+  .btn-p{box-shadow:none}
+}
+@media print{
+  .nav,.mob,.hb,.cta .hero-ctas,.chip-float{display:none!important}
+  body{background:#fff;color:#000}
+  .sec,.hero{padding:20px 0}
+  a[href]::after{content:" (" attr(href) ")";font-size:11px;color:#64748b}
+  a[href^="#"]::after,a[data-download]::after{content:""}
 }
 
 /* ── Expanded content components (same design tokens) ── */
@@ -250,11 +328,15 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
 .key-row{display:grid;grid-template-columns:minmax(140px,auto) 1fr;gap:12px;align-items:baseline;padding:10px 0;border-bottom:1px solid var(--border)}
 .key-row kbd{font-family:var(--fm);font-size:12px;font-weight:700;color:#4338ca;background:#eef0ff;border:1px solid #d8daf5;border-radius:7px;padding:4px 8px;white-space:nowrap}
 .key-row span{font-size:14px;color:var(--t2)}
-.cmp{width:100%;border-collapse:separate;border-spacing:0;background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;font-size:14px}
+.cmp-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--r-lg);overscroll-behavior-x:contain;scrollbar-width:thin}
+.cmp-wrap::-webkit-scrollbar{height:8px}
+.cmp-wrap::-webkit-scrollbar-thumb{background:#c7c3e8;border-radius:8px}
+.cmp{width:100%;min-width:640px;border-collapse:separate;border-spacing:0;background:#fff;border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;font-size:14px}
 .cmp th,.cmp td{padding:14px 16px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
 .cmp th{font-family:var(--fd);font-size:13px;font-weight:700;background:#f5f4ff;color:var(--t1)}
 .cmp tr:last-child td{border-bottom:none}
-.cmp td:first-child{font-weight:600;color:var(--t1);width:28%}
+.cmp td:first-child,.cmp th:first-child{font-weight:600;color:var(--t1);width:28%;position:sticky;left:0;background:#fff;z-index:1;box-shadow:1px 0 0 var(--border)}
+.cmp th:first-child{background:#f5f4ff}
 .cmp .yes{color:#047857;font-weight:700}
 .cmp .no{color:var(--t3)}
 .cmp .partial{color:#b45309;font-weight:600}
@@ -326,7 +408,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     <div class="nav-btns">
       <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest"><svg><use href="#g-dl"/></svg> Download</a>
     </div>
-    <button class="hb" id="hb" aria-label="Open menu" onclick="toggleM()"><span></span><span></span><span></span></button>
+    <button class="hb" id="hb" type="button" aria-label="Open menu" aria-controls="mob" aria-expanded="false" onclick="toggleM()"><span></span><span></span><span></span></button>
   </div>
   <div class="mob" id="mob">
     <a href="#idea" onclick="closeM()">The idea</a>
@@ -624,7 +706,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <h2 class="sh">Why Linux users pick <span class="grad">Hub</span></h2>
       <p class="sh-sub">Same web apps you already use — with a shell that respects RAM, privacy, and a free forever promise.</p>
     </div>
-    <div class="fade" style="overflow-x:auto">
+    <div class="fade cmp-wrap" role="region" aria-label="Comparison table" tabindex="0">
       <table class="cmp">
         <thead>
           <tr><th>Capability</th><th>Aspera Hub</th><th>Browser tabs</th><th>Heavy Electron suites</th></tr>
@@ -669,7 +751,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     <div class="inst">
       <div class="distro fade"><span>Debian</span><span>Ubuntu</span><span>Linux Mint</span><span>amd64</span></div>
       <div class="term fade">
-        <div class="term-hd"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="t">bash</span><button class="copy" id="copyBtn" type="button">📋 Copy</button></div>
+        <div class="term-hd"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="t">bash</span><button class="copy" id="copyBtn" type="button">Copy</button></div>
 <pre id="cmd"><span class="c"># Recommended — or just double-click the downloaded .deb</span>
 <span class="g">sudo apt install</span> ./asperadock_<span class="v">&lt;version&gt;</span>_amd64.deb
 
@@ -763,13 +845,36 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
 </footer>
 
 <script>
-function toggleM(){var m=document.getElementById('mob');var b=document.getElementById('hb');b.setAttribute('aria-expanded',m.classList.toggle('open'));}
-function closeM(){document.getElementById('mob').classList.remove('open');}
-document.addEventListener('click',function(e){var n=document.querySelector('.nav');if(!n.contains(e.target))closeM();});
+function toggleM(){
+  var m=document.getElementById('mob');
+  var b=document.getElementById('hb');
+  var open=m.classList.toggle('open');
+  b.setAttribute('aria-expanded',open?'true':'false');
+  b.setAttribute('aria-label',open?'Close menu':'Open menu');
+  document.body.classList.toggle('nav-open',open);
+}
+function closeM(){
+  var m=document.getElementById('mob');
+  var b=document.getElementById('hb');
+  if(!m) return;
+  m.classList.remove('open');
+  if(b){b.setAttribute('aria-expanded','false');b.setAttribute('aria-label','Open menu');}
+  document.body.classList.remove('nav-open');
+}
+document.addEventListener('click',function(e){var n=document.querySelector('.nav');if(n&&!n.contains(e.target))closeM();});
+document.addEventListener('keydown',function(e){if(e.key==='Escape')closeM();});
+window.addEventListener('resize',function(){if(window.matchMedia('(min-width:901px)').matches)closeM();});
 
-// Scroll reveal
-var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('vis');io.unobserve(e.target);}})},{threshold:.08});
-document.querySelectorAll('.fade').forEach(function(el){io.observe(el);});
+// Scroll reveal (skip animation when reduced-motion)
+var prefersReduce=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+if(prefersReduce){
+  document.querySelectorAll('.fade').forEach(function(el){el.classList.add('vis');});
+}else if('IntersectionObserver' in window){
+  var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('vis');io.unobserve(e.target);}})},{threshold:.08,rootMargin:'0px 0px -8% 0px'});
+  document.querySelectorAll('.fade').forEach(function(el){io.observe(el);});
+}else{
+  document.querySelectorAll('.fade').forEach(function(el){el.classList.add('vis');});
+}
 
 // Copy install commands
 (function(){
@@ -777,7 +882,12 @@ document.querySelectorAll('.fade').forEach(function(el){io.observe(el);});
   if(!btn) return;
   btn.addEventListener('click',function(){
     var text="sudo apt install ./asperadock_<version>_amd64.deb\nsudo dpkg -i asperadock_*_amd64.deb\nsudo apt-get install -f";
-    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(function(){btn.textContent='✓ Copied';setTimeout(function(){btn.textContent='📋 Copy';},1600);});}
+    var done=function(){btn.textContent='Copied';setTimeout(function(){btn.textContent='Copy';},1600);};
+    if(navigator.clipboard&&navigator.clipboard.writeText){
+      navigator.clipboard.writeText(text).then(done).catch(function(){
+        try{var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);done();}catch(e){}
+      });
+    }
   });
 })();
 
