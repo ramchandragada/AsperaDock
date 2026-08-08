@@ -20,6 +20,11 @@ import { createRequire } from 'node:module';
 import { buildAppMenuHtml } from './appMenuHtml.js';
 import { buildChromeMenuHtml } from './chromeMenuHtml.js';
 import { buildFindBarHtml } from './findBarHtml.js';
+import { buildWebSearchHtml } from './webSearchHtml.js';
+import {
+  resolveWebSearchInput,
+  webSearchTabName,
+} from './webSearch.js';
 import { buildNotifCenterHtml } from './notifCenterHtml.js';
 import { buildAiResultHtml } from './aiResultHtml.js';
 import { buildCrmLookupHtml } from './crmLookupHtml.js';
@@ -598,6 +603,10 @@ let findBarWindow = null;
 let findBarLastQuery = '';
 /** Bumped on every find/clear so late found-in-page cannot re-paint highlights. */
 let findBarSession = 0;
+/** Floating Google Web-search popup. */
+let webSearchWindow = null;
+/** Last web-search query so Ctrl+K reopens with the same text selected. */
+let webSearchLastQuery = '';
 /** Floating notification center. */
 let notifCenterWindow = null;
 /** Floating Aspera AI result panel. */
@@ -1848,7 +1857,7 @@ function listLinkTabInstances() {
  * Zoho shared-login deep links reuse the source profile; other links become
  * temporary custom tabs (recyclable when the bar is full).
  */
-function openUrlAsHubAppTab(url, sourceService = null) {
+function openUrlAsHubAppTab(url, sourceService = null, opts = {}) {
   const href = String(url || '').trim();
   if (!href.startsWith('http')) {
     return { ok: false, error: 'Invalid link' };
@@ -1909,7 +1918,10 @@ function openUrlAsHubAppTab(url, sourceService = null) {
   }
 
   const id = `${CUSTOM_APP_ID}-${slot}-${Date.now().toString(36)}`;
-  const name = tabNameFromUrl(href);
+  const preferredName = String(opts?.tabName || '').trim();
+  const name = preferredName
+    ? clampAppName(preferredName)
+    : tabNameFromUrl(href);
   const profileId =
     getProfile(PRIMARY_PROFILE_ID)?.id || PRIMARY_PROFILE_ID;
   const sourceAppId = sourceService?.appId || null;
@@ -2331,6 +2343,19 @@ function findBarHandle(channel, handler) {
       event.sender !== findBarWindow.webContents
     ) {
       throw new Error('Unauthorized find-bar IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
+function webSearchHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !webSearchWindow ||
+      webSearchWindow.isDestroyed() ||
+      event.sender !== webSearchWindow.webContents
+    ) {
+      throw new Error('Unauthorized web-search IPC sender');
     }
     return handler(event, ...args);
   });
@@ -3230,6 +3255,126 @@ function isFindBarOpen() {
   return !!(findBarWindow && !findBarWindow.isDestroyed());
 }
 
+function closeWebSearchWindow() {
+  if (!webSearchWindow || webSearchWindow.isDestroyed()) {
+    webSearchWindow = null;
+    return;
+  }
+  const win = webSearchWindow;
+  webSearchWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+  try {
+    focusActiveContents();
+  } catch {
+    // ignore
+  }
+}
+
+function isWebSearchOpen() {
+  return !!(webSearchWindow && !webSearchWindow.isDestroyed());
+}
+
+/**
+ * Floating Google Web-search popup (Aspera AI / Find pattern).
+ * Enter opens results in a Hub link tab — WhatsApp stays put.
+ */
+function openWebSearchWindow({ dark = null } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  if (isWebSearchOpen()) {
+    try {
+      webSearchWindow.show();
+      webSearchWindow.focus();
+      webSearchWindow.webContents.focus();
+      webSearchWindow.webContents.send('web-search:init', {
+        query: webSearchLastQuery,
+      });
+    } catch {
+      // ignore
+    }
+    return { ok: true, focused: true };
+  }
+
+  closeFindBarWindow({ clear: false });
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAppContextMenu();
+
+  const barW = 480;
+  const barH = 132;
+  const content = mainWindow.getContentBounds();
+  const chromeTop = Math.max(48, Number(effectiveMetrics().top) || 78);
+  const rawX = content.x + Math.max(12, Math.floor((content.width - barW) / 2));
+  const rawY = content.y + chromeTop + 10;
+  const pos = clampFloatPosition(rawX, rawY, barW, barH);
+  const darkNow =
+    typeof dark === 'boolean' ? dark : !!nativeTheme.shouldUseDarkColors;
+
+  webSearchWindow = createFloatBrowserWindow({
+    width: barW,
+    height: barH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'webSearchPreload.js',
+    dark: darkNow,
+  });
+
+  const win = webSearchWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildWebSearchHtml(darkNow))}`,
+  );
+
+  win.webContents.once('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    win.webContents.send('web-search:init', { query: webSearchLastQuery });
+  });
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return;
+    win.show();
+    try {
+      if (typeof win.moveTop === 'function') win.moveTop();
+    } catch {
+      // ignore
+    }
+    win.focus();
+    try {
+      win.webContents.focus();
+    } catch {
+      // ignore
+    }
+    setTimeout(() => {
+      if (win.isDestroyed()) return;
+      try {
+        win.focus();
+        win.webContents.focus();
+      } catch {
+        // ignore
+      }
+    }, 40);
+  });
+  win.on('closed', () => {
+    if (webSearchWindow === win) webSearchWindow = null;
+  });
+
+  return { ok: true };
+}
+
+function runWebSearch(text) {
+  const query = String(text || '');
+  webSearchLastQuery = query.trim();
+  const href = resolveWebSearchInput(query);
+  if (!href) return { ok: false, error: 'Empty search' };
+  const result = openUrlAsHubAppTab(href, null, {
+    tabName: webSearchTabName(query),
+  });
+  closeWebSearchWindow();
+  return result;
+}
+
 /**
  * Floating Find popup above the guest. In-page HTML cannot paint over
  * WebContentsView, so we must not push the page down to reveal a chrome bar.
@@ -3251,6 +3396,7 @@ function openFindBarWindow({ dark = null } = {}) {
     return { ok: true, focused: true };
   }
 
+  closeWebSearchWindow();
   closeChromeMenuWindow();
   closeNotifCenterWindow();
   closeAppContextMenu();
@@ -4979,6 +5125,10 @@ function handleChromeMenuAction(type) {
   }
   if (type === 'extensions') {
     openExtensionsWindow({ dark: false });
+    return { ok: true };
+  }
+  if (type === 'web-search') {
+    openWebSearchWindow();
     return { ok: true };
   }
   if (type === 'search') {
@@ -10704,7 +10854,12 @@ function attachShortcuts(webContents) {
 
     const key = String(input.key || '').toLowerCase();
 
-    // Escape closes the floating Find popup from the guest page.
+    // Escape closes the floating Find / Web-search popups from the guest page.
+    if (key === 'escape' && isWebSearchOpen()) {
+      event.preventDefault();
+      closeWebSearchWindow();
+      return;
+    }
     if (key === 'escape' && isFindBarOpen()) {
       event.preventDefault();
       closeFindBarWindow({ clear: true });
@@ -10725,6 +10880,7 @@ function attachShortcuts(webContents) {
       'nextTab',
       'settings',
       'search',
+      'webSearch',
       'find',
       'print',
       'focusMode',
@@ -10744,6 +10900,10 @@ function attachShortcuts(webContents) {
       }
       if (id === 'search') {
         mainWindow?.webContents.send('dock:open-search');
+        return;
+      }
+      if (id === 'webSearch') {
+        openWebSearchWindow();
         return;
       }
       if (id === 'find') {
@@ -11154,6 +11314,11 @@ function installApplicationMenu() {
           label: 'Find…',
           accelerator: 'CommandOrControl+F',
           click: () => openFindBarWindow(),
+        },
+        {
+          label: 'Web search…',
+          accelerator: 'CommandOrControl+K',
+          click: () => openWebSearchWindow(),
         },
       ],
     },
@@ -11699,11 +11864,25 @@ dockHandle('dock:close-find-bar', () => {
   closeFindBarWindow({ clear: true });
   return { ok: true };
 });
+dockHandle('dock:open-web-search', (_e, payload) =>
+  openWebSearchWindow({
+    dark: typeof payload?.dark === 'boolean' ? payload.dark : null,
+  }),
+);
+dockHandle('dock:close-web-search', () => {
+  closeWebSearchWindow();
+  return { ok: true };
+});
 findBarHandle('find-bar:find', (_e, text, options) =>
   findInActivePage(text, options || {}),
 );
 findBarHandle('find-bar:close', () => {
   closeFindBarWindow({ clear: true });
+  return { ok: true };
+});
+webSearchHandle('web-search:go', (_e, text) => runWebSearch(text));
+webSearchHandle('web-search:close', () => {
+  closeWebSearchWindow();
   return { ok: true };
 });
 dockHandle('dock:print-active', () => printActivePage());

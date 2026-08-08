@@ -25,6 +25,13 @@
               <img id="chrome-wordmark" class="chrome-wordmark" alt="" draggable="false" />
               <span class="chrome-brand-ai-hint" aria-hidden="true">AI</span>
             </button>
+            <button
+              type="button"
+              id="web-search-btn"
+              class="icon-btn"
+              title="Web search — Google (Ctrl+K)"
+              aria-label="Web search"
+            ></button>
             <div class="nav-history" role="group" aria-label="Page history">
               <button id="nav-back-btn" type="button" class="icon-btn nav-btn" title="Back (Alt+Left)" aria-label="Back" disabled></button>
               <button id="nav-forward-btn" type="button" class="icon-btn nav-btn" title="Forward (Alt+Right)" aria-label="Forward" disabled></button>
@@ -62,6 +69,9 @@
               <div id="app-chrome-menu" class="chrome-menu hidden" role="menu" aria-label="Aspera Hub menu">
                 <div class="chrome-menu-section" role="group" aria-label="Presence">
                   <div class="chrome-menu-section-title">Presence</div>
+                  <button type="button" data-action="web-search" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="search"></span> Web search
+                  </button>
                   <button type="button" data-action="search" class="chrome-menu-item">
                     <span class="chrome-menu-ico" data-ico="search"></span> Quick search
                   </button>

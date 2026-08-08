@@ -40,6 +40,7 @@ const els = {
   asperaAiBtn: document.getElementById('aspera-ai-btn'),
   chromeMenu: document.getElementById('app-chrome-menu'),
   downloadsBtn: document.getElementById('downloads-btn'),
+  webSearchBtn: document.getElementById('web-search-btn'),
   extensionsBtn: document.getElementById('extensions-btn'),
   checkUpdatesBtn: document.getElementById('check-updates-btn'),
   searchBtn: document.getElementById('search-btn'),
@@ -203,6 +204,7 @@ function paintToolbarIcons() {
   if (els.downloadsBtn) els.downloadsBtn.innerHTML = icon('download');
   if (els.extensionsBtn) els.extensionsBtn.innerHTML = icon('puzzle');
   if (els.checkUpdatesBtn) els.checkUpdatesBtn.innerHTML = icon('sync');
+  if (els.webSearchBtn) els.webSearchBtn.innerHTML = icon('search');
   if (els.menuBtn) els.menuBtn.innerHTML = asperaAppIconSvg(24);
   if (els.lockBtn) els.lockBtn.innerHTML = icon('lock');
   if (els.addAppBtn) els.addAppBtn.innerHTML = icon('plus');
@@ -1853,6 +1855,10 @@ async function lockHubFromUi() {
 }
 
 function handleChromeAction(action) {
+  if (action === 'web-search') {
+    openWebSearch();
+    return;
+  }
   if (action === 'search') openSearch();
   if (action === 'settings') openSettings();
   if (action === 'ai-settings') openAiSettings();
@@ -2077,6 +2083,12 @@ els.asperaAiBtn?.addEventListener('click', (event) => {
     dark: document.body.classList.contains('theme-dark'),
     skill: 'summarize',
   });
+});
+els.webSearchBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  closeChromeMenu();
+  closeAppMenu();
+  openWebSearch();
 });
 els.settingsClose.addEventListener('click', closeSettings);
 els.settingsModal?.querySelector('.settings-nav')?.addEventListener('click', (event) => {
@@ -2558,6 +2570,16 @@ function closeFindBar() {
   window.asperadock.closeFindBar?.();
 }
 
+function openWebSearch() {
+  window.asperadock.openWebSearch?.({
+    dark: document.body.classList.contains('theme-dark'),
+  });
+}
+
+function closeWebSearch() {
+  window.asperadock.closeWebSearch?.();
+}
+
 els.editAppModal.addEventListener('click', (event) => {
   if (event.target === els.editAppModal) closeEditApp();
 });
@@ -2574,6 +2596,7 @@ document.addEventListener('keydown', (event) => {
     else if (!els.searchModal.classList.contains('hidden')) closeSearch();
     else {
       closeFindBar();
+      closeWebSearch();
       closeChromeMenu();
       closeNotificationCenter();
       closeAppMenu();
