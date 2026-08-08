@@ -10,6 +10,8 @@ test('find clear stops guest highlights and guards late found-in-page', () => {
   assert.match(main, /if \(!findBarLastQuery\)/);
   assert.match(main, /result\.requestId !== findBarRequestId/);
   assert.match(main, /stopFindInPage\('clearSelection'\)/);
+  assert.match(main, /Find bar closed/);
+  assert.match(main, /\\uFFFF\\uFFFE\\uFFFF/);
 });
 
 test('find bar debounces typing and does not select-all on every focus', () => {

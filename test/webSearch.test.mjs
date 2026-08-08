@@ -35,5 +35,7 @@ test('main and forge wire web search float', () => {
   );
   assert.match(main, /openWebSearchWindow/);
   assert.match(main, /resolveWebSearchInput/);
+  assert.match(main, /CommandOrControl\+E/);
+  assert.doesNotMatch(main, /Web search…[\s\S]*CommandOrControl\+K/);
   assert.match(forge, /webSearchPreload\.js/);
 });

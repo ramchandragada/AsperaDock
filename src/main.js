@@ -10896,6 +10896,16 @@ function attachShortcuts(webContents) {
       return;
     }
 
+    // Find bar closed: any typing in WhatsApp/Arattai must kill leftover yellow
+    // find-in-page paint (users search chat names in the left pane, not Ctrl+F).
+    if (!isFindBarOpen() && !input.control && !input.alt && !input.meta) {
+      try {
+        webContents.stopFindInPage('clearSelection');
+      } catch {
+        // ignore
+      }
+    }
+
     // Always-on reload (not user-remappable — reserved).
     if (input.control && !input.alt && !input.meta && key === 'r' && !input.shift) {
       event.preventDefault();
@@ -10923,6 +10933,17 @@ function attachShortcuts(webContents) {
       const entry = map[id];
       const hit = matchShortcut(entry, input);
       if (!hit) continue;
+      // Never steal Ctrl+K from WhatsApp / Arattai chat search — even if the
+      // user still has an old Web-search binding on Control+K.
+      if (id === 'webSearch') {
+        const accel = String(entry.accel || '').toLowerCase();
+        const svc = getService(activeServiceId);
+        const messaging =
+          svc?.appId === 'whatsapp' || svc?.appId === 'arattai';
+        if (messaging && /control\+k|commandorcontrol\+k/.test(accel)) {
+          return;
+        }
+      }
       event.preventDefault();
       if (id === 'settings') {
         mainWindow?.webContents.send('dock:open-settings');
@@ -11148,6 +11169,21 @@ function clearGuestFindHighlights(webContents) {
       // ignore
     }
   }
+  // Nuclear: start an impossible find then stop — forces Chromium to drop
+  // orphaned markers that survive a bare stopFindInPage on WebContentsView.
+  try {
+    webContents.findInPage('\uFFFF\uFFFE\uFFFF', {
+      forward: true,
+      findNext: false,
+    });
+  } catch {
+    // ignore
+  }
+  try {
+    webContents.stopFindInPage('clearSelection');
+  } catch {
+    // ignore
+  }
   // Drop any leftover caret/selection some Chromium builds leave painted.
   try {
     webContents
@@ -11164,6 +11200,16 @@ function clearGuestFindHighlights(webContents) {
 function findInActivePage(text, options = {}) {
   const webContents = views.get(activeServiceId)?.view.webContents;
   if (!webContents || webContents.isDestroyed()) return { ok: false };
+
+  // Never paint find marks while the Find popup is closed (chat-list search
+  // in Arattai/WhatsApp is a different feature — yellow marks confuse users).
+  if (!isFindBarOpen()) {
+    findBarLastQuery = '';
+    findBarRequestId = 0;
+    clearGuestFindHighlights(webContents);
+    return { ok: false, error: 'Find bar closed' };
+  }
+
   const query = String(text || '').trim() ? String(text || '') : '';
   findBarLastQuery = query;
   const session = ++findBarSession;
@@ -11228,6 +11274,12 @@ function stopFindInActivePage() {
       if (!wc.isDestroyed()) clearGuestFindHighlights(wc);
     }
   }, 80);
+  setTimeout(() => {
+    if (session !== findBarSession) return;
+    for (const wc of targets) {
+      if (!wc.isDestroyed()) clearGuestFindHighlights(wc);
+    }
+  }, 200);
   return { ok: true };
 }
 
@@ -11385,7 +11437,7 @@ function installApplicationMenu() {
         },
         {
           label: 'Web search…',
-          accelerator: 'CommandOrControl+K',
+          accelerator: 'CommandOrControl+E',
           click: () => openWebSearchWindow(),
         },
       ],

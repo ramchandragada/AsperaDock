@@ -56,7 +56,8 @@ export const SHORTCUT_CATALOG = Object.freeze([
     group: 'Sections and features',
     label: 'Web search (Google)',
     kind: 'simple',
-    defaultAccel: 'Control+K',
+    // Not Ctrl+K — WhatsApp / Arattai use Ctrl+K for chat/contact search.
+    defaultAccel: 'Control+E',
   },
   {
     id: 'print',
@@ -306,6 +307,18 @@ export function migrateShortcutsMap(raw = {}) {
     if (Object.prototype.hasOwnProperty.call(incoming, item.id)) {
       out[item.id] = normalizeShortcutEntry(item.id, incoming[item.id]);
     }
+  }
+  // v0.5.4 briefly bound Web search to Ctrl+K, which broke Arattai/WhatsApp
+  // "Search chats and contacts (ctrl + k)". Force those installs onto Ctrl+E.
+  const webAccel = String(out.webSearch?.accel || '')
+    .toLowerCase()
+    .replace(/commandorcontrol/g, 'control');
+  if (webAccel === 'control+k') {
+    out.webSearch = {
+      ...out.webSearch,
+      enabled: out.webSearch?.enabled !== false,
+      accel: 'Control+E',
+    };
   }
   return out;
 }
