@@ -98,6 +98,7 @@ import {
   shouldForwardAsDocument,
 } from './forwardHub.js';
 import { uniqueDownloadPath } from './downloadPath.js';
+import { linuxUsesOpaqueOverlays } from './linuxDesktop.js';
 import {
   clearMessagingLeftSearchJs,
   composeReplyJs,
@@ -2424,13 +2425,19 @@ function parkGuestView(entry, viewId = null) {
   }
 }
 
-/** Detach non-warm guests; park warm ones off-screen (still visible to Chromium). */
+/**
+ * Park warm + recently-used tabs off-screen (keeps Zoho/CRM SPAs alive on
+ * Mint XFCE). Only detach truly stale non-warm guests.
+ */
 function parkBackgroundViews(exceptId = null) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   for (const [viewId, entry] of views.entries()) {
     if (viewId === exceptId) continue;
-    if (isKeepWarmService(viewId)) parkGuestView(entry, viewId);
-    else detachGuestView(entry.view);
+    if (isKeepWarmService(viewId) || !isEvictableBackground(viewId, entry)) {
+      parkGuestView(entry, viewId);
+    } else {
+      detachGuestView(entry.view);
+    }
   }
 }
 
@@ -3221,12 +3228,27 @@ function openFindBarWindow({ dark = null } = {}) {
   win.once('ready-to-show', () => {
     if (win.isDestroyed()) return;
     win.show();
+    // XFCE / Cinnamon focus-stealing: raise + focus so typing works immediately.
+    try {
+      if (typeof win.moveTop === 'function') win.moveTop();
+    } catch {
+      // ignore
+    }
     win.focus();
     try {
       win.webContents.focus();
     } catch {
       // ignore
     }
+    setTimeout(() => {
+      if (win.isDestroyed()) return;
+      try {
+        win.focus();
+        win.webContents.focus();
+      } catch {
+        // ignore
+      }
+    }, 40);
   });
   // Do NOT close on blur — user clicks the page to read match highlights.
   win.on('closed', () => {
@@ -3368,19 +3390,6 @@ function clampFloatPosition(screenX, screenY, menuW, menuH) {
   return { x: Math.round(x), y: Math.round(y) };
 }
 
-/** Linux Mint XFCE (and similar) without a compositor paint transparent windows badly. */
-function linuxUsesOpaqueOverlays() {
-  if (process.platform !== 'linux') return false;
-  const de = `${process.env.XDG_CURRENT_DESKTOP || ''} ${process.env.DESKTOP_SESSION || ''} ${process.env.GDMSESSION || ''}`.toLowerCase();
-  return (
-    de.includes('xfce') ||
-    de.includes('xubuntu') ||
-    de.includes('lxde') ||
-    de.includes('lxqt') ||
-    de.includes('openbox')
-  );
-}
-
 function createFloatBrowserWindow({
   width,
   height,
@@ -3389,6 +3398,7 @@ function createFloatBrowserWindow({
   preload,
   dark = false,
 }) {
+  // Mint XFCE / MATE (weak compositor): opaque. Cinnamon / Ubuntu GNOME: transparent OK.
   const opaque = linuxUsesOpaqueOverlays();
   const win = new BrowserWindow({
     parent: mainWindow,
@@ -10040,14 +10050,20 @@ function reconcileWarmSelections() {
 /**
  * Recently used non-warm tabs stay resident so form drafts survive tab
  * switches (e.g. CRM ↔ WhatsApp). Idle hibernate still unloads later.
+ * Low-memory Mint PCs skip the grace so RAM stays tight.
  */
-const RESIDENT_GRACE_MS = 20 * 60_000;
+function residentGraceMs() {
+  if (isLowMemoryMode()) return 0;
+  return 20 * 60_000;
+}
 
 function isEvictableBackground(id, entry) {
   if (!id || id === activeServiceId) return false;
   if (isKeepWarmService(id)) return false;
+  const grace = residentGraceMs();
+  if (!grace) return true;
   const last = Number(entry?.lastUsed) || 0;
-  if (last && Date.now() - last < RESIDENT_GRACE_MS) return false;
+  if (last && Date.now() - last < grace) return false;
   return true;
 }
 
@@ -10367,6 +10383,20 @@ function reloadActive() {
     hibernateService(activeServiceId, { force: true });
     activateService(activeServiceId);
     return;
+  }
+  // Hard reload during WhatsApp/Arattai QR / login can sign the user out.
+  try {
+    const url = String(wc.getURL() || '');
+    const title = String(wc.getTitle() || '');
+    if (
+      isAuthOrLoginUrl(url) ||
+      /scan|log\s*in|qr code|link with phone|stay logged in/i.test(title)
+    ) {
+      repaintActiveGuestView({ reason: 'reload-guard-login' });
+      return;
+    }
+  } catch {
+    // ignore and fall through to reload
   }
   wc.reload();
 }
