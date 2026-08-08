@@ -295,6 +295,8 @@ import {
   isSameEcosystemUrl,
   isGoogleOauthClientUrl,
   shouldOpenInSystemBrowser,
+  shouldOpenZohoSharedDeepLinkAsHubTab,
+  isZohoAssetHost,
 } from './guestNav.js';
 import {
   resolveLinkHandling,
@@ -1745,6 +1747,7 @@ function openInternalLinkAsHubTab(sourceService, url) {
   if (!String(url).startsWith('http')) return false;
   if (!isInternalUrl(url, sourceService)) return false;
   if (isAuthOrLoginUrl(url)) return false;
+  if (isZohoAssetHost(url)) return false;
   if (totalAppCount() >= MAX_APPS_TOTAL) return false;
   if (countInstances(sourceService.appId) >= MAX_INSTANCES_PER_APP) return false;
 
@@ -2032,7 +2035,8 @@ function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
     }
     return false;
   }
-  // Catalog apps (Gmail/Zoho/…): same-ecosystem URLs never become Hub link tabs.
+  // Catalog apps (Gmail/Zoho/…): same-ecosystem URLs stay in-tab — except Zoho
+  // CRM/Books/One deep links, which open as shared-login Hub tabs (multi-screen).
   if (!(service?.isCustom || service?.linkTab) && isSameEcosystemUrl(service, href)) {
     if (
       isGoogleOauthClientUrl(href) ||
@@ -2051,6 +2055,15 @@ function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
       } catch {
         // ignore
       }
+    }
+    if (
+      shouldOpenZohoSharedDeepLinkAsHubTab(service, href) &&
+      shouldOpenAsHubTab(effectiveLinkHandling(service)) &&
+      openInternalLinkAsHubTab(service, href)
+    ) {
+      return true;
+    }
+    if (webContents && !webContents.isDestroyed()) {
       webContents.loadURL(href).catch(() => {});
       return true;
     }
@@ -9007,6 +9020,7 @@ function attachGuestContextMenu(webContents) {
       // Never replace WhatsApp/Arattai/etc. with a third-party site via this
       // menu — that looked like “Open in tab” but covered the messenger.
       // Link tabs (and same-app URLs) may navigate in place.
+      // Zoho CRM/Books/One also offer Hub tab so lead/deal links can multi-screen.
       if (isLinkTabGuest || linkIsInternal) {
         template.push({
           label: 'Open link in this tab',
@@ -9015,7 +9029,11 @@ function attachGuestContextMenu(webContents) {
             webContents.loadURL(safeLink).catch(() => {});
           },
         });
-      } else {
+      }
+      if (
+        !isLinkTabGuest &&
+        (!linkIsInternal || shouldOpenZohoSharedDeepLinkAsHubTab(live, safeLink))
+      ) {
         template.push({
           label: 'Open in Hub tab',
           click: () => {
@@ -9046,6 +9064,10 @@ function attachGuestContextMenu(webContents) {
             ) {
               webContents.loadURL(safeLink).catch(() => {});
               return;
+            }
+            // Zoho shared deep links reuse the same profile/session.
+            if (shouldOpenZohoSharedDeepLinkAsHubTab(live, safeLink)) {
+              if (openInternalLinkAsHubTab(live, safeLink)) return;
             }
             // Force a real top-bar tab (ignore temporary external/block modes).
             const opened = openUrlAsHubAppTab(safeLink, live);
@@ -9294,6 +9316,10 @@ function guestNavigationApi() {
     startUrlForService,
     handleOutboundOrNewWindowLink,
     guestWebPreferences,
+    tryOpenZohoSharedHubTab: (svc, url) => {
+      if (!shouldOpenAsHubTab(effectiveLinkHandling(svc))) return false;
+      return openInternalLinkAsHubTab(svc, url);
+    },
   };
 }
 
@@ -9415,25 +9441,9 @@ function attachZohoPopupAdoptToHubTab(parentWc, childWindow, service) {
     }
     if (!popupUrl.startsWith('http') || isAuthOrLoginUrl(popupUrl)) return;
     if (!isInternalUrl(popupUrl, service)) return;
+    if (isZohoAssetHost(popupUrl)) return;
 
-    // Zoho CRM/Books open first-party pages in popups during normal usage.
-    // Keep those in the same app tab to avoid surprise extra top-bar tabs.
-    if (
-      (service?.appId === 'zoho-books' || service?.appId === 'zoho-crm') &&
-      parentWc &&
-      !parentWc.isDestroyed()
-    ) {
-      parentWc.loadURL(popupUrl).catch(() => {});
-      adopting = true;
-      setTimeout(() => {
-        try {
-          if (!childWindow.isDestroyed()) childWindow.close();
-        } catch {
-          // ignore
-        }
-      }, 120);
-      return;
-    }
+    // Zoho CRM/Books/One deep links → shared-login Hub tabs (same profile).
     if (!openInternalLinkAsHubTab(service, popupUrl)) return;
     adopting = true;
     setTimeout(() => {
@@ -10221,6 +10231,13 @@ function activateService(id) {
 
   const previousId = activeServiceId;
   parkBackgroundViews(id);
+  // Reused warm CRM/Books tabs must NOT run blank-recovery reload — that wiped
+  // lead forms ~3–4s after switching back (false “blank” on white forms).
+  const reusedLiveView = (() => {
+    const existing = views.get(id);
+    const existingWc = existing?.view?.webContents;
+    return !!(existingWc && !existingWc.isDestroyed());
+  })();
   const entry = ensureLiveView(service);
   const keepWarm = isKeepWarmService(id);
   // Blind stale-reload destroyed warm Zoho/Arattai after ~90s away.
@@ -10273,8 +10290,8 @@ function activateService(id) {
     } catch {
       // ignore
     }
-  } else if (shouldRunPortalBlankRecovery(service)) {
-    // Delayed blank checks only — do not reload a healthy warm tab.
+  } else if (shouldRunPortalBlankRecovery(service) && !reusedLiveView) {
+    // Cold start only — never reload a parked CRM form that looked “blank”.
     schedulePortalHealthChecks(id);
     if (service.appId === 'zoho-one') {
       try {
