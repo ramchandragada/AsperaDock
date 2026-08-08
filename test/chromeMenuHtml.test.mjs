@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   CHROME_MENU_SECTIONS,
   buildChromeMenuHtml,
+  chromeMenuPreferredHeight,
 } from '../src/chromeMenuHtml.js';
 
 test('chrome menu sections follow presence → AI → app → workspace → lock → system', () => {
@@ -26,6 +27,7 @@ test('chrome menu keeps required actions and unique icons for settings vs update
     'ai-settings',
     'lock',
     'check-updates',
+    'website',
     'about',
   ]) {
     assert.ok(actions.includes(need), `missing ${need}`);
@@ -40,8 +42,17 @@ test('chrome menu keeps required actions and unique icons for settings vs update
   assert.match(html, /Workspace/);
   assert.match(html, /Keyboard shortcuts/);
   assert.match(html, /Check for updates/);
+  assert.match(html, /asperahub\.com/);
   // Settings uses sliders path; updates uses download arrow — not identical reload glyph.
   assert.ok(html.includes('data-action="settings"'));
   assert.ok(html.includes('data-action="check-updates"'));
+  assert.ok(html.includes('data-action="website"'));
   assert.ok(html.includes('data-action="ai-settings"'));
+  assert.ok(!html.includes('overflow-y:auto'), 'menu should not force inner scroll');
+});
+
+test('chrome menu preferred height fits all items on a normal display', () => {
+  const h = chromeMenuPreferredHeight({ workAreaHeight: 1080 });
+  assert.ok(h >= 900, `expected tall menu, got ${h}`);
+  assert.ok(h <= 1056, `should still clamp to work area, got ${h}`);
 });

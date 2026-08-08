@@ -58,7 +58,36 @@ const ICO = {
   puzzle: svg(
     '<path d="M12 2a2.5 2.5 0 0 1 2.5 2.5V6h2a2 2 0 0 1 2 2v2.1a2.4 2.4 0 1 0 0 3.8V16a2 2 0 0 1-2 2h-2.1a2.4 2.4 0 1 0-3.8 0H8a2 2 0 0 1-2-2v-2.1a2.4 2.4 0 1 0 0-3.8V8a2 2 0 0 1 2-2h2V4.5A2.5 2.5 0 0 1 12 2Z"/>',
   ),
+  link: svg(
+    '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  ),
 };
+
+/** Item / chrome metrics for sizing the floating menu window (keep in sync with CSS). */
+export const CHROME_MENU_ITEM_H = 36;
+export const CHROME_MENU_SECTION_TITLE_H = 22;
+export const CHROME_MENU_SEP_H = 9;
+export const CHROME_MENU_FOOTER_H = 52;
+export const CHROME_MENU_PAD_H = 20;
+
+/**
+ * Preferred floating-window height so the full menu fits without scrolling.
+ * @param {{ workAreaHeight?: number }} [opts]
+ */
+export function chromeMenuPreferredHeight({ workAreaHeight = 900 } = {}) {
+  const items = CHROME_MENU_SECTIONS.reduce((n, s) => n + s.items.length, 0);
+  const titled = CHROME_MENU_SECTIONS.filter((s) => s.title).length;
+  const seps = Math.max(0, CHROME_MENU_SECTIONS.length - 1);
+  const content =
+    CHROME_MENU_PAD_H +
+    items * CHROME_MENU_ITEM_H +
+    titled * CHROME_MENU_SECTION_TITLE_H +
+    seps * CHROME_MENU_SEP_H +
+    CHROME_MENU_FOOTER_H;
+  const max = Math.max(480, Number(workAreaHeight) || 900) - 24;
+  // Prefer full content; only clamp when the display is genuinely short.
+  return Math.min(max, Math.max(content, 560));
+}
 
 /** Stable action order for tests / docs (floating menu). */
 export const CHROME_MENU_SECTIONS = [
@@ -66,6 +95,7 @@ export const CHROME_MENU_SECTIONS = [
     id: 'presence',
     title: 'Presence',
     items: [
+      { action: 'web-search', label: 'Web search' },
       { action: 'search', label: 'Quick search' },
       { action: 'focus', label: 'Focus mode', id: 'focus-item' },
       { action: 'mute', label: 'Mute', id: 'mute-item' },
@@ -112,12 +142,14 @@ export const CHROME_MENU_SECTIONS = [
       { action: 'settings', label: 'Settings' },
       { action: 'shortcuts', label: 'Keyboard shortcuts' },
       { action: 'check-updates', label: 'Check for updates' },
+      { action: 'website', label: 'asperahub.com' },
       { action: 'about', label: 'About Aspera Hub' },
     ],
   },
 ];
 
 const ACTION_ICON = {
+  'web-search': ICO.search,
   search: ICO.search,
   focus: ICO.focus,
   mute: ICO.unmute,
@@ -137,6 +169,7 @@ const ACTION_ICON = {
   settings: ICO.settings,
   shortcuts: ICO.keyboard,
   'check-updates': ICO.updates,
+  website: ICO.link,
   about: ICO.info,
 };
 
@@ -178,10 +211,10 @@ export function buildChromeMenuHtml(dark = false) {
 <style>
   html, body { margin:0; padding:0; background:transparent; overflow:hidden; font:500 13px/1.35 system-ui,"Segoe UI","Ubuntu","Cantarell",sans-serif; color:${text}; user-select:none; }
   .card {
-    margin:4px; width:248px; max-height:calc(100vh - 16px); box-sizing:border-box;
+    margin:4px; width:248px; max-height:none; box-sizing:border-box;
     background:${bg}; border:1px solid ${border}; border-radius:12px;
     box-shadow:0 12px 40px rgba(15,23,42,0.22); padding:6px 6px 4px;
-    overflow-y:auto; overscroll-behavior:contain;
+    overflow:visible; overscroll-behavior:contain;
   }
   .section { display:grid; gap:1px; }
   .section-title {
@@ -201,12 +234,13 @@ export function buildChromeMenuHtml(dark = false) {
     padding:8px 10px 6px; font-size:11px; font-weight:600; color:${muted};
     border-top:1px solid ${border}; margin-top:2px;
   }
+  .ver .site { display:block; margin-top:2px; font-weight:500; opacity:0.9; }
 </style>
 </head>
 <body>
   <div class="card" role="menu" aria-label="Aspera Hub menu">
     ${sections}
-    <div class="ver" id="version">Aspera Hub</div>
+    <div class="ver" id="version">Aspera Hub<span class="site">asperahub.com</span></div>
   </div>
   <script>
     const api = window.chromeMenuApi;
@@ -214,7 +248,9 @@ export function buildChromeMenuHtml(dark = false) {
     const muteIcoOff = ${JSON.stringify(ICO.unmute)};
     function applyState(data) {
       const ver = document.getElementById('version');
-      if (ver && data?.versionLabel) ver.textContent = data.versionLabel;
+      if (ver && data?.versionLabel) {
+        ver.innerHTML = data.versionLabel + '<span class="site">asperahub.com</span>';
+      }
       const focus = document.getElementById('focus-item');
       if (focus) {
         const label = focus.querySelector('.label');

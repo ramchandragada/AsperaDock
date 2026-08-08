@@ -26,6 +26,7 @@ test('About text lists contributors as alphabetical', () => {
     chromeVersion: '2.0.0',
   });
   assert.match(detail, /Early contributors \(alphabetical order\):/);
+  assert.match(detail, /Website: https:\/\/asperahub\.com/);
   const amar = detail.indexOf('Amar Vallakati');
   const diksha = detail.indexOf('Diksha Garade');
   const tarun = detail.indexOf('Tarun Pandal');
