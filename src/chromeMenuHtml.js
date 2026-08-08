@@ -1,7 +1,7 @@
 /**
- * Floating chrome (Aspera) menu — structured like GNOME / Windows / Apple HIG:
- * related groups of 2–5 items, separators between groups, frequent actions first,
- * Settings / Shortcuts / About / Updates near the bottom.
+ * Floating chrome (Aspera) menu — Hub controls only (not a second toolbar).
+ * Toolbar already covers search, nav, add-app, and extensions.
+ * Groups: Presence → AI → app extras → workspace → lock → system.
  */
 
 function svg(path) {
@@ -84,9 +84,9 @@ export function chromeMenuPreferredHeight({ workAreaHeight = 900 } = {}) {
     titled * CHROME_MENU_SECTION_TITLE_H +
     seps * CHROME_MENU_SEP_H +
     CHROME_MENU_FOOTER_H;
-  const max = Math.max(480, Number(workAreaHeight) || 900) - 24;
+  const max = Math.max(400, Number(workAreaHeight) || 900) - 24;
   // Prefer full content; only clamp when the display is genuinely short.
-  return Math.min(max, Math.max(content, 560));
+  return Math.min(max, Math.max(content, 400));
 }
 
 /** Stable action order for tests / docs (floating menu). */
@@ -95,8 +95,6 @@ export const CHROME_MENU_SECTIONS = [
     id: 'presence',
     title: 'Presence',
     items: [
-      { action: 'web-search', label: 'Web search' },
-      { action: 'search', label: 'Quick search' },
       { action: 'focus', label: 'Focus mode', id: 'focus-item' },
       { action: 'mute', label: 'Mute', id: 'mute-item' },
     ],
@@ -113,22 +111,12 @@ export const CHROME_MENU_SECTIONS = [
   {
     id: 'app',
     title: 'Current app',
-    items: [
-      { action: 'back', label: 'Back' },
-      { action: 'forward', label: 'Forward' },
-      { action: 'reload', label: 'Reload' },
-      { action: 'home', label: 'Go to home' },
-      { action: 'free-ram', label: 'Free RAM' },
-    ],
+    items: [{ action: 'free-ram', label: 'Free RAM' }],
   },
   {
     id: 'workspace',
     title: 'Workspace',
-    items: [
-      { action: 'add-app', label: 'Add app' },
-      { action: 'profiles', label: 'Profiles' },
-      { action: 'extensions', label: 'Extensions' },
-    ],
+    items: [{ action: 'profiles', label: 'Profiles' }],
   },
   {
     id: 'security',
