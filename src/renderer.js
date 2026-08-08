@@ -469,7 +469,19 @@ function paintAppVersion() {
   if (running) running.textContent = full;
 
   const menuVer = document.getElementById('chrome-menu-version');
-  if (menuVer) menuVer.textContent = full;
+  if (menuVer) {
+    menuVer.textContent = '';
+    menuVer.append(document.createTextNode(full));
+    const site = document.createElement('span');
+    site.className = 'chrome-menu-site';
+    site.textContent = 'asperahub.com';
+    menuVer.appendChild(site);
+  }
+}
+
+function openAsperaWebsite(event) {
+  event?.preventDefault?.();
+  window.asperadock.openExternal?.('https://asperahub.com');
 }
 
 function renderChromeActions() {
@@ -1879,6 +1891,9 @@ function handleChromeAction(action) {
   if (action === 'check-updates') {
     runUpdateCheck();
   }
+  if (action === 'website') {
+    openAsperaWebsite();
+  }
 }
 
 function closeSettings() {
@@ -2124,7 +2139,14 @@ els.chromeMenu?.addEventListener('click', (event) => {
   }
   if (action === 'free-ram') window.asperadock.hibernateBackground();
   if (action === 'about') window.asperadock.showAbout?.();
+  if (action === 'website') openAsperaWebsite();
 });
+
+document.getElementById('empty-website-link')?.addEventListener('click', openAsperaWebsite);
+document.getElementById('settings-website-link')?.addEventListener('click', openAsperaWebsite);
+document
+  .getElementById('settings-general-website-link')
+  ?.addEventListener('click', openAsperaWebsite);
 
 function paintZohoCrmStatus(status) {
   const el = document.getElementById('zoho-crm-status');

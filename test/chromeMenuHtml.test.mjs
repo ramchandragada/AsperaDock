@@ -26,6 +26,7 @@ test('chrome menu keeps required actions and unique icons for settings vs update
     'ai-settings',
     'lock',
     'check-updates',
+    'website',
     'about',
   ]) {
     assert.ok(actions.includes(need), `missing ${need}`);
@@ -40,8 +41,10 @@ test('chrome menu keeps required actions and unique icons for settings vs update
   assert.match(html, /Workspace/);
   assert.match(html, /Keyboard shortcuts/);
   assert.match(html, /Check for updates/);
+  assert.match(html, /asperahub\.com/);
   // Settings uses sliders path; updates uses download arrow — not identical reload glyph.
   assert.ok(html.includes('data-action="settings"'));
   assert.ok(html.includes('data-action="check-updates"'));
+  assert.ok(html.includes('data-action="website"'));
   assert.ok(html.includes('data-action="ai-settings"'));
 });

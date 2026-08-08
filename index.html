@@ -141,10 +141,13 @@
                 <button type="button" data-action="check-updates" class="chrome-menu-item">
                   <span class="chrome-menu-ico" data-ico="download"></span> Check for updates
                 </button>
+                <button type="button" data-action="website" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="link"></span> asperahub.com
+                </button>
                 <button type="button" data-action="about" class="chrome-menu-item">
                   <span class="chrome-menu-ico" data-ico="info"></span> About Aspera Hub
                 </button>
-                <div id="chrome-menu-version" class="chrome-menu-version">Aspera Hub</div>
+                <div id="chrome-menu-version" class="chrome-menu-version">Aspera Hub<span class="chrome-menu-site">asperahub.com</span></div>
               </div>
             </div>
           </div>
@@ -165,6 +168,9 @@
               <h1>Aspera Hub</h1>
               <p id="empty-version" class="app-version-label">Version …</p>
               <p>Add WhatsApp, Arattai, Gmail, and Zoho from the Aspera catalog. Up to 10 apps. Names max 10 characters.</p>
+              <p class="empty-site">
+                <a href="https://asperahub.com" id="empty-website-link" class="site-link">asperahub.com</a>
+              </p>
               <button id="empty-add-btn" type="button" class="primary">Add your first app</button>
             </div>
           </div>
@@ -215,6 +221,10 @@
 
           <section class="settings-panel active" data-panel="general" aria-label="General">
           <h3 class="settings-panel-title">General</h3>
+          <p class="hint-text">
+            Product site:
+            <a href="https://asperahub.com" id="settings-general-website-link" class="site-link">asperahub.com</a>
+          </p>
 
           <label class="field">
             <span>Theme</span>
@@ -569,6 +579,8 @@
           <h3 class="settings-panel-title">Updates</h3>
           <p class="settings-banner" id="settings-version-banner">
             You are running <strong id="settings-running-version">Aspera Hub</strong>.
+            Learn more at
+            <a href="https://asperahub.com" id="settings-website-link" class="site-link">asperahub.com</a>.
           </p>
           <label class="switch-row">
             <input id="set-auto-update" type="checkbox" />
@@ -921,6 +933,7 @@
       <div class="lock-card">
         <div class="brand-mark" id="lock-brand" aria-hidden="true"></div>
         <h1>Aspera Hub is locked</h1>
+        <p class="lock-site">asperahub.com</p>
         <input id="lock-password" type="password" placeholder="Password" />
         <button id="unlock-btn" type="button" class="primary">Unlock</button>
         <p id="lock-error" class="error"></p>

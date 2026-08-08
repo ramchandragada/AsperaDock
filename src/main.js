@@ -146,7 +146,7 @@ import {
 } from './guestChatContext.js';
 import { guestContextMenuActionOrder, canOfferHubPin } from './guestContextMenu.js';
 import { isHubComposePollution } from './composeSafety.js';
-import { aboutDetailText } from './aboutCopy.js';
+import { aboutDetailText, ASPERA_HUB_WEBSITE } from './aboutCopy.js';
 import { spawnSync } from 'node:child_process';
 import {
   installUnpackedExtension,
@@ -5216,6 +5216,10 @@ function handleChromeMenuAction(type) {
   }
   if (type === 'about') {
     showAboutDialog();
+    return { ok: true };
+  }
+  if (type === 'website') {
+    openExternalSafe(ASPERA_HUB_WEBSITE);
     return { ok: true };
   }
   if (type === 'check-updates') {
@@ -11147,6 +11151,11 @@ function ensureTray() {
     },
     { type: 'separator' },
     {
+      label: 'asperahub.com',
+      click: () => openExternalSafe(ASPERA_HUB_WEBSITE),
+    },
+    { type: 'separator' },
+    {
       label: 'Quit',
       click: () => {
         quitting = true;
@@ -11511,6 +11520,10 @@ function installApplicationMenu() {
       label: 'Help',
       submenu: [
         {
+          label: 'Visit asperahub.com',
+          click: () => openExternalSafe(ASPERA_HUB_WEBSITE),
+        },
+        {
           label: 'Support',
           accelerator: 'CommandOrControl+F1',
           click: () =>
@@ -11568,8 +11581,13 @@ function showAboutDialog() {
         electronVersion: process.versions.electron,
         chromeVersion: process.versions.chrome,
       }),
-      buttons: ['OK'],
+      buttons: ['Website', 'OK'],
+      defaultId: 1,
+      cancelId: 1,
       icon: getAppIcon(),
+    })
+    .then(({ response }) => {
+      if (response === 0) openExternalSafe(ASPERA_HUB_WEBSITE);
     })
     .finally(() => afterDialogSafe());
 }
@@ -11935,6 +11953,11 @@ dockHandle('dock:open-error-reports', () => {
 });
 
 dockHandle('dock:update-status', () => getUpdateStatus());
+dockHandle('dock:open-external', (_e, url) => {
+  const ok = openExternalSafe(url);
+  return { ok: !!ok };
+});
+
 dockHandle('dock:show-about', () => {
   showAboutDialog();
   return { version: app.getVersion() };

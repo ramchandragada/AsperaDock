@@ -89,6 +89,7 @@ contextBridge.exposeInMainWorld('asperadock', {
   updateDownload: () => ipcRenderer.invoke('dock:update-download'),
   updateInstall: () => ipcRenderer.invoke('dock:update-install'),
   showAbout: () => ipcRenderer.invoke('dock:show-about'),
+  openExternal: (url) => ipcRenderer.invoke('dock:open-external', url),
   onUpdateEvent: (callback) => {
     const listener = (_event, data) => callback(data);
     ipcRenderer.on('dock:update-event', listener);
