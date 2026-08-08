@@ -14,3 +14,5 @@ scripts/*.png
 scripts/rambox-frames/
 scripts/error-inbox/
 .electron-zips/
+# Copied from node_modules during electron-forge generateAssets.
+packaging/pdfjs-runtime/*.mjs

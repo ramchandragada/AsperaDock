@@ -8,6 +8,11 @@ contextBridge.exposeInMainWorld('asperadock', {
   findInPage: (text, options) =>
     ipcRenderer.invoke('dock:find-in-page', text, options),
   stopFind: () => ipcRenderer.invoke('dock:stop-find'),
+  openFindBar: (payload) => ipcRenderer.invoke('dock:open-find-bar', payload || {}),
+  closeFindBar: () => ipcRenderer.invoke('dock:close-find-bar'),
+  openWebSearch: (payload) =>
+    ipcRenderer.invoke('dock:open-web-search', payload || {}),
+  closeWebSearch: () => ipcRenderer.invoke('dock:close-web-search'),
   printActive: () => ipcRenderer.invoke('dock:print-active'),
   removeService: (id) => ipcRenderer.invoke('dock:remove-service', id),
   createProfile: (name) => ipcRenderer.invoke('dock:create-profile', name),
@@ -84,6 +89,7 @@ contextBridge.exposeInMainWorld('asperadock', {
   updateDownload: () => ipcRenderer.invoke('dock:update-download'),
   updateInstall: () => ipcRenderer.invoke('dock:update-install'),
   showAbout: () => ipcRenderer.invoke('dock:show-about'),
+  openExternal: (url) => ipcRenderer.invoke('dock:open-external', url),
   onUpdateEvent: (callback) => {
     const listener = (_event, data) => callback(data);
     ipcRenderer.on('dock:update-event', listener);

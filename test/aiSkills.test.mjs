@@ -78,6 +78,8 @@ test('summarize prompt requests English Hindi and Marathi', () => {
   assert.match(prompt, /## Hindi/);
   assert.match(prompt, /## Marathi/);
   assert.match(prompt, /WhatsApp/);
+  assert.match(prompt, /Do not write TL;DR/);
+  assert.doesNotMatch(prompt, /one-line TL;DR/);
 });
 
 test('summarize and suggest-reply prompts include earlier conversation context', () => {

@@ -17,7 +17,8 @@ export function buildSummarizePrompt({ text, appName, priorMessages } = {}) {
     '## English',
     '## Hindi (हिन्दी)',
     '## Marathi (मराठी)',
-    'Under each heading: one-line TL;DR, then max 4 short bullets.',
+    'Under each heading: one short lead sentence (no label), then max 4 short bullets.',
+    'Do not write TL;DR, Summary, or any other prefix before the lead sentence.',
     'Hindi and Marathi use Devanagari. Keep names/URLs as-is. No invented facts. No preamble.',
     'If earlier conversation is provided, use it only to understand references,',
     'pronouns, and what the selected text is responding to — still center the summary on the selection.',
@@ -26,6 +27,55 @@ export function buildSummarizePrompt({ text, appName, priorMessages } = {}) {
     'Selected text:',
     body,
   ].filter((line, i, arr) => !(line === '' && arr[i - 1] === '')).join('\n');
+}
+
+/** Summarize extracted PDF text (or note when user also attached the file). */
+export function buildSummarizePdfTextPrompt({ text, fileName, pagesRead, numPages } = {}) {
+  const body = String(text || '').trim().slice(0, 12_000);
+  const pages =
+    pagesRead && numPages
+      ? `Pages used: ${pagesRead} of ${numPages}.`
+      : pagesRead
+        ? `Pages used: ${pagesRead}.`
+        : '';
+  return [
+    'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
+    'Skill: Summarize an uploaded PDF from its extracted text — be brief and fast.',
+    `File name: ${fileName || 'document.pdf'}.`,
+    pages,
+    'Produce summaries in THREE languages with these exact headings, in order:',
+    '## English',
+    '## Hindi (हिन्दी)',
+    '## Marathi (मराठी)',
+    'Under each heading: one short lead sentence (no label), then max 5 short bullets of the important points.',
+    'Do not write TL;DR, Summary, or any other prefix before the lead sentence.',
+    'Hindi and Marathi use Devanagari. Keep names/amounts/dates/URLs as-is. No invented facts. No preamble.',
+    '',
+    'Extracted PDF text:',
+    body || '(no extractable text)',
+  ].join('\n');
+}
+
+/** Vision / multimodal summarize for an image or PDF bytes. */
+export function buildSummarizeAttachmentPrompt({ kind, fileName } = {}) {
+  const what =
+    kind === 'pdf'
+      ? 'an uploaded PDF document'
+      : 'an uploaded image (photo, screenshot, or scan)';
+  return [
+    'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
+    `Skill: Summarize ${what} — be brief and fast.`,
+    `File name: ${fileName || (kind === 'pdf' ? 'document.pdf' : 'image')}.`,
+    'Produce summaries in THREE languages with these exact headings, in order:',
+    '## English',
+    '## Hindi (हिन्दी)',
+    '## Marathi (मराठी)',
+    'Under each heading: one short lead sentence (no label), then max 5 short bullets.',
+    'Do not write TL;DR, Summary, or any other prefix before the lead sentence.',
+    'For images: describe what is visible and any readable text/numbers that matter for work.',
+    'For PDFs: focus on purpose, key facts, amounts, dates, and action items.',
+    'Hindi and Marathi use Devanagari. Keep names/amounts/dates/URLs as-is. No invented facts. No preamble.',
+  ].join('\n');
 }
 
 export function buildSuggestReplyPrompt({ text, appName, priorMessages } = {}) {
