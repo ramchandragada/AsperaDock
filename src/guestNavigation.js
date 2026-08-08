@@ -12,6 +12,7 @@ import {
   isAllowedGmailTabUrl,
   isSameEcosystemUrl,
   isGoogleOauthClientUrl,
+  shouldOpenZohoSharedDeepLinkAsHubTab,
 } from './guestNav.js';
 
 /**
@@ -21,6 +22,7 @@ import {
  * @property {(service: object) => string} startUrlForService
  * @property {(service: object, url: string, wc: Electron.WebContents) => boolean} handleOutboundOrNewWindowLink
  * @property {(service: object) => object} guestWebPreferences
+ * @property {(service: object, url: string) => boolean} [tryOpenZohoSharedHubTab]
  */
 
 /**
@@ -35,6 +37,7 @@ export function configureGuestWindowOpen(wc, service, api) {
     startUrlForService,
     handleOutboundOrNewWindowLink,
     guestWebPreferences,
+    tryOpenZohoSharedHubTab,
   } = api;
 
   const allowPopup = () => ({
@@ -70,7 +73,7 @@ export function configureGuestWindowOpen(wc, service, api) {
       }
 
       // Catalog apps: same-ecosystem window.opens stay in-app (or auth popup).
-      // Never spawn surprise Hub link tabs for Google/Zoho/first-party URLs.
+      // Zoho CRM/Books deep links are an exception — open as shared-login Hub tabs.
       if (!(live?.isCustom || live?.linkTab) && isSameEcosystemUrl(live, raw)) {
         if (
           isGoogleOauthClientUrl(raw) ||
@@ -90,6 +93,13 @@ export function configureGuestWindowOpen(wc, service, api) {
           }
         } catch {
           // ignore
+        }
+        if (
+          typeof tryOpenZohoSharedHubTab === 'function' &&
+          shouldOpenZohoSharedDeepLinkAsHubTab(live, raw) &&
+          tryOpenZohoSharedHubTab(live, raw)
+        ) {
+          return { action: 'deny' };
         }
         wc.loadURL(raw).catch(() => {});
         return { action: 'deny' };
