@@ -96,6 +96,7 @@ import {
   sanitizeForwardLinkURL,
   shouldForwardAsDocument,
 } from './forwardHub.js';
+import { uniqueDownloadPath } from './downloadPath.js';
 import {
   clearMessagingLeftSearchJs,
   composeReplyJs,
@@ -609,11 +610,11 @@ let forwardPayload = null;
 /** One-shot download hijack used while capturing a document to forward. */
 let pendingForwardDownload = null;
 /**
- * While > now, every guest download is saved silently (no Save dialog).
- * Needed because PDF preview Forward often fires 2–3 DownloadItems; only the
- * first fills pendingForwardDownload — extras used to pop "Save download".
+ * Brief tail after Forward hijack completes — swallow duplicate DownloadItems
+ * from the same preview click only. Must NOT block normal user downloads.
  */
-let forwardCaptureSilentUntil = 0;
+let forwardExtraSwallowUntil = 0;
+const FORWARD_EXTRA_SWALLOW_MS = 2_000;
 /** Bumped to cancel in-flight Forward Ctrl+V waits (prevents paste into later chats). */
 let forwardPasteGeneration = 0;
 /** Text Hub last wrote to the system clipboard for Forward (for restore + sanitize). */
@@ -624,16 +625,92 @@ let hubClipboardBeforeStage = null;
 const recentGuestDownloads = [];
 const RECENT_DOWNLOAD_MAX = 40;
 
-function beginForwardCaptureWindow(ms = 20_000) {
-  forwardCaptureSilentUntil = Math.max(forwardCaptureSilentUntil, Date.now() + ms);
+function beginForwardExtraSwallow(ms = FORWARD_EXTRA_SWALLOW_MS) {
+  forwardExtraSwallowUntil = Math.max(forwardExtraSwallowUntil, Date.now() + ms);
 }
 
-function endForwardCaptureWindow() {
-  forwardCaptureSilentUntil = 0;
+function endForwardExtraSwallow() {
+  forwardExtraSwallowUntil = 0;
 }
 
-function isForwardCaptureSilentActive() {
-  return !!pendingForwardDownload || Date.now() < forwardCaptureSilentUntil;
+function shouldSwallowForwardExtraDownload() {
+  return Date.now() < forwardExtraSwallowUntil;
+}
+
+function swallowForwardExtraDownload(item) {
+  try {
+    item.cancel();
+  } catch {
+    try {
+      const dump = path.join(
+        forwardTempDir(),
+        `fwd-extra-${Date.now()}-${sanitizeForwardFilename(item.getFilename() || 'bin')}`,
+      );
+      item.setSavePath(dump);
+      item.once('done', () => {
+        try {
+          fs.unlinkSync(dump);
+        } catch {
+          // ignore
+        }
+      });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+function promptGuestDownloadSave(item, defaultPath) {
+  try {
+    item.pause();
+  } catch {
+    // ignore — older builds may not support pause
+  }
+  const parent =
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  dialog
+    .showSaveDialog(parent, {
+      title: 'Save download',
+      defaultPath,
+    })
+    .then(({ canceled, filePath }) => {
+      if (canceled || !filePath) {
+        try {
+          item.cancel();
+        } catch {
+          // ignore
+        }
+        return;
+      }
+      try {
+        item.setSavePath(filePath);
+        item.resume();
+      } catch {
+        try {
+          item.setSavePath(defaultPath);
+          item.resume();
+        } catch {
+          // ignore
+        }
+      }
+    })
+    .catch(() => {
+      try {
+        item.setSaveDialogOptions({
+          title: 'Save download',
+          defaultPath,
+          ...(parent ? { window: parent } : {}),
+        });
+        item.resume();
+      } catch {
+        try {
+          item.setSavePath(defaultPath);
+          item.resume();
+        } catch {
+          // ignore
+        }
+      }
+    });
 }
 /** Floating Chrome-like Extensions manager. */
 let extensionsWindow = null;
@@ -6067,78 +6144,54 @@ function configureSession(partitionSession, partitionKey) {
 
   partitionSession.on('will-download', (_event, item) => {
     // Silent capture for Forward-with-Hub (must not show Save dialog).
-    // Keep hijacking for the whole capture window — preview Download often
-    // fires multiple items; only the first should fulfill the promise.
-    if (isForwardCaptureSilentActive()) {
-      const pending = pendingForwardDownload;
-      if (pending) {
-        pendingForwardDownload = null;
-        try {
-          const hinted = String(pending.fileName || '').trim();
-          const rawName = hinted || item.getFilename() || 'document.bin';
-          const name = sanitizeForwardFilename(
-            rawName,
-            extensionOf(rawName) || 'bin',
-          );
-          const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
-          item.setSavePath(savePath);
-          item.once('done', (_e, state) => {
-            if (state === 'completed') {
-              rememberGuestDownload(savePath, name);
-              pending.resolve(item.getSavePath());
-            } else {
-              pending.reject(new Error(`Download ${state}`));
-            }
-          });
-        } catch (error) {
-          try {
-            item.cancel();
-          } catch {
-            // ignore
-          }
-          pending.reject(error);
-        }
-        return;
-      }
-      // Extra download during Forward capture — swallow silently (no Save dialog).
+    const pending = pendingForwardDownload;
+    if (pending) {
+      pendingForwardDownload = null;
       try {
-        item.cancel();
-      } catch {
+        const hinted = String(pending.fileName || '').trim();
+        const rawName = hinted || item.getFilename() || 'document.bin';
+        const name = sanitizeForwardFilename(
+          rawName,
+          extensionOf(rawName) || 'bin',
+        );
+        const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
+        item.setSavePath(savePath);
+        item.once('done', (_e, state) => {
+          if (state === 'completed') {
+            rememberGuestDownload(savePath, name);
+            pending.resolve(item.getSavePath());
+          } else {
+            pending.reject(new Error(`Download ${state}`));
+          }
+        });
+      } catch (error) {
         try {
-          const dump = path.join(
-            forwardTempDir(),
-            `fwd-extra-${Date.now()}-${sanitizeForwardFilename(item.getFilename() || 'bin')}`,
-          );
-          item.setSavePath(dump);
-          item.once('done', () => {
-            try {
-              fs.unlinkSync(dump);
-            } catch {
-              // ignore
-            }
-          });
+          item.cancel();
         } catch {
           // ignore
         }
+        pending.reject(error);
       }
+      // Swallow duplicate DownloadItems from the same preview click briefly.
+      beginForwardExtraSwallow();
       return;
     }
 
-    if (settings.downloadPath) {
-      item.setSavePath(path.join(settings.downloadPath, item.getFilename()));
+    if (shouldSwallowForwardExtraDownload()) {
+      swallowForwardExtraDownload(item);
+      return;
+    }
+
+    const downloadDir = String(settings.downloadPath || '').trim();
+    const downloadName = item.getFilename();
+    if (downloadDir) {
+      item.setSavePath(uniqueDownloadPath(downloadDir, downloadName));
     } else {
-      // Ask every time — use Electron's async save dialog (never Sync: it freezes Hub).
-      try {
-        item.setSaveDialogOptions({
-          title: 'Save download',
-          defaultPath: path.join(app.getPath('downloads'), item.getFilename()),
-        });
-      } catch {
-        // Older Electron: fall back to downloads folder without blocking the UI.
-        item.setSavePath(
-          path.join(app.getPath('downloads'), item.getFilename()),
-        );
-      }
+      const defaultPath = uniqueDownloadPath(
+        app.getPath('downloads'),
+        downloadName,
+      );
+      promptGuestDownloadSave(item, defaultPath);
     }
     item.once('done', (_e, state) => {
       if (state !== 'completed') return;
@@ -6780,7 +6833,6 @@ function clickWebContentsAt(webContents, x, y) {
 }
 
 function armForwardDownload(fileName = '', timeoutMs = 12_000) {
-  beginForwardCaptureWindow(Math.max(timeoutMs + 2_000, 8_000));
   return new Promise((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(() => {
@@ -6795,9 +6847,7 @@ function armForwardDownload(fileName = '', timeoutMs = 12_000) {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        // Keep silent window briefly so duplicate DownloadItems from the same
-        // preview click cannot open the Save dialog.
-        beginForwardCaptureWindow(4_000);
+        beginForwardExtraSwallow();
         resolve(filePath);
       },
       reject: (error) => {
@@ -6814,6 +6864,7 @@ function disarmForwardDownload(downloadPromise) {
   if (pendingForwardDownload) {
     const pending = pendingForwardDownload;
     pendingForwardDownload = null;
+    endForwardExtraSwallow();
     try {
       pending.reject(new Error('cancelled'));
     } catch {
@@ -6991,8 +7042,6 @@ async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', 
     return { ok: false, error: 'Chat view is gone.' };
   }
 
-  beginForwardCaptureWindow(25_000);
-
   let clickPoints = Array.isArray(points) ? points.filter((p) => p && p.x >= 0 && p.y >= 0) : [];
   if (!clickPoints.length) {
     try {
@@ -7017,7 +7066,7 @@ async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', 
     try {
       const filePath = await downloadPromise;
       if (filePath) {
-        beginForwardCaptureWindow(4_000);
+        beginForwardExtraSwallow();
         return { ok: true, filePath };
       }
     } catch {
@@ -7068,7 +7117,7 @@ async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', 
       try {
         const filePath = await downloadPromise;
         if (filePath) {
-          beginForwardCaptureWindow(4_000);
+          beginForwardExtraSwallow();
           return { ok: true, filePath };
         }
       } catch {
@@ -7093,7 +7142,6 @@ function downloadForwardFile(webContents, url, fileName = '') {
       reject(new Error('No downloadable document URL.'));
       return;
     }
-    beginForwardCaptureWindow(50_000);
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
@@ -7107,7 +7155,7 @@ function downloadForwardFile(webContents, url, fileName = '') {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        beginForwardCaptureWindow(4_000);
+        beginForwardExtraSwallow();
         resolve(filePath);
       },
       reject: (error) => {
@@ -7282,7 +7330,6 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
 
   if (documentHint) {
     // Entire document capture must stay silent — no "Save download" dialogs.
-    beginForwardCaptureWindow(45_000);
     const hintedName = sanitizeForwardFilename(
       candidateName || 'document.pdf',
       extensionOf(candidateName) || extensionOf(candidateUrl) || 'pdf',
@@ -7294,91 +7341,86 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
       arattaiFullFileUrlFromAny(String(params.linkURL || ''), ctx.chatId) ||
       arattaiFullFileUrlFromAny(srcURL, ctx.chatId);
 
-    try {
-      // 0) PDF already open in Adobe / WhatsApp preview — read bytes (no Download click).
-      if (!filePath) {
-        const viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
-        if (viewer.ok) filePath = viewer.filePath;
-      }
+    // 0) PDF already open in Adobe / WhatsApp preview — read bytes (no Download click).
+    if (!filePath) {
+      const viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
+      if (viewer.ok) filePath = viewer.filePath;
+    }
 
-      // 1) User already downloaded this file in chat — reuse it.
-      if (!filePath) {
-        const recentPath = matchRecentDownload(
-          recentGuestDownloads,
-          hintedName,
-          ctx.nearbyText || candidateName,
-        );
-        if (recentPath && fs.existsSync(recentPath)) {
-          try {
-            const dest = path.join(
-              forwardTempDir(),
-              `${Date.now()}-${path.basename(recentPath)}`,
-            );
-            fs.copyFileSync(recentPath, dest);
-            filePath = dest;
-          } catch (error) {
-            console.warn('[forward] reuse recent download failed', error);
-          }
-        }
-      }
-
-      // 2) Arattai UDS via session cookies (more reliable than downloadURL).
-      if (!filePath && arattaiUrl) {
-        const fetched = await fetchArattaiDocumentViaSession(
-          webContents,
-          arattaiUrl,
-          hintedName,
-        );
-        if (fetched.ok) filePath = fetched.filePath;
-        else {
-          try {
-            filePath = await downloadForwardFile(webContents, arattaiUrl, hintedName);
-          } catch (error) {
-            console.warn('[forward] Arattai document URL download failed', error);
-          }
-        }
-      }
-
-      // 3) Direct URL download when we have a real document link (not image/blob thumbs).
-      if (
-        !filePath &&
-        candidateUrl &&
-        !/^data:image\//i.test(candidateUrl) &&
-        !/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(candidateUrl) &&
-        !/webdownload/i.test(candidateUrl)
-      ) {
+    // 1) User already downloaded this file in chat — reuse it.
+    if (!filePath) {
+      const recentPath = matchRecentDownload(
+        recentGuestDownloads,
+        hintedName,
+        ctx.nearbyText || candidateName,
+      );
+      if (recentPath && fs.existsSync(recentPath)) {
         try {
-          filePath = await downloadForwardFile(webContents, candidateUrl, hintedName);
+          const dest = path.join(
+            forwardTempDir(),
+            `${Date.now()}-${path.basename(recentPath)}`,
+          );
+          fs.copyFileSync(recentPath, dest);
+          filePath = dest;
         } catch (error) {
-          console.warn('[forward] document URL download failed', error);
+          console.warn('[forward] reuse recent download failed', error);
         }
       }
+    }
 
-      // 4) Click download control; extras during capture window are cancelled silently.
-      if (!filePath) {
-        const ui = await tryCaptureDocumentByUiDownload(
-          webContents,
-          params.x,
-          params.y,
-          hintedName,
-          ctx.downloadPoints,
-        );
-        if (ui.ok && ui.filePath) filePath = ui.filePath;
-        else console.warn('[forward] UI document download failed', ui.error);
+    // 2) Arattai UDS via session cookies (more reliable than downloadURL).
+    if (!filePath && arattaiUrl) {
+      const fetched = await fetchArattaiDocumentViaSession(
+        webContents,
+        arattaiUrl,
+        hintedName,
+      );
+      if (fetched.ok) filePath = fetched.filePath;
+      else {
+        try {
+          filePath = await downloadForwardFile(webContents, arattaiUrl, hintedName);
+        } catch (error) {
+          console.warn('[forward] Arattai document URL download failed', error);
+        }
       }
+    }
 
-      // 5) Retry session fetch after UI click (Arattai may warm the file).
-      if (!filePath && arattaiUrl) {
-        const fetched = await fetchArattaiDocumentViaSession(
-          webContents,
-          arattaiUrl,
-          hintedName,
-        );
-        if (fetched.ok) filePath = fetched.filePath;
+    // 3) Direct URL download when we have a real document link (not image/blob thumbs).
+    if (
+      !filePath &&
+      candidateUrl &&
+      !/^data:image\//i.test(candidateUrl) &&
+      !/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(candidateUrl) &&
+      !/webdownload/i.test(candidateUrl)
+    ) {
+      try {
+        filePath = await downloadForwardFile(webContents, candidateUrl, hintedName);
+      } catch (error) {
+        console.warn('[forward] document URL download failed', error);
       }
-    } finally {
-      // Keep a short silence tail so late duplicate DownloadItems cannot open Save.
-      beginForwardCaptureWindow(3_500);
+    }
+
+    // 4) Click download control; duplicate DownloadItems are swallowed briefly.
+    if (!filePath) {
+      const ui = await tryCaptureDocumentByUiDownload(
+        webContents,
+        params.x,
+        params.y,
+        hintedName,
+        ctx.downloadPoints,
+      );
+      if (ui.ok && ui.filePath) filePath = ui.filePath;
+      else console.warn('[forward] UI document download failed', ui.error);
+    }
+
+    // 5) Retry session fetch after UI click (Arattai may warm the file).
+    if (!filePath && arattaiUrl) {
+      const fetched = await fetchArattaiDocumentViaSession(
+        webContents,
+        arattaiUrl,
+        hintedName,
+      );
+      if (fetched.ok) filePath = fetched.filePath;
     }
 
     if (filePath && fs.existsSync(filePath)) {
