@@ -96,6 +96,7 @@ import {
   sanitizeForwardLinkURL,
   shouldForwardAsDocument,
 } from './forwardHub.js';
+import { uniqueDownloadPath } from './downloadPath.js';
 import {
   clearMessagingLeftSearchJs,
   composeReplyJs,
@@ -6124,20 +6125,24 @@ function configureSession(partitionSession, partitionKey) {
       return;
     }
 
-    if (settings.downloadPath) {
-      item.setSavePath(path.join(settings.downloadPath, item.getFilename()));
+    const downloadDir = String(settings.downloadPath || '').trim();
+    const downloadName = item.getFilename();
+    if (downloadDir) {
+      item.setSavePath(uniqueDownloadPath(downloadDir, downloadName));
     } else {
+      const defaultPath = uniqueDownloadPath(
+        app.getPath('downloads'),
+        downloadName,
+      );
       // Ask every time — use Electron's async save dialog (never Sync: it freezes Hub).
       try {
         item.setSaveDialogOptions({
           title: 'Save download',
-          defaultPath: path.join(app.getPath('downloads'), item.getFilename()),
+          defaultPath,
         });
       } catch {
         // Older Electron: fall back to downloads folder without blocking the UI.
-        item.setSavePath(
-          path.join(app.getPath('downloads'), item.getFilename()),
-        );
+        item.setSavePath(defaultPath);
       }
     }
     item.once('done', (_e, state) => {
