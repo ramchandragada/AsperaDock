@@ -29,12 +29,13 @@ const els = {
   addAppBtn: document.getElementById('add-app-btn'),
   navBackBtn: document.getElementById('nav-back-btn'),
   navForwardBtn: document.getElementById('nav-forward-btn'),
+  navReloadBtn: document.getElementById('nav-reload-btn'),
   emptyState: document.getElementById('empty-state'),
   emptyAddBtn: document.getElementById('empty-add-btn'),
   focusBtn: document.getElementById('focus-btn'),
   muteBtn: document.getElementById('mute-btn'),
   freeRamBtn: null,
-  reloadBtn: null,
+  reloadBtn: document.getElementById('nav-reload-btn'),
   menuBtn: document.getElementById('menu-btn'),
   asperaAiBtn: document.getElementById('aspera-ai-btn'),
   chromeMenu: document.getElementById('app-chrome-menu'),
@@ -207,6 +208,7 @@ function paintToolbarIcons() {
   if (els.addAppBtn) els.addAppBtn.innerHTML = icon('plus');
   if (els.navBackBtn) els.navBackBtn.innerHTML = icon('back');
   if (els.navForwardBtn) els.navForwardBtn.innerHTML = icon('forward');
+  if (els.navReloadBtn) els.navReloadBtn.innerHTML = icon('reload');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
   if (els.appMenuEdit) els.appMenuEdit.innerHTML = icon('settings');
   if (els.appMenuHome) els.appMenuHome.innerHTML = icon('home');
@@ -483,6 +485,9 @@ function renderChromeActions() {
   }
   if (els.navForwardBtn) {
     els.navForwardBtn.disabled = !nav.canGoForward || state.locked;
+  }
+  if (els.navReloadBtn) {
+    els.navReloadBtn.disabled = !!state.locked || !state.activeServiceId;
   }
 
   const total = state.totalUnread || 0;
@@ -2088,6 +2093,9 @@ els.lockBtn?.addEventListener('click', () => {
 });
 els.navBackBtn?.addEventListener('click', () => navigateActive('back'));
 els.navForwardBtn?.addEventListener('click', () => navigateActive('forward'));
+els.navReloadBtn?.addEventListener('click', () => {
+  window.asperadock.reloadActive?.();
+});
 els.addAppBtn.addEventListener('click', openAppsSettings);
 els.emptyAddBtn.addEventListener('click', openAppsSettings);
 
