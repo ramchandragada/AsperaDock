@@ -11,7 +11,12 @@ test('find clear stops guest highlights and guards late found-in-page', () => {
   assert.match(main, /result\.requestId !== findBarRequestId/);
   assert.match(main, /stopFindInPage\('clearSelection'\)/);
   assert.match(main, /Find bar closed/);
-  assert.match(main, /\\uFFFF\\uFFFE\\uFFFF/);
+  assert.match(main, /restoreGuestFocusAfterFloat/);
+  // Must not call stopFindInPage on every guest keystroke (blocks compose).
+  assert.doesNotMatch(
+    main,
+    /Find bar closed: any typing[\s\S]*stopFindInPage\('clearSelection'\)/,
+  );
 });
 
 test('find bar debounces typing and does not select-all on every focus', () => {

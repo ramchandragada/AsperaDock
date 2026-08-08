@@ -2283,6 +2283,37 @@ function focusActiveContents() {
   }
 }
 
+/**
+ * After closing a floating child (Find / Web search), mainWindow often is not
+ * focused yet — dockIsUserFocused() is false and focusActiveContents() no-ops,
+ * so WhatsApp compose receives no keys until the user opens Find again.
+ */
+function restoreGuestFocusAfterFloat() {
+  if (locked || overlayOpen || !activeServiceId) return;
+  const entry = views.get(activeServiceId);
+  const wc = entry?.view?.webContents;
+  const kick = () => {
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      if (wc && !wc.isDestroyed()) wc.focus();
+    } catch {
+      // ignore
+    }
+  };
+  kick();
+  setTimeout(kick, 0);
+  setTimeout(kick, 40);
+  setTimeout(kick, 120);
+}
+
 /** Bring the dock to the front — only from explicit user actions. */
 function raiseDockWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -3236,6 +3267,7 @@ function closeFindBarWindow({ clear = true } = {}) {
   }
   if (!findBarWindow || findBarWindow.isDestroyed()) {
     findBarWindow = null;
+    restoreGuestFocusAfterFloat();
     return;
   }
   const win = findBarWindow;
@@ -3245,12 +3277,9 @@ function closeFindBarWindow({ clear = true } = {}) {
   } catch {
     // ignore
   }
-  // Return keyboard focus to the active guest after closing the popup.
-  try {
-    focusActiveContents();
-  } catch {
-    // ignore
-  }
+  // Force focus back to WhatsApp/Arattai compose (not focusActiveContents —
+  // mainWindow is often unfocused while the Find child still had keyboard).
+  restoreGuestFocusAfterFloat();
 }
 
 function isFindBarOpen() {
@@ -3260,6 +3289,7 @@ function isFindBarOpen() {
 function closeWebSearchWindow() {
   if (!webSearchWindow || webSearchWindow.isDestroyed()) {
     webSearchWindow = null;
+    restoreGuestFocusAfterFloat();
     return;
   }
   const win = webSearchWindow;
@@ -3269,11 +3299,7 @@ function closeWebSearchWindow() {
   } catch {
     // ignore
   }
-  try {
-    focusActiveContents();
-  } catch {
-    // ignore
-  }
+  restoreGuestFocusAfterFloat();
 }
 
 function isWebSearchOpen() {
@@ -10896,16 +10922,6 @@ function attachShortcuts(webContents) {
       return;
     }
 
-    // Find bar closed: any typing in WhatsApp/Arattai must kill leftover yellow
-    // find-in-page paint (users search chat names in the left pane, not Ctrl+F).
-    if (!isFindBarOpen() && !input.control && !input.alt && !input.meta) {
-      try {
-        webContents.stopFindInPage('clearSelection');
-      } catch {
-        // ignore
-      }
-    }
-
     // Always-on reload (not user-remappable — reserved).
     if (input.control && !input.alt && !input.meta && key === 'r' && !input.shift) {
       event.preventDefault();
@@ -11162,38 +11178,14 @@ function clearGuestFindHighlights(webContents) {
   findBarRequestId = 0;
   // clearSelection removes Chromium find markers; call twice — some Linux
   // builds keep the yellow paint after a single stop while a find is in flight.
+  // Do NOT start a new findInPage here and do NOT call this on every keystroke —
+  // that stole focus from WhatsApp compose after Find closed (v0.5.6 regression).
   for (let i = 0; i < 2; i++) {
     try {
       webContents.stopFindInPage('clearSelection');
     } catch {
       // ignore
     }
-  }
-  // Nuclear: start an impossible find then stop — forces Chromium to drop
-  // orphaned markers that survive a bare stopFindInPage on WebContentsView.
-  try {
-    webContents.findInPage('\uFFFF\uFFFE\uFFFF', {
-      forward: true,
-      findNext: false,
-    });
-  } catch {
-    // ignore
-  }
-  try {
-    webContents.stopFindInPage('clearSelection');
-  } catch {
-    // ignore
-  }
-  // Drop any leftover caret/selection some Chromium builds leave painted.
-  try {
-    webContents
-      .executeJavaScript(
-        `(() => { try { window.getSelection()?.removeAllRanges(); } catch (e) {} })();`,
-        true,
-      )
-      .catch(() => {});
-  } catch {
-    // ignore
   }
 }
 
