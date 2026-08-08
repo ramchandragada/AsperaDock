@@ -772,6 +772,28 @@ body.layout-right .app-tab.drop-after {
   margin-top: 2px;
 }
 
+.chrome-menu-site {
+  display: block;
+  margin-top: 2px;
+  font-weight: 500;
+  opacity: 0.9;
+}
+
+.site-link {
+  color: var(--accent, #2563eb);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.site-link:hover {
+  text-decoration: underline;
+}
+
+.empty-site {
+  margin: -8px 0 18px !important;
+  font-size: 13px !important;
+}
+
 .chrome-menu-section-title {
   padding: 7px 12px 3px;
   font-size: 10px;
@@ -2475,6 +2497,14 @@ kbd {
   font-size: 18px;
 }
 
+.lock-card .lock-site {
+  margin: 6px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 .error {
   color: var(--danger);
   min-height: 1.2em;
@@ -3013,23 +3043,12 @@ body.theme-dark .ghost-btn {
   margin: 0;
 }
 
+/* Legacy in-page find bar — kept in DOM but unused. Find is a floating popup. */
 .find-bar {
-  position: fixed;
-  top: calc(var(--top-bar) + 8px);
-  right: 16px;
-  z-index: 80;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--chrome-1, #fff);
-  color: var(--text);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+  display: none !important;
 }
 .find-bar.hidden {
-  display: none;
+  display: none !important;
 }
 .find-bar input {
   width: 180px;
