@@ -972,6 +972,73 @@ function isMessagingApp(service) {
   return id === 'whatsapp' || id === 'arattai';
 }
 
+/** Defer inbox scrape while PDF/media preview is open (common in group chats). */
+const scrapeDeferTimers = new Map();
+const SCRAPE_DEFER_MS = 5_000;
+
+function guestMediaViewerOpenJs() {
+  return `(() => {
+    if (document.querySelector('embed[type="application/pdf"], object[type="application/pdf"], .pdfViewer, #viewer')) {
+      return true;
+    }
+    const roots = [];
+    const dialog = document.querySelector('[role="dialog"]');
+    if (dialog) roots.push(dialog);
+    const viewer = document.querySelector(
+      '[data-testid="media-viewer"], [data-testid="media-viewer-modal"], #media-viewer, .media-viewer',
+    );
+    if (viewer) roots.push(viewer);
+    for (const root of roots) {
+      if (root.querySelector('embed, object, iframe, canvas, video, img[src^="blob:"]')) return true;
+      const label = (root.getAttribute('aria-label') || root.textContent || '').slice(0, 240);
+      if (/\\bPDF\\b|application\\/pdf|document preview/i.test(label)) return true;
+    }
+    return false;
+  })()`;
+}
+
+function serviceHasBlobPreviewPopup(serviceId) {
+  const set = servicePopups.get(serviceId);
+  if (!set?.size) return false;
+  for (const win of set) {
+    try {
+      if (win.isDestroyed?.()) continue;
+      const url = String(win.webContents?.getURL?.() || '');
+      if (/^blob:|^data:/i.test(url)) return true;
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+}
+
+async function serviceIsBusyWithMediaViewer(serviceId) {
+  if (serviceHasBlobPreviewPopup(serviceId)) return true;
+  const wc = views.get(serviceId)?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return false;
+  try {
+    return await wc.executeJavaScript(guestMediaViewerOpenJs(), true);
+  } catch {
+    return false;
+  }
+}
+
+function scheduleDeferredInboxScrape(service, run) {
+  const key = String(service?.id || '');
+  if (!key || scrapeDeferTimers.has(key)) return;
+  scrapeDeferTimers.set(
+    key,
+    setTimeout(async () => {
+      scrapeDeferTimers.delete(key);
+      if (await serviceIsBusyWithMediaViewer(key)) {
+        scheduleDeferredInboxScrape(service, run);
+        return;
+      }
+      run();
+    }, SCRAPE_DEFER_MS),
+  );
+}
+
 /** WhatsApp/Arattai QR or phone-link screens — never reload these. */
 async function guestLooksLikeLoginOrPairing(webContents, service) {
   if (!webContents || webContents.isDestroyed()) return false;
@@ -1073,6 +1140,11 @@ async function runActiveGuestSurfaceHealthCheck(id, { fromPoll = false } = {}) {
   }
 
   if (await guestLooksLikeLoginOrPairing(wc, service)) {
+    entry.__surfaceBlankStrikes = 0;
+    return;
+  }
+
+  if (isMessagingApp(service) && (await serviceIsBusyWithMediaViewer(id))) {
     entry.__surfaceBlankStrikes = 0;
     return;
   }
@@ -3408,11 +3480,12 @@ function buildNotifCenterData() {
   return buildNotifCenterDataSync([]);
 }
 
-async function scrapeUnreadChatsForService(service) {
+async function scrapeUnreadChatsForService(service, { allowDefer = true } = {}) {
   if (!service || !isInboxAppId(service.appId)) return [];
   if (whatsappAutomationBlocked(settings, service.appId)) return [];
   const wc = views.get(service.id)?.view?.webContents;
   if (!wc || wc.isDestroyed()) return [];
+  if (allowDefer && (await serviceIsBusyWithMediaViewer(service.id))) return [];
   try {
     const result = await wc.executeJavaScript(scrapeMessagingInboxJs(), true);
     const at = Date.now();
@@ -9307,8 +9380,13 @@ function createViewForService(service) {
   webContents.on('did-create-window', (childWindow) => {
     const childWc = childWindow.webContents;
     trackServicePopup(service.id, childWindow);
-    configureGuestWindowOpen(childWc, service);
     attachGuestContextMenu(childWc);
+    watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
+
+    // WhatsApp/Arattai PDF and photo previews are read-only blob windows.
+    if (isMessagingApp(service)) return;
+
+    configureGuestWindowOpen(childWc, service);
     attachGuestNavigationGate(childWc, service);
     attachPopupSessionAdopt(webContents, childWindow, service);
     attachLinkTabPopupAdopt(webContents, childWindow, service);
@@ -9320,7 +9398,6 @@ function createViewForService(service) {
         enabled: settings.googleSpoofEnabled !== false,
       }).catch(() => {});
     }
-    watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
   });
 
   webContents.on('console-message', (event, level, message) => {
@@ -9358,37 +9435,44 @@ function createViewForService(service) {
     if (next > previous && next > baseline) {
       if (entry) entry.__titleCountBaseline = next;
       // Prefer per-chat cards with last-message preview over a bare "N unread".
-      scrapeUnreadChatsForService(service)
-        .then((chats) => {
-          if (chats.length) {
-            chats.slice(0, 8).forEach((chat, index) => {
-              emitServiceNotification(service, {
-                title: chat.name,
-                body:
-                  chat.preview ||
-                  (chat.unread > 1
-                    ? `${chat.unread} unread messages`
-                    : 'New message'),
-                fromTitleCount: false,
-                // One desktop toast; the rest fill the in-app center.
-                showOs: index === 0,
+      const runScrape = () => {
+        scrapeUnreadChatsForService(service, { allowDefer: false })
+          .then((chats) => {
+            if (chats.length) {
+              chats.slice(0, 8).forEach((chat, index) => {
+                emitServiceNotification(service, {
+                  title: chat.name,
+                  body:
+                    chat.preview ||
+                    (chat.unread > 1
+                      ? `${chat.unread} unread messages`
+                      : 'New message'),
+                  fromTitleCount: false,
+                  // One desktop toast; the rest fill the in-app center.
+                  showOs: index === 0,
+                });
               });
+              return;
+            }
+            emitServiceNotification(service, {
+              title: service.title || service.name,
+              body: `${next} unread`,
+              fromTitleCount: true,
             });
-            return;
-          }
-          emitServiceNotification(service, {
-            title: service.title || service.name,
-            body: `${next} unread`,
-            fromTitleCount: true,
+          })
+          .catch(() => {
+            emitServiceNotification(service, {
+              title: service.title || service.name,
+              body: `${next} unread`,
+              fromTitleCount: true,
+            });
           });
-        })
-        .catch(() => {
-          emitServiceNotification(service, {
-            title: service.title || service.name,
-            body: `${next} unread`,
-            fromTitleCount: true,
-          });
-        });
+      };
+      serviceIsBusyWithMediaViewer(service.id).then((busy) => {
+        if (busy) scheduleDeferredInboxScrape(service, runScrape);
+        else runScrape();
+      });
+      return;
     }
   });
 
