@@ -52,6 +52,13 @@ export const SHORTCUT_CATALOG = Object.freeze([
     defaultAccel: 'Control+F',
   },
   {
+    id: 'webSearch',
+    group: 'Sections and features',
+    label: 'Web search (Google)',
+    kind: 'simple',
+    defaultAccel: 'Control+K',
+  },
+  {
     id: 'print',
     group: 'Sections and features',
     label: 'Print page',
