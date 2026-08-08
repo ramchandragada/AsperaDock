@@ -596,6 +596,8 @@ let chromeMenuWindow = null;
 let findBarWindow = null;
 /** Last find query so Ctrl+F reopens with the same text selected. */
 let findBarLastQuery = '';
+/** Bumped on every find/clear so late found-in-page cannot re-paint highlights. */
+let findBarSession = 0;
 /** Floating notification center. */
 let notifCenterWindow = null;
 /** Floating Aspera AI result panel. */
@@ -9882,6 +9884,22 @@ function createViewForService(service) {
 
   attachShortcuts(webContents);
   webContents.on('found-in-page', (_event, result) => {
+    // User cleared the query (or closed Find) while this request was in flight —
+    // do not keep yellow matches painted on the guest page.
+    if (!findBarLastQuery) {
+      clearGuestFindHighlights(webContents);
+      if (isFindBarOpen()) {
+        try {
+          findBarWindow.webContents.send('find-bar:result', {
+            activeMatchOrdinal: 0,
+            matches: 0,
+          });
+        } catch {
+          // ignore
+        }
+      }
+      return;
+    }
     const payload = {
       activeMatchOrdinal: result.activeMatchOrdinal,
       matches: result.matches,
@@ -10928,13 +10946,44 @@ function changeZoom(delta = 0, exact = null) {
   }
 }
 
+function clearGuestFindHighlights(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  try {
+    webContents.stopFindInPage('clearSelection');
+  } catch {
+    // ignore
+  }
+  // Drop any leftover caret/selection some Chromium builds leave painted.
+  try {
+    webContents
+      .executeJavaScript(
+        `(() => { try { window.getSelection()?.removeAllRanges(); } catch (e) {} })();`,
+        true,
+      )
+      .catch(() => {});
+  } catch {
+    // ignore
+  }
+}
+
 function findInActivePage(text, options = {}) {
   const webContents = views.get(activeServiceId)?.view.webContents;
   if (!webContents || webContents.isDestroyed()) return { ok: false };
-  const query = String(text || '');
+  const query = String(text || '').trim() ? String(text || '') : '';
   findBarLastQuery = query;
+  const session = ++findBarSession;
   if (!query) {
-    webContents.stopFindInPage('clearSelection');
+    clearGuestFindHighlights(webContents);
+    // A prior findInPage can still emit found-in-page after clear and
+    // re-paint yellow matches — stop again on the next ticks.
+    setTimeout(() => {
+      if (session !== findBarSession) return;
+      clearGuestFindHighlights(webContents);
+    }, 0);
+    setTimeout(() => {
+      if (session !== findBarSession) return;
+      clearGuestFindHighlights(webContents);
+    }, 60);
     return { ok: true, cleared: true };
   }
   webContents.findInPage(query, {
@@ -10946,9 +10995,11 @@ function findInActivePage(text, options = {}) {
 }
 
 function stopFindInActivePage() {
+  findBarLastQuery = '';
+  findBarSession += 1;
   const webContents = views.get(activeServiceId)?.view.webContents;
   if (!webContents || webContents.isDestroyed()) return { ok: false };
-  webContents.stopFindInPage('clearSelection');
+  clearGuestFindHighlights(webContents);
   return { ok: true };
 }
 

@@ -98,18 +98,28 @@ export function buildFindBarHtml(dark = false) {
       focusInput();
       setTimeout(focusInput, 0);
       setTimeout(focusInput, 40);
+      // Re-open with a restored query: re-run find so matches match the box.
+      // Empty box must clear leftover yellow highlights from the last session.
+      runFind({ findNext: false, forward: true });
     });
 
     api.onResult((data) => {
       if (!data) return;
+      if (!input.value) {
+        status.textContent = '';
+        return;
+      }
       if (!data.matches) {
-        status.textContent = input.value ? '0/0' : '';
+        status.textContent = '0/0';
         return;
       }
       status.textContent = (data.activeMatchOrdinal || 0) + '/' + data.matches;
     });
 
+    // type=search clear (✕) fires "search"; typing fires "input". Handle both
+    // so emptying the box always clears guest yellow highlights.
     input.addEventListener('input', () => runFind({ findNext: false, forward: true }));
+    input.addEventListener('search', () => runFind({ findNext: false, forward: true }));
     input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
         event.preventDefault();
