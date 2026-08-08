@@ -23,10 +23,15 @@ import {
   buildCatchMeUpPrompt,
   buildRefineDraftPrompt,
   buildSuggestReplyPrompt,
+  buildSummarizeAttachmentPrompt,
+  buildSummarizePdfTextPrompt,
   buildSummarizePrompt,
 } from './skills.js';
 import { buildReviseReplyPrompt } from './replyEditor.js';
 import { extractOpenAiCompatibleText } from './openaiText.js';
+
+/** Providers that can accept image (and Gemini/OpenRouter often PDF) inline parts. */
+const VISION_PROVIDER_IDS = new Set(['gemini', 'openrouter', 'anthropic', 'grok']);
 
 /** Last provider that answered successfully — reuse until it fails/exhausts. */
 let stickyProviderId = null;
@@ -67,11 +72,25 @@ export function onAiProviderKeyChanged(providerId, configured) {
   if (stickyProviderId === id) stickyProviderId = null;
 }
 
+function openAiUserContent(prompt, media) {
+  if (!media?.base64 || !media?.mime) return prompt;
+  // OpenAI-compatible vision: images via data URL. PDF usually unsupported here.
+  if (media.kind === 'pdf') return prompt;
+  return [
+    { type: 'text', text: prompt },
+    {
+      type: 'image_url',
+      image_url: { url: `data:${media.mime};base64,${media.base64}` },
+    },
+  ];
+}
+
 async function callOpenAiCompatible({
   baseUrl,
   apiKey,
   model,
   prompt,
+  media = null,
   extraHeaders = {},
   extraBody = {},
   maxTokens = 1600,
@@ -92,7 +111,7 @@ async function callOpenAiCompatible({
           role: 'system',
           content: 'You are Aspera AI, a concise workplace assistant for employees.',
         },
-        { role: 'user', content: prompt },
+        { role: 'user', content: openAiUserContent(prompt, media) },
       ],
       ...extraBody,
     }),
@@ -123,13 +142,23 @@ async function callOpenAiCompatible({
   return text;
 }
 
-async function callGemini({ apiKey, model, prompt }) {
+async function callGemini({ apiKey, model, prompt, media = null }) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+  const parts = [];
+  if (media?.base64 && media?.mime) {
+    parts.push({
+      inline_data: {
+        mime_type: media.mime,
+        data: media.base64,
+      },
+    });
+  }
+  parts.push({ text: prompt });
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      contents: [{ role: 'user', parts }],
       generationConfig: { temperature: 0.3, maxOutputTokens: 1600 },
     }),
   });
@@ -141,14 +170,30 @@ async function callGemini({ apiKey, model, prompt }) {
     err.model = model;
     throw err;
   }
-  const parts = data?.candidates?.[0]?.content?.parts || [];
-  const text = parts.map((p) => p.text || '').join('').trim();
+  const outParts = data?.candidates?.[0]?.content?.parts || [];
+  const text = outParts.map((p) => p.text || '').join('').trim();
   if (!text) throw new Error('Empty response from Gemini');
   return text;
 }
 
-async function callAnthropic({ apiKey, model, prompt }) {
+async function callAnthropic({ apiKey, model, prompt, media = null }) {
   const resolved = normalizeAnthropicModel(model);
+  let content = prompt;
+  if (media?.base64 && media?.mime && media.kind === 'image') {
+    content = [
+      {
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: media.mime,
+          data: media.base64,
+        },
+      },
+      { type: 'text', text: prompt },
+    ];
+  } else if (media?.kind === 'pdf') {
+    throw new Error('Anthropic path does not accept PDF bytes — use text extract or Gemini.');
+  }
   const res = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -161,7 +206,7 @@ async function callAnthropic({ apiKey, model, prompt }) {
       max_tokens: 1600,
       temperature: 0.3,
       system: 'You are Aspera AI, a concise workplace assistant for employees.',
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{ role: 'user', content }],
     }),
   });
   const data = await res.json().catch(() => ({}));
@@ -225,13 +270,41 @@ async function resolveModelChain(providerId, preferredOverride) {
   });
 }
 
-async function callProviderWithModelChain(providerId, prompt, preferredOverride) {
+async function callProviderWithModelChain(
+  providerId,
+  prompt,
+  preferredOverride,
+  media = null,
+) {
   const provider = getAiProvider(providerId);
   const apiKey = getAiProviderKey(provider.id);
   if (!apiKey) {
     throw new Error(
       `Add your ${provider.name} API key in Settings → Aspera AI.`,
     );
+  }
+
+  if (media) {
+    if (provider.id === 'anthropic' && media.kind === 'pdf') {
+      throw new Error('Anthropic cannot take PDF bytes in Hub — use Gemini or extract text.');
+    }
+    if (
+      (provider.id === 'sambanova' ||
+        provider.id === 'deepseek' ||
+        provider.id === 'sarvam') &&
+      media.kind
+    ) {
+      throw new Error(
+        `${provider.name} has no vision/PDF path in Hub — use Gemini or extract text.`,
+      );
+    }
+    if (provider.id === 'grok' && media.kind === 'pdf') {
+      throw new Error('Grok path in Hub accepts images, not PDF bytes.');
+    }
+    if (provider.id === 'openrouter' && media.kind === 'pdf') {
+      // OpenRouter image_url path is image-only here; PDF goes through Gemini.
+      throw new Error('OpenRouter PDF bytes not used — prefer Gemini or text extract.');
+    }
   }
 
   const chain = await resolveModelChain(provider.id, preferredOverride);
@@ -243,15 +316,16 @@ async function callProviderWithModelChain(providerId, prompt, preferredOverride)
     try {
       let text = '';
       if (provider.id === 'gemini') {
-        text = await callGemini({ apiKey, model, prompt });
+        text = await callGemini({ apiKey, model, prompt, media });
       } else if (provider.id === 'anthropic') {
-        text = await callAnthropic({ apiKey, model, prompt });
+        text = await callAnthropic({ apiKey, model, prompt, media });
       } else if (provider.id === 'grok') {
         text = await callOpenAiCompatible({
           baseUrl: 'https://api.x.ai/v1',
           apiKey,
           model,
           prompt,
+          media: media?.kind === 'image' ? media : null,
         });
       } else if (provider.id === 'sambanova') {
         text = await callOpenAiCompatible({
@@ -291,6 +365,7 @@ async function callProviderWithModelChain(providerId, prompt, preferredOverride)
           apiKey,
           model,
           prompt,
+          media: media?.kind === 'image' ? media : null,
           extraHeaders: {
             'HTTP-Referer': 'https://asperahub.com',
             'X-Title': 'Aspera Hub',
@@ -339,20 +414,42 @@ export async function runAiCompletion({
  * 3. On failure/exhaustion, try the next provider in order; within a provider,
  *    walk live/catalog models until one works.
  */
-export async function runAiCompletionWithFailover(prompt) {
+export async function runAiCompletionWithFailover(prompt, { media = null } = {}) {
   const settings = readAiSettings() || {};
   const providerOrder = settings.aiProviderOrder;
   const disabledIds = settings.aiDisabledProviders;
   const configured = listConfiguredAiProviderIds();
-  const attemptIds = resolveAiAttemptOrder({
+  let attemptIds = resolveAiAttemptOrder({
     configuredIds: configured,
     stickyId: stickyProviderId,
     exhaustedIds: [...exhaustedProviderIds],
     order: providerOrder,
     disabledIds,
   });
+  if (media) {
+    // Prefer vision-capable providers when sending file bytes.
+    const visionFirst = attemptIds.filter((id) => VISION_PROVIDER_IDS.has(id));
+    const rest = attemptIds.filter((id) => !VISION_PROVIDER_IDS.has(id));
+    attemptIds = [...visionFirst, ...rest];
+    if (media.kind === 'pdf') {
+      // Only Gemini accepts PDF bytes in our client today.
+      attemptIds = attemptIds.filter((id) => id === 'gemini');
+    } else if (media.kind === 'image') {
+      attemptIds = attemptIds.filter((id) => VISION_PROVIDER_IDS.has(id));
+    }
+  }
   if (!attemptIds.length) {
     const hasAnyKey = configured.length > 0;
+    if (media?.kind === 'pdf') {
+      throw new Error(
+        'PDF vision needs a Gemini API key (or attach a text-extractable PDF). Add Gemini in Settings → Aspera AI.',
+      );
+    }
+    if (media?.kind === 'image') {
+      throw new Error(
+        'Image summarize needs a vision-capable key (Gemini recommended). Add one in Settings → Aspera AI.',
+      );
+    }
     throw new Error(
       hasAnyKey
         ? 'All AI providers with saved keys are disabled. Enable at least one in Settings → Aspera AI → Failover order.'
@@ -370,7 +467,12 @@ export async function runAiCompletionWithFailover(prompt) {
     }
 
     try {
-      const result = await callProviderWithModelChain(provider.id, prompt);
+      const result = await callProviderWithModelChain(
+        provider.id,
+        prompt,
+        undefined,
+        media,
+      );
       stickyProviderId = provider.id;
       exhaustedProviderIds.delete(provider.id);
       return {
@@ -401,6 +503,12 @@ export async function runAiCompletionWithFailover(prompt) {
 export function promptForSkill(skill, payload) {
   if (skill === 'summarize') {
     return buildSummarizePrompt(payload);
+  }
+  if (skill === 'summarize-file-text') {
+    return buildSummarizePdfTextPrompt(payload);
+  }
+  if (skill === 'summarize-attachment') {
+    return buildSummarizeAttachmentPrompt(payload);
   }
   if (skill === 'suggest-reply') {
     return buildSuggestReplyPrompt(payload);
