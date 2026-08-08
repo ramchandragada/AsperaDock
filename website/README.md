@@ -6,6 +6,8 @@ Visual style matches modern product marketing pages (layout, tokens, typography)
 
 Self-contained `index.html` (inline CSS/JS) plus Aspera Hub icon assets.
 
+Responsive for phones, tablets, desktops, and landscape (safe-area insets, touch targets, scrollable compare table, mobile nav).
+
 ## Local preview
 
 ```bash

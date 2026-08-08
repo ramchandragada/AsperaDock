@@ -45,8 +45,8 @@ a{color:inherit}
 img{max-width:100%;height:auto}
 svg{max-width:100%}
 button,a,.btn,.copy,.hb,.faq summary{-webkit-tap-highlight-color:transparent}
-.container{max-width:1140px;margin:0 auto;padding:0 max(16px,env(safe-area-inset-left)) 0 max(16px,env(safe-area-inset-right));padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right))}
-@supports (padding:max(0px)){.container{padding-left:max(24px,env(safe-area-inset-left));padding-right:max(24px,env(safe-area-inset-right))}}
+.container{max-width:1140px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+@media(min-width:520px){.container{padding-left:max(24px,env(safe-area-inset-left,0px));padding-right:max(24px,env(safe-area-inset-right,0px))}}
 .sec{padding:88px 0}
 .grad{background:linear-gradient(135deg,var(--green),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 .fade{opacity:0;transform:translateY(20px);transition:opacity .55s ease,transform .55s ease}
@@ -438,7 +438,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
           <a class="btn btn-s" href="https://github.com/ramchandragada/AsperaDock" target="_blank" rel="noopener"><svg><use href="#g-link"/></svg> View on GitHub</a>
         </div>
         <div class="stats">
-          <div><span class="grad" data-version>v0.4.42</span><span>Latest</span></div>
+          <div><span class="grad" data-version>v0.5.7</span><span>Latest</span></div>
           <div><span class="grad">₹0</span><span>Free forever</span></div>
           <div><span class="grad">MIT</span><span>Open source</span></div>
           <div><span class="grad">.deb</span><span>Debian · Ubuntu · Mint</span></div>
@@ -800,7 +800,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
         <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest"><svg><use href="#g-dl"/></svg> Download .deb for Linux</a>
         <a class="btn btn-s" href="https://github.com/ramchandragada/AsperaDock" target="_blank" rel="noopener"><svg><use href="#g-link"/></svg> View on GitHub</a>
       </div>
-      <p class="fine"><span data-version>v0.4.42</span> · Debian / Ubuntu / Mint · amd64 · MIT licensed</p>
+      <p class="fine"><span data-version>v0.5.7</span> · Debian / Ubuntu / Mint · amd64 · MIT licensed</p>
     </div>
   </div>
 </section>
