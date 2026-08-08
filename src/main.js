@@ -19,6 +19,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { buildAppMenuHtml } from './appMenuHtml.js';
 import { buildChromeMenuHtml } from './chromeMenuHtml.js';
+import { buildFindBarHtml } from './findBarHtml.js';
 import { buildNotifCenterHtml } from './notifCenterHtml.js';
 import { buildAiResultHtml } from './aiResultHtml.js';
 import { buildCrmLookupHtml } from './crmLookupHtml.js';
@@ -584,6 +585,10 @@ let appMenuWindow = null;
 let appMenuServiceId = null;
 /** Floating chrome (Aspera) menu — same overlay approach. */
 let chromeMenuWindow = null;
+/** Floating Find-in-page popup (above WebContentsView — no guest resize). */
+let findBarWindow = null;
+/** Last find query so Ctrl+F reopens with the same text selected. */
+let findBarLastQuery = '';
 /** Floating notification center. */
 let notifCenterWindow = null;
 /** Floating Aspera AI result panel. */
@@ -2259,6 +2264,19 @@ function chromeMenuHandle(channel, handler) {
   });
 }
 
+function findBarHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !findBarWindow ||
+      findBarWindow.isDestroyed() ||
+      event.sender !== findBarWindow.webContents
+    ) {
+      throw new Error('Unauthorized find-bar IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
 function notifCenterHandle(channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
     if (
@@ -3116,6 +3134,108 @@ function closeChromeMenuWindow() {
   }
 }
 
+function closeFindBarWindow({ clear = true } = {}) {
+  if (clear) {
+    try {
+      stopFindInActivePage();
+    } catch {
+      // ignore
+    }
+  }
+  if (!findBarWindow || findBarWindow.isDestroyed()) {
+    findBarWindow = null;
+    return;
+  }
+  const win = findBarWindow;
+  findBarWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+  // Return keyboard focus to the active guest after closing the popup.
+  try {
+    focusActiveContents();
+  } catch {
+    // ignore
+  }
+}
+
+function isFindBarOpen() {
+  return !!(findBarWindow && !findBarWindow.isDestroyed());
+}
+
+/**
+ * Floating Find popup above the guest. In-page HTML cannot paint over
+ * WebContentsView, so we must not push the page down to reveal a chrome bar.
+ */
+function openFindBarWindow({ dark = null } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  if (isFindBarOpen()) {
+    try {
+      findBarWindow.show();
+      findBarWindow.focus();
+      findBarWindow.webContents.focus();
+      findBarWindow.webContents.send('find-bar:init', {
+        query: findBarLastQuery,
+      });
+    } catch {
+      // ignore
+    }
+    return { ok: true, focused: true };
+  }
+
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAppContextMenu();
+
+  const barW = 360;
+  const barH = 56;
+  const content = mainWindow.getContentBounds();
+  const chromeTop = Math.max(48, Number(effectiveMetrics().top) || 78);
+  const rawX = content.x + content.width - barW - 12;
+  const rawY = content.y + chromeTop + 8;
+  const pos = clampFloatPosition(rawX, rawY, barW, barH);
+  const darkNow =
+    typeof dark === 'boolean' ? dark : !!nativeTheme.shouldUseDarkColors;
+
+  findBarWindow = createFloatBrowserWindow({
+    width: barW,
+    height: barH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'findBarPreload.js',
+    dark: darkNow,
+  });
+
+  const win = findBarWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildFindBarHtml(darkNow))}`,
+  );
+
+  win.webContents.once('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    win.webContents.send('find-bar:init', { query: findBarLastQuery });
+  });
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return;
+    win.show();
+    win.focus();
+    try {
+      win.webContents.focus();
+    } catch {
+      // ignore
+    }
+  });
+  // Do NOT close on blur — user clicks the page to read match highlights.
+  win.on('closed', () => {
+    if (findBarWindow === win) findBarWindow = null;
+  });
+
+  return { ok: true };
+}
+
 function closeNotifCenterWindow() {
   if (!notifCenterWindow || notifCenterWindow.isDestroyed()) {
     notifCenterWindow = null;
@@ -3229,6 +3349,7 @@ function stageHubForwardClipboard(write) {
 function closeAllFloatMenus() {
   closeAppContextMenu();
   closeChromeMenuWindow();
+  closeFindBarWindow({ clear: true });
   closeNotifCenterWindow();
   closeAiResultWindow();
   closeForwardPickerWindow();
@@ -9665,10 +9786,18 @@ function createViewForService(service) {
 
   attachShortcuts(webContents);
   webContents.on('found-in-page', (_event, result) => {
-    mainWindow?.webContents.send('dock:find-result', {
+    const payload = {
       activeMatchOrdinal: result.activeMatchOrdinal,
       matches: result.matches,
-    });
+    };
+    mainWindow?.webContents.send('dock:find-result', payload);
+    if (isFindBarOpen()) {
+      try {
+        findBarWindow.webContents.send('find-bar:result', payload);
+      } catch {
+        // ignore
+      }
+    }
   });
   webContents.loadURL(startUrlForService(service));
 
@@ -10401,6 +10530,13 @@ function attachShortcuts(webContents) {
 
     const key = String(input.key || '').toLowerCase();
 
+    // Escape closes the floating Find popup from the guest page.
+    if (key === 'escape' && isFindBarOpen()) {
+      event.preventDefault();
+      closeFindBarWindow({ clear: true });
+      return;
+    }
+
     // Always-on reload (not user-remappable — reserved).
     if (input.control && !input.alt && !input.meta && key === 'r' && !input.shift) {
       event.preventDefault();
@@ -10437,7 +10573,7 @@ function attachShortcuts(webContents) {
         return;
       }
       if (id === 'find') {
-        mainWindow?.webContents.send('dock:open-find');
+        openFindBarWindow();
         return;
       }
       if (id === 'print') {
@@ -10640,6 +10776,7 @@ function findInActivePage(text, options = {}) {
   const webContents = views.get(activeServiceId)?.view.webContents;
   if (!webContents || webContents.isDestroyed()) return { ok: false };
   const query = String(text || '');
+  findBarLastQuery = query;
   if (!query) {
     webContents.stopFindInPage('clearSelection');
     return { ok: true, cleared: true };
@@ -10809,7 +10946,7 @@ function installApplicationMenu() {
         {
           label: 'Find…',
           accelerator: 'CommandOrControl+F',
-          click: () => mainWindow?.webContents.send('dock:open-find'),
+          click: () => openFindBarWindow(),
         },
       ],
     },
@@ -11346,6 +11483,22 @@ dockHandle('dock:find-in-page', (_e, text, options) =>
   findInActivePage(text, options || {}),
 );
 dockHandle('dock:stop-find', () => stopFindInActivePage());
+dockHandle('dock:open-find-bar', (_e, payload) =>
+  openFindBarWindow({
+    dark: typeof payload?.dark === 'boolean' ? payload.dark : null,
+  }),
+);
+dockHandle('dock:close-find-bar', () => {
+  closeFindBarWindow({ clear: true });
+  return { ok: true };
+});
+findBarHandle('find-bar:find', (_e, text, options) =>
+  findInActivePage(text, options || {}),
+);
+findBarHandle('find-bar:close', () => {
+  closeFindBarWindow({ clear: true });
+  return { ok: true };
+});
 dockHandle('dock:print-active', () => printActivePage());
 dockHandle('dock:remove-service', (_e, id) => removeService(id));
 dockHandle('dock:create-profile', (_e, name) => createProfile(name));
