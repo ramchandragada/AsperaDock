@@ -78,29 +78,63 @@ export function buildFindBarHtml(dark = false) {
     const input = document.getElementById('find-input');
     const status = document.getElementById('find-status');
     const api = window.findBarApi;
+    let debounceTimer = 0;
+    let findSeq = 0;
 
-    function runFind(opts) {
+    function runFind(opts, { immediate = false } = {}) {
       const text = input.value || '';
-      api.find(text, opts || {});
-      status.textContent = text ? '…' : '';
+      const doFind = () => {
+        const seq = ++findSeq;
+        const q = input.value || '';
+        Promise.resolve(api.find(q, opts || {})).then(() => {
+          if (seq !== findSeq) return;
+          if (!q) status.textContent = '';
+        }).catch(() => {});
+      };
+      if (!String(text).trim()) {
+        // Clear immediately — do not wait for debounce (kills sticky yellow).
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = 0;
+        }
+        status.textContent = '';
+        doFind();
+        return;
+      }
+      if (immediate) {
+        if (debounceTimer) {
+          clearTimeout(debounceTimer);
+          debounceTimer = 0;
+        }
+        status.textContent = '…';
+        doFind();
+        return;
+      }
+      // Debounce typing so find("a") cannot finish after find("aspera").
+      status.textContent = '…';
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        debounceTimer = 0;
+        doFind();
+      }, 120);
     }
 
-    function focusInput() {
+    function focusInput({ select = false } = {}) {
       try {
         input.focus();
-        input.select();
+        // Never select-all while the user may be typing — that replaces the
+        // whole query with the next key and leaves find stuck on one letter.
+        if (select) input.select();
       } catch (e) {}
     }
 
     api.onInit((data) => {
       if (data && typeof data.query === 'string') input.value = data.query;
       status.textContent = '';
-      focusInput();
-      setTimeout(focusInput, 0);
-      setTimeout(focusInput, 40);
-      // Re-open with a restored query: re-run find so matches match the box.
-      // Empty box must clear leftover yellow highlights from the last session.
-      runFind({ findNext: false, forward: true });
+      focusInput({ select: true });
+      setTimeout(() => focusInput({ select: true }), 0);
+      // Re-run find for restored query, or clear if empty.
+      runFind({ findNext: false, forward: true }, { immediate: true });
     });
 
     api.onResult((data) => {
@@ -116,14 +150,20 @@ export function buildFindBarHtml(dark = false) {
       status.textContent = (data.activeMatchOrdinal || 0) + '/' + data.matches;
     });
 
-    // type=search clear (✕) fires "search"; typing fires "input". Handle both
-    // so emptying the box always clears guest yellow highlights.
-    input.addEventListener('input', () => runFind({ findNext: false, forward: true }));
-    input.addEventListener('search', () => runFind({ findNext: false, forward: true }));
+    // type=search clear (✕) fires "search"; typing fires "input".
+    input.addEventListener('input', () =>
+      runFind({ findNext: false, forward: true }),
+    );
+    input.addEventListener('search', () =>
+      runFind({ findNext: false, forward: true }, { immediate: true }),
+    );
     input.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {
         event.preventDefault();
-        runFind({ findNext: true, forward: !event.shiftKey });
+        runFind(
+          { findNext: true, forward: !event.shiftKey },
+          { immediate: true },
+        );
       }
       if (event.key === 'Escape') {
         event.preventDefault();
@@ -131,16 +171,16 @@ export function buildFindBarHtml(dark = false) {
       }
     });
     document.getElementById('find-prev').addEventListener('click', () => {
-      runFind({ findNext: true, forward: false });
-      focusInput();
+      runFind({ findNext: true, forward: false }, { immediate: true });
+      focusInput({ select: false });
     });
     document.getElementById('find-next').addEventListener('click', () => {
-      runFind({ findNext: true, forward: true });
-      focusInput();
+      runFind({ findNext: true, forward: true }, { immediate: true });
+      focusInput({ select: false });
     });
     document.getElementById('find-close').addEventListener('click', () => api.close());
-    window.addEventListener('focus', focusInput);
-    focusInput();
+    window.addEventListener('focus', () => focusInput({ select: false }));
+    focusInput({ select: true });
   </script>
 </body>
 </html>`;

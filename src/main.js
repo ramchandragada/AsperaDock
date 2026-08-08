@@ -603,6 +603,8 @@ let findBarWindow = null;
 let findBarLastQuery = '';
 /** Bumped on every find/clear so late found-in-page cannot re-paint highlights. */
 let findBarSession = 0;
+/** Chromium findInPage request id — ignore stale replies from earlier keystrokes. */
+let findBarRequestId = 0;
 /** Floating Google Web-search popup. */
 let webSearchWindow = null;
 /** Last web-search query so Ctrl+K reopens with the same text selected. */
@@ -10002,6 +10004,12 @@ function createViewForService(service) {
   });
   webContents.on('did-finish-load', () => {
     try {
+      // Guest reload must not resurrect sticky yellow find marks from a prior session.
+      if (!isFindBarOpen()) {
+        findBarLastQuery = '';
+        findBarRequestId = 0;
+        clearGuestFindHighlights(webContents);
+      }
       const url = webContents.getURL();
       rememberGoodUrl(service.id, url);
       if (isGoogleService(service)) noteGoogleMarketingLanding(service.id, url);
@@ -10050,9 +10058,23 @@ function createViewForService(service) {
       }
       return;
     }
+    // Typing "aspera" fires find("a"), find("as"), … — a late reply for "a"
+    // must not win after the full-string search (that painted every letter a).
+    if (
+      findBarRequestId &&
+      result?.requestId &&
+      result.requestId !== findBarRequestId
+    ) {
+      return;
+    }
+    const matches = Number(result?.matches) || 0;
+    if (matches <= 0) {
+      // Zero-match queries must not leave the previous query's yellow marks.
+      clearGuestFindHighlights(webContents);
+    }
     const payload = {
-      activeMatchOrdinal: result.activeMatchOrdinal,
-      matches: result.matches,
+      activeMatchOrdinal: matches ? result.activeMatchOrdinal || 0 : 0,
+      matches,
     };
     mainWindow?.webContents.send('dock:find-result', payload);
     if (isFindBarOpen()) {
@@ -10659,6 +10681,14 @@ function reloadActive() {
   } catch {
     // ignore and fall through to reload
   }
+  // Drop find markers before reload — some builds keep them across soft reloads.
+  if (isFindBarOpen()) {
+    closeFindBarWindow({ clear: true });
+  } else {
+    findBarLastQuery = '';
+    findBarRequestId = 0;
+    clearGuestFindHighlights(wc);
+  }
   wc.reload();
 }
 
@@ -11108,10 +11138,15 @@ function changeZoom(delta = 0, exact = null) {
 
 function clearGuestFindHighlights(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
-  try {
-    webContents.stopFindInPage('clearSelection');
-  } catch {
-    // ignore
+  findBarRequestId = 0;
+  // clearSelection removes Chromium find markers; call twice — some Linux
+  // builds keep the yellow paint after a single stop while a find is in flight.
+  for (let i = 0; i < 2; i++) {
+    try {
+      webContents.stopFindInPage('clearSelection');
+    } catch {
+      // ignore
+    }
   }
   // Drop any leftover caret/selection some Chromium builds leave painted.
   try {
@@ -11132,6 +11167,8 @@ function findInActivePage(text, options = {}) {
   const query = String(text || '').trim() ? String(text || '') : '';
   findBarLastQuery = query;
   const session = ++findBarSession;
+  const findNext = !!options.findNext;
+
   if (!query) {
     clearGuestFindHighlights(webContents);
     // A prior findInPage can still emit found-in-page after clear and
@@ -11143,23 +11180,54 @@ function findInActivePage(text, options = {}) {
     setTimeout(() => {
       if (session !== findBarSession) return;
       clearGuestFindHighlights(webContents);
-    }, 60);
+    }, 50);
+    setTimeout(() => {
+      if (session !== findBarSession) return;
+      clearGuestFindHighlights(webContents);
+    }, 150);
     return { ok: true, cleared: true };
   }
-  webContents.findInPage(query, {
+
+  // New query (not Next/Prev): cancel any in-flight find for "a" before
+  // starting "aspera", otherwise the late "a" paint sticks forever.
+  if (!findNext) {
+    try {
+      webContents.stopFindInPage('clearSelection');
+    } catch {
+      // ignore
+    }
+  }
+
+  const requestId = webContents.findInPage(query, {
     forward: options.forward !== false,
-    findNext: !!options.findNext,
+    findNext,
     matchCase: !!options.matchCase,
   });
-  return { ok: true };
+  findBarRequestId = Number(requestId) || 0;
+  return { ok: true, requestId: findBarRequestId };
 }
 
 function stopFindInActivePage() {
   findBarLastQuery = '';
+  findBarRequestId = 0;
   findBarSession += 1;
-  const webContents = views.get(activeServiceId)?.view.webContents;
-  if (!webContents || webContents.isDestroyed()) return { ok: false };
-  clearGuestFindHighlights(webContents);
+  const session = findBarSession;
+  // Clear on the active guest and every live guest — highlights can linger on
+  // a view that was active when Find started if the user switched tabs.
+  const targets = new Set();
+  const active = views.get(activeServiceId)?.view?.webContents;
+  if (active) targets.add(active);
+  for (const entry of views.values()) {
+    const wc = entry?.view?.webContents;
+    if (wc && !wc.isDestroyed()) targets.add(wc);
+  }
+  for (const wc of targets) clearGuestFindHighlights(wc);
+  setTimeout(() => {
+    if (session !== findBarSession) return;
+    for (const wc of targets) {
+      if (!wc.isDestroyed()) clearGuestFindHighlights(wc);
+    }
+  }, 80);
   return { ok: true };
 }
 
