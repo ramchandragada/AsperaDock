@@ -155,8 +155,8 @@ export function buildAiResultHtml(dark = false) {
       </div>
     </header>
     <div class="inbox" id="inbox">
-      <div class="section-label">Your text (paste from any app)</div>
-      <textarea id="inbox-text" placeholder="Copy text in WhatsApp, Arattai, Gmail, or Zoho Mail — then paste here (Ctrl+V). Or attach a PDF/image below for Summarize."></textarea>
+      <div class="section-label">Your text (or paste a screenshot)</div>
+      <textarea id="inbox-text" placeholder="Copy text — or take a screenshot (Ctrl+Shift+Print / Flameshot) and Paste from clipboard. Or attach a PDF/image below for Summarize."></textarea>
       <div class="actions">
         <button type="button" class="btn" id="inbox-paste">Paste from clipboard</button>
         <button type="button" class="btn" id="inbox-clear">Clear text</button>
@@ -165,7 +165,7 @@ export function buildAiResultHtml(dark = false) {
       <div class="attach-row">
         <button type="button" class="btn" id="inbox-attach">Upload PDF / image…</button>
         <input type="file" id="inbox-file" accept=".pdf,application/pdf,image/png,image/jpeg,image/jpg,image/webp,image/gif" hidden />
-        <span class="drop-hint">or drop a file on this window</span>
+        <span class="drop-hint">or drop a file / paste a screenshot</span>
       </div>
       <div class="attach-chip" id="attach-chip">
         <span class="name" id="attach-name">file</span>
@@ -182,7 +182,7 @@ export function buildAiResultHtml(dark = false) {
         <button type="button" class="btn primary" id="inbox-run">Run Aspera AI</button>
       </div>
       <p class="inbox-foot" id="inbox-status">
-        Paste text, or attach a PDF/image for Summarize. Hub never sends for you.
+        Paste text or a screenshot, or attach a PDF/image for Summarize. Hub never sends for you.
       </p>
     </div>
     <div class="work-pane" id="work-pane">
@@ -347,6 +347,29 @@ export function buildAiResultHtml(dark = false) {
 
     async function pasteClipboardIntoInbox() {
       try {
+        if (api.pasteClipboard) {
+          const result = await api.pasteClipboard();
+          if (!result?.ok) {
+            inboxStatus.textContent = String(
+              result?.error ||
+                'Clipboard is empty — copy text, or take a screenshot and paste.',
+            );
+            return;
+          }
+          if (result.kind === 'image' && result.attachment) {
+            stagedAttachment = result.attachment;
+            syncAttachmentUi();
+            inboxStatus.textContent =
+              'Screenshot attached from clipboard. Summarize is selected — Run Aspera AI.';
+            return;
+          }
+          const text = String(result.text || '');
+          if (text) inboxText.value = text;
+          inboxStatus.textContent = text
+            ? 'Clipboard text pasted. Choose a skill and Run — or paste a screenshot for Summarize.'
+            : 'Clipboard is empty — copy text, or take a screenshot and paste.';
+          return;
+        }
         const text = await api.readClipboard();
         if (text) inboxText.value = text;
         inboxStatus.textContent = text
@@ -708,7 +731,7 @@ export function buildAiResultHtml(dark = false) {
         syncAttachmentUi();
         inboxStatus.textContent =
           data?.hint ||
-          'Paste text, or attach a PDF/image for Summarize. Hub never sends for you.';
+          'Paste text or a screenshot, or attach a PDF/image for Summarize. Hub never sends for you.';
         inboxRun.disabled = false;
         copyBtn.disabled = true;
         return;
@@ -813,9 +836,25 @@ export function buildAiResultHtml(dark = false) {
     };
     document.getElementById('inbox-clear').onclick = () => {
       inboxText.value = '';
-      inboxStatus.textContent = 'Text cleared. Paste text or attach a PDF/image, then Run.';
+      inboxStatus.textContent =
+        'Text cleared. Paste text or a screenshot, or attach a PDF/image, then Run.';
       inboxText.focus();
     };
+    // Ctrl+V image paste (screenshots) — text paste keeps default textarea behavior.
+    document.addEventListener('paste', (event) => {
+      if (!inbox.classList.contains('show')) return;
+      const items = event.clipboardData?.items;
+      if (!items?.length) return;
+      for (const item of items) {
+        if (item && String(item.type || '').startsWith('image/')) {
+          const file = item.getAsFile();
+          if (!file) continue;
+          event.preventDefault();
+          stageLocalFile(file).catch(() => {});
+          return;
+        }
+      }
+    });
     document.getElementById('inbox-attach').onclick = () => {
       document.getElementById('inbox-file')?.click();
     };
@@ -827,7 +866,8 @@ export function buildAiResultHtml(dark = false) {
     document.getElementById('attach-remove').onclick = () => {
       clearStagedAttachment()
         .then(() => {
-          inboxStatus.textContent = 'Attachment removed. Paste text or attach another file.';
+          inboxStatus.textContent =
+            'Attachment removed. Paste text or a screenshot, or attach another file.';
         })
         .catch(() => {});
     };
@@ -864,7 +904,7 @@ export function buildAiResultHtml(dark = false) {
       const skill = selectedInboxSkill();
       if (!text && !stagedAttachment) {
         inboxStatus.textContent =
-          'Paste text first, or attach a PDF/image and choose Summarize.';
+          'Paste text or a screenshot first, or attach a PDF/image and choose Summarize.';
         inboxText.focus();
         return;
       }

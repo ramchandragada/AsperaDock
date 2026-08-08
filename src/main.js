@@ -195,9 +195,11 @@ import {
   setAiSettingsReader,
 } from './ai/service.js';
 import {
+  clipboardScreenshotFileName,
   extractPdfText,
   newAttachmentId,
   pdfTextIsUsable,
+  pickClipboardImageEncoding,
   validateAiAttachmentMeta,
 } from './ai/attachments.js';
 import { parseSuggestedReplies } from './ai/replyEditor.js';
@@ -4298,20 +4300,24 @@ function openAsperaAiInbox({ dark = false, skill = 'summarize', pasteText = null
             return '';
           }
         })();
+  const hasClipImage = pasteText == null && clipboardHasAiImage();
 
   // Fresh inbox — drop any previous staged file.
+  // Do not auto-attach clipboard screenshots — user confirms via Paste.
   clearAiInboxAttachment();
 
   const inboxPayload = {
     title: 'Aspera AI',
-    meta: 'Paste text or attach PDF/image → Run → copy result back',
+    meta: 'Paste text/screenshot or attach PDF/image → Run → copy result back',
     mode: 'inbox',
     skill: skill === 'refine' || skill === 'suggest-reply' ? skill : 'summarize',
     pasteText: seed,
     attachment: null,
-    hint: seed
-      ? 'Clipboard loaded. Choose a skill and Run — or attach a PDF/image for Summarize.'
-      : 'Paste text from any app, or attach a PDF/image (Summarize). Hub never sends for you.',
+    hint: hasClipImage
+      ? 'Screenshot on clipboard — click Paste from clipboard to attach it for Summarize.'
+      : seed
+        ? 'Clipboard text loaded. Choose a skill and Run — or paste a screenshot / attach a file for Summarize.'
+        : 'Paste text or a screenshot, or attach a PDF/image (Summarize). Hub never sends for you.',
   };
 
   if (aiResultWindow && !aiResultWindow.isDestroyed()) {
@@ -4811,6 +4817,86 @@ function stageAiInboxAttachment({ name, mime, base64 }) {
     buffer,
   };
   return { ok: true, attachment: aiAttachmentPublicMeta() };
+}
+
+function clipboardHasAiImage() {
+  try {
+    const img = clipboard.readImage();
+    return !!(img && !img.isEmpty());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stage a screenshot/image from the system clipboard for Summarize.
+ * Prefer PNG; use JPEG when PNG exceeds the image size cap.
+ */
+function stageAiInboxAttachmentFromClipboardImage() {
+  let img;
+  try {
+    img = clipboard.readImage();
+  } catch {
+    img = null;
+  }
+  if (!img || img.isEmpty()) {
+    return { ok: false, error: 'No image on the clipboard.' };
+  }
+  let png;
+  let jpeg;
+  try {
+    png = img.toPNG();
+  } catch {
+    png = null;
+  }
+  try {
+    jpeg = img.toJPEG(85);
+  } catch {
+    jpeg = null;
+  }
+  const encoding = pickClipboardImageEncoding(
+    png?.length || 0,
+    jpeg?.length || 0,
+  );
+  if (!encoding) {
+    return {
+      ok: false,
+      error:
+        'Clipboard image is too large (max 5 MB). Save a smaller screenshot, or upload a file.',
+    };
+  }
+  const buffer = encoding === 'jpeg' ? jpeg : png;
+  const mime = encoding === 'jpeg' ? 'image/jpeg' : 'image/png';
+  const name = clipboardScreenshotFileName(encoding);
+  return stageAiInboxAttachment({
+    name,
+    mime,
+    base64: Buffer.from(buffer).toString('base64'),
+  });
+}
+
+/** Paste button: image first (screenshots), else text. */
+function pasteAiInboxFromClipboard() {
+  if (clipboardHasAiImage()) {
+    const staged = stageAiInboxAttachmentFromClipboardImage();
+    if (!staged.ok) return { ok: false, kind: 'image', error: staged.error };
+    return { ok: true, kind: 'image', attachment: staged.attachment };
+  }
+  let text = '';
+  try {
+    text = clipboard.readText() || '';
+  } catch {
+    text = '';
+  }
+  if (!String(text).trim()) {
+    return {
+      ok: false,
+      kind: 'empty',
+      error:
+        'Clipboard is empty — copy text, or take a screenshot and Paste from clipboard.',
+    };
+  }
+  return { ok: true, kind: 'text', text: String(text) };
 }
 
 async function runAsperaAiSkill(
@@ -12290,6 +12376,7 @@ aiResultHandle('ai-result:read-clipboard', () => {
     return '';
   }
 });
+aiResultHandle('ai-result:paste-clipboard', () => pasteAiInboxFromClipboard());
 aiResultHandle('ai-result:run-clipboard', async (_e, payload) => {
   const body = payload && typeof payload === 'object' ? payload : {};
   const skillRaw = String(body.skill || 'summarize');
@@ -12304,7 +12391,7 @@ aiResultHandle('ai-result:run-clipboard', async (_e, payload) => {
   if (!text && !hasAttach) {
     return {
       ok: false,
-      error: 'Paste text first, or attach a PDF/image for Summarize.',
+      error: 'Paste text or a screenshot first, or attach a PDF/image for Summarize.',
     };
   }
   if (hasAttach && skill !== 'summarize') {

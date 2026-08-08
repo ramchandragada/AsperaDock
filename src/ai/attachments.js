@@ -184,3 +184,30 @@ export function pdfTextIsUsable(text) {
 export function newAttachmentId() {
   return randomUUID();
 }
+
+/**
+ * Prefer PNG for clipboard screenshots; fall back to JPEG when over the image cap.
+ * @param {number} pngLength
+ * @param {number} jpegLength
+ * @param {number} [maxBytes]
+ * @returns {'png'|'jpeg'|''}
+ */
+export function pickClipboardImageEncoding(
+  pngLength,
+  jpegLength,
+  maxBytes = AI_ATTACH_IMAGE_MAX_BYTES,
+) {
+  const png = Number(pngLength) || 0;
+  const jpg = Number(jpegLength) || 0;
+  const max = Number(maxBytes) || AI_ATTACH_IMAGE_MAX_BYTES;
+  if (png > 0 && png <= max) return 'png';
+  if (jpg > 0 && jpg <= max) return 'jpeg';
+  return '';
+}
+
+/** Stable display name for a clipboard screenshot attachment. */
+export function clipboardScreenshotFileName(encoding = 'png', when = Date.now()) {
+  const ext = encoding === 'jpeg' ? 'jpg' : 'png';
+  const stamp = new Date(when).toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  return `screenshot-${stamp}.${ext}`;
+}

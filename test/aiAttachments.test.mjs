@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import {
   AI_ATTACH_IMAGE_MAX_BYTES,
   classifyAiAttachment,
+  clipboardScreenshotFileName,
   normalizeImageMime,
   pdfTextIsUsable,
+  pickClipboardImageEncoding,
   resolvePdfjsUrls,
   validateAiAttachmentMeta,
 } from '../src/ai/attachments.js';
@@ -64,6 +66,23 @@ test('normalizeImageMime maps jpg aliases', () => {
 test('pdfTextIsUsable rejects tiny extracts', () => {
   assert.equal(pdfTextIsUsable('hi'), false);
   assert.equal(pdfTextIsUsable('x'.repeat(80)), true);
+});
+
+test('pickClipboardImageEncoding prefers PNG under the image cap', () => {
+  assert.equal(pickClipboardImageEncoding(1200, 800), 'png');
+  assert.equal(
+    pickClipboardImageEncoding(AI_ATTACH_IMAGE_MAX_BYTES + 1, 900_000),
+    'jpeg',
+  );
+  assert.equal(
+    pickClipboardImageEncoding(
+      AI_ATTACH_IMAGE_MAX_BYTES + 1,
+      AI_ATTACH_IMAGE_MAX_BYTES + 2,
+    ),
+    '',
+  );
+  assert.match(clipboardScreenshotFileName('png', Date.parse('2026-08-08T12:00:00Z')), /\.png$/);
+  assert.match(clipboardScreenshotFileName('jpeg', Date.parse('2026-08-08T12:00:00Z')), /\.jpg$/);
 });
 
 test('resolvePdfjsUrls finds node_modules builds', async () => {

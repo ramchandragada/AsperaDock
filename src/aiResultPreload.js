@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('aiResultApi', {
   copy: (text) => ipcRenderer.invoke('ai-result:copy', text),
   close: () => ipcRenderer.invoke('ai-result:close'),
   readClipboard: () => ipcRenderer.invoke('ai-result:read-clipboard'),
+  pasteClipboard: () => ipcRenderer.invoke('ai-result:paste-clipboard'),
   runClipboard: (payload) => ipcRenderer.invoke('ai-result:run-clipboard', payload),
   attachFile: (payload) => ipcRenderer.invoke('ai-result:attach-file', payload),
   clearAttachment: () => ipcRenderer.invoke('ai-result:clear-attachment'),
