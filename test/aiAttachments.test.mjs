@@ -73,7 +73,7 @@ test('resolvePdfjsUrls finds node_modules builds', async () => {
   assert.match(urls.moduleUrl, /^file:/);
 });
 
-test('attachment summarize prompts stay trilingual', () => {
+test('attachment summarize prompts stay trilingual and forbid TL;DR labels', () => {
   const pdf = buildSummarizePdfTextPrompt({
     text: 'Invoice total 1000',
     fileName: 'inv.pdf',
@@ -84,6 +84,8 @@ test('attachment summarize prompts stay trilingual', () => {
   assert.match(pdf, /## Hindi/);
   assert.match(pdf, /## Marathi/);
   assert.match(pdf, /inv\.pdf/);
+  assert.match(pdf, /Do not write TL;DR/);
+  assert.doesNotMatch(pdf, /one-line TL;DR/);
 
   const img = buildSummarizeAttachmentPrompt({
     kind: 'image',
@@ -91,4 +93,5 @@ test('attachment summarize prompts stay trilingual', () => {
   });
   assert.match(img, /uploaded image/);
   assert.match(img, /## English/);
+  assert.match(img, /Do not write TL;DR/);
 });
