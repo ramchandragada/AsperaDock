@@ -1,7 +1,11 @@
 {
   "name": "asperadock",
   "productName": "Aspera Hub",
+<<<<<<< HEAD
   "version": "0.4.98",
+=======
+  "version": "0.4.99",
+>>>>>>> origin/cursor/retain-tab-state-reload-55c1
   "description": "Aspera Hub — free Linux company workspace for WhatsApp, Arattai, Google Workspace, and Zoho",
   "main": ".vite/build/main.js",
   "private": true,

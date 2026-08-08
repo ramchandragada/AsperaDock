@@ -1401,13 +1401,13 @@ function getAppConfig(id) {
   const raw = getRawInstance(id);
   const appId = raw?.appId || id;
   const stored = (settings.serviceConfigs || {})[id] || {};
-  // Messaging sessions die if hibernated mid-pairing — keep them warm by default
-  // unless the user explicitly turned keepWarm off.
-  const messagingDefault =
+  // Messaging + Zoho form apps stay warm by default unless the user turned
+  // keepWarm off — otherwise switching tabs wiped unsaved CRM/Books drafts.
+  const warmDefault =
     defaultKeepWarmForApp(appId) && stored.keepWarm === undefined
       ? { keepWarm: true }
       : {};
-  return mergeAppConfig({ ...messagingDefault, ...stored });
+  return mergeAppConfig({ ...warmDefault, ...stored });
 }
 
 function saveAppConfig(id, patch) {
@@ -9996,9 +9996,15 @@ function flushAllSessionCookies() {
   }
 }
 
-/** Warm status is chosen per app by the user; catalog type has no priority. */
+/** Warm status — includes catalog defaults (WhatsApp / Zoho) when unset. */
 function isKeepWarmService(id) {
   return getAppConfig(id).keepWarm === true;
+}
+
+/** User flame-marked keepWarm only (for the warm-slot quota). */
+function isExplicitKeepWarm(id) {
+  const stored = (settings.serviceConfigs || {})[id] || {};
+  return stored.keepWarm === true;
 }
 
 function warmSelectionLimit() {
@@ -10012,13 +10018,43 @@ function selectedWarmIds() {
     .map((service) => service.id);
 }
 
+function explicitWarmIds() {
+  return orderedServices()
+    .filter((service) => service.config?.enabled !== false && isExplicitKeepWarm(service.id))
+    .map((service) => service.id);
+}
+
 function reconcileWarmSelections() {
-  const selected = selectedWarmIds();
+  // Only demote user flame marks — never persist keepWarm:false over catalog defaults
+  // (that used to wipe Zoho CRM draft retention after Settings save).
+  const selected = explicitWarmIds();
   const limit = warmSelectionLimit();
   for (const id of selected.slice(limit)) {
     saveAppConfig(id, { keepWarm: false });
-    if (id !== activeServiceId) hibernateService(id);
+    if (id !== activeServiceId && !defaultKeepWarmForApp(getService(id)?.appId)) {
+      hibernateService(id);
+    }
   }
+}
+
+/**
+ * Recently used non-warm tabs stay resident so form drafts survive tab
+ * switches (e.g. CRM ↔ WhatsApp). Idle hibernate still unloads later.
+ */
+const RESIDENT_GRACE_MS = 20 * 60_000;
+
+function isEvictableBackground(id, entry) {
+  if (!id || id === activeServiceId) return false;
+  if (isKeepWarmService(id)) return false;
+  const last = Number(entry?.lastUsed) || 0;
+  if (last && Date.now() - last < RESIDENT_GRACE_MS) return false;
+  return true;
+}
+
+function listEvictableBackground() {
+  return [...views.entries()]
+    .filter(([viewId, entry]) => isEvictableBackground(viewId, entry))
+    .sort((a, b) => (a[1].lastUsed || 0) - (b[1].lastUsed || 0));
 }
 
 /** Background wake — loads without stealing the active tab. */
@@ -10027,10 +10063,8 @@ function softWakeService(id) {
   const service = getService(id);
   if (!service || service.config?.enabled === false) return false;
 
-  // Never park warm apps. Only drop non-warm background views for budget.
-  const evictable = [...views.entries()]
-    .filter(([viewId]) => viewId !== activeServiceId && !isKeepWarmService(viewId))
-    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+  // Never park warm apps. Only drop stale non-warm background views for budget.
+  const evictable = listEvictableBackground();
   while (views.size >= maxWarm() && evictable.length) {
     const [victimId] = evictable.shift();
     hibernateService(victimId);
@@ -10080,10 +10114,8 @@ function softWakeKeepWarmApps(exceptId = null) {
 
 function enforceResidentLimit() {
   // Usability first: never park flame/keepWarm apps for RAM.
-  // Only unload non-warm background guests beyond the warm budget.
-  const evictable = [...views.entries()]
-    .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
-    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+  // Only unload stale non-warm background guests beyond the warm budget.
+  const evictable = listEvictableBackground();
 
   while (views.size > maxWarm() && evictable.length) {
     const [id] = evictable.shift();
@@ -10092,9 +10124,7 @@ function enforceResidentLimit() {
 }
 
 function enforceWarmLimit() {
-  const evictable = [...views.entries()]
-    .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
-    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+  const evictable = listEvictableBackground();
 
   while (views.size > maxWarm() && evictable.length) {
     const [id] = evictable.shift();
@@ -10110,7 +10140,8 @@ function toggleKeepWarm(id) {
   const enabled = !isKeepWarmService(id);
   if (enabled) {
     const limit = warmSelectionLimit();
-    if (selectedWarmIds().length >= limit) {
+    // Quota applies to user flame marks; catalog defaults (WA/Zoho) stay free.
+    if (explicitWarmIds().length >= limit) {
       return {
         ok: false,
         error:
@@ -10244,9 +10275,11 @@ function activateService(id) {
   scheduleActiveGuestSurfaceChecks(id);
   entry.__parked = false;
 
-  // Only user-selected apps remain loaded after switching away.
-  if (previousId && previousId !== id && !isKeepWarmService(previousId)) {
-    hibernateService(previousId);
+  // Keep the previous tab resident (parked/detached) so form drafts survive.
+  // Idle hibernate + warm-budget eviction (with grace) reclaim RAM later.
+  if (previousId && previousId !== id) {
+    const prev = views.get(previousId);
+    if (prev) prev.lastUsed = Date.now();
   }
 
   if (!overlayOpen) {
