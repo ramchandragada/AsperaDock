@@ -18,7 +18,10 @@ import {
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { buildAppMenuHtml } from './appMenuHtml.js';
-import { buildChromeMenuHtml } from './chromeMenuHtml.js';
+import {
+  buildChromeMenuHtml,
+  chromeMenuPreferredHeight,
+} from './chromeMenuHtml.js';
 import { buildFindBarHtml } from './findBarHtml.js';
 import { buildWebSearchHtml } from './webSearchHtml.js';
 import {
@@ -3744,13 +3747,14 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
   closeNotifCenterWindow();
   closeChromeMenuWindow();
 
-  const menuW = 242;
-  // Tall enough for About + version; clampFloatPosition shrinks into the work area.
+  const menuW = 256;
+  // Tall enough for every section + website/About/version — no inner scrollbar.
   const display = screen.getDisplayNearestPoint({
     x: mainWindow.getBounds().x,
     y: mainWindow.getBounds().y,
   });
-  const menuH = Math.min(760, Math.max(520, (display?.workArea?.height || 800) - 48));
+  const workH = display?.workArea?.height || 900;
+  const menuH = chromeMenuPreferredHeight({ workAreaHeight: workH });
   const content = mainWindow.getContentBounds();
   const anchorX = content.x + (Number(x) || 0);
   const anchorY = content.y + (Number(y) || 0);
@@ -3773,13 +3777,42 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
 
   const versionLabel = `Aspera Hub ${app.getVersion()}${app.isPackaged ? '' : ' (dev)'}`;
   win.webContents.once('did-finish-load', () => {
-    if (!win.isDestroyed()) {
-      win.webContents.send('chrome-menu:init', {
-        versionLabel,
-        focusMode: !!settings.focusMode,
-        muted: !!settings.muted,
-      });
-    }
+    if (win.isDestroyed()) return;
+    win.webContents.send('chrome-menu:init', {
+      versionLabel,
+      focusMode: !!settings.focusMode,
+      muted: !!settings.muted,
+    });
+    // Size the window to the measured card so nothing scrolls.
+    win.webContents
+      .executeJavaScript(
+        `(() => {
+          const card = document.querySelector('.card');
+          if (!card) return 0;
+          card.style.maxHeight = 'none';
+          card.style.overflow = 'visible';
+          return Math.ceil(card.getBoundingClientRect().height) + 10;
+        })()`,
+      )
+      .then((measured) => {
+        if (win.isDestroyed() || !measured || measured < 200) return;
+        const bounds = win.getBounds();
+        const d = screen.getDisplayNearestPoint({
+          x: bounds.x,
+          y: bounds.y,
+        });
+        const maxH = Math.max(400, (d?.workArea?.height || workH) - 16);
+        const nextH = Math.min(maxH, Math.max(measured, menuH));
+        if (Math.abs(nextH - bounds.height) < 4) return;
+        const next = clampFloatPosition(bounds.x, bounds.y, bounds.width, nextH);
+        win.setBounds({
+          x: next.x,
+          y: next.y,
+          width: bounds.width,
+          height: nextH,
+        });
+      })
+      .catch(() => {});
   });
   win.once('ready-to-show', () => {
     if (!win.isDestroyed()) {

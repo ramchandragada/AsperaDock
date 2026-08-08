@@ -63,6 +63,32 @@ const ICO = {
   ),
 };
 
+/** Item / chrome metrics for sizing the floating menu window (keep in sync with CSS). */
+export const CHROME_MENU_ITEM_H = 36;
+export const CHROME_MENU_SECTION_TITLE_H = 22;
+export const CHROME_MENU_SEP_H = 9;
+export const CHROME_MENU_FOOTER_H = 52;
+export const CHROME_MENU_PAD_H = 20;
+
+/**
+ * Preferred floating-window height so the full menu fits without scrolling.
+ * @param {{ workAreaHeight?: number }} [opts]
+ */
+export function chromeMenuPreferredHeight({ workAreaHeight = 900 } = {}) {
+  const items = CHROME_MENU_SECTIONS.reduce((n, s) => n + s.items.length, 0);
+  const titled = CHROME_MENU_SECTIONS.filter((s) => s.title).length;
+  const seps = Math.max(0, CHROME_MENU_SECTIONS.length - 1);
+  const content =
+    CHROME_MENU_PAD_H +
+    items * CHROME_MENU_ITEM_H +
+    titled * CHROME_MENU_SECTION_TITLE_H +
+    seps * CHROME_MENU_SEP_H +
+    CHROME_MENU_FOOTER_H;
+  const max = Math.max(480, Number(workAreaHeight) || 900) - 24;
+  // Prefer full content; only clamp when the display is genuinely short.
+  return Math.min(max, Math.max(content, 560));
+}
+
 /** Stable action order for tests / docs (floating menu). */
 export const CHROME_MENU_SECTIONS = [
   {
@@ -185,10 +211,10 @@ export function buildChromeMenuHtml(dark = false) {
 <style>
   html, body { margin:0; padding:0; background:transparent; overflow:hidden; font:500 13px/1.35 system-ui,"Segoe UI","Ubuntu","Cantarell",sans-serif; color:${text}; user-select:none; }
   .card {
-    margin:4px; width:248px; max-height:calc(100vh - 16px); box-sizing:border-box;
+    margin:4px; width:248px; max-height:none; box-sizing:border-box;
     background:${bg}; border:1px solid ${border}; border-radius:12px;
     box-shadow:0 12px 40px rgba(15,23,42,0.22); padding:6px 6px 4px;
-    overflow-y:auto; overscroll-behavior:contain;
+    overflow:visible; overscroll-behavior:contain;
   }
   .section { display:grid; gap:1px; }
   .section-title {

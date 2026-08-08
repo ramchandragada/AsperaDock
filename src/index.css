@@ -1735,7 +1735,7 @@ body.theme-dark .defaults-block {
   top: calc(100% + 6px);
   right: 0;
   width: 248px;
-  max-height: min(80vh, 640px);
+  max-height: min(92vh, 980px);
   overflow-y: auto;
   background: #fff;
   border: 1px solid var(--border);
