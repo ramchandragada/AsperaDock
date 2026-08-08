@@ -292,6 +292,9 @@ import {
   isSameEcosystemUrl,
   isGoogleOauthClientUrl,
   shouldOpenInSystemBrowser,
+  shouldOpenZohoCrmDeepLinkAsHubTab,
+  shouldOpenZohoSharedDeepLinkAsHubTab,
+  isZohoAssetHost,
 } from './guestNav.js';
 import {
   resolveLinkHandling,
@@ -1590,6 +1593,7 @@ function openInternalLinkAsHubTab(sourceService, url) {
   if (!String(url).startsWith('http')) return false;
   if (!isInternalUrl(url, sourceService)) return false;
   if (isAuthOrLoginUrl(url)) return false;
+  if (isZohoAssetHost(url)) return false;
   if (totalAppCount() >= MAX_APPS_TOTAL) return false;
   if (countInstances(sourceService.appId) >= MAX_INSTANCES_PER_APP) return false;
 
@@ -1877,7 +1881,8 @@ function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
     }
     return false;
   }
-  // Catalog apps (Gmail/Zoho/…): same-ecosystem URLs never become Hub link tabs.
+  // Catalog apps (Gmail/Zoho/…): same-ecosystem URLs stay in-tab — except Zoho
+  // CRM/Books deep links, which open as shared-login Hub tabs (multi-screen).
   if (!(service?.isCustom || service?.linkTab) && isSameEcosystemUrl(service, href)) {
     if (
       isGoogleOauthClientUrl(href) ||
@@ -1896,6 +1901,15 @@ function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
       } catch {
         // ignore
       }
+    }
+    if (
+      shouldOpenZohoSharedDeepLinkAsHubTab(service, href) &&
+      shouldOpenAsHubTab(effectiveLinkHandling(service)) &&
+      openInternalLinkAsHubTab(service, href)
+    ) {
+      return true;
+    }
+    if (webContents && !webContents.isDestroyed()) {
       webContents.loadURL(href).catch(() => {});
       return true;
     }
@@ -8761,6 +8775,7 @@ function attachGuestContextMenu(webContents) {
       // Never replace WhatsApp/Arattai/etc. with a third-party site via this
       // menu — that looked like “Open in tab” but covered the messenger.
       // Link tabs (and same-app URLs) may navigate in place.
+      // Zoho CRM/Books also offer Hub tab so invoice/deal links can multi-screen.
       if (isLinkTabGuest || linkIsInternal) {
         template.push({
           label: 'Open link in this tab',
@@ -8769,7 +8784,11 @@ function attachGuestContextMenu(webContents) {
             webContents.loadURL(safeLink).catch(() => {});
           },
         });
-      } else {
+      }
+      if (
+        !isLinkTabGuest &&
+        (!linkIsInternal || shouldOpenZohoSharedDeepLinkAsHubTab(live, safeLink))
+      ) {
         template.push({
           label: 'Open in Hub tab',
           click: () => {
@@ -9048,6 +9067,10 @@ function guestNavigationApi() {
     startUrlForService,
     handleOutboundOrNewWindowLink,
     guestWebPreferences,
+    tryOpenZohoSharedHubTab: (svc, url) => {
+      if (!shouldOpenAsHubTab(effectiveLinkHandling(svc))) return false;
+      return openInternalLinkAsHubTab(svc, url);
+    },
   };
 }
 
@@ -9169,25 +9192,9 @@ function attachZohoPopupAdoptToHubTab(parentWc, childWindow, service) {
     }
     if (!popupUrl.startsWith('http') || isAuthOrLoginUrl(popupUrl)) return;
     if (!isInternalUrl(popupUrl, service)) return;
+    if (isZohoAssetHost(popupUrl)) return;
 
-    // Zoho CRM/Books open first-party pages in popups during normal usage.
-    // Keep those in the same app tab to avoid surprise extra top-bar tabs.
-    if (
-      (service?.appId === 'zoho-books' || service?.appId === 'zoho-crm') &&
-      parentWc &&
-      !parentWc.isDestroyed()
-    ) {
-      parentWc.loadURL(popupUrl).catch(() => {});
-      adopting = true;
-      setTimeout(() => {
-        try {
-          if (!childWindow.isDestroyed()) childWindow.close();
-        } catch {
-          // ignore
-        }
-      }, 120);
-      return;
-    }
+    // Zoho CRM/Books deep links → shared-login Hub tabs (same profile).
     if (!openInternalLinkAsHubTab(service, popupUrl)) return;
     adopting = true;
     setTimeout(() => {
