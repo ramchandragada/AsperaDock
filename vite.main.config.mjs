@@ -5,7 +5,8 @@ export default defineConfig({
     rollupOptions: {
       // Bundle @sentry into main.js — externalizing it left require() broken in
       // the packaged asar (OnlyLoadAppFromAsar + no node_modules/@sentry).
-      external: ['electron'],
+      // Keep pdfjs out of the bundle so workerSrc can resolve from node_modules/asar.
+      external: ['electron', 'pdfjs-dist', /^pdfjs-dist\//],
     },
   },
 });

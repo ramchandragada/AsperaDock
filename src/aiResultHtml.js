@@ -116,6 +116,25 @@ export function buildAiResultHtml(dark = false) {
   .inbox-skills label {
     display:flex; align-items:center; gap:8px; font-size:14px; font-weight:600; cursor:pointer;
   }
+  .attach-row {
+    display:flex; flex-wrap:wrap; gap:8px; align-items:center; flex:0 0 auto;
+  }
+  .attach-chip {
+    display:none; align-items:center; gap:8px; max-width:100%;
+    padding:7px 10px; border-radius:9px; background:${card};
+    border:1px solid ${border}; font-size:12px; font-weight:600;
+  }
+  .attach-chip.show { display:inline-flex; }
+  .attach-chip .name {
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:220px;
+  }
+  .attach-chip .meta { color:${muted}; font-weight:600; }
+  .drop-hint {
+    color:${muted}; font-size:12px; font-weight:600; line-height:1.4;
+  }
+  .inbox.drag {
+    outline:2px dashed #2563eb88; outline-offset:-4px; border-radius:12px;
+  }
   .inbox-foot {
     color:${muted}; font-size:12px; font-weight:600; line-height:1.4; flex:0 0 auto;
   }
@@ -137,22 +156,33 @@ export function buildAiResultHtml(dark = false) {
     </header>
     <div class="inbox" id="inbox">
       <div class="section-label">Your text (paste from any app)</div>
-      <textarea id="inbox-text" placeholder="Copy text in WhatsApp, Arattai, Gmail, or Zoho Mail — then paste here (Ctrl+V)."></textarea>
+      <textarea id="inbox-text" placeholder="Copy text in WhatsApp, Arattai, Gmail, or Zoho Mail — then paste here (Ctrl+V). Or attach a PDF/image below for Summarize."></textarea>
       <div class="actions">
         <button type="button" class="btn" id="inbox-paste">Paste from clipboard</button>
-        <button type="button" class="btn" id="inbox-clear">Clear</button>
+        <button type="button" class="btn" id="inbox-clear">Clear text</button>
+      </div>
+      <div class="section-label">Or attach a file (Summarize)</div>
+      <div class="attach-row">
+        <button type="button" class="btn" id="inbox-attach">Upload PDF / image…</button>
+        <input type="file" id="inbox-file" accept=".pdf,application/pdf,image/png,image/jpeg,image/jpg,image/webp,image/gif" hidden />
+        <span class="drop-hint">or drop a file on this window</span>
+      </div>
+      <div class="attach-chip" id="attach-chip">
+        <span class="name" id="attach-name">file</span>
+        <span class="meta" id="attach-meta"></span>
+        <button type="button" class="btn small danger" id="attach-remove">Remove</button>
       </div>
       <div class="inbox-skills" role="radiogroup" aria-label="Aspera AI skill">
         <div class="section-label">What do you need?</div>
         <label><input type="radio" name="inbox-skill" value="summarize" checked /> Summarize</label>
-        <label><input type="radio" name="inbox-skill" value="refine" /> Refine draft</label>
-        <label><input type="radio" name="inbox-skill" value="suggest-reply" /> Suggest reply</label>
+        <label id="skill-refine-label"><input type="radio" name="inbox-skill" value="refine" /> Refine draft</label>
+        <label id="skill-suggest-label"><input type="radio" name="inbox-skill" value="suggest-reply" /> Suggest reply</label>
       </div>
       <div class="actions">
         <button type="button" class="btn primary" id="inbox-run">Run Aspera AI</button>
       </div>
       <p class="inbox-foot" id="inbox-status">
-        Same on every app: copy → paste here → copy result → paste back. Hub never sends for you.
+        Paste text, or attach a PDF/image for Summarize. Hub never sends for you.
       </p>
     </div>
     <div class="work-pane" id="work-pane">
@@ -223,6 +253,7 @@ export function buildAiResultHtml(dark = false) {
     let syncTimer = null;
     let refineSyncTimer = null;
     let renderSeq = 0;
+    let stagedAttachment = null;
 
     function selectedInboxSkill() {
       const el = document.querySelector('input[name="inbox-skill"]:checked');
@@ -235,13 +266,92 @@ export function buildAiResultHtml(dark = false) {
       if (el) el.checked = true;
     }
 
+    function formatSize(n) {
+      const b = Number(n) || 0;
+      if (b < 1024) return b + ' B';
+      if (b < 1024 * 1024) return Math.round(b / 1024) + ' KB';
+      return (b / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function syncAttachmentUi() {
+      const chip = document.getElementById('attach-chip');
+      const nameEl = document.getElementById('attach-name');
+      const metaEl = document.getElementById('attach-meta');
+      const refineLab = document.getElementById('skill-refine-label');
+      const suggestLab = document.getElementById('skill-suggest-label');
+      const has = !!stagedAttachment;
+      chip.classList.toggle('show', has);
+      if (has) {
+        nameEl.textContent = stagedAttachment.name || 'file';
+        metaEl.textContent =
+          (stagedAttachment.kind === 'pdf' ? 'PDF' : 'Image') +
+          ' · ' +
+          formatSize(stagedAttachment.size);
+        setInboxSkill('summarize');
+      }
+      if (refineLab) refineLab.style.opacity = has ? '0.45' : '';
+      if (suggestLab) suggestLab.style.opacity = has ? '0.45' : '';
+      const refineIn = document.querySelector('input[name="inbox-skill"][value="refine"]');
+      const suggestIn = document.querySelector('input[name="inbox-skill"][value="suggest-reply"]');
+      if (refineIn) refineIn.disabled = has;
+      if (suggestIn) suggestIn.disabled = has;
+    }
+
+    async function clearStagedAttachment() {
+      stagedAttachment = null;
+      try {
+        if (api.clearAttachment) await api.clearAttachment();
+      } catch {
+        // ignore
+      }
+      syncAttachmentUi();
+    }
+
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = String(reader.result || '');
+          const idx = result.indexOf('base64,');
+          resolve(idx >= 0 ? result.slice(idx + 7) : result);
+        };
+        reader.onerror = () => reject(reader.error || new Error('Could not read file'));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function stageLocalFile(file) {
+      if (!file) return;
+      inboxStatus.textContent = 'Attaching ' + (file.name || 'file') + '…';
+      try {
+        const base64 = await fileToBase64(file);
+        const result = await api.attachFile({
+          name: file.name || 'file',
+          mime: file.type || '',
+          base64,
+        });
+        if (!result?.ok) {
+          inboxStatus.textContent = String(result?.error || 'Could not attach file.');
+          return;
+        }
+        stagedAttachment = result.attachment;
+        syncAttachmentUi();
+        inboxStatus.textContent =
+          'Attached ' +
+          (stagedAttachment.name || 'file') +
+          '. Summarize is selected — Run Aspera AI.';
+      } catch (err) {
+        inboxStatus.textContent = String(err?.message || err || 'Could not attach file.');
+      }
+    }
+
     async function pasteClipboardIntoInbox() {
       try {
         const text = await api.readClipboard();
         if (text) inboxText.value = text;
         inboxStatus.textContent = text
-          ? 'Clipboard pasted. Choose a skill and Run.'
-          : 'Clipboard is empty — copy text in the app first, then paste here.';
+          ? 'Clipboard pasted. Choose a skill and Run — or attach a PDF/image for Summarize.'
+          : 'Clipboard is empty — paste text, or attach a PDF/image for Summarize.';
       } catch (err) {
         inboxStatus.textContent = String(err?.message || err || 'Could not read clipboard.');
       }
@@ -594,9 +704,11 @@ export function buildAiResultHtml(dark = false) {
       if (isInbox) {
         if (data?.pasteText != null) inboxText.value = String(data.pasteText || '');
         if (data?.skill) setInboxSkill(data.skill);
+        stagedAttachment = data?.attachment || null;
+        syncAttachmentUi();
         inboxStatus.textContent =
           data?.hint ||
-          'Same on every app: copy → paste here → copy result → paste back. Hub never sends for you.';
+          'Paste text, or attach a PDF/image for Summarize. Hub never sends for you.';
         inboxRun.disabled = false;
         copyBtn.disabled = true;
         return;
@@ -701,10 +813,44 @@ export function buildAiResultHtml(dark = false) {
     };
     document.getElementById('inbox-clear').onclick = () => {
       inboxText.value = '';
-      inboxStatus.textContent = 'Cleared. Paste text from any app, then Run.';
+      inboxStatus.textContent = 'Text cleared. Paste text or attach a PDF/image, then Run.';
       inboxText.focus();
     };
+    document.getElementById('inbox-attach').onclick = () => {
+      document.getElementById('inbox-file')?.click();
+    };
+    document.getElementById('inbox-file').onchange = (event) => {
+      const file = event.target?.files?.[0];
+      event.target.value = '';
+      stageLocalFile(file).catch(() => {});
+    };
+    document.getElementById('attach-remove').onclick = () => {
+      clearStagedAttachment()
+        .then(() => {
+          inboxStatus.textContent = 'Attachment removed. Paste text or attach another file.';
+        })
+        .catch(() => {});
+    };
+    ;['dragenter', 'dragover'].forEach((type) => {
+      inbox.addEventListener(type, (e) => {
+        e.preventDefault();
+        inbox.classList.add('drag');
+      });
+    });
+    ;['dragleave', 'drop'].forEach((type) => {
+      inbox.addEventListener(type, (e) => {
+        e.preventDefault();
+        if (type === 'dragleave') inbox.classList.remove('drag');
+      });
+    });
+    inbox.addEventListener('drop', (e) => {
+      inbox.classList.remove('drag');
+      const file = e.dataTransfer?.files?.[0];
+      stageLocalFile(file).catch(() => {});
+    });
     async function goNewPaste() {
+      stagedAttachment = null;
+      syncAttachmentUi();
       if (api.newPaste) await api.newPaste();
     }
     document.getElementById('new-paste')?.addEventListener('click', () => {
@@ -715,17 +861,28 @@ export function buildAiResultHtml(dark = false) {
     });
     inboxRun.onclick = async () => {
       const text = String(inboxText.value || '').trim();
-      if (!text) {
-        inboxStatus.textContent = 'Paste text first (copy from the app, then Ctrl+V here).';
+      const skill = selectedInboxSkill();
+      if (!text && !stagedAttachment) {
+        inboxStatus.textContent =
+          'Paste text first, or attach a PDF/image and choose Summarize.';
         inboxText.focus();
         return;
       }
+      if (stagedAttachment && skill !== 'summarize') {
+        inboxStatus.textContent =
+          'PDF/image attachments only work with Summarize. Clear the file for Refine or Suggest reply.';
+        setInboxSkill('summarize');
+        return;
+      }
       inboxRun.disabled = true;
-      inboxStatus.textContent = 'Running Aspera AI…';
+      inboxStatus.textContent = stagedAttachment
+        ? 'Summarizing attachment…'
+        : 'Running Aspera AI…';
       try {
         const result = await api.runClipboard({
-          skill: selectedInboxSkill(),
+          skill,
           text,
+          attachmentId: stagedAttachment?.id || '',
         });
         if (result?.ok === false) {
           inboxStatus.textContent = String(result.error || 'Could not run Aspera AI.');

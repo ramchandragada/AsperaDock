@@ -194,6 +194,12 @@ import {
   resetAiProviderSession,
   setAiSettingsReader,
 } from './ai/service.js';
+import {
+  extractPdfText,
+  newAttachmentId,
+  pdfTextIsUsable,
+  validateAiAttachmentMeta,
+} from './ai/attachments.js';
 import { parseSuggestedReplies } from './ai/replyEditor.js';
 import { parseRefinedDrafts, serializeRefinedDrafts } from './ai/refineDraft.js';
 import {
@@ -618,6 +624,8 @@ let notifCenterWindow = null;
 let aiResultWindow = null;
 /** Context for follow-up actions on the open AI result (e.g. suggest replies). */
 let aiResultContext = null;
+/** One staged file for Aspera AI inbox: { id, name, mime, kind, buffer }. */
+let aiInboxAttachment = null;
 /** Floating Zoho CRM Deals lookup panel. */
 let crmLookupWindow = null;
 /** Floating Forward-with-Hub account picker. */
@@ -3509,6 +3517,7 @@ function closeNotifCenterWindow() {
 
 function closeAiResultWindow() {
   aiResultContext = null;
+  clearAiInboxAttachment();
   if (!aiResultWindow || aiResultWindow.isDestroyed()) {
     aiResultWindow = null;
     return;
@@ -4290,15 +4299,19 @@ function openAsperaAiInbox({ dark = false, skill = 'summarize', pasteText = null
           }
         })();
 
+  // Fresh inbox — drop any previous staged file.
+  clearAiInboxAttachment();
+
   const inboxPayload = {
     title: 'Aspera AI',
-    meta: 'Copy → click Aspera logo → paste → Run → paste back',
+    meta: 'Paste text or attach PDF/image → Run → copy result back',
     mode: 'inbox',
     skill: skill === 'refine' || skill === 'suggest-reply' ? skill : 'summarize',
     pasteText: seed,
+    attachment: null,
     hint: seed
-      ? 'Clipboard loaded. Choose a skill and Run — or edit the text first.'
-      : 'Copy text in any app → click the Aspera logo → paste here → Run → copy result back.',
+      ? 'Clipboard loaded. Choose a skill and Run — or attach a PDF/image for Summarize.'
+      : 'Paste text from any app, or attach a PDF/image (Summarize). Hub never sends for you.',
   };
 
   if (aiResultWindow && !aiResultWindow.isDestroyed()) {
@@ -4754,9 +4767,49 @@ function cleanAiPlainText(text) {
     .trim();
 }
 
+function clearAiInboxAttachment() {
+  aiInboxAttachment = null;
+}
+
+function aiAttachmentPublicMeta(att = aiInboxAttachment) {
+  if (!att) return null;
+  return {
+    id: att.id,
+    name: att.name,
+    mime: att.mime,
+    kind: att.kind,
+    size: att.buffer?.length || 0,
+  };
+}
+
+function stageAiInboxAttachment({ name, mime, base64 }) {
+  const raw = String(base64 || '');
+  const buffer = Buffer.from(raw.replace(/^data:[^;]+;base64,/, ''), 'base64');
+  const checked = validateAiAttachmentMeta({
+    name,
+    mime,
+    byteLength: buffer.length,
+  });
+  if (!checked.ok) return { ok: false, error: checked.error };
+  aiInboxAttachment = {
+    id: newAttachmentId(),
+    name: checked.name || String(name || 'file').trim() || 'file',
+    mime: checked.mime,
+    kind: checked.kind,
+    buffer,
+  };
+  return { ok: true, attachment: aiAttachmentPublicMeta() };
+}
+
 async function runAsperaAiSkill(
   skill,
-  { selectionText = '', dark = false, clickX = 0, clickY = 0 } = {},
+  {
+    selectionText = '',
+    dark = false,
+    clickX = 0,
+    clickY = 0,
+    attachmentId = '',
+  } = {},
 ) {
   if (settings.aiEnabled === false) {
     return { ok: false, error: 'Aspera AI is turned off in Settings.' };
@@ -4790,6 +4843,7 @@ async function runAsperaAiSkill(
 
   try {
     let prompt;
+    let media = null;
     let summarizeSelection = '';
     let summarizeAppName = '';
     let summarizePriorMessages = [];
@@ -4797,15 +4851,72 @@ async function runAsperaAiSkill(
     let refineAppName = '';
     let refineServiceId = '';
     let refineHasComposeTarget = false;
+    const wantAttach =
+      attachmentId &&
+      aiInboxAttachment &&
+      aiInboxAttachment.id === String(attachmentId);
+
+    if (wantAttach && skill !== 'summarize') {
+      throw new Error(
+        'PDF/image attachments only work with Summarize. Clear the file for Refine or Suggest reply.',
+      );
+    }
+
     if (skill === 'catch-up') {
       const items = collectCatchUpItems();
       prompt = promptForSkill('catch-up', { items, language });
+    } else if (wantAttach && skill === 'summarize') {
+      const att = aiInboxAttachment;
+      summarizeAppName = att.name || (att.kind === 'pdf' ? 'PDF' : 'Image');
+      summarizePriorMessages = [];
+      if (att.kind === 'pdf') {
+        let extracted = { text: '', pagesRead: 0, numPages: 0 };
+        try {
+          extracted = await extractPdfText(att.buffer);
+        } catch (err) {
+          extracted = { text: '', pagesRead: 0, numPages: 0, error: err };
+        }
+        if (pdfTextIsUsable(extracted.text)) {
+          summarizeSelection = extracted.text;
+          prompt = promptForSkill('summarize-file-text', {
+            text: extracted.text,
+            fileName: att.name,
+            pagesRead: extracted.pagesRead,
+            numPages: extracted.numPages,
+          });
+        } else {
+          // Scanned / image PDF — send bytes to Gemini.
+          summarizeSelection = `[PDF attachment: ${att.name}]`;
+          prompt = promptForSkill('summarize-attachment', {
+            kind: 'pdf',
+            fileName: att.name,
+          });
+          media = {
+            kind: 'pdf',
+            mime: att.mime,
+            base64: att.buffer.toString('base64'),
+          };
+        }
+      } else {
+        summarizeSelection = `[Image attachment: ${att.name}]`;
+        prompt = promptForSkill('summarize-attachment', {
+          kind: 'image',
+          fileName: att.name,
+        });
+        media = {
+          kind: 'image',
+          mime: att.mime,
+          base64: att.buffer.toString('base64'),
+        };
+      }
     } else if (skill === 'summarize' || skill === 'suggest-reply') {
       // Clipboard-first on every app — never scrape guest DOM for the source text.
       const text = String(selectionText || '').trim();
       if (!text) {
         throw new Error(
-          'Paste text into Aspera AI first (copy from any app, then paste here).',
+          wantAttach
+            ? 'Attachment missing — re-attach the file, or paste text.'
+            : 'Paste text into Aspera AI first (copy from any app, then paste here), or attach a PDF/image.',
         );
       }
       const service = activeAiService();
@@ -4813,11 +4924,14 @@ async function runAsperaAiSkill(
       summarizeAppName =
         service?.name || service?.defaultName || service?.appId || 'Clipboard';
       summarizePriorMessages = [];
-      prompt = promptForSkill('summarize', {
-        text,
-        appName: summarizeAppName,
-        priorMessages: [],
-      });
+      prompt = promptForSkill(
+        skill === 'suggest-reply' ? 'suggest-reply' : 'summarize',
+        {
+          text,
+          appName: summarizeAppName,
+          priorMessages: [],
+        },
+      );
     } else if (skill === 'refine') {
       const text = String(selectionText || '').trim();
       if (!text) {
@@ -4839,7 +4953,7 @@ async function runAsperaAiSkill(
       throw new Error('Unknown skill');
     }
 
-    const result = await runAiCompletionWithFailover(prompt);
+    const result = await runAiCompletionWithFailover(prompt, { media });
     syncPreferredAiProvider();
     let resultText = result.text;
     let refineSections = null;
@@ -12168,15 +12282,50 @@ aiResultHandle('ai-result:run-clipboard', async (_e, payload) => {
   const skill =
     skillRaw === 'refine' || skillRaw === 'suggest-reply' ? skillRaw : 'summarize';
   const text = String(body.text || '').trim();
-  if (!text) {
-    return { ok: false, error: 'Paste text first.' };
+  const attachmentId = String(body.attachmentId || '').trim();
+  const hasAttach =
+    attachmentId &&
+    aiInboxAttachment &&
+    aiInboxAttachment.id === attachmentId;
+  if (!text && !hasAttach) {
+    return {
+      ok: false,
+      error: 'Paste text first, or attach a PDF/image for Summarize.',
+    };
+  }
+  if (hasAttach && skill !== 'summarize') {
+    return {
+      ok: false,
+      error:
+        'PDF/image attachments only work with Summarize. Clear the file for Refine or Suggest reply.',
+    };
   }
   return runAsperaAiSkill(skill, {
     selectionText: text,
     dark: !!body.dark,
+    attachmentId: hasAttach ? attachmentId : '',
   });
 });
-aiResultHandle('ai-result:new-paste', () => openAsperaAiInbox({ dark: false }));
+aiResultHandle('ai-result:attach-file', (_e, payload) => {
+  const body = payload && typeof payload === 'object' ? payload : {};
+  return stageAiInboxAttachment({
+    name: body.name,
+    mime: body.mime,
+    base64: body.base64,
+  });
+});
+aiResultHandle('ai-result:clear-attachment', () => {
+  clearAiInboxAttachment();
+  return { ok: true };
+});
+aiResultHandle('ai-result:attachment-meta', () => ({
+  ok: true,
+  attachment: aiAttachmentPublicMeta(),
+}));
+aiResultHandle('ai-result:new-paste', () => {
+  clearAiInboxAttachment();
+  return openAsperaAiInbox({ dark: false });
+});
 crmLookupHandle('crm-lookup:copy', (_e, text) => {
   clipboard.writeText(String(text || ''));
   return { ok: true };
