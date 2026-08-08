@@ -86,6 +86,16 @@ module.exports = {
             target: 'preload',
           },
           {
+            entry: 'src/findBarPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/webSearchPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
             entry: 'src/notifCenterPreload.js',
             config: 'vite.preload.config.mjs',
             target: 'preload',

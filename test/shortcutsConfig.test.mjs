@@ -27,6 +27,18 @@ test('legacy boolean shortcuts migrate to enabled+accel', () => {
   assert.equal(map.search.accel, 'Control+/');
 });
 
+test('web search Control+K migrates to Control+E for chat search', () => {
+  const map = migrateShortcutsMap({
+    webSearch: { enabled: true, accel: 'Control+K' },
+  });
+  assert.equal(map.webSearch.accel, 'Control+E');
+  assert.equal(defaultWebSearchAccel(), 'Control+E');
+});
+
+function defaultWebSearchAccel() {
+  return migrateShortcutsMap({}).webSearch.accel;
+}
+
 test('match simple, tab digits, tab cycle, back/forward', () => {
   assert.deepEqual(
     matchShortcut(
