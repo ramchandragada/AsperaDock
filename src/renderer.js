@@ -683,12 +683,8 @@ function renderNotificationCenter() {
 let lastChromeReport = '';
 function reportChromeSize() {
   if (!els.topBar) return;
-  let top = Math.round(els.topBar.getBoundingClientRect().height);
-  // Find bar is fixed under the top bar; push the guest down so Ctrl+F stays visible.
-  if (els.findBar && !els.findBar.classList.contains('hidden')) {
-    const findH = Math.round(els.findBar.getBoundingClientRect().height) || 48;
-    top += findH + 12;
-  }
+  // Find is a floating child window above the guest — never resize chrome for it.
+  const top = Math.round(els.topBar.getBoundingClientRect().height);
   const key = `0:0:${top}`;
   if (key === lastChromeReport) return;
   lastChromeReport = key;
@@ -2370,14 +2366,6 @@ window.asperadock.onOpenAppsSettings?.(openAppsSettings);
 window.asperadock.onOpenProfiles?.(openProfiles);
 window.asperadock.onOpenSearch?.(openSearch);
 window.asperadock.onOpenFind?.(openFindBar);
-window.asperadock.onFindResult?.((data) => {
-  if (!els.findStatus || !data) return;
-  if (!data.matches) {
-    els.findStatus.textContent = '0/0';
-    return;
-  }
-  els.findStatus.textContent = `${data.activeMatchOrdinal || 0}/${data.matches}`;
-});
 window.asperadock.onSyncOverlay?.(syncOverlayFromModals);
 window.asperadock.onOpenEditApp?.((id) => {
   if (id) openEditApp(id);
@@ -2549,46 +2537,18 @@ els.customAppUrl?.addEventListener('keydown', (event) => {
 });
 
 function openFindBar() {
-  if (!els.findBar) return;
-  els.findBar.classList.remove('hidden');
-  els.findInput.value = '';
-  els.findStatus.textContent = '';
-  lastChromeReport = '';
-  requestAnimationFrame(() => {
-    reportChromeSize();
-    els.findInput?.focus();
-    els.findInput?.select();
+  // Keep legacy in-page bar hidden — guest WebContentsView covers it, so Find
+  // is a floating popup that does not push the page down.
+  els.findBar?.classList.add('hidden');
+  window.asperadock.openFindBar?.({
+    dark: document.body.classList.contains('theme-dark'),
   });
 }
 
 function closeFindBar() {
   els.findBar?.classList.add('hidden');
-  window.asperadock.stopFind?.();
-  els.findStatus.textContent = '';
-  lastChromeReport = '';
-  requestAnimationFrame(reportChromeSize);
+  window.asperadock.closeFindBar?.();
 }
-
-async function runFind({ findNext = false, forward = true } = {}) {
-  const text = els.findInput?.value || '';
-  await window.asperadock.findInPage?.(text, { findNext, forward });
-  els.findStatus.textContent = text ? 'Searching…' : '';
-}
-
-els.findClose?.addEventListener('click', closeFindBar);
-els.findNext?.addEventListener('click', () => runFind({ findNext: true, forward: true }));
-els.findPrev?.addEventListener('click', () => runFind({ findNext: true, forward: false }));
-els.findInput?.addEventListener('input', () => runFind({ findNext: false }));
-els.findInput?.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    runFind({ findNext: true, forward: !event.shiftKey });
-  }
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    closeFindBar();
-  }
-});
 
 els.editAppModal.addEventListener('click', (event) => {
   if (event.target === els.editAppModal) closeEditApp();
@@ -2596,8 +2556,8 @@ els.editAppModal.addEventListener('click', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
-    if (!els.findBar?.classList.contains('hidden')) closeFindBar();
-    else if (!els.customAppModal?.classList.contains('hidden')) closeCustomAppModal();
+    // Floating Find handles Escape in its own window / guest shortcut path.
+    if (!els.customAppModal?.classList.contains('hidden')) closeCustomAppModal();
     else if (!els.profileNameModal?.classList.contains('hidden')) closeProfileNameModal(null);
     else if (!els.profilesModal?.classList.contains('hidden')) closeProfiles();
     else if (!els.editAppModal.classList.contains('hidden')) closeEditApp();
@@ -2605,6 +2565,7 @@ document.addEventListener('keydown', (event) => {
     else if (!els.settingsModal.classList.contains('hidden')) closeSettings();
     else if (!els.searchModal.classList.contains('hidden')) closeSearch();
     else {
+      closeFindBar();
       closeChromeMenu();
       closeNotificationCenter();
       closeAppMenu();
