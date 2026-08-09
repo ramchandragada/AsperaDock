@@ -69,7 +69,19 @@ export function buildAiResultHtml(dark = false) {
   .reply-lang-head {
     display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;
   }
-  .reply-lang-head strong { font-size:14px; font-weight:700; }
+  .reply-lang-head strong, .lang-label {
+    font-size:14px; font-weight:700;
+  }
+  .lang-label.lang-en { color:#1d4ed8; }
+  .lang-label.lang-hi { color:#c2410c; }
+  .lang-label.lang-mr { color:#047857; }
+  .lang-label.lang-bn { color:#be185d; }
+  .lang-label.lang-te { color:#7c3aed; }
+  .lang-label.lang-ta { color:#0f766e; }
+  .lang-label.lang-gu { color:#b45309; }
+  .lang-label.lang-kn { color:#4338ca; }
+  .lang-label.lang-or { color:#e11d48; }
+  .lang-label.lang-ml { color:#0284c7; }
   .reply-card {
     border:1px solid ${border}; border-radius:10px; padding:10px;
     background:${inputBg}; display:flex; flex-direction:column; gap:8px;
@@ -88,17 +100,28 @@ export function buildAiResultHtml(dark = false) {
     background:${card}; border-radius:12px; padding:12px 14px;
     display:flex; flex-direction:column; gap:8px;
   }
-  .refine-lang-head {
+  .refine-lang-head, .summary-lang-head {
     display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;
   }
-  .refine-lang-head strong { font-size:14px; font-weight:700; }
+  .summary-wrap { display:none; flex-direction:column; gap:12px; flex:0 0 auto; }
+  .summary-wrap.show { display:flex; }
+  .summary-lang {
+    background:${card}; border-radius:12px; padding:12px 14px;
+    display:flex; flex-direction:column; gap:8px;
+  }
+  .summary-lang-body {
+    white-space:pre-wrap; word-break:break-word; font-weight:500;
+    font-size:15px; line-height:1.55;
+    border:1px solid ${border}; border-radius:10px; padding:10px 12px;
+    background:${inputBg}; min-height:64px;
+  }
+  .summary-lang-actions, .refine-lang-actions { display:flex; gap:6px; flex-wrap:wrap; }
   .refine-lang textarea {
     width:100%; box-sizing:border-box; min-height:88px; resize:vertical;
     border:1px solid ${border}; border-radius:10px; padding:10px 12px;
     font:inherit; font-size:15px; line-height:1.55; color:inherit; background:${inputBg};
   }
   .refine-lang textarea:focus { outline:2px solid #2563eb55; border-color:#2563eb; }
-  .refine-lang-actions { display:flex; gap:6px; flex-wrap:wrap; }
   .inbox {
     display:none; flex-direction:column; gap:12px; flex:1 1 auto; min-height:0;
   }
@@ -202,6 +225,9 @@ export function buildAiResultHtml(dark = false) {
     <div class="scroll" id="scroll">
       <div class="section-label" id="summary-label" hidden>Summary</div>
       <div class="body loading" id="body">Working…</div>
+      <div class="summary-wrap" id="summary-wrap">
+        <div id="summary-editor"></div>
+      </div>
       <div class="refine-wrap" id="refine-wrap">
         <div class="section-label" id="refine-section-label">Refined message</div>
         <div id="refine-editor"></div>
@@ -236,6 +262,8 @@ export function buildAiResultHtml(dark = false) {
     const refineStatus = document.getElementById('refine-status');
     const refineHint = document.getElementById('refine-hint');
     const refineAgainBtn = document.getElementById('refine-again');
+    const summaryWrap = document.getElementById('summary-wrap');
+    const summaryEditor = document.getElementById('summary-editor');
     const suggestBtn = document.getElementById('suggest-reply');
     const replyHint = document.getElementById('reply-hint');
     const repliesWrap = document.getElementById('replies-wrap');
@@ -250,10 +278,30 @@ export function buildAiResultHtml(dark = false) {
     let mode = '';
     let sections = [];
     let refineSections = [];
+    let summarySections = [];
     let syncTimer = null;
     let refineSyncTimer = null;
     let renderSeq = 0;
     let stagedAttachment = null;
+
+    function langLabelClass(id) {
+      const key = String(id || 'en').toLowerCase().replace(/[^a-z]/g, '');
+      return 'lang-label lang-' + (key || 'en');
+    }
+
+    function bindCopyButton(btn, getText) {
+      btn.type = 'button';
+      btn.className = 'btn small primary';
+      btn.textContent = 'Copy';
+      btn.onclick = async () => {
+        const t = String(getText() || '').trim();
+        if (!t) return;
+        await api.copy(t);
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1000);
+      };
+      return btn;
+    }
 
     function selectedInboxSkill() {
       const el = document.querySelector('input[name="inbox-skill"]:checked');
@@ -534,9 +582,42 @@ export function buildAiResultHtml(dark = false) {
           ? serializeRefineSections(refineSections)
           : String(latestRefine || '').trim();
       }
+      const summaryText = summarySections.length
+        ? serializeRefineSections(summarySections)
+        : latestSummary;
       const repliesText = sections.length ? serializeReplies(sections) : latestReplies;
-      const parts = [latestSummary, repliesText].filter(Boolean);
+      const parts = [summaryText, repliesText].filter(Boolean);
       return parts.join('\\n\\n—\\n\\n');
+    }
+
+    function anySummaryText() {
+      return summarySections.some((s) => String(s.text || '').trim());
+    }
+
+    function renderSummaryEditor() {
+      if (!summaryEditor) return;
+      summaryEditor.innerHTML = '';
+      summarySections.forEach((section) => {
+        if (!String(section.text || '').trim()) return;
+        const wrap = document.createElement('div');
+        wrap.className = 'summary-lang';
+        const head = document.createElement('div');
+        head.className = 'summary-lang-head';
+        const title = document.createElement('strong');
+        title.className = langLabelClass(section.id);
+        title.textContent = section.label;
+        const copyOne = document.createElement('button');
+        bindCopyButton(copyOne, () => section.text);
+        head.appendChild(title);
+        head.appendChild(copyOne);
+        wrap.appendChild(head);
+
+        const bodyEl = document.createElement('div');
+        bodyEl.className = 'summary-lang-body';
+        bodyEl.textContent = section.text || '';
+        wrap.appendChild(bodyEl);
+        summaryEditor.appendChild(wrap);
+      });
     }
 
     function setRefineStatus(msg) {
@@ -569,9 +650,8 @@ export function buildAiResultHtml(dark = false) {
         const head = document.createElement('div');
         head.className = 'refine-lang-head';
         const title = document.createElement('strong');
+        title.className = langLabelClass(section.id);
         title.textContent = section.label;
-        head.appendChild(title);
-        wrap.appendChild(head);
 
         const ta = document.createElement('textarea');
         ta.value = section.text || '';
@@ -584,24 +664,12 @@ export function buildAiResultHtml(dark = false) {
           refineAgainBtn.disabled = !anyRefineText();
         };
 
-        const actions = document.createElement('div');
-        actions.className = 'refine-lang-actions';
-
         const copyOne = document.createElement('button');
-        copyOne.type = 'button';
-        copyOne.className = 'btn small primary';
-        copyOne.textContent = 'Copy';
-        copyOne.onclick = async () => {
-          const t = String(ta.value || '').trim();
-          if (!t) return;
-          await api.copy(t);
-          copyOne.textContent = 'Copied';
-          setTimeout(() => { copyOne.textContent = 'Copy'; }, 1000);
-        };
-
-        actions.appendChild(copyOne);
+        bindCopyButton(copyOne, () => ta.value);
+        head.appendChild(title);
+        head.appendChild(copyOne);
+        wrap.appendChild(head);
         wrap.appendChild(ta);
-        wrap.appendChild(actions);
         refineEditor.appendChild(wrap);
       });
     }
@@ -635,6 +703,7 @@ export function buildAiResultHtml(dark = false) {
         const head = document.createElement('div');
         head.className = 'reply-lang-head';
         const title = document.createElement('strong');
+        title.className = langLabelClass(section.id);
         title.textContent = section.label;
         const addBtn = document.createElement('button');
         addBtn.type = 'button';
@@ -783,6 +852,9 @@ export function buildAiResultHtml(dark = false) {
 
       if (isRefine && !loading && !err) {
         body.hidden = true;
+        if (summaryWrap) summaryWrap.classList.remove('show');
+        summarySections = [];
+        if (summaryEditor) summaryEditor.innerHTML = '';
         refineWrap.classList.add('show');
         latestRefine = latestSummary;
         if (Array.isArray(data?.refineSections) && data.refineSections.length) {
@@ -801,11 +873,42 @@ export function buildAiResultHtml(dark = false) {
         summaryLabel.hidden = true;
         copyBtn.textContent = 'Copy all';
         resultFoot.hidden = false;
+      } else if (
+        data?.showTrilingual &&
+        !loading &&
+        !err &&
+        latestSummary &&
+        !isRefine
+      ) {
+        // Summarize: per-language cards with colored labels + Copy (like Refine).
+        body.hidden = true;
+        refineWrap.classList.remove('show');
+        refineEditor.innerHTML = '';
+        refineSections = [];
+        summarySections = parseRefineSections(latestSummary).filter((s) =>
+          String(s.text || '').trim(),
+        );
+        if (!summarySections.length) {
+          body.hidden = false;
+          body.className = 'body';
+          body.textContent = latestSummary;
+          if (summaryWrap) summaryWrap.classList.remove('show');
+          summaryLabel.hidden = false;
+        } else {
+          if (summaryWrap) summaryWrap.classList.add('show');
+          renderSummaryEditor();
+          summaryLabel.hidden = false;
+        }
+        copyBtn.textContent = 'Copy all';
+        resultFoot.hidden = false;
       } else {
         body.hidden = false;
         refineWrap.classList.remove('show');
         refineEditor.innerHTML = '';
         refineSections = [];
+        summarySections = [];
+        if (summaryWrap) summaryWrap.classList.remove('show');
+        if (summaryEditor) summaryEditor.innerHTML = '';
         body.className = 'body' + (err ? ' error' : loading ? ' loading' : '');
         body.textContent = latestSummary || (err ? String(data.error) : '…');
         summaryLabel.hidden = !(data?.showTrilingual && !loading && !err && latestSummary);
@@ -870,7 +973,9 @@ export function buildAiResultHtml(dark = false) {
       }
       const hasReplyText = sections.some((s) => s.items.some((i) => String(i.text || '').trim()));
       copyBtn.disabled =
-        (isRefine ? !anyRefineText() : (!latestSummary && !latestReplies && !hasReplyText))
+        (isRefine
+          ? !anyRefineText()
+          : (!anySummaryText() && !latestSummary && !latestReplies && !hasReplyText))
         || err
         || loading;
     });
