@@ -168,16 +168,23 @@ import {
   AI_LANGUAGES,
   AI_PROVIDER_TRY_ORDER,
   AI_PROVIDERS,
+  aiOutputLanguageMeta,
   aiProviderTryOrdinal,
   configuredProvidersInRouteOrder,
+  getAiLanguage,
   getAiProvider,
   isAiAllowedAppId,
   isDefaultAiProviderOrder,
+  languageSectionFor,
   normalizeAnthropicModel,
   normalizeGeminiModel,
   normalizeGrokModel,
   normalizeSarvamModel,
+  refineSectionsForLanguages,
+  replySectionsForLanguages,
+  resolveAiOutputLanguages,
   sanitizeAiDisabledProviders,
+  sanitizeAiExtraLanguages,
   sanitizeAiProviderOrder,
 } from './ai/catalog.js';
 import {
@@ -4486,10 +4493,34 @@ function setAiProviderModelPreference(providerId, modelId) {
   return { ok: true, providerId: id, model: choice };
 }
 
+function aiOutputLanguages() {
+  return resolveAiOutputLanguages(settings.aiExtraLanguages);
+}
+
+function aiLanguageMetaLabel(languages = aiOutputLanguages()) {
+  return aiOutputLanguageMeta(languages);
+}
+
+function aiLanguagePromptPayload(languages = aiOutputLanguages()) {
+  return {
+    languages,
+    extraLanguages: sanitizeAiExtraLanguages(settings.aiExtraLanguages),
+  };
+}
+
+function aiOutputLanguageSections(languages = aiOutputLanguages()) {
+  return {
+    refine: refineSectionsForLanguages(languages),
+    replies: replySectionsForLanguages(languages),
+    payload: languages.map((l) => languageSectionFor(l)),
+  };
+}
+
 function aiSettingsSnapshot() {
-  const language = ['en', 'hi', 'mr'].includes(settings.aiLanguage)
-    ? settings.aiLanguage
-    : 'en';
+  const language = getAiLanguage(settings.aiLanguage || 'en').id;
+  const extraLanguages = sanitizeAiExtraLanguages(settings.aiExtraLanguages);
+  const outputLanguages = resolveAiOutputLanguages(extraLanguages);
+  const languageMeta = aiOutputLanguageMeta(outputLanguages);
   const configured = listConfiguredAiProviders()
     .filter((p) => p.configured)
     .map((p) => p.id);
@@ -4520,7 +4551,16 @@ function aiSettingsSnapshot() {
     model = normalizeSarvamModel(model || provider.defaultModel);
   }
   if (!model) model = provider.defaultModel;
-  return { provider, model, language, routeOrder: order, stickyId: sticky };
+  return {
+    provider,
+    model,
+    language,
+    extraLanguages,
+    outputLanguages,
+    languageMeta,
+    routeOrder: order,
+    stickyId: sticky,
+  };
 }
 
 /**
@@ -4913,7 +4953,8 @@ async function runAsperaAiSkill(
     return { ok: false, error: 'Aspera AI is turned off in Settings.' };
   }
 
-  const { language, routeOrder } = aiSettingsSnapshot();
+  const { language, routeOrder, outputLanguages, languageMeta } =
+    aiSettingsSnapshot();
   if (!routeOrder.length) {
     mainWindow?.webContents.send('dock:chrome-action', 'settings');
     return {
@@ -4923,14 +4964,17 @@ async function runAsperaAiSkill(
     };
   }
 
-  const langLabel =
-    AI_LANGUAGES.find((l) => l.id === language)?.label || 'English';
+  const langLabel = getAiLanguage(language).id === 'en'
+    ? 'English'
+    : `${getAiLanguage(language).name} (${getAiLanguage(language).native})`;
   const skillTitle = asperaAiSkillTitle(skill);
   const routeHint = routeOrder.map((p) => p.name).join(' → ');
   const metaLang =
     skill === 'summarize' || skill === 'refine' || skill === 'suggest-reply'
-      ? 'EN · HI · MR'
+      ? languageMeta
       : langLabel;
+  const langPayload = aiLanguagePromptPayload(outputLanguages);
+  const langSections = aiOutputLanguageSections(outputLanguages);
 
   ensureAiResultWindow({
     title: `Aspera AI · ${skillTitle}`,
@@ -4983,6 +5027,7 @@ async function runAsperaAiSkill(
             fileName: att.name,
             pagesRead: extracted.pagesRead,
             numPages: extracted.numPages,
+            ...langPayload,
           });
         } else {
           // Scanned / image PDF — send bytes to Gemini.
@@ -4990,6 +5035,7 @@ async function runAsperaAiSkill(
           prompt = promptForSkill('summarize-attachment', {
             kind: 'pdf',
             fileName: att.name,
+            ...langPayload,
           });
           media = {
             kind: 'pdf',
@@ -5002,6 +5048,7 @@ async function runAsperaAiSkill(
         prompt = promptForSkill('summarize-attachment', {
           kind: 'image',
           fileName: att.name,
+          ...langPayload,
         });
         media = {
           kind: 'image',
@@ -5030,6 +5077,7 @@ async function runAsperaAiSkill(
           text,
           appName: summarizeAppName,
           priorMessages: [],
+          ...langPayload,
         },
       );
     } else if (skill === 'refine') {
@@ -5048,6 +5096,7 @@ async function runAsperaAiSkill(
       prompt = promptForSkill('refine', {
         text,
         appName: refineAppName,
+        ...langPayload,
       });
     } else {
       throw new Error('Unknown skill');
@@ -5058,8 +5107,8 @@ async function runAsperaAiSkill(
     let resultText = result.text;
     let refineSections = null;
     if (skill === 'refine') {
-      refineSections = parseRefinedDrafts(result.text);
-      resultText = serializeRefinedDrafts(refineSections);
+      refineSections = parseRefinedDrafts(result.text, langSections.refine);
+      resultText = serializeRefinedDrafts(refineSections, langSections.refine);
     }
     if (skill === 'summarize' || skill === 'suggest-reply') {
       aiResultContext = {
@@ -5071,6 +5120,8 @@ async function runAsperaAiSkill(
         summaryText: resultText,
         providerName: result.providerName,
         model: result.model,
+        outputLanguages: langSections.payload,
+        languageMeta,
       };
     } else if (skill === 'refine') {
       aiResultContext = {
@@ -5082,6 +5133,8 @@ async function runAsperaAiSkill(
         hasComposeTarget: false,
         dark: !!dark,
         refinedText: resultText,
+        outputLanguages: langSections.payload,
+        languageMeta,
         refineSections,
         providerName: result.providerName,
         model: result.model,
@@ -5106,6 +5159,8 @@ async function runAsperaAiSkill(
       refineSections: refineSections || undefined,
       repliesText: '',
       repliesLoading: skill === 'suggest-reply',
+      outputLanguages: langSections.payload,
+      languageMeta: metaLang,
     });
     if (skill === 'suggest-reply') {
       runSuggestRepliesFromAiResult().catch(() => {});
@@ -5129,6 +5184,8 @@ async function runAsperaAiSkill(
       canSuggestReply: false,
       canUseInCompose: false,
       canRefineAgain: false,
+      outputLanguages: langSections.payload,
+      languageMeta: metaLang,
     });
     return { ok: false, error: message };
   }
@@ -5201,23 +5258,28 @@ async function runSuggestRepliesFromAiResult() {
   if (!ctx?.selectionText) {
     return { ok: false, error: 'No message context for reply suggestions.' };
   }
-  const { routeOrder } = aiSettingsSnapshot();
+  const { routeOrder, outputLanguages, languageMeta } = aiSettingsSnapshot();
   if (!routeOrder.length) {
     return {
       ok: false,
       error: 'Add at least one AI API key in Settings → Aspera AI.',
     };
   }
+  const langPayload = aiLanguagePromptPayload(outputLanguages);
+  const langSections = aiOutputLanguageSections(outputLanguages);
+  const metaLang = ctx.languageMeta || languageMeta;
 
   pushAiResult({
     title: 'Aspera AI · Summarize selection',
-    meta: [ctx.providerName, ctx.model, 'EN · HI · MR'].filter(Boolean).join(' · '),
+    meta: [ctx.providerName, ctx.model, metaLang].filter(Boolean).join(' · '),
     text: ctx.summaryText || '',
     loading: false,
     showTrilingual: true,
     canSuggestReply: true,
     repliesLoading: true,
     repliesText: '',
+    outputLanguages: langSections.payload,
+    languageMeta: metaLang,
   });
 
   try {
@@ -5225,19 +5287,25 @@ async function runSuggestRepliesFromAiResult() {
       text: ctx.selectionText,
       appName: ctx.appName,
       priorMessages: ctx.priorMessages,
+      ...langPayload,
     });
     const result = await runAiCompletionWithFailover(prompt);
     syncPreferredAiProvider();
-    const repliesSections = parseSuggestedReplies(result.text);
+    const repliesSections = parseSuggestedReplies(
+      result.text,
+      langSections.replies,
+    );
     aiResultContext = {
       ...ctx,
       repliesText: result.text,
       providerName: result.providerName,
       model: result.model,
+      outputLanguages: langSections.payload,
+      languageMeta: metaLang,
     };
     pushAiResult({
       title: 'Aspera AI · Summarize selection',
-      meta: `${result.providerName} · ${result.model} · EN · HI · MR`,
+      meta: `${result.providerName} · ${result.model} · ${metaLang}`,
       text: ctx.summaryText || '',
       loading: false,
       showTrilingual: true,
@@ -5245,19 +5313,23 @@ async function runSuggestRepliesFromAiResult() {
       repliesLoading: false,
       repliesText: result.text,
       repliesSections,
+      outputLanguages: langSections.payload,
+      languageMeta: metaLang,
     });
     return { ok: true, text: result.text };
   } catch (error) {
     const message = String(error?.message || error);
     pushAiResult({
       title: 'Aspera AI · Summarize selection',
-      meta: 'EN · HI · MR',
+      meta: metaLang,
       text: ctx.summaryText || '',
       loading: false,
       showTrilingual: true,
       canSuggestReply: true,
       repliesLoading: false,
       repliesError: message,
+      outputLanguages: langSections.payload,
+      languageMeta: metaLang,
     });
     return { ok: false, error: message };
   }
@@ -11035,6 +11107,9 @@ function currentState() {
           ? settings.aiProviderModels
           : {},
       language: settings.aiLanguage || 'en',
+      extraLanguages: sanitizeAiExtraLanguages(settings.aiExtraLanguages),
+      outputLanguages: aiOutputLanguages().map((l) => languageSectionFor(l)),
+      languageMeta: aiLanguageMetaLabel(),
       allowedAppIds: AI_ALLOWED_APP_IDS,
       languages: AI_LANGUAGES,
       providers: aiProvidersForUi(),
@@ -12698,6 +12773,9 @@ dockHandle('dock:ai-status', () => ({
       ? settings.aiProviderModels
       : {},
   language: settings.aiLanguage || 'en',
+  extraLanguages: sanitizeAiExtraLanguages(settings.aiExtraLanguages),
+  outputLanguages: aiOutputLanguages().map((l) => languageSectionFor(l)),
+  languageMeta: aiLanguageMetaLabel(),
   allowedAppIds: AI_ALLOWED_APP_IDS,
   languages: AI_LANGUAGES,
   providers: aiProvidersForUi(),

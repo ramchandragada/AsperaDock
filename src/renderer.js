@@ -850,6 +850,41 @@ async function setAiProviderEnabled(providerId, enabled) {
 /** Providers currently showing the key input (new key or edit). */
 const aiKeyEditMode = new Set();
 
+function readAiExtraLanguages() {
+  const a = String(document.getElementById('set-ai-extra-1')?.value || '').trim();
+  const b = String(document.getElementById('set-ai-extra-2')?.value || '').trim();
+  const out = [];
+  for (const id of [a, b]) {
+    if (!id || id === 'en' || out.includes(id)) continue;
+    out.push(id);
+    if (out.length >= 2) break;
+  }
+  return out;
+}
+
+/** Hide a language already chosen in the other extra select. */
+function syncAiExtraLanguageOptions() {
+  const sel1 = document.getElementById('set-ai-extra-1');
+  const sel2 = document.getElementById('set-ai-extra-2');
+  if (!sel1 || !sel2) return;
+  const v1 = String(sel1.value || '');
+  const v2 = String(sel2.value || '');
+  for (const opt of sel1.options) {
+    if (!opt.value) {
+      opt.hidden = false;
+      continue;
+    }
+    opt.hidden = !!v2 && opt.value === v2;
+  }
+  for (const opt of sel2.options) {
+    if (!opt.value) {
+      opt.hidden = false;
+      continue;
+    }
+    opt.hidden = !!v1 && opt.value === v1;
+  }
+}
+
 function renderAiProviderKeys() {
   const root = document.getElementById('ai-provider-keys');
   if (!root) return;
@@ -1168,6 +1203,16 @@ function fillSettingsForm() {
   set('set-whatsapp-safe-mode', s.whatsappSafeMode !== false);
   set('set-ai-enabled', s.aiEnabled !== false);
   set('set-ai-language', s.aiLanguage || 'en');
+  {
+    const extras = Array.isArray(s.aiExtraLanguages)
+      ? s.aiExtraLanguages
+      : Array.isArray(s.ai?.extraLanguages)
+        ? s.ai.extraLanguages
+        : ['hi', 'mr'];
+    set('set-ai-extra-1', extras[0] || '');
+    set('set-ai-extra-2', extras[1] || '');
+    syncAiExtraLanguageOptions();
+  }
   aiKeyEditMode.clear();
   renderAiProviderKeys();
   set('set-zoho-crm-enabled', s.zohoCrmEnabled !== false);
@@ -1246,6 +1291,7 @@ function readSettingsForm() {
     whatsappSafeMode: checked('set-whatsapp-safe-mode'),
     aiEnabled: checked('set-ai-enabled'),
     aiLanguage: val('set-ai-language'),
+    aiExtraLanguages: readAiExtraLanguages(),
     zohoCrmEnabled: checked('set-zoho-crm-enabled'),
     zohoCrmDc: val('set-zoho-crm-dc') || 'in',
     zohoCrmFleetUrl: val('set-zoho-crm-fleet-url').trim(),
@@ -2425,6 +2471,12 @@ document.getElementById('ai-catch-up-btn')?.addEventListener('click', () => {
   window.asperadock.aiCatchUp?.({
     dark: document.body.classList.contains('theme-dark'),
   });
+});
+document.getElementById('set-ai-extra-1')?.addEventListener('change', () => {
+  syncAiExtraLanguageOptions();
+});
+document.getElementById('set-ai-extra-2')?.addEventListener('change', () => {
+  syncAiExtraLanguageOptions();
 });
 
 async function patchMenuFlag(key, checked) {

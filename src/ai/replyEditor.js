@@ -1,37 +1,57 @@
-/** Parse / serialize trilingual suggested-reply drafts for the AI result panel. */
+/** Parse / serialize multi-language suggested-reply drafts for the AI result panel. */
 
 import { formatPriorMessagesForPrompt } from '../guestChatContext.js';
+import {
+  AI_DEFAULT_EXTRA_LANGUAGES,
+  getAiLanguage,
+  replySectionsForLanguages,
+  resolveAiOutputLanguages,
+} from './catalog.js';
 
-export const REPLY_SECTIONS = [
-  {
-    id: 'en',
-    heading: '## English replies',
-    label: 'English',
-  },
-  {
-    id: 'hi',
-    heading: '## Hindi replies (हिन्दी)',
-    label: 'Hindi (हिन्दी)',
-  },
-  {
-    id: 'mr',
-    heading: '## Marathi replies (मराठी)',
-    label: 'Marathi (मराठी)',
-  },
-];
+/** Default EN+HI+MR sections (backward compatible). */
+export const REPLY_SECTIONS = replySectionsForLanguages(
+  resolveAiOutputLanguages(AI_DEFAULT_EXTRA_LANGUAGES),
+);
 
-function matchHeading(line) {
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function sectionsFrom(languages) {
+  if (Array.isArray(languages) && languages.length) {
+    if (languages[0]?.id && (languages[0]?.heading || languages[0]?.repliesHeading || languages[0]?.name)) {
+      return languages.map((s) => ({
+        id: s.id,
+        heading:
+          s.repliesHeading ||
+          s.activeHeading ||
+          s.heading ||
+          `## ${s.name || s.label || s.id} replies`,
+        label: s.label || s.name || s.id,
+        name: s.name || s.label || s.id,
+      }));
+    }
+    return replySectionsForLanguages(languages);
+  }
+  return REPLY_SECTIONS;
+}
+
+function matchHeading(line, sections) {
   const t = String(line || '').trim();
   if (!t) return null;
   const lower = t.toLowerCase();
-  for (const section of REPLY_SECTIONS) {
-    if (t === section.heading || lower.startsWith(section.heading.toLowerCase())) {
+  for (const section of sections) {
+    if (t === section.heading || lower.startsWith(String(section.heading || '').toLowerCase())) {
       return section.id;
     }
   }
-  if (/^##\s*english/i.test(t)) return 'en';
-  if (/^##\s*hindi/i.test(t)) return 'hi';
-  if (/^##\s*marathi/i.test(t)) return 'mr';
+  for (const section of sections) {
+    const name = section.name || String(section.label || '').split('(')[0].trim();
+    if (!name) continue;
+    if (new RegExp(`^##\\s*${escapeRegExp(name)}(?:\\s+replies)?\\b`, 'i').test(t)) {
+      return section.id;
+    }
+  }
   return null;
 }
 
@@ -43,10 +63,11 @@ function stripOptionPrefix(line) {
 
 /**
  * @param {string} text
+ * @param {object[]|string[]} [languages]
  * @returns {{ id: string, heading: string, label: string, items: { text: string }[] }[]}
  */
-export function parseSuggestedReplies(text) {
-  const base = REPLY_SECTIONS.map((s) => ({
+export function parseSuggestedReplies(text, languages) {
+  const base = sectionsFrom(languages).map((s) => ({
     id: s.id,
     heading: s.heading,
     label: s.label,
@@ -58,19 +79,19 @@ export function parseSuggestedReplies(text) {
 
   let current = null;
   for (const line of raw.split('\n')) {
-    const headingId = matchHeading(line);
+    const headingId = matchHeading(line, base);
     if (headingId) {
       current = headingId;
       continue;
     }
     if (!current) {
-      // Loose text before any heading → English
-      current = 'en';
+      current = base[0]?.id || 'en';
     }
     const trimmed = line.trim();
     if (!trimmed) continue;
     const item = stripOptionPrefix(trimmed);
     if (!item) continue;
+    if (!byId[current]) continue;
     byId[current].items.push({ text: item });
   }
 
@@ -84,16 +105,18 @@ export function parseSuggestedReplies(text) {
 
 /**
  * @param {{ id?: string, heading?: string, label?: string, items?: { text?: string }[] }[]} sections
+ * @param {object[]|string[]} [languages]
  */
-export function serializeSuggestedReplies(sections) {
+export function serializeSuggestedReplies(sections, languages) {
+  const catalog = sectionsFrom(languages);
   const list = Array.isArray(sections) && sections.length
     ? sections
-    : REPLY_SECTIONS.map((s) => ({ ...s, items: [] }));
+    : catalog.map((s) => ({ ...s, items: [] }));
 
   return list
     .map((section) => {
       const meta =
-        REPLY_SECTIONS.find((s) => s.id === section.id) ||
+        catalog.find((s) => s.id === section.id) ||
         {
           heading: section.heading || '## Replies',
           label: section.label || 'Replies',
@@ -116,9 +139,9 @@ export function buildReviseReplyPrompt({
   appName,
   priorMessages,
 }) {
+  const lang = getAiLanguage(language);
   const langLabel =
-    REPLY_SECTIONS.find((s) => s.id === language)?.label ||
-    String(language || 'English');
+    lang.id === 'en' ? 'English' : `${lang.name} (${lang.native})`;
   const draft = String(replyText || '').trim().slice(0, 2_000);
   const context = String(selectionText || '').trim().slice(0, 4_000);
   const prior = formatPriorMessagesForPrompt(priorMessages);
@@ -129,7 +152,7 @@ export function buildReviseReplyPrompt({
     `Language for the revised reply: ${langLabel}.`,
     'Rules:',
     '- Output ONLY the revised reply text (1–2 sentences).',
-    '- Same language as requested. Hindi/Marathi in Devanagari when applicable.',
+    `- Same language as requested. Use ${lang.script} when applicable.`,
     '- Do not invent facts. No preamble, labels, or quotation marks wrappers.',
     '- Use earlier conversation only for consistency with the thread.',
     '',

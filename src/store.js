@@ -11,7 +11,9 @@ import {
 import { defaultShortcutsMap, migrateShortcutsMap } from './shortcutsConfig.js';
 import { sanitizePinnedPeople } from './guestInbox.js';
 import {
+  getAiLanguage,
   sanitizeAiDisabledProviders,
+  sanitizeAiExtraLanguages,
   sanitizeAiProviderOrder,
 } from './ai/catalog.js';
 
@@ -153,7 +155,13 @@ export const DEFAULTS = {
    * @type {Record<string, string>}
    */
   aiProviderModels: {},
-  aiLanguage: 'en', // en | hi | mr
+  aiLanguage: 'en', // Catch me up language (any AI_LANGUAGE_CATALOG id)
+  /**
+   * Extra languages for Summarize / Refine / Suggest reply (max 2).
+   * English is always included. Default Hindi + Marathi.
+   * @type {string[]}
+   */
+  aiExtraLanguages: ['hi', 'mr'],
   /**
    * Custom Aspera AI failover sequence (provider ids).
    * Empty / omitted → built-in default (Gemini → … → Anthropic).
@@ -559,6 +567,12 @@ export function loadSettings() {
             aiDisabledProviders: sanitizeAiDisabledProviders(
               parsed.aiDisabledProviders,
             ),
+            aiLanguage: getAiLanguage(parsed.aiLanguage || 'en').id,
+            aiExtraLanguages: sanitizeAiExtraLanguages(
+              Object.prototype.hasOwnProperty.call(parsed, 'aiExtraLanguages')
+                ? parsed.aiExtraLanguages
+                : undefined,
+            ),
           }),
         ),
       ),
@@ -591,6 +605,15 @@ export function saveSettings(patch) {
     cache.aiDisabledProviders = sanitizeAiDisabledProviders(
       patch.aiDisabledProviders,
     );
+  }
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'aiLanguage')) {
+    cache.aiLanguage = getAiLanguage(patch.aiLanguage || 'en').id;
+  }
+  if (
+    patch &&
+    Object.prototype.hasOwnProperty.call(patch, 'aiExtraLanguages')
+  ) {
+    cache.aiExtraLanguages = sanitizeAiExtraLanguages(patch.aiExtraLanguages);
   }
   try {
     fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });

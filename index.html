@@ -346,7 +346,8 @@
             Default failover is
             <strong>Gemini → Sarvam → Grok → DeepSeek → SambaNova → OpenRouter → Anthropic</strong>
             — reorder or disable providers below for full control.
-            <strong>Summarize</strong> returns English + Hindi + Marathi, with optional reply drafts.
+            <strong>Summarize / Refine / Suggest reply</strong> always include English,
+            plus up to <strong>2</strong> extra Indian languages you choose below.
           </p>
           <label class="switch-row">
             <input id="set-ai-enabled" type="checkbox" />
@@ -358,8 +359,48 @@
               <option value="en">English</option>
               <option value="hi">Hindi (हिन्दी)</option>
               <option value="mr">Marathi (मराठी)</option>
+              <option value="bn">Bengali (বাংলা)</option>
+              <option value="te">Telugu (తెలుగు)</option>
+              <option value="ta">Tamil (தமிழ்)</option>
+              <option value="gu">Gujarati (ગુજરાતી)</option>
+              <option value="kn">Kannada (ಕನ್ನಡ)</option>
+              <option value="or">Odia (ଓଡ଼ିଆ)</option>
+              <option value="ml">Malayalam (മലയാളം)</option>
             </select>
           </label>
+          <div class="field ai-extra-langs">
+            <span>Also include in Summarize / Refine / Suggest reply</span>
+            <p class="hint-text" style="margin:4px 0 8px;">
+              English is always included. Choose up to 2 more (default Hindi + Marathi).
+            </p>
+            <div class="ai-extra-langs-row">
+              <span class="ai-lang-chip locked" title="Always included">English</span>
+              <select id="set-ai-extra-1" aria-label="Extra language 1">
+                <option value="">None</option>
+                <option value="hi">Hindi (हिन्दी)</option>
+                <option value="mr">Marathi (मराठी)</option>
+                <option value="bn">Bengali (বাংলা)</option>
+                <option value="te">Telugu (తెలుగు)</option>
+                <option value="ta">Tamil (தமிழ்)</option>
+                <option value="gu">Gujarati (ગુજરાતી)</option>
+                <option value="kn">Kannada (ಕನ್ನಡ)</option>
+                <option value="or">Odia (ଓଡ଼ିଆ)</option>
+                <option value="ml">Malayalam (മലയാളം)</option>
+              </select>
+              <select id="set-ai-extra-2" aria-label="Extra language 2">
+                <option value="">None</option>
+                <option value="hi">Hindi (हिन्दी)</option>
+                <option value="mr">Marathi (मराठी)</option>
+                <option value="bn">Bengali (বাংলা)</option>
+                <option value="te">Telugu (తెలుగు)</option>
+                <option value="ta">Tamil (தமிழ்)</option>
+                <option value="gu">Gujarati (ગુજરાતી)</option>
+                <option value="kn">Kannada (ಕನ್ನಡ)</option>
+                <option value="or">Odia (ଓଡ଼ିଆ)</option>
+                <option value="ml">Malayalam (മലയാളം)</option>
+              </select>
+            </div>
+          </div>
           <div class="ai-route-toolbar">
             <div class="ai-route-toolbar-text">
               <strong>Failover order</strong>

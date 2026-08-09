@@ -1,4 +1,10 @@
-import { languageInstruction } from './catalog.js';
+import {
+  languageInstruction,
+  promptHeadingsBlock,
+  resolveAiOutputLanguages,
+  scriptInstructionsForLanguages,
+  AI_DEFAULT_EXTRA_LANGUAGES,
+} from './catalog.js';
 import { formatPriorMessagesForPrompt } from '../guestChatContext.js';
 
 function priorContextBlock(priorMessages) {
@@ -6,20 +12,35 @@ function priorContextBlock(priorMessages) {
   return block ? `${block}\n` : '';
 }
 
-export function buildSummarizePrompt({ text, appName, priorMessages } = {}) {
+function outputLanguagesFrom(payload = {}) {
+  if (Array.isArray(payload.languages) && payload.languages.length) {
+    return payload.languages;
+  }
+  if (payload.extraLanguages !== undefined) {
+    return resolveAiOutputLanguages(payload.extraLanguages);
+  }
+  return resolveAiOutputLanguages(AI_DEFAULT_EXTRA_LANGUAGES);
+}
+
+export function buildSummarizePrompt({
+  text,
+  appName,
+  priorMessages,
+  languages,
+  extraLanguages,
+} = {}) {
   const body = String(text || '').trim().slice(0, 6_000);
   const prior = priorContextBlock(priorMessages);
+  const langs = outputLanguagesFrom({ languages, extraLanguages });
   return [
     'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
     'Skill: Summarize selection — be brief and fast.',
     `App context: ${appName || 'Messaging / Mail'}.`,
-    'Produce summaries in THREE languages with these exact headings, in order:',
-    '## English',
-    '## Hindi (हिन्दी)',
-    '## Marathi (मराठी)',
+    promptHeadingsBlock(langs, { replies: false }),
     'Under each heading: one short lead sentence (no label), then max 4 short bullets.',
     'Do not write TL;DR, Summary, or any other prefix before the lead sentence.',
-    'Hindi and Marathi use Devanagari. Keep names/URLs as-is. No invented facts. No preamble.',
+    scriptInstructionsForLanguages(langs),
+    'No invented facts. No preamble.',
     'If earlier conversation is provided, use it only to understand references,',
     'pronouns, and what the selected text is responding to — still center the summary on the selection.',
     '',
@@ -30,7 +51,14 @@ export function buildSummarizePrompt({ text, appName, priorMessages } = {}) {
 }
 
 /** Summarize extracted PDF text (or note when user also attached the file). */
-export function buildSummarizePdfTextPrompt({ text, fileName, pagesRead, numPages } = {}) {
+export function buildSummarizePdfTextPrompt({
+  text,
+  fileName,
+  pagesRead,
+  numPages,
+  languages,
+  extraLanguages,
+} = {}) {
   const body = String(text || '').trim().slice(0, 12_000);
   const pages =
     pagesRead && numPages
@@ -38,18 +66,17 @@ export function buildSummarizePdfTextPrompt({ text, fileName, pagesRead, numPage
       : pagesRead
         ? `Pages used: ${pagesRead}.`
         : '';
+  const langs = outputLanguagesFrom({ languages, extraLanguages });
   return [
     'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
     'Skill: Summarize an uploaded PDF from its extracted text — be brief and fast.',
     `File name: ${fileName || 'document.pdf'}.`,
     pages,
-    'Produce summaries in THREE languages with these exact headings, in order:',
-    '## English',
-    '## Hindi (हिन्दी)',
-    '## Marathi (मराठी)',
+    promptHeadingsBlock(langs, { replies: false }),
     'Under each heading: one short lead sentence (no label), then max 5 short bullets of the important points.',
     'Do not write TL;DR, Summary, or any other prefix before the lead sentence.',
-    'Hindi and Marathi use Devanagari. Keep names/amounts/dates/URLs as-is. No invented facts. No preamble.',
+    scriptInstructionsForLanguages(langs),
+    'No invented facts. No preamble.',
     '',
     'Extracted PDF text:',
     body || '(no extractable text)',
@@ -57,40 +84,50 @@ export function buildSummarizePdfTextPrompt({ text, fileName, pagesRead, numPage
 }
 
 /** Vision / multimodal summarize for an image or PDF bytes. */
-export function buildSummarizeAttachmentPrompt({ kind, fileName } = {}) {
+export function buildSummarizeAttachmentPrompt({
+  kind,
+  fileName,
+  languages,
+  extraLanguages,
+} = {}) {
   const what =
     kind === 'pdf'
       ? 'an uploaded PDF document'
       : 'an uploaded image (photo, screenshot, or scan)';
+  const langs = outputLanguagesFrom({ languages, extraLanguages });
   return [
     'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
     `Skill: Summarize ${what} — be brief and fast.`,
     `File name: ${fileName || (kind === 'pdf' ? 'document.pdf' : 'image')}.`,
-    'Produce summaries in THREE languages with these exact headings, in order:',
-    '## English',
-    '## Hindi (हिन्दी)',
-    '## Marathi (मराठी)',
+    promptHeadingsBlock(langs, { replies: false }),
     'Under each heading: one short lead sentence (no label), then max 5 short bullets.',
     'Do not write TL;DR, Summary, or any other prefix before the lead sentence.',
     'For images: describe what is visible and any readable text/numbers that matter for work.',
     'For PDFs: focus on purpose, key facts, amounts, dates, and action items.',
-    'Hindi and Marathi use Devanagari. Keep names/amounts/dates/URLs as-is. No invented facts. No preamble.',
+    scriptInstructionsForLanguages(langs),
+    'No invented facts. No preamble.',
   ].join('\n');
 }
 
-export function buildSuggestReplyPrompt({ text, appName, priorMessages } = {}) {
+export function buildSuggestReplyPrompt({
+  text,
+  appName,
+  priorMessages,
+  languages,
+  extraLanguages,
+} = {}) {
   const body = String(text || '').trim().slice(0, 6_000);
   const prior = priorContextBlock(priorMessages);
+  const langs = outputLanguagesFrom({ languages, extraLanguages });
   return [
     'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
     'Skill: Suggest short reply drafts — be brief and fast.',
     `App context: ${appName || 'Messaging / Mail'}.`,
-    'Produce drafts in THREE languages with these exact headings, in order:',
-    '## English replies',
-    '## Hindi replies (हिन्दी)',
-    '## Marathi replies (मराठी)',
+    promptHeadingsBlock(langs, { replies: true }),
     'Under each: exactly 2 options labeled 1) and 2), each 1–2 sentences.',
-    '1) formal, 2) warmer/concise. Hindi/Marathi in Devanagari. No invented facts. No preamble.',
+    '1) formal, 2) warmer/concise.',
+    scriptInstructionsForLanguages(langs),
+    'No invented facts. No preamble.',
     'Read earlier conversation first (like a human), then reply to the latest/selected message.',
     'Stay consistent with names, decisions, and open questions from the earlier thread.',
     '',
@@ -101,19 +138,23 @@ export function buildSuggestReplyPrompt({ text, appName, priorMessages } = {}) {
 }
 
 /** Polish a message the employee typed in the send/compose box before sending. */
-export function buildRefineDraftPrompt({ text, appName }) {
+export function buildRefineDraftPrompt({
+  text,
+  appName,
+  languages,
+  extraLanguages,
+} = {}) {
   const body = String(text || '').trim().slice(0, 6_000);
+  const langs = outputLanguagesFrom({ languages, extraLanguages });
   return [
     'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
     'Skill: Refine a message the employee is about to send.',
     `App context: ${appName || 'Messaging / Mail'}.`,
     'Improve clarity, grammar, spelling, and professional tone.',
-    'Produce refined drafts in THREE languages with these exact headings, in order:',
-    '## English',
-    '## Hindi (हिन्दी)',
-    '## Marathi (मराठी)',
+    promptHeadingsBlock(langs, { replies: false }),
     'Under each heading: ONLY the refined message text (same meaning/intent).',
-    'Hindi and Marathi must use Devanagari. Do not invent facts or add commitments.',
+    scriptInstructionsForLanguages(langs),
+    'Do not invent facts or add commitments.',
     'Do not make it longer unless needed for clarity. No preamble outside the headings.',
     '',
     'Draft to refine:',

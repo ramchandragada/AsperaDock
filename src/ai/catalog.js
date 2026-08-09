@@ -6,11 +6,225 @@ export const AI_ALLOWED_APP_IDS = Object.freeze([
   'zoho-mail',
 ]);
 
-export const AI_LANGUAGES = Object.freeze([
-  { id: 'en', label: 'English' },
-  { id: 'hi', label: 'Hindi (हिन्दी)' },
-  { id: 'mr', label: 'Marathi (मराठी)' },
+/**
+ * Full Aspera AI language catalog.
+ * English is always included in Summarize / Refine / Suggest reply.
+ * Extras (max 2) are chosen in Settings from AI_EXTRA_LANGUAGE_IDS.
+ */
+export const AI_LANGUAGE_CATALOG = Object.freeze([
+  {
+    id: 'en',
+    short: 'EN',
+    name: 'English',
+    native: 'English',
+    script: 'Latin script',
+  },
+  {
+    id: 'hi',
+    short: 'HI',
+    name: 'Hindi',
+    native: 'हिन्दी',
+    script: 'Devanagari script',
+  },
+  {
+    id: 'mr',
+    short: 'MR',
+    name: 'Marathi',
+    native: 'मराठी',
+    script: 'Devanagari script',
+  },
+  {
+    id: 'bn',
+    short: 'BN',
+    name: 'Bengali',
+    native: 'বাংলা',
+    script: 'Bengali script',
+  },
+  {
+    id: 'te',
+    short: 'TE',
+    name: 'Telugu',
+    native: 'తెలుగు',
+    script: 'Telugu script',
+  },
+  {
+    id: 'ta',
+    short: 'TA',
+    name: 'Tamil',
+    native: 'தமிழ்',
+    script: 'Tamil script',
+  },
+  {
+    id: 'gu',
+    short: 'GU',
+    name: 'Gujarati',
+    native: 'ગુજરાતી',
+    script: 'Gujarati script',
+  },
+  {
+    id: 'kn',
+    short: 'KN',
+    name: 'Kannada',
+    native: 'ಕನ್ನಡ',
+    script: 'Kannada script',
+  },
+  {
+    id: 'or',
+    short: 'OR',
+    name: 'Odia',
+    native: 'ଓଡ଼ିଆ',
+    script: 'Odia script',
+  },
+  {
+    id: 'ml',
+    short: 'ML',
+    name: 'Malayalam',
+    native: 'മലയാളം',
+    script: 'Malayalam script',
+  },
 ]);
+
+/** Selectable extras for multi-language skills (English is always on). */
+export const AI_EXTRA_LANGUAGE_IDS = Object.freeze(
+  AI_LANGUAGE_CATALOG.filter((l) => l.id !== 'en').map((l) => l.id),
+);
+
+/** Preserve today’s EN+HI+MR behavior for existing installs. */
+export const AI_DEFAULT_EXTRA_LANGUAGES = Object.freeze(['hi', 'mr']);
+
+export const AI_MAX_EXTRA_LANGUAGES = 2;
+
+/** Catch me up + settings lists — every supported language. */
+export const AI_LANGUAGES = Object.freeze(
+  AI_LANGUAGE_CATALOG.map((lang) => ({
+    id: lang.id,
+    label: aiLanguageLabel(lang),
+    short: lang.short,
+    name: lang.name,
+    native: lang.native,
+  })),
+);
+
+function aiLanguageLabel(lang) {
+  if (!lang) return 'English';
+  if (lang.id === 'en') return 'English';
+  return `${lang.name} (${lang.native})`;
+}
+
+export function getAiLanguage(id) {
+  const key = String(id || '').trim().toLowerCase();
+  return AI_LANGUAGE_CATALOG.find((l) => l.id === key) || AI_LANGUAGE_CATALOG[0];
+}
+
+export function isAiExtraLanguageId(id) {
+  return AI_EXTRA_LANGUAGE_IDS.includes(String(id || '').trim().toLowerCase());
+}
+
+/**
+ * Normalize extras: unique, valid Indic ids only, max 2, never English.
+ * `undefined`/`null` → default Hindi+Marathi (migration).
+ * Explicit `[]` stays empty (English-only output).
+ */
+export function sanitizeAiExtraLanguages(raw) {
+  if (raw === undefined || raw === null) {
+    return [...AI_DEFAULT_EXTRA_LANGUAGES];
+  }
+  const seen = new Set();
+  const out = [];
+  for (const item of Array.isArray(raw) ? raw : []) {
+    const id = String(item || '').trim().toLowerCase();
+    if (!isAiExtraLanguageId(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= AI_MAX_EXTRA_LANGUAGES) break;
+  }
+  return out;
+}
+
+/** Ordered output languages: English first, then extras. */
+export function resolveAiOutputLanguages(extraIds) {
+  const extras = sanitizeAiExtraLanguages(
+    extraIds === undefined ? AI_DEFAULT_EXTRA_LANGUAGES : extraIds,
+  );
+  return [getAiLanguage('en'), ...extras.map((id) => getAiLanguage(id))];
+}
+
+export function aiOutputLanguageMeta(languages) {
+  const list =
+    Array.isArray(languages) && languages.length
+      ? languages
+      : resolveAiOutputLanguages(AI_DEFAULT_EXTRA_LANGUAGES);
+  return list.map((l) => l.short || getAiLanguage(l.id).short).join(' · ');
+}
+
+export function aiLanguageHeading(lang, { replies = false } = {}) {
+  const L = typeof lang === 'string' ? getAiLanguage(lang) : lang || getAiLanguage('en');
+  if (L.id === 'en') return replies ? '## English replies' : '## English';
+  return replies
+    ? `## ${L.name} replies (${L.native})`
+    : `## ${L.name} (${L.native})`;
+}
+
+export function languageSectionFor(lang, { replies = false } = {}) {
+  const L = typeof lang === 'string' ? getAiLanguage(lang) : lang || getAiLanguage('en');
+  const summaryHeading = aiLanguageHeading(L, { replies: false });
+  const repliesHeading = aiLanguageHeading(L, { replies: true });
+  return {
+    id: L.id,
+    short: L.short,
+    name: L.name,
+    native: L.native,
+    script: L.script,
+    label: aiLanguageLabel(L),
+    // `heading` matches the skill context (refine/summarize vs suggest-reply).
+    heading: replies ? repliesHeading : summaryHeading,
+    repliesHeading,
+    summaryHeading,
+  };
+}
+
+export function refineSectionsForLanguages(languages) {
+  const list =
+    Array.isArray(languages) && languages.length
+      ? languages.map((l) => getAiLanguage(l.id || l))
+      : resolveAiOutputLanguages(AI_DEFAULT_EXTRA_LANGUAGES);
+  return list.map((l) => languageSectionFor(l, { replies: false }));
+}
+
+export function replySectionsForLanguages(languages) {
+  const list =
+    Array.isArray(languages) && languages.length
+      ? languages.map((l) => getAiLanguage(l.id || l))
+      : resolveAiOutputLanguages(AI_DEFAULT_EXTRA_LANGUAGES);
+  return list.map((l) => languageSectionFor(l, { replies: true }));
+}
+
+export function scriptInstructionsForLanguages(languages) {
+  const list =
+    Array.isArray(languages) && languages.length
+      ? languages.map((l) => getAiLanguage(l.id || l))
+      : resolveAiOutputLanguages(AI_DEFAULT_EXTRA_LANGUAGES);
+  const parts = list
+    .filter((l) => l.id !== 'en')
+    .map((l) => `${l.name}: ${l.script}`);
+  if (!parts.length) {
+    return 'English uses Latin script. Keep names/amounts/dates/URLs as-is.';
+  }
+  return `Use the correct native script for each language (${parts.join('; ')}). English uses Latin. Keep names/amounts/dates/URLs as-is.`;
+}
+
+export function promptHeadingsBlock(languages, { replies = false } = {}) {
+  const sections = replies
+    ? replySectionsForLanguages(languages)
+    : refineSectionsForLanguages(languages);
+  const n = sections.length;
+  const countWord =
+    n === 1 ? 'ONE language' : n === 2 ? 'TWO languages' : `${n} languages`;
+  return [
+    `Produce output in ${countWord} with these exact headings, in order:`,
+    ...sections.map((s) => s.heading),
+  ].join('\n');
+}
 
 /**
  * Fixed try order for speed (also UI order):
@@ -363,11 +577,11 @@ export function isAiAllowedAppId(appId) {
 }
 
 export function languageInstruction(langId) {
-  if (langId === 'hi') {
-    return 'Write the entire response in Hindi (हिन्दी), using Devanagari script. Keep names and URLs as-is.';
+  const lang = getAiLanguage(langId);
+  if (lang.id === 'en') {
+    return 'Write the entire response in clear professional English.';
   }
-  if (langId === 'mr') {
-    return 'Write the entire response in Marathi (मराठी), using Devanagari script. Keep names and URLs as-is.';
-  }
-  return 'Write the entire response in clear professional English.';
+  return `Write the entire response in ${lang.name} (${lang.native}), using ${lang.script}. Keep names and URLs as-is.`;
 }
+
+export { aiLanguageLabel };

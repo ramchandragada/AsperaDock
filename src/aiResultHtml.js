@@ -191,24 +191,24 @@ export function buildAiResultHtml(dark = false) {
       <span class="hint">Same window — paste new text to run again</span>
     </div>
     <div class="toolbar" id="reply-bar">
-      <button type="button" class="btn primary" id="suggest-reply">Suggest replies (EN · HI · MR)</button>
+      <button type="button" class="btn primary" id="suggest-reply">Suggest replies</button>
       <span class="hint" id="reply-hint">Rough drafts — copy and paste into the app yourself</span>
     </div>
     <div class="toolbar" id="refine-bar">
-      <button type="button" class="btn" id="refine-again">Refine again (EN · HI · MR)</button>
+      <button type="button" class="btn" id="refine-again">Refine again</button>
       <button type="button" class="btn" id="new-paste">New paste</button>
-      <span class="hint" id="refine-hint">Pick English, Hindi, or Marathi — then Copy and paste yourself</span>
+      <span class="hint" id="refine-hint">Pick a language — then Copy and paste yourself</span>
     </div>
     <div class="scroll" id="scroll">
-      <div class="section-label" id="summary-label" hidden>Summary · EN · HI · MR</div>
+      <div class="section-label" id="summary-label" hidden>Summary</div>
       <div class="body loading" id="body">Working…</div>
       <div class="refine-wrap" id="refine-wrap">
-        <div class="section-label">Refined message · EN · HI · MR</div>
+        <div class="section-label" id="refine-section-label">Refined message</div>
         <div id="refine-editor"></div>
         <div class="reply-status" id="refine-status" hidden></div>
       </div>
       <div class="replies-block" id="replies-wrap">
-        <div class="section-label">Suggested replies · EN · HI · MR</div>
+        <div class="section-label" id="replies-section-label">Suggested replies</div>
         <div id="replies-status" class="reply-status" hidden></div>
         <div class="replies-editor" id="replies-editor" hidden></div>
         <div class="body" id="replies" hidden></div>
@@ -380,28 +380,66 @@ export function buildAiResultHtml(dark = false) {
       }
     }
 
-    const REFINE_LANGS = [
-      { id: 'en', heading: '## English', label: 'English' },
-      { id: 'hi', heading: '## Hindi (हिन्दी)', label: 'Hindi (हिन्दी)' },
-      { id: 'mr', heading: '## Marathi (मराठी)', label: 'Marathi (मराठी)' },
+    let languageMeta = 'EN · HI · MR';
+    let REFINE_LANGS = [
+      { id: 'en', heading: '## English', label: 'English', name: 'English' },
+      { id: 'hi', heading: '## Hindi (हिन्दी)', label: 'Hindi (हिन्दी)', name: 'Hindi' },
+      { id: 'mr', heading: '## Marathi (मराठी)', label: 'Marathi (मराठी)', name: 'Marathi' },
+    ];
+    let LANGS = [
+      { id: 'en', heading: '## English replies', label: 'English', name: 'English' },
+      { id: 'hi', heading: '## Hindi replies (हिन्दी)', label: 'Hindi (हिन्दी)', name: 'Hindi' },
+      { id: 'mr', heading: '## Marathi replies (मराठी)', label: 'Marathi (मराठी)', name: 'Marathi' },
     ];
 
-    const LANGS = [
-      { id: 'en', heading: '## English replies', label: 'English' },
-      { id: 'hi', heading: '## Hindi replies (हिन्दी)', label: 'Hindi (हिन्दी)' },
-      { id: 'mr', heading: '## Marathi replies (मराठी)', label: 'Marathi (मराठी)' },
-    ];
+    function escapeRegExp(value) {
+      return String(value || '').replace(/[.*+?^$()|[\\]\\\\{}]/g, '\\\\$&');
+    }
+
+    function applyOutputLanguages(list, meta) {
+      if (Array.isArray(list) && list.length) {
+        REFINE_LANGS = list.map((l) => ({
+          id: l.id,
+          name: l.name || l.label || l.id,
+          label: l.label || l.name || l.id,
+          heading: l.heading || ('## ' + (l.label || l.name || l.id)),
+        }));
+        LANGS = list.map((l) => ({
+          id: l.id,
+          name: l.name || l.label || l.id,
+          label: l.label || l.name || l.id,
+          heading:
+            l.repliesHeading ||
+            (l.id === 'en'
+              ? '## English replies'
+              : ('## ' + (l.name || l.label || l.id) + ' replies' + (l.native ? ' (' + l.native + ')' : ''))),
+        }));
+      }
+      if (meta) languageMeta = String(meta);
+      const suggestBtn = document.getElementById('suggest-reply');
+      const refineAgainBtn = document.getElementById('refine-again');
+      const summaryLabel = document.getElementById('summary-label');
+      const refineLabel = document.getElementById('refine-section-label');
+      const repliesLabel = document.getElementById('replies-section-label');
+      if (suggestBtn) suggestBtn.textContent = 'Suggest replies (' + languageMeta + ')';
+      if (refineAgainBtn) refineAgainBtn.textContent = 'Refine again (' + languageMeta + ')';
+      if (summaryLabel) summaryLabel.textContent = 'Summary · ' + languageMeta;
+      if (refineLabel) refineLabel.textContent = 'Refined message · ' + languageMeta;
+      if (repliesLabel) repliesLabel.textContent = 'Suggested replies · ' + languageMeta;
+    }
 
     function matchHeading(line) {
       const t = String(line || '').trim();
       if (!t) return null;
       const lower = t.toLowerCase();
       for (const section of LANGS) {
-        if (t === section.heading || lower.startsWith(section.heading.toLowerCase())) return section.id;
+        if (t === section.heading || lower.startsWith(String(section.heading || '').toLowerCase())) return section.id;
       }
-      if (/^##\\s*english/i.test(t)) return 'en';
-      if (/^##\\s*hindi/i.test(t)) return 'hi';
-      if (/^##\\s*marathi/i.test(t)) return 'mr';
+      for (const section of LANGS) {
+        const name = section.name || String(section.label || '').split('(')[0].trim();
+        if (!name) continue;
+        if (new RegExp('^##\\\\s*' + escapeRegExp(name) + '(?:\\\\s+replies)?\\\\b', 'i').test(t)) return section.id;
+      }
       return null;
     }
 
@@ -445,11 +483,13 @@ export function buildAiResultHtml(dark = false) {
       if (!t) return null;
       const lower = t.toLowerCase();
       for (const section of REFINE_LANGS) {
-        if (t === section.heading || lower.startsWith(section.heading.toLowerCase())) return section.id;
+        if (t === section.heading || lower.startsWith(String(section.heading || '').toLowerCase())) return section.id;
       }
-      if (/^##\\s*english\\b/i.test(t)) return 'en';
-      if (/^##\\s*hindi\\b/i.test(t)) return 'hi';
-      if (/^##\\s*marathi\\b/i.test(t)) return 'mr';
+      for (const section of REFINE_LANGS) {
+        const name = section.name || String(section.label || '').split('(')[0].trim();
+        if (!name) continue;
+        if (new RegExp('^##\\\\s*' + escapeRegExp(name) + '\\\\b', 'i').test(t)) return section.id;
+      }
       return null;
     }
 
@@ -459,18 +499,21 @@ export function buildAiResultHtml(dark = false) {
       const raw = String(text || '').replace(/\\r\\n/g, '\\n').trim();
       if (!raw) return base;
       if (!/^##\\s+/m.test(raw)) {
-        byId.en.text = raw;
+        if (byId.en) byId.en.text = raw;
+        else if (base[0]) base[0].text = raw;
         return base;
       }
       let current = null;
-      const buckets = { en: [], hi: [], mr: [] };
+      const buckets = Object.fromEntries(base.map((s) => [s.id, []]));
       for (const line of raw.split('\\n')) {
         const headingId = matchRefineHeading(line);
         if (headingId) { current = headingId; continue; }
-        if (!current) current = 'en';
+        if (!current) current = base[0] ? base[0].id : 'en';
+        if (!buckets[current]) buckets[current] = [];
         buckets[current].push(line);
       }
       for (const id of Object.keys(buckets)) {
+        if (!byId[id]) continue;
         byId[id].text = buckets[id].join('\\n').trim();
       }
       return base;
@@ -707,6 +750,7 @@ export function buildAiResultHtml(dark = false) {
     api.onInit((data) => {
       document.getElementById('title').textContent = data?.title || 'Aspera AI';
       document.getElementById('meta').textContent = data?.meta || '';
+      applyOutputLanguages(data?.outputLanguages, data?.languageMeta || data?.meta);
       mode = String(data?.mode || (data?.canUseInCompose ? 'refine' : ''));
       latestSummary = String(data?.text || '');
       latestReplies = String(data?.repliesText || '');
@@ -781,7 +825,7 @@ export function buildAiResultHtml(dark = false) {
       suggestBtn.disabled = !!data?.repliesLoading;
       suggestBtn.textContent = latestReplies || data?.repliesError
         ? 'Regenerate replies'
-        : 'Suggest replies (EN · HI · MR)';
+        : 'Suggest replies (' + languageMeta + ')';
       replyHint.textContent = data?.repliesLoading
         ? 'Writing reply drafts…'
         : latestReplies
@@ -796,7 +840,7 @@ export function buildAiResultHtml(dark = false) {
       } else if (data?.repliesLoading) {
         repliesWrap.classList.add('show');
         setStatus('');
-        showPlainReplies('Writing reply drafts in English, Hindi, and Marathi…', 'loading');
+        showPlainReplies('Writing reply drafts (' + languageMeta + ')…', 'loading');
         scroll.scrollTop = scroll.scrollHeight;
       } else if (latestReplies) {
         repliesWrap.classList.add('show');
