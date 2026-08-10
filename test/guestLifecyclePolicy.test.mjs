@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   shouldRunPortalBlankRecovery,
+  shouldSkipBlankHeuristicReload,
   portalHealthCheckDelays,
   shouldRecoverAfterAway,
   PORTAL_STALE_MS,
@@ -11,12 +12,20 @@ import {
   defaultKeepWarmForApp,
 } from '../src/guestLifecycle.js';
 
-test('shouldRunPortalBlankRecovery only for Zoho portals', () => {
+test('shouldRunPortalBlankRecovery only for Zoho One portal', () => {
   assert.equal(shouldRunPortalBlankRecovery({ appId: 'zoho-one' }), true);
-  assert.equal(shouldRunPortalBlankRecovery({ appId: 'zoho-crm' }), true);
+  assert.equal(shouldRunPortalBlankRecovery({ appId: 'zoho-crm' }), false);
+  assert.equal(shouldRunPortalBlankRecovery({ appId: 'zoho-books' }), false);
   assert.equal(shouldRunPortalBlankRecovery({ appId: 'arattai' }), false);
   assert.equal(shouldRunPortalBlankRecovery({ appId: 'whatsapp' }), false);
   assert.equal(shouldRunPortalBlankRecovery(null), false);
+});
+
+test('shouldSkipBlankHeuristicReload for CRM and Books forms', () => {
+  assert.equal(shouldSkipBlankHeuristicReload({ appId: 'zoho-crm' }), true);
+  assert.equal(shouldSkipBlankHeuristicReload({ appId: 'zoho-books' }), true);
+  assert.equal(shouldSkipBlankHeuristicReload({ appId: 'zoho-one' }), false);
+  assert.equal(shouldSkipBlankHeuristicReload({ appId: 'gmail' }), false);
 });
 
 test('portalHealthCheckDelays adds long-idle pass', () => {

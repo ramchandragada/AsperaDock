@@ -292,6 +292,7 @@ import {
   PORTAL_HEALTH_RETRY_MS,
   ZOHO_SALES_RECOVERY_DELAYS_MS,
   shouldRunPortalBlankRecovery,
+  shouldSkipBlankHeuristicReload,
   portalHealthCheckDelays,
 } from './guestIdleRecovery.js';
 import {
@@ -1161,6 +1162,10 @@ function softReloadActiveGuest(reason = 'idle-blank') {
   if (isMessagingApp(service) && /surface|active-surface/i.test(String(reason || ''))) {
     return false;
   }
+  // Zoho CRM/Books white forms look "blank" to capturePage — never soft-reload.
+  if (shouldSkipBlankHeuristicReload(service)) {
+    return false;
+  }
   const now = Date.now();
   if (
     entry.__lastStaleReloadAt &&
@@ -1274,10 +1279,10 @@ async function runActiveGuestSurfaceHealthCheck(id, { fromPoll = false } = {}) {
     return;
   }
 
-  // Second strike: reload only for non-messaging apps.
+  // Second strike: reload only for non-messaging / non-CRM-form apps.
   entry.__surfaceBlankStrikes = 0;
-  if (isMessagingApp(service)) {
-    // Keep trying gentle repaints; never reload WhatsApp while focused.
+  if (isMessagingApp(service) || shouldSkipBlankHeuristicReload(service)) {
+    // Keep trying gentle repaints; never reload WhatsApp or CRM/Books forms.
     return;
   }
   softReloadActiveGuest('active-surface-blank');
