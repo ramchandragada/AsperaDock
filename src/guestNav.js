@@ -289,21 +289,6 @@ export function shouldOpenZohoCrmDeepLinkAsHubTab(service, url) {
   return shouldOpenZohoSharedDeepLinkAsHubTab(service, url);
 }
 
-/**
- * Same product/ecosystem as the catalog app — must stay in that Hub tab
- * (or a real auth popup). Never becomes a surprise top-bar link tab.
- * Exception: Zoho CRM/Books/One deep links may open as shared Hub tabs (see
- * shouldOpenZohoSharedDeepLinkAsHubTab).
- */
-export function isSameEcosystemUrl(service, url) {
-  if (!service || !url) return false;
-  if (isInternalUrl(url, service)) return true;
-  const appId = String(service.appId || '');
-  if (appId === 'gmail' && isGoogleOwnedUrl(url)) return true;
-  if (appId.startsWith('zoho') && isZohoOwnedUrl(url)) return true;
-  return false;
-}
-
 /** WhatsApp / Arattai — messengers must never be replaced by Drive/Docs/etc. */
 export function isMessagingAppId(appId) {
   const id = String(appId || '');
@@ -340,6 +325,26 @@ export function isAllowedMessagingTabUrl(service, url) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Same product/ecosystem as the catalog app — must stay in that Hub tab
+ * (or a real auth popup). Never becomes a surprise top-bar link tab.
+ * Exception: Zoho CRM/Books/One deep links may open as shared Hub tabs (see
+ * shouldOpenZohoSharedDeepLinkAsHubTab).
+ */
+export function isSameEcosystemUrl(service, url) {
+  if (!service || !url) return false;
+  // WhatsApp / Arattai: only first-party messenger hosts — never Google via
+  // INTERNAL_HOSTS (that list exists for Gmail and was swallowing Drive clicks).
+  if (isMessagingAppId(service.appId)) {
+    return isAllowedMessagingTabUrl(service, url);
+  }
+  if (isInternalUrl(url, service)) return true;
+  const appId = String(service.appId || '');
+  if (appId === 'gmail' && isGoogleOwnedUrl(url)) return true;
+  if (appId.startsWith('zoho') && isZohoOwnedUrl(url)) return true;
+  return false;
 }
 
 export function isFragileZohoOneDeepUrl(url) {

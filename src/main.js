@@ -2116,6 +2116,27 @@ function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
     }
     return false;
   }
+  // WhatsApp / Arattai: Hub-tab BEFORE same-ecosystem. google.com is in
+  // INTERNAL_HOSTS for Gmail, so Drive used to hit loadURL-in-messenger and
+  // fight will-navigate preventDefault — link opened nowhere.
+  if (
+    isMessagingAppId(service?.appId) &&
+    !isAllowedMessagingTabUrl(service, href)
+  ) {
+    const opened = openUrlAsHubAppTab(href, service);
+    if (!opened.ok && opened.error) {
+      const errBox = {
+        type: 'warning',
+        buttons: ['OK'],
+        defaultId: 0,
+        title: 'Could not open Hub tab',
+        message: opened.error,
+      };
+      if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+      else dialog.showMessageBox(errBox).catch(() => {});
+    }
+    return true;
+  }
   // Catalog apps (Gmail/Zoho/…): same-ecosystem URLs stay in-tab — except Zoho
   // CRM/Books/One deep links, which open as shared-login Hub tabs (multi-screen).
   if (!(service?.isCustom || service?.linkTab) && isSameEcosystemUrl(service, href)) {
@@ -2154,27 +2175,6 @@ function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
   // Only explicit email-link unwraps pass allowHubTab: true.
   if (isGoogleService(service) && !(service?.isCustom || service?.linkTab) && !allowHubTab) {
     if (shouldOpenInSystemBrowser(href)) openExternalSafe(href);
-    return true;
-  }
-  // WhatsApp / Arattai: always open outbound links as Hub tabs (never ask /
-  // never replace the messenger — matches left-click + context menu policy).
-  if (
-    isMessagingAppId(service?.appId) &&
-    !(service?.isCustom || service?.linkTab) &&
-    !isAllowedMessagingTabUrl(service, href)
-  ) {
-    const opened = openUrlAsHubAppTab(href, service);
-    if (!opened.ok && opened.error) {
-      const errBox = {
-        type: 'warning',
-        buttons: ['OK'],
-        defaultId: 0,
-        title: 'Could not open Hub tab',
-        message: opened.error,
-      };
-      if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
-      else dialog.showMessageBox(errBox).catch(() => {});
-    }
     return true;
   }
   const mode = effectiveLinkHandling(service);

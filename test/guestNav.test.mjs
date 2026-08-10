@@ -14,6 +14,7 @@ import {
   shouldOpenInSystemBrowser,
   isMessagingAppId,
   isAllowedMessagingTabUrl,
+  isSameEcosystemUrl,
 } from '../src/guestNav.js';
 
 test('isForbiddenGuestNavigation blocks file and javascript', () => {
@@ -135,4 +136,19 @@ test('messaging apps: Drive/Google must not stay in WhatsApp or Arattai tab', ()
   assert.equal(isAllowedMessagingTabUrl(wa, 'https://mmg.whatsapp.net/v/t62.x'), true);
   assert.equal(isAllowedMessagingTabUrl(wa, drive), false);
   assert.equal(isAllowedMessagingTabUrl(wa, accounts), false);
+});
+
+test('messaging apps: Google is not same-ecosystem (Hub tab, not in-chat load)', () => {
+  const arattai = { url: 'https://web.arattai.in', appId: 'arattai' };
+  const wa = { url: 'https://web.whatsapp.com', appId: 'whatsapp' };
+  const gmail = { url: 'https://mail.google.com', appId: 'gmail' };
+  const drive = 'https://drive.google.com/file/d/abc/view';
+  // INTERNAL_HOSTS includes google.com — must NOT make Drive “in-app” for messengers.
+  assert.equal(isInternalUrl(drive, arattai), true);
+  assert.equal(isSameEcosystemUrl(arattai, drive), false);
+  assert.equal(isSameEcosystemUrl(wa, drive), false);
+  assert.equal(isSameEcosystemUrl(arattai, 'https://web.arattai.in/chats'), true);
+  assert.equal(isSameEcosystemUrl(wa, 'https://web.whatsapp.com/'), true);
+  // Gmail still treats Google as ecosystem.
+  assert.equal(isSameEcosystemUrl(gmail, drive), true);
 });
