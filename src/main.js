@@ -108,6 +108,7 @@ import {
 import {
   releaseDownloadPath,
   resolveSavePathAfterPrompt,
+  sanitizeDownloadFilename,
   uniqueDownloadPath,
 } from './downloadPath.js';
 import { linuxUsesOpaqueOverlays } from './linuxDesktop.js';
@@ -712,6 +713,36 @@ function swallowForwardExtraDownload(item) {
 }
 
 function promptGuestDownloadSave(item, defaultPath, downloadName = '') {
+  const suggested = String(defaultPath || '').trim();
+  const intendedName =
+    String(downloadName || '').trim() ||
+    item.getFilename?.() ||
+    path.basename(suggested) ||
+    'download';
+
+  // Claim the download immediately so Chromium does not open its own Save
+  // dialog in parallel with Hub's "Save download" picker (which caused a
+  // second copy in Downloads when the user picked another folder).
+  let claimPath = '';
+  try {
+    const claimDir = path.join(app.getPath('temp'), 'asperahub-downloads');
+    fs.mkdirSync(claimDir, { recursive: true });
+    claimPath = path.join(
+      claimDir,
+      `${Date.now()}-${sanitizeDownloadFilename(intendedName)}`,
+    );
+    item.setSavePath(claimPath);
+  } catch {
+    try {
+      if (suggested) {
+        claimPath = suggested;
+        item.setSavePath(claimPath);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   try {
     item.pause();
   } catch {
@@ -729,12 +760,15 @@ function promptGuestDownloadSave(item, defaultPath, downloadName = '') {
   } catch {
     // ignore
   }
-  const suggested = String(defaultPath || '').trim();
-  const intendedName =
-    String(downloadName || '').trim() ||
-    item.getFilename?.() ||
-    path.basename(suggested) ||
-    'download';
+
+  const cleanupClaimFile = (finalPath) => {
+    if (!claimPath || claimPath === finalPath) return;
+    try {
+      if (fs.existsSync(claimPath)) fs.unlinkSync(claimPath);
+    } catch {
+      // ignore
+    }
+  };
 
   const finishWithPath = (pickedPath) => {
     // Drop the dialog suggestion reservation before resolving the final path
@@ -744,13 +778,16 @@ function promptGuestDownloadSave(item, defaultPath, downloadName = '') {
     try {
       item.setSavePath(finalPath);
       item.resume();
+      cleanupClaimFile(finalPath);
     } catch {
       try {
         item.setSavePath(finalPath || suggested);
         item.resume();
+        cleanupClaimFile(finalPath || suggested);
       } catch {
         releaseDownloadPath(finalPath);
         releaseDownloadPath(suggested);
+        cleanupClaimFile('');
         return;
       }
     }
@@ -763,6 +800,7 @@ function promptGuestDownloadSave(item, defaultPath, downloadName = '') {
     } catch {
       // ignore
     }
+    cleanupClaimFile('');
   };
 
   dialog
@@ -781,21 +819,12 @@ function promptGuestDownloadSave(item, defaultPath, downloadName = '') {
       finishWithPath(filePath);
     })
     .catch(() => {
+      // showSaveDialog failed — keep the claimed path silent and save to the
+      // suggested Downloads location (never open a second Chromium dialog).
       try {
-        item.setSaveDialogOptions({
-          title: 'Save download',
-          defaultPath: suggested,
-          buttonLabel: 'Save',
-          ...(parent ? { window: parent } : {}),
-        });
-        item.resume();
-        item.once?.('done', () => releaseDownloadPath(suggested));
+        finishWithPath(suggested);
       } catch {
-        try {
-          finishWithPath(suggested);
-        } catch {
-          cancelItem();
-        }
+        cancelItem();
       }
     });
 }
