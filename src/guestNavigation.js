@@ -13,6 +13,8 @@ import {
   isSameEcosystemUrl,
   isGoogleOauthClientUrl,
   shouldOpenZohoSharedDeepLinkAsHubTab,
+  isMessagingAppId,
+  isAllowedMessagingTabUrl,
 } from './guestNav.js';
 
 /**
@@ -69,6 +71,12 @@ export function configureGuestWindowOpen(wc, service, api) {
           return allowPopup();
         }
         wc.loadURL(raw).catch(() => {});
+        return { action: 'deny' };
+      }
+
+      // WhatsApp / Arattai: any outbound click → new Hub tab (never replace chat).
+      if (isMessagingAppId(live?.appId) && !isAllowedMessagingTabUrl(live, raw)) {
+        handleOutboundOrNewWindowLink(live, raw, wc, { allowHubTab: true });
         return { action: 'deny' };
       }
 
@@ -181,6 +189,15 @@ export function attachGuestNavigationGate(webContents, service, api) {
     const live = liveService(service);
     if (live?.isCustom || live?.linkTab) return;
 
+    // WhatsApp / Arattai: never leave the messenger for Drive/Docs/Google login.
+    // Open the destination as a Hub tab (same policy for both apps).
+    if (isMessagingAppId(live?.appId)) {
+      if (isAllowedMessagingTabUrl(live, url)) return;
+      event.preventDefault();
+      handleOutboundOrNewWindowLink(live, url, webContents, { allowHubTab: true });
+      return;
+    }
+
     if (isGoogleService(live)) {
       const outbound = extractGoogleOutboundUrl(url);
       if (outbound) {
@@ -236,6 +253,13 @@ export function attachGuestNavigationGate(webContents, service, api) {
       const live = liveService(service);
       if (live?.isCustom || live?.linkTab) return;
       if (isGoogleService(live)) return;
+      // Messaging iframes: only first-party hosts; never promote Drive into chat.
+      if (isMessagingAppId(live?.appId)) {
+        if (isAllowedMessagingTabUrl(live, url)) return;
+        if (typeof details.preventDefault === 'function') details.preventDefault();
+        handleOutboundOrNewWindowLink(live, url, webContents, { allowHubTab: true });
+        return;
+      }
       // Zoho SPAs load many cross-origin iframes (CDN, widgets). Never promote
       // those into Hub tabs or the main frame — that blank/reload-loops Books.
       if (
@@ -266,6 +290,17 @@ export function attachGuestNavigationGate(webContents, service, api) {
       const home = startUrlForService(live) || live.url;
       // Never spawn Hub link tabs from a completed main-frame navigation —
       // that left blank Gmail-branded tabs. Reclaim inbox only.
+      if (home && home.split('#')[0] !== String(url).split('#')[0]) {
+        webContents.loadURL(home).catch(() => {});
+      }
+      return;
+    }
+
+    // WhatsApp / Arattai: if Drive/Google somehow loaded, reclaim messenger + Hub-tab.
+    if (isMessagingAppId(live?.appId)) {
+      if (isAllowedMessagingTabUrl(live, url)) return;
+      const home = startUrlForService(live) || live.url;
+      handleOutboundOrNewWindowLink(live, url, webContents, { allowHubTab: true });
       if (home && home.split('#')[0] !== String(url).split('#')[0]) {
         webContents.loadURL(home).catch(() => {});
       }

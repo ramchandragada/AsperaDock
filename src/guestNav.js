@@ -304,6 +304,44 @@ export function isSameEcosystemUrl(service, url) {
   return false;
 }
 
+/** WhatsApp / Arattai — messengers must never be replaced by Drive/Docs/etc. */
+export function isMessagingAppId(appId) {
+  const id = String(appId || '');
+  return id === 'whatsapp' || id === 'arattai';
+}
+
+/**
+ * URLs allowed to load inside a WhatsApp or Arattai guest tab.
+ * Everything else (Google Drive, Docs, news, Canva, …) opens as a Hub tab.
+ * Do NOT use isInternalUrl here — that allowlist includes google.com for Gmail.
+ */
+export function isAllowedMessagingTabUrl(service, url) {
+  if (!service || !url || isForbiddenGuestNavigation(url)) return false;
+  if (!isMessagingAppId(service.appId)) return false;
+  try {
+    const u = new URL(String(url));
+    const protocol = u.protocol.toLowerCase();
+    if (protocol === 'about:' || protocol === 'blob:' || protocol === 'data:') {
+      return true;
+    }
+    const host = u.hostname.toLowerCase();
+    if (service.appId === 'arattai') {
+      return host === 'arattai.in' || host.endsWith('.arattai.in');
+    }
+    if (service.appId === 'whatsapp') {
+      return (
+        host === 'whatsapp.com' ||
+        host.endsWith('.whatsapp.com') ||
+        host === 'whatsapp.net' ||
+        host.endsWith('.whatsapp.net')
+      );
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export function isFragileZohoOneDeepUrl(url) {
   try {
     const path = new URL(String(url || '')).pathname.toLowerCase();

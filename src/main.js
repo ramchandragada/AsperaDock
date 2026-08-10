@@ -324,6 +324,8 @@ import {
   shouldOpenInSystemBrowser,
   shouldOpenZohoSharedDeepLinkAsHubTab,
   isZohoAssetHost,
+  isMessagingAppId,
+  isAllowedMessagingTabUrl,
 } from './guestNav.js';
 import {
   resolveLinkHandling,
@@ -2152,6 +2154,27 @@ function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
   // Only explicit email-link unwraps pass allowHubTab: true.
   if (isGoogleService(service) && !(service?.isCustom || service?.linkTab) && !allowHubTab) {
     if (shouldOpenInSystemBrowser(href)) openExternalSafe(href);
+    return true;
+  }
+  // WhatsApp / Arattai: always open outbound links as Hub tabs (never ask /
+  // never replace the messenger — matches left-click + context menu policy).
+  if (
+    isMessagingAppId(service?.appId) &&
+    !(service?.isCustom || service?.linkTab) &&
+    !isAllowedMessagingTabUrl(service, href)
+  ) {
+    const opened = openUrlAsHubAppTab(href, service);
+    if (!opened.ok && opened.error) {
+      const errBox = {
+        type: 'warning',
+        buttons: ['OK'],
+        defaultId: 0,
+        title: 'Could not open Hub tab',
+        message: opened.error,
+      };
+      if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+      else dialog.showMessageBox(errBox).catch(() => {});
+    }
     return true;
   }
   const mode = effectiveLinkHandling(service);
@@ -9585,7 +9608,26 @@ function attachGuestContextMenu(webContents) {
       template.push({
         label: 'Open link',
         click: () => {
-          // Google SSO/consent URLs 400 in Chrome — keep them in Hub.
+          // WhatsApp / Arattai: never load Drive/Google into the chat tab.
+          if (
+            isMessagingAppId(live?.appId) &&
+            !isAllowedMessagingTabUrl(live, safeLink)
+          ) {
+            const opened = openUrlAsHubAppTab(safeLink, live);
+            if (!opened.ok && opened.error) {
+              const errBox = {
+                type: 'warning',
+                buttons: ['OK'],
+                defaultId: 0,
+                title: 'Could not open Hub tab',
+                message: opened.error,
+              };
+              if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+              else dialog.showMessageBox(errBox).catch(() => {});
+            }
+            return;
+          }
+          // Google SSO/consent URLs 400 in Chrome — keep them in Hub (Gmail/Zoho).
           if (mustKeepGoogleUrlInApp(safeLink) || isGoogleOwnedUrl(safeLink)) {
             webContents.loadURL(safeLink).catch(() => {});
             return;
@@ -9635,6 +9677,25 @@ function attachGuestContextMenu(webContents) {
                 return;
               }
               webContents.loadURL(safeLink).catch(() => {});
+              return;
+            }
+            // Messaging: always Hub-tab outbound (including Google Drive / Accounts).
+            if (
+              isMessagingAppId(live?.appId) &&
+              !isAllowedMessagingTabUrl(live, safeLink)
+            ) {
+              const opened = openUrlAsHubAppTab(safeLink, live);
+              if (!opened.ok && opened.error) {
+                const errBox = {
+                  type: 'warning',
+                  buttons: ['OK'],
+                  defaultId: 0,
+                  title: 'Could not open Hub tab',
+                  message: opened.error,
+                };
+                if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+                else dialog.showMessageBox(errBox).catch(() => {});
+              }
               return;
             }
             if (

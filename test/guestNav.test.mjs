@@ -12,6 +12,8 @@ import {
   isGoogleOwnedUrl,
   mustKeepGoogleUrlInApp,
   shouldOpenInSystemBrowser,
+  isMessagingAppId,
+  isAllowedMessagingTabUrl,
 } from '../src/guestNav.js';
 
 test('isForbiddenGuestNavigation blocks file and javascript', () => {
@@ -114,4 +116,23 @@ test('Google SSO/consent URLs must stay in Hub (not Chrome)', () => {
   assert.equal(shouldOpenInSystemBrowser('https://accounts.google.com/o/oauth2/v2/auth'), false);
   assert.equal(shouldOpenInSystemBrowser('https://cybercrime.gov.in/'), true);
   assert.equal(shouldOpenInSystemBrowser('https://mail.google.com/mail/u/0/#inbox'), true);
+});
+
+test('messaging apps: Drive/Google must not stay in WhatsApp or Arattai tab', () => {
+  const arattai = { url: 'https://web.arattai.in', appId: 'arattai' };
+  const wa = { url: 'https://web.whatsapp.com', appId: 'whatsapp' };
+  const drive =
+    'https://drive.google.com/file/d/1lyfP_FwVO_vcT3Q7UFpkDcVxhryQaDgo/view?usp=sharing';
+  const accounts = 'https://accounts.google.com/v3/signin/identifier';
+  assert.equal(isMessagingAppId('arattai'), true);
+  assert.equal(isMessagingAppId('whatsapp'), true);
+  assert.equal(isMessagingAppId('gmail'), false);
+  assert.equal(isAllowedMessagingTabUrl(arattai, 'https://web.arattai.in/app'), true);
+  assert.equal(isAllowedMessagingTabUrl(arattai, 'https://files.arattai.in/webdownload?x=1'), true);
+  assert.equal(isAllowedMessagingTabUrl(arattai, drive), false);
+  assert.equal(isAllowedMessagingTabUrl(arattai, accounts), false);
+  assert.equal(isAllowedMessagingTabUrl(wa, 'https://web.whatsapp.com/'), true);
+  assert.equal(isAllowedMessagingTabUrl(wa, 'https://mmg.whatsapp.net/v/t62.x'), true);
+  assert.equal(isAllowedMessagingTabUrl(wa, drive), false);
+  assert.equal(isAllowedMessagingTabUrl(wa, accounts), false);
 });
