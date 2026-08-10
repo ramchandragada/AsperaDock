@@ -53,6 +53,48 @@ export function releaseDownloadPath(filePath) {
 }
 
 /**
+ * Move a completed download from an Electron claim path to the user's Save As
+ * destination. `setSavePath` only sticks inside `will-download`, so Ask-every-
+ * time saves to a temp claim first, then relocates here on `done`.
+ *
+ * Prefers rename (same volume); falls back to copy + unlink.
+ * @returns {string} Path that holds the file (final or claim on failure).
+ */
+export function moveDownloadClaim(claimPath, finalPath) {
+  const claim = String(claimPath || '').trim();
+  const final = String(finalPath || '').trim();
+  if (!final) return claim;
+  if (!claim || claim === final) return final;
+
+  try {
+    fs.mkdirSync(path.dirname(final), { recursive: true });
+  } catch {
+    // ignore — rename/copy will surface real errors
+  }
+
+  if (!fs.existsSync(claim)) {
+    return fs.existsSync(final) ? final : claim;
+  }
+
+  try {
+    fs.renameSync(claim, final);
+    return final;
+  } catch {
+    try {
+      fs.copyFileSync(claim, final);
+      try {
+        fs.unlinkSync(claim);
+      } catch {
+        // ignore
+      }
+      return final;
+    } catch {
+      return claim;
+    }
+  }
+}
+
+/**
  * After the Save dialog returns a path, never clobber an existing file — and
  * never let GTK's sticky last-used name save Maharashtra into Karnataka.pdf.
  *

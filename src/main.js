@@ -106,6 +106,7 @@ import {
   shouldForwardAsDocument,
 } from './forwardHub.js';
 import {
+  moveDownloadClaim,
   releaseDownloadPath,
   resolveSavePathAfterPrompt,
   sanitizeDownloadFilename,
@@ -712,7 +713,18 @@ function swallowForwardExtraDownload(item) {
   }
 }
 
-function promptGuestDownloadSave(item, defaultPath, downloadName = '') {
+/**
+ * Ask-every-time Save As for guest downloads.
+ *
+ * Electron only honors `setSavePath` inside `will-download`. We claim a temp
+ * path immediately (silences Chromium's dialog), show Hub's picker, then on
+ * `done` move the claim to the user's path via {@link moveDownloadClaim}.
+ * Changing `setSavePath` after the dialog and deleting the claim (v0.5.20)
+ * left users with no file on disk.
+ *
+ * @param {object} destHolder Shared with the will-download `done` handler.
+ */
+function promptGuestDownloadSave(item, defaultPath, downloadName, destHolder) {
   const suggested = String(defaultPath || '').trim();
   const intendedName =
     String(downloadName || '').trim() ||
@@ -720,9 +732,6 @@ function promptGuestDownloadSave(item, defaultPath, downloadName = '') {
     path.basename(suggested) ||
     'download';
 
-  // Claim the download immediately so Chromium does not open its own Save
-  // dialog in parallel with Hub's "Save download" picker (which caused a
-  // second copy in Downloads when the user picked another folder).
   let claimPath = '';
   try {
     const claimDir = path.join(app.getPath('temp'), 'asperahub-downloads');
@@ -743,6 +752,9 @@ function promptGuestDownloadSave(item, defaultPath, downloadName = '') {
     }
   }
 
+  destHolder.claimPath = claimPath;
+  destHolder.path = suggested;
+
   try {
     item.pause();
   } catch {
@@ -761,8 +773,8 @@ function promptGuestDownloadSave(item, defaultPath, downloadName = '') {
     // ignore
   }
 
-  const cleanupClaimFile = (finalPath) => {
-    if (!claimPath || claimPath === finalPath) return;
+  const cleanupClaimFile = () => {
+    if (!claimPath) return;
     try {
       if (fs.existsSync(claimPath)) fs.unlinkSync(claimPath);
     } catch {
@@ -771,36 +783,31 @@ function promptGuestDownloadSave(item, defaultPath, downloadName = '') {
   };
 
   const finishWithPath = (pickedPath) => {
-    // Drop the dialog suggestion reservation before resolving the final path
-    // so the suggested unique name is not treated as already taken.
     releaseDownloadPath(suggested);
     const finalPath = resolveSavePathAfterPrompt(pickedPath, intendedName);
+    destHolder.path = finalPath;
+    destHolder.canceled = false;
+    destHolder.resolveReady();
+    // Do not setSavePath here — it only applies inside will-download.
+    // Do not delete claimPath — the file is still downloading (or already
+    // finished) there and will be moved on `done`.
     try {
-      item.setSavePath(finalPath);
       item.resume();
-      cleanupClaimFile(finalPath);
     } catch {
-      try {
-        item.setSavePath(finalPath || suggested);
-        item.resume();
-        cleanupClaimFile(finalPath || suggested);
-      } catch {
-        releaseDownloadPath(finalPath);
-        releaseDownloadPath(suggested);
-        cleanupClaimFile('');
-        return;
-      }
+      // ignore — download may already be complete
     }
   };
 
   const cancelItem = () => {
+    destHolder.canceled = true;
+    destHolder.resolveReady();
     releaseDownloadPath(suggested);
     try {
       item.cancel();
     } catch {
       // ignore
     }
-    cleanupClaimFile('');
+    cleanupClaimFile();
   };
 
   dialog
@@ -819,8 +826,7 @@ function promptGuestDownloadSave(item, defaultPath, downloadName = '') {
       finishWithPath(filePath);
     })
     .catch(() => {
-      // showSaveDialog failed — keep the claimed path silent and save to the
-      // suggested Downloads location (never open a second Chromium dialog).
+      // showSaveDialog failed — save to the suggested Downloads location.
       try {
         finishWithPath(suggested);
       } catch {
@@ -7029,6 +7035,8 @@ function configureSession(partitionSession, partitionKey) {
 
     const downloadDir = String(settings.downloadPath || '').trim();
     let savePathClaimed = '';
+    /** @type {{ path: string, claimPath: string, canceled: boolean, ready: Promise<void>, resolveReady: () => void } | null} */
+    let destHolder = null;
     if (downloadDir) {
       savePathClaimed = uniqueDownloadPath(downloadDir, downloadName);
       item.setSavePath(savePathClaimed);
@@ -7038,9 +7046,55 @@ function configureSession(partitionSession, partitionKey) {
         downloadName,
       );
       savePathClaimed = defaultPath;
-      promptGuestDownloadSave(item, defaultPath, downloadName);
+      let resolveReady = () => {};
+      const ready = new Promise((resolve) => {
+        resolveReady = resolve;
+      });
+      destHolder = {
+        path: defaultPath,
+        claimPath: '',
+        canceled: false,
+        ready,
+        resolveReady: () => resolveReady(),
+      };
+      promptGuestDownloadSave(item, defaultPath, downloadName, destHolder);
     }
-    item.once('done', (_e, state) => {
+    item.once('done', async (_e, state) => {
+      if (destHolder) {
+        try {
+          await destHolder.ready;
+        } catch {
+          // ignore
+        }
+        releaseDownloadPath(savePathClaimed);
+        releaseDownloadPath(destHolder.path);
+        if (destHolder.canceled || state !== 'completed') {
+          const claim = String(destHolder.claimPath || '').trim();
+          if (claim) {
+            try {
+              if (fs.existsSync(claim)) fs.unlinkSync(claim);
+            } catch {
+              // ignore
+            }
+          }
+          return;
+        }
+        const savePath = moveDownloadClaim(
+          destHolder.claimPath,
+          destHolder.path,
+        );
+        releaseDownloadPath(savePath);
+        if (!savePath || !fs.existsSync(savePath)) return;
+        rememberGuestDownload(
+          savePath,
+          item.getFilename?.() || path.basename(savePath),
+        );
+        // Ask-every-time: user already picked the folder — skip auto-open
+        // folder (Thunar can cover the next dialog on XFCE).
+        if (settings.openFileOnDownload) shell.openPath(savePath);
+        return;
+      }
+
       const savePath = item.getSavePath?.() || savePathClaimed;
       releaseDownloadPath(savePath);
       releaseDownloadPath(savePathClaimed);

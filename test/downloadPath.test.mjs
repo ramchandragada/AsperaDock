@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
+  moveDownloadClaim,
   releaseDownloadPath,
   resolveSavePathAfterPrompt,
   sanitizeDownloadFilename,
@@ -87,10 +88,38 @@ test('resolveSavePathAfterPrompt honors free rename', () => {
   }
 });
 
+test('moveDownloadClaim renames claim to final path', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-dl-'));
+  try {
+    const claim = path.join(dir, 'claim.pdf');
+    const final = path.join(dir, 'chosen', 'final.pdf');
+    fs.writeFileSync(claim, 'pdf-bytes');
+    const out = moveDownloadClaim(claim, final);
+    assert.equal(out, final);
+    assert.equal(fs.readFileSync(final, 'utf8'), 'pdf-bytes');
+    assert.equal(fs.existsSync(claim), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('moveDownloadClaim is a no-op when paths match', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hub-dl-'));
+  try {
+    const same = path.join(dir, 'same.pdf');
+    fs.writeFileSync(same, 'x');
+    assert.equal(moveDownloadClaim(same, same), same);
+    assert.equal(fs.readFileSync(same, 'utf8'), 'x');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('main uses uniqueDownloadPath and resolveSavePathAfterPrompt', () => {
   const src = fs.readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
   assert.match(src, /uniqueDownloadPath/);
   assert.match(src, /resolveSavePathAfterPrompt/);
+  assert.match(src, /moveDownloadClaim/);
   assert.doesNotMatch(
     src,
     /setSavePath\(path\.join\(settings\.downloadPath, item\.getFilename\(\)\)\)/,
