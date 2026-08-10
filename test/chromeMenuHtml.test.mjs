@@ -23,6 +23,7 @@ test('chrome menu is hub controls only — no toolbar duplicates', () => {
     'aspera-ai',
     'catch-up',
     'ai-settings',
+    'copy-link',
     'free-ram',
     'profiles',
     'lock',
@@ -53,6 +54,8 @@ test('chrome menu is hub controls only — no toolbar duplicates', () => {
   assert.match(html, /Presence/);
   assert.match(html, /Aspera AI/);
   assert.match(html, /Current app/);
+  assert.ok(html.includes('data-action="copy-link"'));
+  assert.match(html, /Copy link/);
   assert.match(html, /Workspace/);
   assert.match(html, /Keyboard shortcuts/);
   assert.match(html, /Check for updates/);

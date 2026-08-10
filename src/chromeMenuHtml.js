@@ -111,7 +111,10 @@ export const CHROME_MENU_SECTIONS = [
   {
     id: 'app',
     title: 'Current app',
-    items: [{ action: 'free-ram', label: 'Free RAM' }],
+    items: [
+      { action: 'copy-link', label: 'Copy link' },
+      { action: 'free-ram', label: 'Free RAM' },
+    ],
   },
   {
     id: 'workspace',
@@ -149,6 +152,7 @@ const ACTION_ICON = {
   back: ICO.back,
   forward: ICO.forward,
   home: ICO.home,
+  'copy-link': ICO.link,
   'free-ram': ICO.ram,
   'add-app': ICO.plus,
   profiles: ICO.users,

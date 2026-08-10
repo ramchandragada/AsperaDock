@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('asperadock', {
   hibernate: (id) => ipcRenderer.invoke('dock:hibernate', id),
   hibernateBackground: () => ipcRenderer.invoke('dock:hibernate-background'),
   reloadActive: () => ipcRenderer.invoke('dock:reload-active'),
+  copyActiveLink: () => ipcRenderer.invoke('dock:copy-active-link'),
   toggleFocus: () => ipcRenderer.invoke('dock:toggle-focus'),
   toggleMute: () => ipcRenderer.invoke('dock:toggle-mute'),
   saveSettings: (patch) => ipcRenderer.invoke('dock:save-settings', patch),

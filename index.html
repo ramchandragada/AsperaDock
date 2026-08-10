@@ -36,6 +36,7 @@
               <button id="nav-back-btn" type="button" class="icon-btn nav-btn" title="Back (Alt+Left)" aria-label="Back" disabled></button>
               <button id="nav-forward-btn" type="button" class="icon-btn nav-btn" title="Forward (Alt+Right)" aria-label="Forward" disabled></button>
               <button id="nav-reload-btn" type="button" class="icon-btn nav-btn" title="Reload (Ctrl+R)" aria-label="Reload"></button>
+              <button id="nav-copy-link-btn" type="button" class="icon-btn nav-btn" title="Copy link — current page URL" aria-label="Copy link"></button>
             </div>
             <span class="chrome-divider" aria-hidden="true"></span>
             <button id="lock-btn" type="button" class="icon-btn lock-btn" title="Lock Aspera Hub (Ctrl+Shift+L)" aria-label="Lock Aspera Hub"></button>
@@ -92,6 +93,9 @@
                 <hr />
                 <div class="chrome-menu-section" role="group" aria-label="Current app">
                   <div class="chrome-menu-section-title">Current app</div>
+                  <button type="button" data-action="copy-link" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="link"></span> Copy link
+                  </button>
                   <button type="button" data-action="free-ram" class="chrome-menu-item">
                     <span class="chrome-menu-ico" data-ico="ram"></span> Free RAM
                   </button>

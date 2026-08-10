@@ -30,6 +30,7 @@ const els = {
   navBackBtn: document.getElementById('nav-back-btn'),
   navForwardBtn: document.getElementById('nav-forward-btn'),
   navReloadBtn: document.getElementById('nav-reload-btn'),
+  navCopyLinkBtn: document.getElementById('nav-copy-link-btn'),
   emptyState: document.getElementById('empty-state'),
   emptyAddBtn: document.getElementById('empty-add-btn'),
   focusBtn: document.getElementById('focus-btn'),
@@ -211,6 +212,7 @@ function paintToolbarIcons() {
   if (els.navBackBtn) els.navBackBtn.innerHTML = icon('back');
   if (els.navForwardBtn) els.navForwardBtn.innerHTML = icon('forward');
   if (els.navReloadBtn) els.navReloadBtn.innerHTML = icon('reload');
+  if (els.navCopyLinkBtn) els.navCopyLinkBtn.innerHTML = icon('link');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
   if (els.appMenuEdit) els.appMenuEdit.innerHTML = icon('settings');
   if (els.appMenuHome) els.appMenuHome.innerHTML = icon('home');
@@ -2165,6 +2167,23 @@ els.navForwardBtn?.addEventListener('click', () => navigateActive('forward'));
 els.navReloadBtn?.addEventListener('click', () => {
   window.asperadock.reloadActive?.();
 });
+els.navCopyLinkBtn?.addEventListener('click', async () => {
+  const btn = els.navCopyLinkBtn;
+  const result = await window.asperadock.copyActiveLink?.();
+  if (!btn) return;
+  const prevTitle = btn.getAttribute('title') || 'Copy link — current page URL';
+  if (result?.ok) {
+    btn.setAttribute('title', 'Copied!');
+    btn.setAttribute('aria-label', 'Copied');
+    setTimeout(() => {
+      btn.setAttribute('title', prevTitle);
+      btn.setAttribute('aria-label', 'Copy link');
+    }, 1600);
+  } else if (result?.error) {
+    btn.setAttribute('title', result.error);
+    setTimeout(() => btn.setAttribute('title', prevTitle), 2200);
+  }
+});
 els.addAppBtn.addEventListener('click', openAppsSettings);
 els.emptyAddBtn.addEventListener('click', openAppsSettings);
 
@@ -2184,6 +2203,7 @@ els.chromeMenu?.addEventListener('click', (event) => {
     if (id) window.asperadock.appNavigate?.(id, 'home');
   }
   if (action === 'free-ram') window.asperadock.hibernateBackground();
+  if (action === 'copy-link') window.asperadock.copyActiveLink?.();
   if (action === 'about') window.asperadock.showAbout?.();
   if (action === 'website') openAsperaWebsite();
 });

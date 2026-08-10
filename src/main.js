@@ -5561,6 +5561,9 @@ function handleChromeMenuAction(type) {
     broadcastState();
     return { ok: true };
   }
+  if (type === 'copy-link') {
+    return copyActivePageLink();
+  }
   if (type === 'about') {
     showAboutDialog();
     return { ok: true };
@@ -11068,6 +11071,46 @@ function hibernateBackground({ forceWarm = false } = {}) {
   broadcastState();
 }
 
+/**
+ * Copy the active guest page URL (http/https) for sharing in WhatsApp/Arattai.
+ * Like Chrome’s address-bar copy — Hub has no address bar, so this is the shortcut.
+ */
+function copyActivePageLink() {
+  if (!activeServiceId) {
+    return { ok: false, error: 'Open an app first' };
+  }
+  const wc = views.get(activeServiceId)?.view?.webContents;
+  if (!wc || wc.isDestroyed()) {
+    return { ok: false, error: 'No page open' };
+  }
+  let url = '';
+  try {
+    url = String(wc.getURL() || '').trim();
+  } catch {
+    return { ok: false, error: 'Could not read page link' };
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    return { ok: false, error: 'This page has no shareable link yet' };
+  }
+  try {
+    clipboard.writeText(url);
+  } catch {
+    return { ok: false, error: 'Could not copy to clipboard' };
+  }
+  try {
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Link copied',
+        body: url.length > 120 ? `${url.slice(0, 117)}…` : url,
+        silent: true,
+      }).show();
+    }
+  } catch {
+    // ignore — clipboard already has the URL
+  }
+  return { ok: true, url };
+}
+
 function reloadActive() {
   if (!activeServiceId) return;
   const entry = views.get(activeServiceId);
@@ -13233,6 +13276,7 @@ dockHandle('dock:reload-active', () => {
   reloadActive();
   return { ok: true };
 });
+dockHandle('dock:copy-active-link', () => copyActivePageLink());
 dockHandle('dock:toggle-focus', () => {
   toggleFocusMode();
   return { focusMode: settings.focusMode };
