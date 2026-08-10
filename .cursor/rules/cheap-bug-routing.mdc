@@ -1,0 +1,53 @@
+---
+description: Cheap routing for non-coder bug reports — go straight to the right files
+alwaysApply: true
+---
+
+# Cheap agent routing (owner is not a developer)
+
+The product owner describes bugs in plain English and does **not** know file names.
+Your job is to map the symptom to a small file list and **stay there**. Do not explore the whole repo.
+
+## Token budget (mandatory)
+
+- Prefer `rg` / `Grep` for exact symbols over reading huge files.
+- Do **not** read all of `src/main.js` unless a targeted search failed. Prefer `Grep` + `Read` with offset/limit around the hit.
+- Skip `website/` unless the bug is about asperahub.com / the marketing site.
+- Skip AI (`src/ai/`), forward, Zoho CRM, extensions, and PDF code unless the report mentions them.
+- One bug per change set. Do not “also clean up” unrelated areas.
+- If the user says **fix only**, **I'll test first**, or **don't release yet** — patch + commit/push/PR only; **do not** `npm run make` or publish a GitHub release until they confirm.
+- If the user only asks for advice (no code change), answer in text — do not open a feature branch or ship.
+
+## Symptom → where to look first
+
+| User says (examples) | Open these first |
+|---|---|
+| Link in WhatsApp / Arattai opens wrong, nowhere, or replaces chat; Hub tab; Drive / Google link | `src/guestNav.js`, `src/guestNavigation.js`, then `handleOutboundOrNewWindowLink` / `openUrlAsHubAppTab` in `src/main.js` |
+| Update check failed / Feed 404 / latest.json | `src/updater.js`, `scripts/publish-update.mjs`, GitHub release assets — usually upload missing `latest.json`, not a big code rewrite |
+| Website / asperahub.com / download page | `website/index.html` only (+ `website/assets/` if images) |
+| Pin / Hub pin / open chat from pin | `src/whatsappPinOpen.js`, `src/guestInbox.js`, pin helpers in `src/main.js` |
+| Safe Mode / WhatsApp automation blocked | `src/whatsappSafeMode.js` |
+| Find / Ctrl+F / search highlight | Find-bar related files (`src/findBar*`, search in `src/main.js` / renderer) |
+| Google Web search / Ctrl+E | `src/webSearch.js`, `src/webSearch*` |
+| Aspera AI / Summarize / Suggest reply / languages | `src/ai/` only |
+| Forward WhatsApp ↔ Arattai | `src/forwardHub.js` |
+| Notification / tray / badge / mute | notification / tray code in `src/main.js` + notif center HTML |
+| Settings UI / theme / lock | settings sections in renderer + store |
+| Crash on start / blank window | `src/main.js` window create + guest lifecycle (`src/guestLifecycle.js`) |
+
+## How to reply to the owner
+
+- Use plain language. No “refactor the abstraction” jargon.
+- Say what you fixed in one short sentence and how to install/test (version or `.deb` link when shipped).
+- If you need a clarifying detail, ask **one** yes/no or A/B question — not a questionnaire.
+
+## Prompt the owner can paste (you may remind them)
+
+When starting a bug, they can write:
+
+> Bug: \<what app: WhatsApp / Arattai / Gmail / Zoho / website\>  
+> What I did: \<one sentence\>  
+> What should happen: \<one sentence\>  
+> What happens instead: \<one sentence\>  
+> Version: \<e.g. 0.5.17\>  
+> Fix only first — wait for me to test before release.
