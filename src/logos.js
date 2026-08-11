@@ -43,11 +43,6 @@ export const LOGOS = {
     `<path fill="#EA4335" d="${PATHS.gmail}" transform="translate(2.2 2.2) scale(0.8167)"/>`,
   ),
 
-  canva: solidTile(
-    '#00C4CC',
-    `<text x="12" y="16.5" text-anchor="middle" font-size="12" font-family="Arial,Helvetica,sans-serif" font-weight="700" fill="#fff">C</text>`,
-  ),
-
   arattai: imgLogo(arattaiImg),
   'zoho-mail': imgLogo(zohoMailImg),
   'zoho-crm': imgLogo(zohoCrmImg),

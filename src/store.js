@@ -283,6 +283,43 @@ function dropRetiredApps(settings) {
 }
 
 /**
+ * One-shot: remove the retired Canva catalog app from persisted docks so
+ * existing installs lose the Canva icon (link tabs to canva.com still work).
+ */
+function migrateRemoveCanvaApp(settings) {
+  if (settings.removeCanvaAppV1) return settings;
+  const instances = settings.serviceInstances || [];
+  const canvaIds = new Set(
+    instances.filter((i) => i?.appId === 'canva').map((i) => i.id),
+  );
+  if (!canvaIds.size) {
+    return { ...settings, removeCanvaAppV1: true };
+  }
+
+  const serviceLabels = { ...(settings.serviceLabels || {}) };
+  const serviceConfigs = { ...(settings.serviceConfigs || {}) };
+  const lastServiceUrls = { ...(settings.lastServiceUrls || {}) };
+  for (const id of canvaIds) {
+    delete serviceLabels[id];
+    delete serviceConfigs[id];
+    delete lastServiceUrls[id];
+  }
+
+  return {
+    ...settings,
+    removeCanvaAppV1: true,
+    serviceInstances: instances.filter((i) => !canvaIds.has(i.id)),
+    serviceOrder: (settings.serviceOrder || []).filter((id) => !canvaIds.has(id)),
+    serviceLabels,
+    serviceConfigs,
+    lastServiceUrls,
+    lastActiveServiceId: canvaIds.has(settings.lastActiveServiceId)
+      ? null
+      : settings.lastActiveServiceId,
+  };
+}
+
+/**
  * One Hub-wide link rule: promote old per-app hub-tab choices to global,
  * clear per-app overrides so WhatsApp/Arattai/Gmail/Zoho cannot diverge.
  * Also force update channel to stable (beta feed is unpublished).
@@ -554,26 +591,28 @@ export function loadSettings() {
     cache = migrateWarmKeepAlive(
       migrateUnifyLinkHandling(
         migrateProfiles(
-          dropRetiredApps({
-            ...DEFAULTS,
-            ...parsed,
-            shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
-            serviceLabels: parsed.serviceLabels || {},
-            serviceConfigs: parsed.serviceConfigs || {},
-            serviceInstances: parsed.serviceInstances || [],
-            profiles: parsed.profiles,
-            pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
-            aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
-            aiDisabledProviders: sanitizeAiDisabledProviders(
-              parsed.aiDisabledProviders,
-            ),
-            aiLanguage: getAiLanguage(parsed.aiLanguage || 'en').id,
-            aiExtraLanguages: sanitizeAiExtraLanguages(
-              Object.prototype.hasOwnProperty.call(parsed, 'aiExtraLanguages')
-                ? parsed.aiExtraLanguages
-                : undefined,
-            ),
-          }),
+          dropRetiredApps(
+            migrateRemoveCanvaApp({
+              ...DEFAULTS,
+              ...parsed,
+              shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
+              serviceLabels: parsed.serviceLabels || {},
+              serviceConfigs: parsed.serviceConfigs || {},
+              serviceInstances: parsed.serviceInstances || [],
+              profiles: parsed.profiles,
+              pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
+              aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
+              aiDisabledProviders: sanitizeAiDisabledProviders(
+                parsed.aiDisabledProviders,
+              ),
+              aiLanguage: getAiLanguage(parsed.aiLanguage || 'en').id,
+              aiExtraLanguages: sanitizeAiExtraLanguages(
+                Object.prototype.hasOwnProperty.call(parsed, 'aiExtraLanguages')
+                  ? parsed.aiExtraLanguages
+                  : undefined,
+              ),
+            }),
+          ),
         ),
       ),
     );

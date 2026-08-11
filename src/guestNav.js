@@ -461,21 +461,6 @@ export function isSameEcosystemUrl(service, url) {
   if (isInternalUrl(url, service)) return true;
   const appId = String(service.appId || '');
   if (appId === 'gmail' && isGoogleOwnedUrl(url)) return true;
-  if (appId === 'canva') {
-    try {
-      const host = new URL(String(url || '')).hostname.toLowerCase();
-      if (
-        host === 'canva.com' ||
-        host.endsWith('.canva.com') ||
-        host === 'canva.in' ||
-        host.endsWith('.canva.in')
-      ) {
-        return true;
-      }
-    } catch {
-      // ignore
-    }
-  }
   if (appId.startsWith('zoho') && isZohoOwnedUrl(url)) return true;
   return false;
 }
@@ -500,18 +485,6 @@ export function safeStartUrlForService(service, candidate) {
     isFragileZohoOneDeepUrl(candidate)
   ) {
     return service.url;
-  }
-  // Canva design deep-links 403 (“This design is private” / Ray ID …-BOM)
-  // when the session is missing — never cold-start or Home onto them.
-  if (service.appId === 'canva' && candidate) {
-    try {
-      const path = new URL(String(candidate)).pathname.toLowerCase();
-      if (/^\/(design|folder|brand|projects)\//.test(path)) {
-        return service.url || 'https://www.canva.com/';
-      }
-    } catch {
-      // fall through
-    }
   }
   return candidate || service.url;
 }

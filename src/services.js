@@ -82,14 +82,6 @@ export const APP_CATALOG = [
     logo: 'gmail',
   },
   {
-    appId: 'canva',
-    name: 'Canva',
-    title: 'Canva',
-    url: 'https://www.canva.com/',
-    color: '#00C4CC',
-    logo: 'canva',
-  },
-  {
     appId: 'zoho-mail',
     name: 'Zoho Mail',
     title: 'Zoho Mail',
@@ -164,7 +156,6 @@ export function defaultInstanceName(entry, index) {
     whatsapp: 'WA',
     arattai: 'Arattai',
     gmail: 'Gmail',
-    canva: 'Canva',
     'zoho-mail': 'ZMail',
     'zoho-crm': 'CRM',
     'zoho-books': 'Books',
@@ -201,8 +192,6 @@ export const INTERNAL_HOSTS = [
   'whatsapp.com',
   'whatsapp.net',
   'accounts.youtube.com',
-  'canva.com',
-  'canva.in',
 ];
 
 export function getChromeMetrics(settings) {

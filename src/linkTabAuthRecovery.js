@@ -1,9 +1,9 @@
 /**
- * Hub link tabs / Canva SSO recovery helpers.
+ * Hub link-tab SSO recovery helpers.
  *
- * Never interrupt OAuth handoffs. Recover wiped about:blank documents and
- * Canva Cloudflare “This design is private” (403 / Ray ID) after Google SSO.
- * Preserve canva.in vs canva.com hosts for cookie affinity.
+ * Never interrupt OAuth handoffs. Recover wiped about:blank documents after
+ * Google (or other IdP) SSO returns to a link tab. Preserve canva.in vs
+ * canva.com hosts when mapping ad-hoc link-tab homes for cookie affinity.
  */
 
 import {
@@ -52,78 +52,12 @@ export function isOauthHandoffUrl(url) {
   return false;
 }
 
-/** True if URL should open as the Canva catalog app instead of a link tab. */
-export function isCanvaAppUrl(url) {
-  try {
-    const host = new URL(String(url || '')).hostname.toLowerCase();
-    return (
-      host === 'canva.com' ||
-      host.endsWith('.canva.com') ||
-      host === 'canva.in' ||
-      host.endsWith('.canva.in')
-    );
-  } catch {
-    return false;
-  }
-}
-
-/** Design / editor deep links that 403 when the Canva session is missing. */
-export function isCanvaDesignUrl(url) {
-  if (!isCanvaAppUrl(url)) return false;
-  try {
-    const path = new URL(String(url || '')).pathname.toLowerCase();
-    return (
-      /^\/design\//.test(path) ||
-      /^\/folder\//.test(path) ||
-      /^\/brand\//.test(path) ||
-      /^\/projects\//.test(path)
-    );
-  } catch {
-    return false;
-  }
-}
-
 /**
- * Canva (via Cloudflare) “This design is private” / Error 403 · Ray ID …-BOM.
- * Match page text — the URL usually stays on /design/….
- * Real Canva footer uses “Error: 403 • Ray ID”, not “Error code: 403”.
+ * Stuck after SSO: blank/error docs. Login/callback handoffs are never stuck.
  */
-export function pageTextLooksLikeCanvaPrivate403(text) {
-  const t = String(text || '');
-  if (/this design is private/i.test(t)) return true;
-  if (/go to home to keep designing/i.test(t)) return true;
-  if (/error:\s*403/i.test(t) && /ray\s*id/i.test(t)) return true;
-  if (/error code:\s*403/i.test(t) && /ray\s*id/i.test(t)) return true;
-  return false;
-}
-
-/**
- * Stuck after SSO or on reload: blank/error docs OR a Canva private-design 403.
- * Login/callback handoffs are never stuck.
- */
-export function isPostAuthStuckUrl(url, { pageText = '' } = {}) {
+export function isPostAuthStuckUrl(url) {
   if (isOauthHandoffUrl(url)) return false;
   if (isBlankOrErrorGuestUrl(url)) return true;
-  if (isCanvaAppUrl(url) && pageTextLooksLikeCanvaPrivate403(pageText)) {
-    return true;
-  }
-  return false;
-}
-
-/**
- * Canva private 403 / blank recovery may run without a recent IdP visit
- * (app reload reopens a stuck design URL with sawIdp=false).
- */
-export function shouldRecoverCanvaStuckPage({
-  sawIdp = false,
-  url = '',
-  pageText = '',
-} = {}) {
-  if (isOauthHandoffUrl(url)) return false;
-  if (!isCanvaAppUrl(url) && !isBlankOrErrorGuestUrl(url)) return false;
-  if (pageTextLooksLikeCanvaPrivate403(pageText)) return true;
-  if (isBlankOrErrorGuestUrl(url)) return true;
-  if (sawIdp && isPostAuthStuckUrl(url, { pageText })) return true;
   return false;
 }
 
@@ -137,5 +71,5 @@ export function shouldAdoptLinkTabPopupUrlAfterIdp(popupUrl, { sawIdp = false } 
   return true;
 }
 
-/** Faster Canva 403 / blank checks — reload must not sit on private design. */
+/** Blank / stuck checks after IdP returns to a link tab. */
 export const LINK_TAB_POST_AUTH_CHECK_MS = [1200, 3500, 8000];

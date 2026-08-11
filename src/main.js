@@ -323,19 +323,9 @@ import {
   isBlankOrErrorGuestUrl,
   isPostAuthStuckUrl,
   isOauthHandoffUrl,
-  isCanvaAppUrl,
-  isCanvaDesignUrl,
-  pageTextLooksLikeCanvaPrivate403,
-  shouldRecoverCanvaStuckPage,
   shouldAdoptLinkTabPopupUrlAfterIdp,
   LINK_TAB_POST_AUTH_CHECK_MS,
 } from './linkTabAuthRecovery.js';
-import {
-  isCanvaPrivateDesignTitle,
-  canvaCatalogHome,
-  shouldForceCanvaHome,
-  isAlreadyCanvaHome,
-} from './canvaForceHome.js';
 import {
   isInternalUrl,
   isForbiddenGuestNavigation,
@@ -1910,47 +1900,6 @@ function openUrlAsHubAppTab(url, sourceService = null, opts = {}) {
   // Zoho CRM/One/… shared workspace tabs.
   if (openInternalLinkAsHubTab(sourceService, href)) {
     return { ok: true, kind: 'shared' };
-  }
-
-  // Canva: always open the catalog home. Design deep-links 403 in Hub
-  // (Ray ID …-BOM) and Google SSO “continue” bounces right back onto them.
-  if (isCanvaAppUrl(href)) {
-    const home = canvaCatalogHome(href);
-    const existingCanva = orderedServices().find((s) => s.appId === 'canva');
-    if (existingCanva) {
-      const lastServiceUrls = {
-        ...(settings.lastServiceUrls || {}),
-        [existingCanva.id]: home,
-      };
-      settings = saveSettings({ lastServiceUrls });
-      lastGoodUrls.set(existingCanva.id, home);
-      activateService(existingCanva.id);
-      const wc = views.get(existingCanva.id)?.view?.webContents;
-      if (wc && !wc.isDestroyed()) {
-        pinChromeUserAgent(wc);
-        wc.loadURL(home).catch(() => {});
-      }
-      return { ok: true, id: existingCanva.id, kind: 'canva' };
-    }
-    const profileId =
-      getProfile(PRIMARY_PROFILE_ID)?.id || PRIMARY_PROFILE_ID;
-    const added = addService('canva', profileId, { startUrl: home });
-    if (added.ok) {
-      const wc = views.get(added.id)?.view?.webContents;
-      if (wc && !wc.isDestroyed()) {
-        pinChromeUserAgent(wc);
-        try {
-          const cur = wc.getURL();
-          if (!cur || cur === 'about:blank' || !cur.startsWith('http')) {
-            wc.loadURL(home).catch(() => {});
-          }
-        } catch {
-          wc.loadURL(home).catch(() => {});
-        }
-      }
-      return { ok: true, id: added.id, kind: 'canva' };
-    }
-    // Dock full — fall through to a temporary link tab.
   }
 
   // Reuse an existing link tab for the same URL.
@@ -7100,7 +7049,7 @@ function serviceForWebContentsId(wcId) {
   return null;
 }
 
-/** Keep Canva/link-tab guests on Chrome UA (Cloudflare rejects Firefox pin). */
+/** Keep link-tab guests on Chrome UA (some CDNs reject a Firefox pin). */
 function pinChromeUserAgent(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
   try {
@@ -7108,112 +7057,6 @@ function pinChromeUserAgent(webContents) {
   } catch {
     // ignore
   }
-}
-
-/** Immediate Canva → home. Title / HTTP 403 — does not wait on IdP or scraping. */
-function forceCanvaHome(webContents, service, reason = 'force-home') {
-  if (!webContents || webContents.isDestroyed()) return false;
-  let cur = '';
-  try {
-    cur = String(webContents.getURL() || '');
-  } catch {
-    cur = '';
-  }
-  if (isAlreadyCanvaHome(cur)) return false;
-  // Never yank the user off Google accounts mid-signin.
-  if (cur && isIdentityProviderUrl(cur)) return false;
-  const home =
-    canvaCatalogHome(cur) ||
-    canvaCatalogHome(service?.url) ||
-    'https://www.canva.com/';
-  if (!home) return false;
-  const until = Number(webContents.__asperaCanvaHomeCoolingUntil) || 0;
-  if (Date.now() < until) return false;
-  webContents.__asperaCanvaHomeCoolingUntil = Date.now() + 3500;
-  pinChromeUserAgent(webContents);
-  try {
-    logBreadcrumb('canva-force-home', {
-      reason,
-      serviceId: service?.id,
-      from: cur,
-      home,
-    });
-  } catch {
-    // ignore
-  }
-  if (service?.id) {
-    lastGoodUrls.set(service.id, home);
-    rememberGoodUrl(service.id, home);
-  }
-  webContents.loadURL(home).catch(() => {});
-  return true;
-}
-
-/**
- * Hard guard for Canva private-design 403. Uses page title + blank URL —
- * does not depend on executeJavaScript (often blocked / empty on CF pages).
- */
-function attachCanvaForceHomeGuard(webContents, service) {
-  const isCanva =
-    service?.appId === 'canva' ||
-    (service && isCanvaAppUrl(service.url)) ||
-    (service?.isCustom && isCanvaAppUrl(service.url));
-  if (!isCanva || !webContents || webContents.isDestroyed()) return;
-  if (webContents.__asperaCanvaForceHome) return;
-  webContents.__asperaCanvaForceHome = true;
-
-  const check = (reason) => {
-    if (webContents.isDestroyed()) return;
-    let cur = '';
-    let title = '';
-    try {
-      cur = String(webContents.getURL() || '');
-      title = String(webContents.getTitle() || '');
-    } catch {
-      return;
-    }
-    if (isIdentityProviderUrl(cur)) return;
-    if (isOauthHandoffUrl(cur) && !isCanvaAppUrl(cur)) return;
-    if (
-      shouldForceCanvaHome({ url: cur, title }) ||
-      isCanvaPrivateDesignTitle(title)
-    ) {
-      forceCanvaHome(webContents, service, reason);
-      return;
-    }
-    if (isBlankOrErrorGuestUrl(cur)) {
-      setTimeout(() => {
-        if (webContents.isDestroyed()) return;
-        try {
-          const now = String(webContents.getURL() || '');
-          const t = String(webContents.getTitle() || '');
-          if (
-            isBlankOrErrorGuestUrl(now) ||
-            isCanvaPrivateDesignTitle(t) ||
-            shouldForceCanvaHome({ url: now, title: t })
-          ) {
-            forceCanvaHome(webContents, service, `${reason}-blank`);
-          }
-        } catch {
-          // ignore
-        }
-      }, 1200);
-    }
-  };
-
-  webContents.on('page-title-updated', (_e, title) => {
-    if (isCanvaPrivateDesignTitle(title)) {
-      forceCanvaHome(webContents, service, 'page-title');
-    }
-  });
-  webContents.on('did-navigate', (_e, url) => {
-    check(`nav:${String(url || '').slice(0, 80)}`);
-  });
-  webContents.on('did-navigate-in-page', () => check('in-page'));
-  webContents.on('did-finish-load', () => check('finish-load'));
-  webContents.on('did-fail-load', (_e, _code, _desc, _url, isMainFrame) => {
-    if (isMainFrame) check('fail-load');
-  });
 }
 
 function configureSession(partitionSession, partitionKey) {
@@ -7239,8 +7082,8 @@ function configureSession(partitionSession, partitionKey) {
     );
   });
 
-  // Google + Canva: keep Chrome UA/Client Hints consistent. Firefox accounts
-  // spoof is Gmail-only and must NOT flip mid-Canva OAuth (Continue step).
+  // Google: keep Chrome UA/Client Hints consistent. Firefox accounts spoof is
+  // Gmail-only and must NOT flip mid-OAuth Continue on third-party link tabs.
   partitionSession.webRequest.onBeforeSendHeaders(
     {
       urls: [
@@ -7249,10 +7092,6 @@ function configureSession(partitionSession, partitionKey) {
         '*://*.googleusercontent.com/*',
         '*://*.gstatic.com/*',
         '*://*.googleapis.com/*',
-        '*://*.canva.com/*',
-        '*://canva.com/*',
-        '*://*.canva.in/*',
-        '*://canva.in/*',
       ],
     },
     (details, callback) => {
@@ -7266,11 +7105,6 @@ function configureSession(partitionSession, partitionKey) {
       }
 
       const svc = serviceForWebContentsId(details.webContentsId);
-      const isCanvaHost =
-        host === 'canva.com' ||
-        host.endsWith('.canva.com') ||
-        host === 'canva.in' ||
-        host.endsWith('.canva.in');
       const isAccounts =
         host === 'accounts.google.com' || host.endsWith('.accounts.google.com');
 
@@ -7287,17 +7121,12 @@ function configureSession(partitionSession, partitionKey) {
         return;
       }
 
-      if (isCanvaHost || svc?.appId === 'canva' || svc?.linkTab || svc?.isCustom) {
-        // Match real Chrome — Cloudflare (Ray ID …-BOM) rejects mismatched CH.
+      if (svc?.linkTab || svc?.isCustom) {
+        // Match real Chrome — some CDNs reject mismatched CH after Firefox pin.
         headers['User-Agent'] = CHROME_USER_AGENT;
         headers['sec-ch-ua'] = SEC_CH_UA;
         headers['sec-ch-ua-mobile'] = '?0';
         headers['sec-ch-ua-platform'] = '"Linux"';
-      }
-
-      if (isCanvaHost) {
-        callback({ cancel: false, requestHeaders: headers });
-        return;
       }
 
       const next = applyGoogleRequestHeaders(headers, details.url, {
@@ -7308,41 +7137,6 @@ function configureSession(partitionSession, partitionKey) {
         preferChromeAccounts: false,
       });
       callback({ cancel: false, requestHeaders: next });
-    },
-  );
-
-  // Canva main-frame HTTP 403 → force catalog home (title may lag behind).
-  partitionSession.webRequest.onCompleted(
-    {
-      urls: [
-        '*://*.canva.com/*',
-        '*://canva.com/*',
-        '*://*.canva.in/*',
-        '*://canva.in/*',
-      ],
-    },
-    (details) => {
-      if (details.resourceType !== 'mainFrame') return;
-      if (details.statusCode !== 403) return;
-      let wc = null;
-      try {
-        wc = electronWebContents.fromId(details.webContentsId);
-      } catch {
-        wc = null;
-      }
-      if (!wc || wc.isDestroyed()) return;
-      const svc =
-        serviceForWebContentsId(details.webContentsId) ||
-        orderedServices().find((s) => s.appId === 'canva') ||
-        null;
-      if (
-        shouldForceCanvaHome({
-          url: details.url,
-          httpStatus: details.statusCode,
-        })
-      ) {
-        forceCanvaHome(wc, svc || { url: 'https://www.canva.com/' }, 'http-403');
-      }
     },
   );
 
@@ -10484,14 +10278,13 @@ function attachPopupSessionAdopt(parentWc, childWindow, service) {
 }
 
 /**
- * WhatsApp/Arattai / Web Search Hub link tabs (Canva, etc.): OAuth often
- * finishes in a floating popup while the dock tab stays blank. Fold the
- * post-login app page back into the same Hub tab — but only after the popup
- * has visited an IdP, and never fold fragile /login shells (that aborted
- * Google SSO and left a white pane on 0.5.25).
+ * WhatsApp/Arattai / Web Search Hub link tabs: OAuth often finishes in a
+ * floating popup while the dock tab stays blank. Fold the post-login app page
+ * back into the same Hub tab — but only after the popup has visited an IdP,
+ * and never fold fragile /login shells.
  */
 function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
-  if (!(service?.isCustom || service?.linkTab || service?.appId === 'canva')) return;
+  if (!(service?.isCustom || service?.linkTab)) return;
   if (!parentWc || parentWc.isDestroyed()) return;
 
   const childWc = childWindow.webContents;
@@ -10553,8 +10346,7 @@ function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
     const home =
       linkTabSiteHome(lastAdoptableUrl || lastThirdPartyOrigin) ||
       lastAdoptableUrl ||
-      lastThirdPartyOrigin ||
-      (service.appId === 'canva' ? 'https://www.canva.com/' : '');
+      lastThirdPartyOrigin;
     if (!home || !sawIdp) return;
     let parentUrl = '';
     try {
@@ -10562,54 +10354,29 @@ function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
     } catch {
       parentUrl = '';
     }
-    // After Google popup closes: blank, login handoff, or Canva Cloudflare
-    // “This design is private” (403 / Ray ID) → home so SSO cookies hydrate.
-    const finish = (needsHome) => {
-      if (!needsHome || adopting || parentWc.isDestroyed()) return;
-      setTimeout(() => {
-        if (adopting || parentWc.isDestroyed()) return;
-        pinChromeUserAgent(parentWc);
-        // Always land on home after a private-design 403 — do not reopen
-        // the design (that was the “nothing changed” loop on 0.5.32).
-        adoptIntoParent(home, { closePopup: false });
-        rememberGoodUrl(service.id, home);
-      }, 700);
-    };
-
+    // After Google popup closes: blank or login handoff → site home.
     const parentNeedsHome =
       isBlankOrErrorGuestUrl(parentUrl) ||
       (isOauthHandoffUrl(parentUrl) && !isIdentityProviderUrl(parentUrl));
-    if (parentNeedsHome) {
-      finish(true);
-      return;
-    }
-    if (!isCanvaAppUrl(parentUrl)) return;
-    parentWc
-      .executeJavaScript(
-        `(() => {
-          try {
-            return String(document.title || '') + '\\n' + String(document.body && document.body.innerText || '').slice(0, 6000);
-          } catch (e) { return ''; }
-        })()`,
-        true,
-      )
-      .then((text) => {
-        finish(pageTextLooksLikeCanvaPrivate403(text));
-      })
-      .catch(() => {});
+    if (!parentNeedsHome) return;
+    setTimeout(() => {
+      if (adopting || parentWc.isDestroyed()) return;
+      pinChromeUserAgent(parentWc);
+      adoptIntoParent(home, { closePopup: false });
+      rememberGoodUrl(service.id, home);
+    }, 700);
   });
 }
 
 /**
  * Google “browser may not be secure”: silent one-shot reload.
  * accounts.google.com already uses Firefox via request headers — no modal,
- * and never pin Firefox on Canva/link-tab webContents (Cloudflare 403).
+ * and never sticky-pin Firefox on link-tab webContents.
  */
 function attachGoogleSecureBrowserGuard(webContents, service) {
   if (!webContents || webContents.isDestroyed()) return;
   let retried = false;
-  const isCanvaLike =
-    service?.appId === 'canva' || service?.linkTab || service?.isCustom;
+  const isLinkTabLike = service?.linkTab || service?.isCustom;
 
   const pageLooksBlocked = async () => {
     try {
@@ -10639,9 +10406,9 @@ function attachGoogleSecureBrowserGuard(webContents, service) {
     } catch {
       return;
     }
-    // Leaving Google accounts → restore Chrome UA for Canva/Cloudflare.
+    // Leaving Google accounts → restore Chrome UA for the destination site.
     if (!onAccounts) {
-      if (isCanvaLike || isCanvaAppUrl(href)) pinChromeUserAgent(webContents);
+      if (isLinkTabLike) pinChromeUserAgent(webContents);
       return;
     }
     let blocked = isGoogleInsecureBrowserErrorUrl(href);
@@ -10667,8 +10434,8 @@ function attachGoogleSecureBrowserGuard(webContents, service) {
       // ignore
     }
     // Header rewrite already forces Firefox on accounts. Do not sticky-pin
-    // Firefox on the webContents (breaks Canva Cloudflare after SSO).
-    if (isCanvaLike) pinChromeUserAgent(webContents);
+    // Firefox on the webContents (breaks some third-party CDNs after SSO).
+    if (isLinkTabLike) pinChromeUserAgent(webContents);
     try {
       webContents.reload();
     } catch {
@@ -10700,18 +10467,16 @@ function attachGoogleSecureBrowserGuard(webContents, service) {
 }
 
 /**
- * Same-tab Google SSO / Canva: recover wiped about:blank and Canva Cloudflare
- * “This design is private” (403 / Ray ID) after IdP. Never interrupt OAuth
- * handoffs. Applies to link tabs and the Canva catalog app.
+ * Same-tab Google SSO on Hub link tabs: recover wiped about:blank after IdP.
+ * Never interrupt OAuth handoffs.
  */
 function attachLinkTabAuthRecovery(webContents, service) {
-  if (!(service?.isCustom || service?.linkTab || service?.appId === 'canva')) return;
+  if (!(service?.isCustom || service?.linkTab)) return;
   if (!webContents || webContents.isDestroyed()) return;
 
   let sawIdp = false;
   let returnOrigin = '';
   let lastNonIdpUrl = '';
-  let pendingDesignUrl = '';
   let recovering = false;
   /** @type {ReturnType<typeof setTimeout>[]} */
   const timers = [];
@@ -10731,44 +10496,17 @@ function attachLinkTabAuthRecovery(webContents, service) {
     }
   };
 
-  const rememberDesign = (href) => {
-    if (isCanvaDesignUrl(href)) pendingDesignUrl = href;
-  };
-
   const resolveHome = (cur) =>
     linkTabSiteHome(cur) ||
     linkTabSiteHome(returnOrigin) ||
     linkTabSiteHome(lastNonIdpUrl) ||
     linkTabSiteHome(lastGoodUrls.get(service.id)) ||
-    linkTabSiteHome(service.url) ||
-    (service.appId === 'canva' ? 'https://www.canva.com/' : '');
+    linkTabSiteHome(service.url);
 
-  const resolveRetryUrl = (cur, { reopenDesign = false } = {}) => {
-    const home = resolveHome(cur);
-    if (!reopenDesign) return { home, design: '' };
-    const design =
-      (isCanvaDesignUrl(pendingDesignUrl) && pendingDesignUrl) ||
-      (isCanvaDesignUrl(lastGoodUrls.get(service.id)) &&
-        lastGoodUrls.get(service.id)) ||
-      (isCanvaDesignUrl(service.url) && service.url) ||
-      '';
-    if (design && isCanvaAppUrl(cur)) return { home, design };
-    return { home, design: '' };
-  };
-
-  const navigateRecover = (reason, cur, { reopenDesign = false } = {}) => {
+  const navigateHome = (reason, cur) => {
     if (recovering || webContents.isDestroyed()) return;
     if (isOauthHandoffUrl(cur)) return;
-    // Private-design 403 must land on home and STAY — reopening the design
-    // immediately re-triggers Cloudflare 403 and looks like “nothing changed”.
-    const allowDesignRetry =
-      reopenDesign &&
-      sawIdp &&
-      reason !== 'canva-private-403' &&
-      reason !== 'canva-private-403-reload';
-    const { home, design } = resolveRetryUrl(cur, {
-      reopenDesign: allowDesignRetry,
-    });
+    const home = resolveHome(cur);
     if (!home) return;
     recovering = true;
     clearTimers();
@@ -10779,49 +10517,20 @@ function attachLinkTabAuthRecovery(webContents, service) {
         serviceId: service.id,
         from: cur,
         home,
-        design: design || undefined,
       });
     } catch {
       // ignore
     }
     webContents.loadURL(home).catch(() => {});
-    // Persist home so Reload / next launch does not reopen the 403 design.
     rememberGoodUrl(service.id, home);
     lastGoodUrls.set(service.id, home);
-    pendingDesignUrl = '';
-    if (design && design !== home) {
-      timers.push(
-        setTimeout(() => {
-          if (webContents.isDestroyed()) return;
-          pinChromeUserAgent(webContents);
-          webContents.loadURL(design).catch(() => {});
-        }, 2500),
-      );
-    }
     setTimeout(() => {
       recovering = false;
       sawIdp = false;
-    }, 6000);
+    }, 2500);
   };
 
-  const readPageText = async () => {
-    try {
-      return String(
-        await webContents.executeJavaScript(
-          `(() => {
-            try {
-              return String(document.title || '') + '\\n' + String(document.body && document.body.innerText || '').slice(0, 6000);
-            } catch (e) { return ''; }
-          })()`,
-          true,
-        ),
-      );
-    } catch {
-      return '';
-    }
-  };
-
-  const tryRecover = async (reason) => {
+  const tryRecover = (reason) => {
     if (recovering || webContents.isDestroyed()) return;
     if (service.id !== activeServiceId) return;
     let cur = '';
@@ -10830,36 +10539,47 @@ function attachLinkTabAuthRecovery(webContents, service) {
     } catch {
       return;
     }
+    if (!sawIdp) return;
     if (isOauthHandoffUrl(cur)) return;
-    const pageText =
-      isCanvaAppUrl(cur) || service.appId === 'canva' ? await readPageText() : '';
-    const canvaStuck = shouldRecoverCanvaStuckPage({
-      sawIdp,
-      url: cur,
-      pageText,
-    });
-    if (!canvaStuck) {
-      // Non-Canva blank recovery still requires a recent IdP visit.
-      if (!sawIdp) return;
-      if (!isPostAuthStuckUrl(cur, { pageText })) return;
+    if (!isPostAuthStuckUrl(cur) && !isBlankOrErrorGuestUrl(cur)) return;
+    navigateHome(reason, cur);
+  };
+
+  const checkVisual = async () => {
+    if (!sawIdp || recovering || webContents.isDestroyed()) return;
+    if (service.id !== activeServiceId) return;
+    let cur = '';
+    try {
+      cur = String(webContents.getURL() || '');
+    } catch {
+      return;
     }
-    const is403 = pageTextLooksLikeCanvaPrivate403(pageText);
-    navigateRecover(
-      is403
-        ? sawIdp
-          ? 'canva-private-403'
-          : 'canva-private-403-reload'
-        : reason,
-      cur,
-    );
+    if (isOauthHandoffUrl(cur)) return;
+    if (isPostAuthStuckUrl(cur) || isBlankOrErrorGuestUrl(cur)) {
+      navigateHome('visual-url-stuck', cur);
+      return;
+    }
+    try {
+      const blank = await isGuestVisuallyBlank(webContents);
+      if (blank) navigateHome('visual-blank', cur);
+      else {
+        sawIdp = false;
+        clearTimers();
+      }
+    } catch {
+      // ignore
+    }
   };
 
   const scheduleRecover = (reason) => {
     clearTimers();
     for (const ms of LINK_TAB_POST_AUTH_CHECK_MS) {
-      timers.push(setTimeout(() => {
-        void tryRecover(reason);
-      }, ms));
+      timers.push(setTimeout(() => tryRecover(reason), ms));
+      timers.push(
+        setTimeout(() => {
+          checkVisual().catch(() => {});
+        }, ms + 250),
+      );
     }
   };
 
@@ -10870,26 +10590,12 @@ function attachLinkTabAuthRecovery(webContents, service) {
       recovering = false;
       if (lastNonIdpUrl) captureReturnOrigin(lastNonIdpUrl);
       if (!returnOrigin) captureReturnOrigin(service.url);
-      rememberDesign(lastNonIdpUrl || lastGoodUrls.get(service.id) || service.url);
       return;
     }
     if (href.startsWith('http') && !isGoogleOwnedUrl(href)) {
       lastNonIdpUrl = href;
       captureReturnOrigin(href);
-      rememberDesign(href);
-      // Back on Canva after Google — keep Chrome UA for Cloudflare.
-      if (isCanvaAppUrl(href)) pinChromeUserAgent(webContents);
-    }
-    // Canva private 403 / blank: recover even without a fresh IdP (reload case).
-    if (isCanvaAppUrl(href) || service.appId === 'canva') {
-      if (isBlankOrErrorGuestUrl(href)) {
-        timers.push(setTimeout(() => {
-          void tryRecover('canva-blank');
-        }, 1200));
-      } else if (!isOauthHandoffUrl(href)) {
-        scheduleRecover(sawIdp ? 'left-idp' : 'canva-check');
-      }
-      return;
+      pinChromeUserAgent(webContents);
     }
     if (!sawIdp) return;
     if (isOauthHandoffUrl(href)) {
@@ -10898,51 +10604,33 @@ function attachLinkTabAuthRecovery(webContents, service) {
     }
     scheduleRecover('left-idp');
     if (isBlankOrErrorGuestUrl(href)) {
-      timers.push(setTimeout(() => {
-        void tryRecover('immediate-blank');
-      }, 1200));
+      timers.push(setTimeout(() => tryRecover('immediate-blank'), 1200));
     }
   };
 
   webContents.on('did-navigate', onNav);
   webContents.on('did-navigate-in-page', onNav);
   webContents.on('did-finish-load', () => {
+    if (!sawIdp) return;
     try {
       const cur = String(webContents.getURL() || '');
       if (isOauthHandoffUrl(cur)) return;
-      void (async () => {
-        const pageText =
-          isCanvaAppUrl(cur) || service.appId === 'canva'
-            ? await readPageText()
-            : '';
-        if (
-          shouldRecoverCanvaStuckPage({ sawIdp, url: cur, pageText }) ||
-          (sawIdp && isPostAuthStuckUrl(cur, { pageText }))
-        ) {
-          scheduleRecover(
-            pageTextLooksLikeCanvaPrivate403(pageText)
-              ? 'canva-private-403'
-              : 'finish-load-blank',
-          );
-          return;
-        }
-        if (sawIdp) {
-          sawIdp = false;
-          clearTimers();
-        }
-      })();
+      if (isBlankOrErrorGuestUrl(cur) || isPostAuthStuckUrl(cur)) {
+        scheduleRecover('finish-load-stuck');
+      } else {
+        timers.push(
+          setTimeout(() => {
+            checkVisual().catch(() => {});
+          }, 1800),
+        );
+      }
     } catch {
       // ignore
     }
   });
   webContents.on('did-fail-load', (_e, _code, _desc, validatedURL, isMainFrame) => {
-    if (!isMainFrame) return;
-    if (!(sawIdp || service.appId === 'canva' || isCanvaAppUrl(validatedURL))) {
-      return;
-    }
-    timers.push(setTimeout(() => {
-      void tryRecover('fail-load');
-    }, 800));
+    if (!isMainFrame || !sawIdp) return;
+    timers.push(setTimeout(() => tryRecover('fail-load'), 800));
     void validatedURL;
   });
 }
@@ -11094,13 +10782,12 @@ function createViewForService(service) {
   webContents.setAudioMuted(settings.muted || !cfg.allowSounds);
   if (
     isGoogleService(service) ||
-    service.appId === 'canva' ||
     service.linkTab ||
     service.isCustom
   ) {
-    // Canva/Cloudflare need a stable Chrome UA on the webContents itself
+    // Link tabs need a stable Chrome UA on the webContents itself
     // (not only request headers) so navigator.userAgent matches sec-ch-ua.
-    if (service.appId === 'canva' || service.linkTab || service.isCustom) {
+    if (service.linkTab || service.isCustom) {
       pinChromeUserAgent(webContents);
     }
     attachGoogleChromeSpoof(webContents, {
@@ -11119,7 +10806,6 @@ function createViewForService(service) {
   attachGuestContextMenu(webContents);
   attachGuestNavigationGate(webContents, service);
   attachLinkTabAuthRecovery(webContents, service);
-  attachCanvaForceHomeGuard(webContents, service);
   attachGoogleSecureBrowserGuard(webContents, service);
   if (isHeavyPortalApp(service) || isKeepWarmService(service.id)) {
     // Safe Mode: do not spoof Page Visibility on WhatsApp.
@@ -11160,11 +10846,10 @@ function createViewForService(service) {
     attachGmailPopupAdoptToHubTab(webContents, childWindow, service);
     if (
       isGoogleService(service) ||
-      service.appId === 'canva' ||
       service.linkTab ||
       service.isCustom
     ) {
-      if (service.appId === 'canva' || service.linkTab || service.isCustom) {
+      if (service.linkTab || service.isCustom) {
         pinChromeUserAgent(childWc);
       }
       attachGoogleChromeSpoof(childWc, {
@@ -11174,7 +10859,6 @@ function createViewForService(service) {
         enabled: settings.googleSpoofEnabled !== false,
       }).catch(() => {});
     }
-    attachCanvaForceHomeGuard(childWc, service);
   });
 
   webContents.on('console-message', (event, level, message) => {
@@ -11587,23 +11271,12 @@ function hibernateService(id, { force = false } = {}) {
 
 /** Prefer the last in-app page; never cold-start on a login/QR / wrong-app screen. */
 function startUrlForService(service) {
-  // Canva catalog always starts at home — saved /design/ URLs 403 forever in Hub.
-  if (service?.appId === 'canva') {
-    return service.url || 'https://www.canva.com/';
-  }
   const memory = lastGoodUrls.get(service.id);
   const disk = (settings.lastServiceUrls || {})[service.id];
   const last = memory || disk;
   // Link / custom tabs may browse any https host (redirects from wa.me, bit.ly, …).
   if (service?.isCustom) {
     if (last && String(last).startsWith('http') && !isAuthOrLoginUrl(last)) {
-      // Custom tabs that are Canva still must not cold-start on /design/.
-      if (isCanvaAppUrl(last)) {
-        return safeStartUrlForService(
-          { ...service, appId: 'canva', url: canvaCatalogHome(last) },
-          last,
-        );
-      }
       return last;
     }
     return service.url;
@@ -11645,11 +11318,6 @@ function rememberGoodUrl(serviceId, url) {
     } catch {
       storeUrl = service.url;
     }
-  }
-  // Never persist Canva design deep-links — they 403 after reload / cold start.
-  if (service?.appId === 'canva' && isCanvaDesignUrl(url)) {
-    storeUrl =
-      linkTabSiteHome(url) || service.url || 'https://www.canva.com/';
   }
   lastGoodUrls.set(serviceId, storeUrl);
   if (lastUrlSaveTimer) clearTimeout(lastUrlSaveTimer);
@@ -11951,37 +11619,26 @@ function activateService(id) {
   });
   setGuestHubActiveFlag(wc, true);
 
-  // Recover blank Hub link tabs / Canva after SSO, failed redirects, or reload.
-  if ((service.isCustom || service.appId === 'canva') && wc && !wc.isDestroyed()) {
+  // Recover blank Hub link tabs after SSO, failed redirects, or reload.
+  if (service.isCustom && wc && !wc.isDestroyed()) {
     try {
       const cur = String(wc.getURL() || '');
-      const title = String(wc.getTitle() || '');
+      const home =
+        linkTabSiteHome(cur) ||
+        linkTabSiteHome(lastGoodUrls.get(service.id) || '') ||
+        linkTabSiteHome(service.url);
+      const target =
+        (home && home.startsWith('http') ? home : '') ||
+        startUrlForService(service) ||
+        service.url;
       if (
-        service.appId === 'canva' &&
+        target &&
+        target.startsWith('http') &&
         (isBlankOrErrorGuestUrl(cur) ||
-          isCanvaDesignUrl(cur) ||
-          isCanvaPrivateDesignTitle(title) ||
-          shouldForceCanvaHome({ url: cur, title }))
+          cur.startsWith('chrome-error://') ||
+          cur === 'chrome://blank/')
       ) {
-        forceCanvaHome(wc, service, 'activate');
-      } else if (service.isCustom) {
-        const home =
-          linkTabSiteHome(cur) ||
-          linkTabSiteHome(lastGoodUrls.get(service.id) || '') ||
-          linkTabSiteHome(service.url);
-        const target =
-          (home && home.startsWith('http') ? home : '') ||
-          startUrlForService(service) ||
-          service.url;
-        if (
-          target &&
-          target.startsWith('http') &&
-          (isBlankOrErrorGuestUrl(cur) ||
-            cur.startsWith('chrome-error://') ||
-            cur === 'chrome://blank/')
-        ) {
-          wc.loadURL(target).catch(() => {});
-        }
+        wc.loadURL(target).catch(() => {});
       }
     } catch {
       // ignore
@@ -12167,25 +11824,6 @@ function reloadActive() {
     findBarLastQuery = '';
     findBarRequestId = 0;
     clearGuestFindHighlights(wc);
-  }
-  // Canva: reload of a private-design 403 just shows the same page — go home.
-  try {
-    const service = getService(activeServiceId);
-    if (service?.appId === 'canva' || isCanvaAppUrl(wc.getURL())) {
-      const cur = String(wc.getURL() || '');
-      const title = String(wc.getTitle() || '');
-      if (
-        isCanvaDesignUrl(cur) ||
-        isCanvaPrivateDesignTitle(title) ||
-        shouldForceCanvaHome({ url: cur, title }) ||
-        isBlankOrErrorGuestUrl(cur)
-      ) {
-        forceCanvaHome(wc, service || { url: 'https://www.canva.com/' }, 'reload');
-        return;
-      }
-    }
-  } catch {
-    // fall through
   }
   wc.reload();
 }
@@ -14293,35 +13931,10 @@ dockHandle('dock:app-navigate', (_e, id, action) => {
     wc.goForward();
     scheduleActiveNavStatePush();
   } else if (action === 'reload') {
-    const service = getService(id);
-    if (service?.appId === 'canva' || isCanvaAppUrl(wc.getURL?.() || '')) {
-      let cur = '';
-      let title = '';
-      try {
-        cur = String(wc.getURL() || '');
-        title = String(wc.getTitle() || '');
-      } catch {
-        // ignore
-      }
-      if (
-        isCanvaDesignUrl(cur) ||
-        isCanvaPrivateDesignTitle(title) ||
-        shouldForceCanvaHome({ url: cur, title }) ||
-        isBlankOrErrorGuestUrl(cur)
-      ) {
-        forceCanvaHome(wc, service || { url: 'https://www.canva.com/' }, 'dock-reload');
-        return { ok: true };
-      }
-    }
     wc.reload();
   } else if (action === 'home') {
     const service = getService(id);
-    if (service?.appId === 'canva') {
-      const home = service.url || 'https://www.canva.com/';
-      pinChromeUserAgent(wc);
-      wc.loadURL(home).catch(() => {});
-      rememberGoodUrl(service.id, home);
-    } else if (service) {
+    if (service) {
       wc.loadURL(startUrlForService(service) || service.url);
     }
   } else if (action === 'devtools') {

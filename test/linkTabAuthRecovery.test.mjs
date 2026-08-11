@@ -5,10 +5,6 @@ import {
   isBlankOrErrorGuestUrl,
   isPostAuthStuckUrl,
   isOauthHandoffUrl,
-  isCanvaAppUrl,
-  isCanvaDesignUrl,
-  pageTextLooksLikeCanvaPrivate403,
-  shouldRecoverCanvaStuckPage,
   shouldAdoptLinkTabPopupUrlAfterIdp,
 } from '../src/linkTabAuthRecovery.js';
 import { safeStartUrlForService } from '../src/guestNav.js';
@@ -19,44 +15,22 @@ test('linkTabSiteHome keeps canva.in separate from canva.com', () => {
   assert.equal(linkTabSiteHome('https://www.canva.com/login'), 'https://www.canva.com/');
 });
 
-test('isCanvaAppUrl detects canva hosts', () => {
-  assert.equal(isCanvaAppUrl('https://www.canva.com/'), true);
-  assert.equal(isCanvaAppUrl('https://www.canva.in/login'), true);
-  assert.equal(isCanvaAppUrl('https://www.google.com/'), false);
+test('catalog no longer includes Canva', () => {
+  assert.equal(getAppCatalogEntry('canva'), null);
 });
 
-test('isCanvaDesignUrl detects design deep links', () => {
+test('safeStartUrlForService still protects Zoho One deep links', () => {
+  const zoho = {
+    appId: 'zoho-one',
+    url: 'https://one.zoho.in/zohoone/org/home',
+  };
   assert.equal(
-    isCanvaDesignUrl('https://www.canva.com/design/DAGxxx/view'),
-    true,
+    safeStartUrlForService(
+      zoho,
+      'https://one.zoho.in/zohoone/org/home/cxapp-spaces/x',
+    ),
+    zoho.url,
   );
-  assert.equal(isCanvaDesignUrl('https://www.canva.com/'), false);
-  assert.equal(isCanvaDesignUrl('https://www.canva.in/folder/xyz'), true);
-});
-
-test('safeStartUrlForService forces Canva home for design deep links', () => {
-  const canva = { appId: 'canva', url: 'https://www.canva.com/' };
-  assert.equal(
-    safeStartUrlForService(canva, 'https://www.canva.com/design/DAGxxx/view'),
-    'https://www.canva.com/',
-  );
-  assert.equal(
-    safeStartUrlForService(canva, 'https://www.canva.com/'),
-    'https://www.canva.com/',
-  );
-});
-
-test('pageTextLooksLikeCanvaPrivate403 matches CF private page', () => {
-  const sample =
-    'This design is private\nGo to home to keep designing\nError code: 403\nRay ID: a29836f54eb03501-BOM';
-  assert.equal(pageTextLooksLikeCanvaPrivate403(sample), true);
-  assert.equal(pageTextLooksLikeCanvaPrivate403('Welcome to Canva'), false);
-});
-
-test('catalog includes Canva', () => {
-  const entry = getAppCatalogEntry('canva');
-  assert.equal(entry?.appId, 'canva');
-  assert.equal(entry?.url, 'https://www.canva.com/');
 });
 
 test('login and OAuth callback are handoffs — not stuck', () => {
@@ -66,44 +40,9 @@ test('login and OAuth callback are handoffs — not stuck', () => {
   assert.equal(isBlankOrErrorGuestUrl('about:blank'), true);
 });
 
-test('Canva private 403 after SSO counts as stuck', () => {
+test('design URLs are not treated as stuck without blank/error', () => {
   const design = 'https://www.canva.com/design/DAGxxx/view';
-  assert.equal(
-    isPostAuthStuckUrl(design, {
-      pageText:
-        'This design is private. Error code: 403 Ray ID: abc-BOM',
-    }),
-    true,
-  );
-  assert.equal(isPostAuthStuckUrl(design, { pageText: 'Open design' }), false);
-});
-
-test('Canva private 403 recovers without sawIdp (reload case)', () => {
-  const design = 'https://www.canva.com/design/DAGxxx/view';
-  assert.equal(
-    shouldRecoverCanvaStuckPage({
-      sawIdp: false,
-      url: design,
-      pageText: 'This design is private\nError code: 403\nRay ID: x-BOM',
-    }),
-    true,
-  );
-  assert.equal(
-    shouldRecoverCanvaStuckPage({
-      sawIdp: false,
-      url: 'about:blank',
-      pageText: '',
-    }),
-    true,
-  );
-  assert.equal(
-    shouldRecoverCanvaStuckPage({
-      sawIdp: false,
-      url: design,
-      pageText: 'Editing your design',
-    }),
-    false,
-  );
+  assert.equal(isPostAuthStuckUrl(design), false);
 });
 
 test('popup adopt waits for IdP and skips login shells', () => {
