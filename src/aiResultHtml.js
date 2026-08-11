@@ -373,8 +373,14 @@ export function buildAiResultHtml(dark = false) {
 
     async function startVoiceRecording() {
       if (!navigator.mediaDevices?.getUserMedia) {
+        const secure = typeof window.isSecureContext === 'boolean' ? window.isSecureContext : '?';
+        const loc = String(location.protocol || '') + '//' + String(location.hostname || '');
         inboxStatus.textContent =
-          'Microphone API unavailable in this panel — update Aspera Hub, or paste text instead.';
+          'Microphone API still blocked here (' +
+          loc +
+          ', secure=' +
+          secure +
+          '). Fully quit Hub and reopen, or paste text instead.';
         return;
       }
       if (typeof MediaRecorder === 'undefined') {

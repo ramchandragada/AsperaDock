@@ -311,10 +311,12 @@ import {
   registerChromeScheme,
   attachChromeProtocolHandler,
   chromeAppUrl,
-  setChromeDynamicHtml,
-  AI_RESULT_CHROME_PATH,
-  aiResultChromeUrl,
 } from './chromeProtocol.js';
+import {
+  setAiResultServerHtml,
+  ensureAiResultServer,
+  aiResultLocalUrl,
+} from './aiResultServer.js';
 import {
   isInternalUrl,
   isForbiddenGuestNavigation,
@@ -4254,16 +4256,19 @@ function openAiResultWindow({ title, meta, dark = false, initialPayload = null }
   } catch {
     // ignore
   }
-  // Serve via privileged asperadock:// (secure context) — data: URLs hide
-  // navigator.mediaDevices, so voice showed "mic not available" with a working headset.
-  setChromeDynamicHtml(AI_RESULT_CHROME_PATH, buildAiResultHtml(!!dark));
-  win.loadURL(aiResultChromeUrl(!!dark)).catch(() => {
-    win
-      .loadURL(
-        `data:text/html;charset=utf-8,${encodeURIComponent(buildAiResultHtml(!!dark))}`,
-      )
-      .catch(() => {});
-  });
+  // Mic needs a secure context. data: hides mediaDevices; custom schemes are
+  // unreliable on some Electron/Linux builds. http://127.0.0.1 always works.
+  const html = buildAiResultHtml(!!dark);
+  setAiResultServerHtml(html);
+  ensureAiResultServer()
+    .then(() => {
+      if (win.isDestroyed()) return;
+      const url = aiResultLocalUrl(!!dark);
+      return win.loadURL(url);
+    })
+    .catch((err) => {
+      console.error('Aspera AI panel failed to load on localhost:', err);
+    });
   try {
     const sess = win.webContents.session;
     sess.setPermissionRequestHandler((_wc, permission, callback) => {
@@ -4280,6 +4285,16 @@ function openAiResultWindow({ title, meta, dark = false, initialPayload = null }
         permission === 'clipboard-read'
       );
     });
+    // Linux: allow mic/camera device choice without an extra prompt UI.
+    if (typeof sess.setDevicePermissionHandler === 'function') {
+      sess.setDevicePermissionHandler((details) => {
+        return (
+          details?.deviceType === 'microphone' ||
+          details?.deviceType === 'speaker' ||
+          details?.deviceType === 'camera'
+        );
+      });
+    }
   } catch {
     // ignore
   }
