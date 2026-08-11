@@ -326,6 +326,8 @@ import {
   isSameEcosystemUrl,
   isGoogleOauthClientUrl,
   shouldOpenInSystemBrowser,
+  shouldAdoptLinkTabPopupUrl,
+  isIdentityProviderUrl,
   shouldOpenZohoSharedDeepLinkAsHubTab,
   isZohoAssetHost,
   isMessagingAppId,
@@ -10158,9 +10160,13 @@ function attachPopupSessionAdopt(parentWc, childWindow, service) {
 }
 
 /**
- * WhatsApp/Arattai Hub link tabs (Canva, etc.): OAuth often finishes in a
- * floating popup while the dock tab stays blank. Fold the post-login page
- * back into the same Hub tab.
+ * WhatsApp/Arattai / Web Search Hub link tabs (Canva, etc.): OAuth often
+ * finishes in a floating popup while the dock tab stays blank. Fold the
+ * post-login app page back into the same Hub tab.
+ *
+ * Do not adopt IdP URLs or one-time OAuth callbacks (opener must consume them).
+ * Third-party /login paths (e.g. canva.com/login after Google) ARE adoptable —
+ * isAuthOrLoginUrl alone was wrongly skipping them and leaving a white pane.
  */
 function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
   if (!(service?.isCustom || service?.linkTab)) return;
@@ -10168,21 +10174,25 @@ function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
 
   const childWc = childWindow.webContents;
   let adopting = false;
+  let lastAdoptableUrl = '';
+  let lastThirdPartyOrigin = '';
 
-  const tryAdopt = () => {
-    if (adopting || childWindow.isDestroyed() || parentWc.isDestroyed()) return;
-    let popupUrl = '';
+  const rememberThirdParty = (popupUrl) => {
+    if (!popupUrl.startsWith('http')) return;
+    if (isIdentityProviderUrl(popupUrl) || isGoogleOwnedUrl(popupUrl)) return;
     try {
-      popupUrl = childWc.getURL();
+      lastThirdPartyOrigin = `${new URL(popupUrl).origin}/`;
     } catch {
-      return;
+      // ignore
     }
-    if (!popupUrl.startsWith('http') || isAuthOrLoginUrl(popupUrl)) return;
-    if (mustKeepGoogleUrlInApp(popupUrl)) return;
+  };
 
+  const adoptIntoParent = (url, { closePopup = true } = {}) => {
+    if (adopting || !url || parentWc.isDestroyed()) return;
     adopting = true;
-    parentWc.loadURL(popupUrl).catch(() => {});
-    rememberGoodUrl(service.id, popupUrl);
+    parentWc.loadURL(url).catch(() => {});
+    rememberGoodUrl(service.id, url);
+    if (!closePopup) return;
     setTimeout(() => {
       try {
         if (!childWindow.isDestroyed()) childWindow.close();
@@ -10192,12 +10202,52 @@ function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
     }, 150);
   };
 
+  const tryAdopt = () => {
+    if (adopting || childWindow.isDestroyed() || parentWc.isDestroyed()) return;
+    let popupUrl = '';
+    try {
+      popupUrl = childWc.getURL();
+    } catch {
+      return;
+    }
+    rememberThirdParty(popupUrl);
+    if (shouldAdoptLinkTabPopupUrl(popupUrl)) {
+      lastAdoptableUrl = popupUrl;
+      adoptIntoParent(popupUrl);
+    }
+  };
+
   childWc.on('did-navigate', tryAdopt);
   childWc.on('did-navigate-in-page', tryAdopt);
   childWc.on('did-finish-load', tryAdopt);
   childWc.on('page-title-updated', tryAdopt);
   setTimeout(tryAdopt, 300);
   setTimeout(tryAdopt, 1200);
+
+  // If the popup closes itself after login and we never adopted (e.g. brief
+  // callback URL then close), fold the last safe app URL into the parent.
+  childWindow.on('closed', () => {
+    if (adopting || parentWc.isDestroyed()) return;
+    const fallback = lastAdoptableUrl || lastThirdPartyOrigin;
+    if (!fallback) return;
+    let parentUrl = '';
+    try {
+      parentUrl = parentWc.getURL();
+    } catch {
+      parentUrl = '';
+    }
+    const parentStuck =
+      !parentUrl ||
+      parentUrl === 'about:blank' ||
+      parentUrl.startsWith('about:blank') ||
+      isIdentityProviderUrl(parentUrl) ||
+      isAuthOrLoginUrl(parentUrl) ||
+      (isGoogleOwnedUrl(parentUrl) &&
+        (parentUrl.includes('/search') || parentUrl.includes('/url')));
+    if (parentStuck) {
+      adoptIntoParent(fallback, { closePopup: false });
+    }
+  });
 }
 
 /**

@@ -28,6 +28,15 @@ test('shouldSkipBlankHeuristicReload for CRM and Books forms', () => {
   assert.equal(shouldSkipBlankHeuristicReload({ appId: 'gmail' }), false);
 });
 
+test('shouldSkipBlankHeuristicReload for Web Search / link tabs', () => {
+  assert.equal(
+    shouldSkipBlankHeuristicReload({ appId: 'custom', linkTab: true }),
+    true,
+  );
+  assert.equal(shouldSkipBlankHeuristicReload({ appId: 'custom', isCustom: true }), true);
+  assert.equal(shouldSkipBlankHeuristicReload({ appId: 'custom' }), true);
+});
+
 test('portalHealthCheckDelays adds long-idle pass', () => {
   assert.deepEqual(portalHealthCheckDelays(60_000), [450, 1200]);
   assert.deepEqual(portalHealthCheckDelays(20 * 60_000), [450, 1200, 2800]);

@@ -26,11 +26,15 @@ export function shouldRunPortalBlankRecovery(service) {
 /**
  * Apps that must never be soft-reloaded by pixel/DOM blank heuristics
  * (white forms / sparse dashboards look empty).
- * @param {{ appId?: string }|null|undefined} service
+ * @param {{ appId?: string, isCustom?: boolean, linkTab?: boolean }|null|undefined} service
  */
 export function shouldSkipBlankHeuristicReload(service) {
   const id = service?.appId;
-  return id === 'zoho-crm' || id === 'zoho-books';
+  if (id === 'zoho-crm' || id === 'zoho-books') return true;
+  // Web Search / ad-hoc link tabs (Canva, etc.): post-login SPAs are often
+  // white-heavy; soft-reload mid-hydrate leaves a permanent blank pane.
+  if (service?.isCustom || service?.linkTab || id === 'custom') return true;
+  return false;
 }
 
 /**

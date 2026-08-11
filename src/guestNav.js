@@ -169,6 +169,93 @@ export function mustKeepGoogleUrlInApp(url) {
 }
 
 /**
+ * External IdP / SSO hosts that must stay in a real popup — never fold into
+ * a Hub link tab (would break opener handoff and one-time OAuth codes).
+ */
+export function isIdentityProviderUrl(url) {
+  if (!url) return false;
+  if (isGoogleOauthClientUrl(url)) return true;
+  if (mustKeepGoogleUrlInApp(url)) return true;
+  try {
+    const host = new URL(String(url)).hostname.toLowerCase();
+    if (host.startsWith('accounts.')) return true;
+    if (host === 'login.microsoftonline.com' || host.endsWith('.login.microsoftonline.com')) {
+      return true;
+    }
+    if (host === 'login.live.com' || host.endsWith('.login.live.com')) return true;
+    if (host === 'appleid.apple.com' || host.endsWith('.appleid.apple.com')) return true;
+    if (host === 'auth0.com' || host.endsWith('.auth0.com')) return true;
+    if (host === 'okta.com' || host.endsWith('.okta.com')) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * OAuth redirect that still carries an authorization code / id_token.
+ * The popup must consume these; loadURL into the parent would double-spend.
+ */
+export function isOauthCallbackUrl(url) {
+  try {
+    const u = new URL(String(url || ''));
+    if (u.searchParams.has('code') || u.searchParams.has('id_token')) return true;
+    if (
+      u.searchParams.has('state') &&
+      /\/(oauth|callback|redirect|authorize)/i.test(u.pathname)
+    ) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Hub link tabs (Web Search → Canva, etc.): when should we fold a popup URL
+ * back into the dock tab?
+ *
+ * Unlike isAuthOrLoginUrl (used for "don't restore as home"), third-party
+ * paths like canva.com/login/... are adoptable once they leave the IdP —
+ * that is where OAuth often finishes while the parent tab stays blank.
+ */
+export function shouldAdoptLinkTabPopupUrl(popupUrl) {
+  const raw = String(popupUrl || '').trim();
+  if (!raw.startsWith('http')) return false;
+  if (isIdentityProviderUrl(raw)) return false;
+  if (isOauthCallbackUrl(raw)) return false;
+  // Keep Google Search / Maps / etc. in the popup until a third-party app lands.
+  if (isGoogleOwnedUrl(raw)) return false;
+  return true;
+}
+
+/**
+ * Link-tab window.open policy: real popup for IdP/Google auth; otherwise
+ * stay in the same Hub tab. Google /url wrappers unwrap to the destination.
+ * @returns {'popup'|'in-tab'} 
+ */
+export function linkTabWindowOpenAction(url) {
+  const raw = String(url || '').trim();
+  if (!raw || raw === 'about:blank' || raw.startsWith('about:blank')) {
+    return 'popup';
+  }
+  if (!raw.startsWith('http')) return 'in-tab';
+  const outbound = extractGoogleOutboundUrl(raw);
+  if (outbound) {
+    // Organic search results → load destination in the same tab (no floating popup).
+    if (isIdentityProviderUrl(outbound) || mustKeepGoogleUrlInApp(outbound)) {
+      return 'popup';
+    }
+    return 'in-tab';
+  }
+  if (isIdentityProviderUrl(raw)) return 'popup';
+  if (isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) return 'popup';
+  if (mustKeepGoogleUrlInApp(raw)) return 'popup';
+  return 'in-tab';
+}
+
+/**
  * True only for http(s) links that are safe to hand to the OS browser.
  * Blocks Google session/SSO URLs that 400 outside Hub.
  */

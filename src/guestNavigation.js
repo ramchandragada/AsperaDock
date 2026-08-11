@@ -7,6 +7,7 @@ import {
   isForbiddenGuestNavigation,
   isAuthOrLoginUrl,
   extractGoogleOutboundUrl,
+  linkTabWindowOpenAction,
   isGoogleOwnedUrl,
   mustKeepGoogleUrlInApp,
   isAllowedGmailTabUrl,
@@ -73,17 +74,16 @@ export function configureGuestWindowOpen(wc, service, api) {
     }
 
     if (raw.startsWith('http')) {
-      // Temporary Hub link tabs (WhatsApp/Arattai → Canva, etc.): never spawn
-      // another top-bar tab for login/redirects. Keep browsing in this tab,
-      // except Google auth popups which need a real window.
+      // Temporary Hub link tabs (Web Search / WhatsApp → Canva, etc.): keep
+      // browsing in this tab. Real popups only for IdP / Google auth.
+      // Google /url search wrappers unwrap to the destination in-tab.
       if (live?.isCustom || live?.linkTab) {
-        if (isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) {
+        const action = linkTabWindowOpenAction(raw);
+        if (action === 'popup') {
           return allowPopup();
         }
-        if (mustKeepGoogleUrlInApp(raw)) {
-          return allowPopup();
-        }
-        wc.loadURL(raw).catch(() => {});
+        const target = extractGoogleOutboundUrl(raw) || raw;
+        wc.loadURL(target).catch(() => {});
         return { action: 'deny' };
       }
 
