@@ -98,7 +98,7 @@ export function pageTextLooksLikeCanvaPrivate403(text) {
 }
 
 /**
- * Stuck after SSO: blank/error docs OR a Canva private-design 403 page.
+ * Stuck after SSO or on reload: blank/error docs OR a Canva private-design 403.
  * Login/callback handoffs are never stuck.
  */
 export function isPostAuthStuckUrl(url, { pageText = '' } = {}) {
@@ -107,6 +107,23 @@ export function isPostAuthStuckUrl(url, { pageText = '' } = {}) {
   if (isCanvaAppUrl(url) && pageTextLooksLikeCanvaPrivate403(pageText)) {
     return true;
   }
+  return false;
+}
+
+/**
+ * Canva private 403 / blank recovery may run without a recent IdP visit
+ * (app reload reopens a stuck design URL with sawIdp=false).
+ */
+export function shouldRecoverCanvaStuckPage({
+  sawIdp = false,
+  url = '',
+  pageText = '',
+} = {}) {
+  if (isOauthHandoffUrl(url)) return false;
+  if (!isCanvaAppUrl(url) && !isBlankOrErrorGuestUrl(url)) return false;
+  if (pageTextLooksLikeCanvaPrivate403(pageText)) return true;
+  if (isBlankOrErrorGuestUrl(url)) return true;
+  if (sawIdp && isPostAuthStuckUrl(url, { pageText })) return true;
   return false;
 }
 
@@ -120,5 +137,5 @@ export function shouldAdoptLinkTabPopupUrlAfterIdp(popupUrl, { sawIdp = false } 
   return true;
 }
 
-/** Blank + Canva-403 checks — give SSO and Canva hydrate time. */
-export const LINK_TAB_POST_AUTH_CHECK_MS = [3500, 8000, 14000];
+/** Faster Canva 403 / blank checks — reload must not sit on private design. */
+export const LINK_TAB_POST_AUTH_CHECK_MS = [1200, 3500, 8000];

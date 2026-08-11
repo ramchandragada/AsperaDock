@@ -8,8 +8,10 @@ import {
   isCanvaAppUrl,
   isCanvaDesignUrl,
   pageTextLooksLikeCanvaPrivate403,
+  shouldRecoverCanvaStuckPage,
   shouldAdoptLinkTabPopupUrlAfterIdp,
 } from '../src/linkTabAuthRecovery.js';
+import { safeStartUrlForService } from '../src/guestNav.js';
 import { getAppCatalogEntry } from '../src/services.js';
 
 test('linkTabSiteHome keeps canva.in separate from canva.com', () => {
@@ -30,6 +32,18 @@ test('isCanvaDesignUrl detects design deep links', () => {
   );
   assert.equal(isCanvaDesignUrl('https://www.canva.com/'), false);
   assert.equal(isCanvaDesignUrl('https://www.canva.in/folder/xyz'), true);
+});
+
+test('safeStartUrlForService forces Canva home for design deep links', () => {
+  const canva = { appId: 'canva', url: 'https://www.canva.com/' };
+  assert.equal(
+    safeStartUrlForService(canva, 'https://www.canva.com/design/DAGxxx/view'),
+    'https://www.canva.com/',
+  );
+  assert.equal(
+    safeStartUrlForService(canva, 'https://www.canva.com/'),
+    'https://www.canva.com/',
+  );
 });
 
 test('pageTextLooksLikeCanvaPrivate403 matches CF private page', () => {
@@ -62,6 +76,34 @@ test('Canva private 403 after SSO counts as stuck', () => {
     true,
   );
   assert.equal(isPostAuthStuckUrl(design, { pageText: 'Open design' }), false);
+});
+
+test('Canva private 403 recovers without sawIdp (reload case)', () => {
+  const design = 'https://www.canva.com/design/DAGxxx/view';
+  assert.equal(
+    shouldRecoverCanvaStuckPage({
+      sawIdp: false,
+      url: design,
+      pageText: 'This design is private\nError code: 403\nRay ID: x-BOM',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRecoverCanvaStuckPage({
+      sawIdp: false,
+      url: 'about:blank',
+      pageText: '',
+    }),
+    true,
+  );
+  assert.equal(
+    shouldRecoverCanvaStuckPage({
+      sawIdp: false,
+      url: design,
+      pageText: 'Editing your design',
+    }),
+    false,
+  );
 });
 
 test('popup adopt waits for IdP and skips login shells', () => {

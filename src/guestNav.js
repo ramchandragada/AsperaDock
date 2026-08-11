@@ -501,6 +501,18 @@ export function safeStartUrlForService(service, candidate) {
   ) {
     return service.url;
   }
+  // Canva design deep-links 403 (“This design is private” / Ray ID …-BOM)
+  // when the session is missing — never cold-start or Home onto them.
+  if (service.appId === 'canva' && candidate) {
+    try {
+      const path = new URL(String(candidate)).pathname.toLowerCase();
+      if (/^\/(design|folder|brand|projects)\//.test(path)) {
+        return service.url || 'https://www.canva.com/';
+      }
+    } catch {
+      // fall through
+    }
+  }
   return candidate || service.url;
 }
 
