@@ -161,6 +161,10 @@ export function buildAiResultHtml(dark = false) {
   .inbox-foot {
     color:${muted}; font-size:12px; font-weight:600; line-height:1.4; flex:0 0 auto;
   }
+  .voice-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; flex:0 0 auto; }
+  .btn.recording { background:#dc2626; color:#fff; }
+  .btn.recording:hover { background:#b91c1c; color:#fff; }
+  .voice-timer { color:${muted}; font-size:12px; font-weight:700; min-width:3.5em; }
   .work-pane { display:flex; flex-direction:column; gap:12px; flex:1 1 auto; min-height:0; }
   .work-pane.hide { display:none; }
 </style>
@@ -179,10 +183,17 @@ export function buildAiResultHtml(dark = false) {
     </header>
     <div class="inbox" id="inbox">
       <div class="section-label">Your text (or paste a screenshot)</div>
-      <textarea id="inbox-text" placeholder="Copy text — or take a screenshot (Ctrl+Shift+Print / Flameshot) and Paste from clipboard. Or attach a PDF/image below for Summarize."></textarea>
+      <textarea id="inbox-text" placeholder="Copy text — or use the mic below for voice. Or attach a PDF/image for Summarize."></textarea>
       <div class="actions">
         <button type="button" class="btn" id="inbox-paste">Paste from clipboard</button>
         <button type="button" class="btn" id="inbox-clear">Clear text</button>
+      </div>
+      <div class="section-label">Or speak (voice → text in your languages)</div>
+      <div class="voice-row">
+        <button type="button" class="btn" id="voice-mic" title="Record up to 30 seconds">🎤 Record</button>
+        <button type="button" class="btn danger" id="voice-stop" disabled>Stop</button>
+        <button type="button" class="btn primary" id="voice-send" disabled>Send voice</button>
+        <span class="voice-timer" id="voice-timer"></span>
       </div>
       <div class="section-label">Or attach a file (Summarize)</div>
       <div class="attach-row">
@@ -205,7 +216,7 @@ export function buildAiResultHtml(dark = false) {
         <button type="button" class="btn primary" id="inbox-run">Run Aspera AI</button>
       </div>
       <p class="inbox-foot" id="inbox-status">
-        Paste text or a screenshot, or attach a PDF/image for Summarize. Hub never sends for you.
+        Paste text, record your voice (mic), or attach a PDF/image. Voice uses Sarvam or Gemini (max 30s). Hub never sends for you.
       </p>
     </div>
     <div class="work-pane" id="work-pane">
@@ -283,6 +294,202 @@ export function buildAiResultHtml(dark = false) {
     let refineSyncTimer = null;
     let renderSeq = 0;
     let stagedAttachment = null;
+    const VOICE_MAX_SEC = 30;
+    let mediaRecorder = null;
+    let voiceStream = null;
+    let voiceChunks = [];
+    let voiceBlob = null;
+    let voiceMime = 'audio/webm';
+    let voiceTimerId = null;
+    let voiceStartedAt = 0;
+
+    const voiceMicBtn = document.getElementById('voice-mic');
+    const voiceStopBtn = document.getElementById('voice-stop');
+    const voiceSendBtn = document.getElementById('voice-send');
+    const voiceTimerEl = document.getElementById('voice-timer');
+
+    function resetVoiceUi() {
+      if (!voiceMicBtn) return;
+      voiceMicBtn.disabled = false;
+      voiceMicBtn.classList.remove('recording');
+      voiceMicBtn.textContent = '🎤 Record';
+      if (voiceStopBtn) voiceStopBtn.disabled = true;
+      if (voiceSendBtn) voiceSendBtn.disabled = !voiceBlob;
+      if (voiceTimerEl) voiceTimerEl.textContent = voiceBlob ? 'Ready' : '';
+      if (voiceTimerId) {
+        clearInterval(voiceTimerId);
+        voiceTimerId = null;
+      }
+    }
+
+    function clearVoiceState() {
+      if (voiceTimerId) {
+        clearInterval(voiceTimerId);
+        voiceTimerId = null;
+      }
+      try {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+      } catch {
+        // ignore
+      }
+      stopVoiceStream();
+      mediaRecorder = null;
+      voiceChunks = [];
+      voiceBlob = null;
+      voiceMime = 'audio/webm';
+      voiceStartedAt = 0;
+      resetVoiceUi();
+    }
+
+    function stopVoiceStream() {
+      try {
+        if (voiceStream) voiceStream.getTracks().forEach((t) => t.stop());
+      } catch {
+        // ignore
+      }
+      voiceStream = null;
+    }
+
+    function pickVoiceMimeType() {
+      if (typeof MediaRecorder === 'undefined') return '';
+      const candidates = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/ogg;codecs=opus',
+        'audio/ogg',
+      ];
+      for (const t of candidates) {
+        if (MediaRecorder.isTypeSupported(t)) return t;
+      }
+      return '';
+    }
+
+    function updateVoiceTimer() {
+      if (!voiceStartedAt || !voiceTimerEl) return;
+      const sec = Math.min(VOICE_MAX_SEC, Math.floor((Date.now() - voiceStartedAt) / 1000));
+      voiceTimerEl.textContent = sec + 's / ' + VOICE_MAX_SEC + 's';
+      if (sec >= VOICE_MAX_SEC) stopVoiceRecording();
+    }
+
+    async function startVoiceRecording() {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        inboxStatus.textContent =
+          'Microphone not available in this window — paste text instead.';
+        return;
+      }
+      if (typeof MediaRecorder === 'undefined') {
+        inboxStatus.textContent = 'Voice recording is not supported here.';
+        return;
+      }
+      try {
+        stopVoiceStream();
+        voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        voiceChunks = [];
+        voiceBlob = null;
+        const mimeType = pickVoiceMimeType();
+        mediaRecorder = mimeType
+          ? new MediaRecorder(voiceStream, { mimeType })
+          : new MediaRecorder(voiceStream);
+        voiceMime = mediaRecorder.mimeType || mimeType || 'audio/webm';
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size) voiceChunks.push(e.data);
+        };
+        mediaRecorder.onstop = () => {
+          stopVoiceStream();
+          if (voiceChunks.length) {
+            voiceBlob = new Blob(voiceChunks, { type: voiceMime });
+            if (voiceSendBtn) voiceSendBtn.disabled = false;
+            if (voiceTimerEl) voiceTimerEl.textContent = 'Ready';
+            inboxStatus.textContent =
+              'Recording ready — click Send voice to convert to text in your languages.';
+          } else {
+            inboxStatus.textContent = 'No audio captured — try Record again.';
+          }
+          resetVoiceUi();
+          if (voiceBlob && voiceSendBtn) voiceSendBtn.disabled = false;
+        };
+        mediaRecorder.start(250);
+        voiceStartedAt = Date.now();
+        voiceMicBtn.disabled = true;
+        voiceMicBtn.classList.add('recording');
+        voiceMicBtn.textContent = 'Recording…';
+        if (voiceStopBtn) voiceStopBtn.disabled = false;
+        if (voiceSendBtn) voiceSendBtn.disabled = true;
+        if (voiceTimerEl) voiceTimerEl.textContent = '0s / ' + VOICE_MAX_SEC + 's';
+        voiceTimerId = setInterval(updateVoiceTimer, 200);
+        inboxStatus.textContent =
+          'Recording… speak now (max ' + VOICE_MAX_SEC + ' seconds). Click Stop when done.';
+      } catch (err) {
+        stopVoiceStream();
+        resetVoiceUi();
+        inboxStatus.textContent = String(
+          err?.message || err || 'Could not access microphone.',
+        );
+      }
+    }
+
+    function stopVoiceRecording() {
+      if (voiceTimerId) {
+        clearInterval(voiceTimerId);
+        voiceTimerId = null;
+      }
+      if (voiceMicBtn) {
+        voiceMicBtn.disabled = false;
+        voiceMicBtn.classList.remove('recording');
+        voiceMicBtn.textContent = '🎤 Record';
+      }
+      if (voiceStopBtn) voiceStopBtn.disabled = true;
+      try {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+      } catch {
+        // ignore
+      }
+    }
+
+    function blobToBase64(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = String(reader.result || '');
+          const idx = result.indexOf('base64,');
+          resolve(idx >= 0 ? result.slice(idx + 7) : result);
+        };
+        reader.onerror = () => reject(reader.error || new Error('Could not read audio'));
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    voiceMicBtn?.addEventListener('click', () => {
+      startVoiceRecording().catch(() => {});
+    });
+    voiceStopBtn?.addEventListener('click', () => {
+      stopVoiceRecording();
+    });
+    voiceSendBtn?.addEventListener('click', async () => {
+      if (!voiceBlob) {
+        inboxStatus.textContent = 'Record your voice first, then Send.';
+        return;
+      }
+      if (voiceSendBtn) voiceSendBtn.disabled = true;
+      if (voiceMicBtn) voiceMicBtn.disabled = true;
+      inboxStatus.textContent = 'Sending voice for transcription…';
+      try {
+        const base64 = await blobToBase64(voiceBlob);
+        const result = await api.transcribeVoice({
+          base64,
+          mime: voiceMime,
+        });
+        if (result?.ok === false) {
+          inboxStatus.textContent = String(result.error || 'Voice input failed.');
+          if (voiceSendBtn) voiceSendBtn.disabled = false;
+          if (voiceMicBtn) voiceMicBtn.disabled = false;
+        }
+      } catch (err) {
+        inboxStatus.textContent = String(err?.message || err || 'Voice input failed.');
+        if (voiceSendBtn) voiceSendBtn.disabled = false;
+        if (voiceMicBtn) voiceMicBtn.disabled = false;
+      }
+    });
 
     function langLabelClass(id) {
       const key = String(id || 'en').toLowerCase().replace(/[^a-z]/g, '');
@@ -1038,6 +1245,7 @@ export function buildAiResultHtml(dark = false) {
       stageLocalFile(file).catch(() => {});
     });
     async function goNewPaste() {
+      clearVoiceState();
       stagedAttachment = null;
       syncAttachmentUi();
       if (api.newPaste) await api.newPaste();
