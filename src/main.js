@@ -13743,7 +13743,8 @@ app.whenReady().then(async () => {
   });
   startAutoUpdate();
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+    else raiseDockWindow();
   });
 });
 
