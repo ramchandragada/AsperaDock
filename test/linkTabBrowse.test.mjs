@@ -1,14 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  linkTabWindowOpenAction,
   isAuthOrLoginUrl,
   isGoogleOwnedUrl,
   mustKeepGoogleUrlInApp,
-  linkTabWindowOpenAction,
-  shouldAdoptLinkTabPopupUrl,
   isIdentityProviderUrl,
   isOauthCallbackUrl,
+  shouldAdoptLinkTabPopupUrl,
 } from '../src/guestNav.js';
+import {
+  shouldAdoptLinkTabPopupUrlAfterIdp,
+  linkTabSiteHome,
+} from '../src/linkTabAuthRecovery.js';
 
 /**
  * Mirrors Hub link-tab policy: Google auth may use a real popup; everything
@@ -50,34 +54,25 @@ test('Google search /url results unwrap into the same link tab (not a popup)', (
   );
 });
 
-test('shouldAdoptLinkTabPopupUrl accepts Canva post-login paths', () => {
-  // Regression: isAuthOrLoginUrl alone skipped these and left a blank Hub tab.
+test('legacy shouldAdoptLinkTabPopupUrl still accepts Canva paths (compat)', () => {
   assert.equal(isAuthOrLoginUrl('https://www.canva.com/login'), true);
   assert.equal(shouldAdoptLinkTabPopupUrl('https://www.canva.com/login'), true);
-  assert.equal(shouldAdoptLinkTabPopupUrl('https://www.canva.com/'), true);
-  assert.equal(
-    shouldAdoptLinkTabPopupUrl('https://www.canva.com/design/ABC/edit'),
-    true,
-  );
 });
 
-test('shouldAdoptLinkTabPopupUrl rejects IdP and OAuth callback URLs', () => {
+test('post-IdP adopt skips login shells (fixes 0.5.25 Canva white pane)', () => {
   assert.equal(
-    shouldAdoptLinkTabPopupUrl('https://accounts.google.com/o/oauth2/v2/auth'),
+    shouldAdoptLinkTabPopupUrlAfterIdp('https://www.canva.com/login', {
+      sawIdp: true,
+    }),
     false,
   );
   assert.equal(
-    shouldAdoptLinkTabPopupUrl(
-      'https://www.canva.com/login/oauth/callback?code=abc&state=1',
-    ),
-    false,
+    shouldAdoptLinkTabPopupUrlAfterIdp('https://www.canva.com/', { sawIdp: true }),
+    true,
   );
-  assert.equal(isOauthCallbackUrl('https://www.canva.com/?code=xyz'), true);
-  assert.equal(isIdentityProviderUrl('https://login.microsoftonline.com/common'), true);
+  assert.equal(linkTabSiteHome('https://www.canva.in/login'), 'https://www.canva.com/');
+  assert.equal(isIdentityProviderUrl('https://accounts.google.com/'), true);
+  assert.equal(isOauthCallbackUrl('https://www.canva.com/?code=x'), true);
   assert.equal(mustKeepGoogleUrlInApp('https://accounts.google.com/'), true);
   assert.equal(isGoogleOwnedUrl('https://www.google.com/search?q=canva'), true);
-  assert.equal(
-    shouldAdoptLinkTabPopupUrl('https://www.google.com/search?q=canva'),
-    false,
-  );
 });

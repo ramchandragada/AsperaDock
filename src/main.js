@@ -318,6 +318,13 @@ import {
   aiResultLocalUrl,
 } from './aiResultServer.js';
 import {
+  linkTabSiteHome,
+  isBlankOrErrorGuestUrl,
+  isPostAuthStuckUrl,
+  shouldAdoptLinkTabPopupUrlAfterIdp,
+  LINK_TAB_POST_AUTH_CHECK_MS,
+} from './linkTabAuthRecovery.js';
+import {
   isInternalUrl,
   isForbiddenGuestNavigation,
   isAuthOrLoginUrl,
@@ -331,7 +338,6 @@ import {
   isSameEcosystemUrl,
   isGoogleOauthClientUrl,
   shouldOpenInSystemBrowser,
-  shouldAdoptLinkTabPopupUrl,
   isIdentityProviderUrl,
   shouldOpenZohoSharedDeepLinkAsHubTab,
   isZohoAssetHost,
@@ -10199,11 +10205,9 @@ function attachPopupSessionAdopt(parentWc, childWindow, service) {
 /**
  * WhatsApp/Arattai / Web Search Hub link tabs (Canva, etc.): OAuth often
  * finishes in a floating popup while the dock tab stays blank. Fold the
- * post-login app page back into the same Hub tab.
- *
- * Do not adopt IdP URLs or one-time OAuth callbacks (opener must consume them).
- * Third-party /login paths (e.g. canva.com/login after Google) ARE adoptable —
- * isAuthOrLoginUrl alone was wrongly skipping them and leaving a white pane.
+ * post-login app page back into the same Hub tab — but only after the popup
+ * has visited an IdP, and never fold fragile /login shells (that aborted
+ * Google SSO and left a white pane on 0.5.25).
  */
 function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
   if (!(service?.isCustom || service?.linkTab)) return;
@@ -10211,6 +10215,7 @@ function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
 
   const childWc = childWindow.webContents;
   let adopting = false;
+  let sawIdp = false;
   let lastAdoptableUrl = '';
   let lastThirdPartyOrigin = '';
 
@@ -10247,8 +10252,9 @@ function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
     } catch {
       return;
     }
+    if (isIdentityProviderUrl(popupUrl)) sawIdp = true;
     rememberThirdParty(popupUrl);
-    if (shouldAdoptLinkTabPopupUrl(popupUrl)) {
+    if (shouldAdoptLinkTabPopupUrlAfterIdp(popupUrl, { sawIdp })) {
       lastAdoptableUrl = popupUrl;
       adoptIntoParent(popupUrl);
     }
@@ -10261,29 +10267,186 @@ function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
   setTimeout(tryAdopt, 300);
   setTimeout(tryAdopt, 1200);
 
-  // If the popup closes itself after login and we never adopted (e.g. brief
-  // callback URL then close), fold the last safe app URL into the parent.
   childWindow.on('closed', () => {
     if (adopting || parentWc.isDestroyed()) return;
-    const fallback = lastAdoptableUrl || lastThirdPartyOrigin;
-    if (!fallback) return;
+    const home =
+      linkTabSiteHome(lastAdoptableUrl || lastThirdPartyOrigin) ||
+      lastAdoptableUrl ||
+      lastThirdPartyOrigin;
+    if (!home || !sawIdp) return;
     let parentUrl = '';
     try {
       parentUrl = parentWc.getURL();
     } catch {
       parentUrl = '';
     }
-    const parentStuck =
-      !parentUrl ||
-      parentUrl === 'about:blank' ||
-      parentUrl.startsWith('about:blank') ||
-      isIdentityProviderUrl(parentUrl) ||
-      isAuthOrLoginUrl(parentUrl) ||
-      (isGoogleOwnedUrl(parentUrl) &&
-        (parentUrl.includes('/search') || parentUrl.includes('/url')));
-    if (parentStuck) {
-      adoptIntoParent(fallback, { closePopup: false });
+    if (isPostAuthStuckUrl(parentUrl) || isBlankOrErrorGuestUrl(parentUrl)) {
+      adoptIntoParent(home, { closePopup: false });
     }
+  });
+}
+
+/**
+ * Same-tab Google SSO (Canva in Web Search tabs): after accounts.google.com
+ * returns, the guest often paints white / about:blank with dead Back/Forward.
+ * Force the product home once cookies are in the shared partition.
+ */
+function attachLinkTabAuthRecovery(webContents, service) {
+  if (!(service?.isCustom || service?.linkTab)) return;
+  if (!webContents || webContents.isDestroyed()) return;
+
+  let sawIdp = false;
+  let returnOrigin = '';
+  let lastNonIdpUrl = '';
+  let recovering = false;
+  /** @type {ReturnType<typeof setTimeout>[]} */
+  const timers = [];
+
+  const clearTimers = () => {
+    for (const t of timers.splice(0, timers.length)) clearTimeout(t);
+  };
+
+  const captureReturnOrigin = (fromUrl) => {
+    const home = linkTabSiteHome(fromUrl);
+    if (home) {
+      try {
+        returnOrigin = new URL(home).origin;
+      } catch {
+        returnOrigin = '';
+      }
+    }
+  };
+
+  const resolveHome = (cur) =>
+    linkTabSiteHome(cur) ||
+    linkTabSiteHome(returnOrigin) ||
+    linkTabSiteHome(lastNonIdpUrl) ||
+    linkTabSiteHome(lastGoodUrls.get(service.id)) ||
+    linkTabSiteHome(service.url);
+
+  const navigateHome = (reason, cur) => {
+    if (recovering || webContents.isDestroyed()) return;
+    const home = resolveHome(cur);
+    if (!home) return;
+    recovering = true;
+    clearTimers();
+    try {
+      logBreadcrumb('link-tab-post-auth-recover', {
+        reason,
+        serviceId: service.id,
+        from: cur,
+        home,
+      });
+    } catch {
+      // ignore
+    }
+    webContents.loadURL(home).catch(() => {});
+    rememberGoodUrl(service.id, home);
+    setTimeout(() => {
+      recovering = false;
+      sawIdp = false;
+    }, 2500);
+  };
+
+  const tryRecover = (reason) => {
+    if (recovering || webContents.isDestroyed()) return;
+    if (service.id !== activeServiceId) return;
+    let cur = '';
+    try {
+      cur = String(webContents.getURL() || '');
+    } catch {
+      return;
+    }
+    if (!sawIdp) return;
+    if (isIdentityProviderUrl(cur)) return;
+    if (!isPostAuthStuckUrl(cur) && !isBlankOrErrorGuestUrl(cur)) {
+      // Landed on a normal app URL — clear the journey unless still white (visual).
+      return;
+    }
+    navigateHome(reason, cur);
+  };
+
+  const checkVisual = async () => {
+    if (!sawIdp || recovering || webContents.isDestroyed()) return;
+    if (service.id !== activeServiceId) return;
+    let cur = '';
+    try {
+      cur = String(webContents.getURL() || '');
+    } catch {
+      return;
+    }
+    if (isIdentityProviderUrl(cur)) return;
+    if (isPostAuthStuckUrl(cur) || isBlankOrErrorGuestUrl(cur)) {
+      navigateHome('visual-url-stuck', cur);
+      return;
+    }
+    try {
+      const blank = await isGuestVisuallyBlank(webContents);
+      if (blank) navigateHome('visual-blank', cur);
+      else {
+        sawIdp = false;
+        clearTimers();
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  const scheduleRecover = (reason) => {
+    clearTimers();
+    for (const ms of LINK_TAB_POST_AUTH_CHECK_MS) {
+      timers.push(setTimeout(() => tryRecover(reason), ms));
+      timers.push(
+        setTimeout(() => {
+          checkVisual().catch(() => {});
+        }, ms + 250),
+      );
+    }
+  };
+
+  const onNav = (_event, url) => {
+    const href = String(url || '');
+    if (isIdentityProviderUrl(href)) {
+      sawIdp = true;
+      recovering = false;
+      if (lastNonIdpUrl) captureReturnOrigin(lastNonIdpUrl);
+      if (!returnOrigin) captureReturnOrigin(service.url);
+      return;
+    }
+    if (href.startsWith('http') && !isGoogleOwnedUrl(href)) {
+      lastNonIdpUrl = href;
+      captureReturnOrigin(href);
+    }
+    if (!sawIdp) return;
+    scheduleRecover('left-idp');
+    if (isBlankOrErrorGuestUrl(href) || isPostAuthStuckUrl(href)) {
+      timers.push(setTimeout(() => tryRecover('immediate-stuck'), 400));
+    }
+  };
+
+  webContents.on('did-navigate', onNav);
+  webContents.on('did-navigate-in-page', onNav);
+  webContents.on('did-finish-load', () => {
+    if (!sawIdp) return;
+    try {
+      const cur = String(webContents.getURL() || '');
+      if (isBlankOrErrorGuestUrl(cur) || isPostAuthStuckUrl(cur)) {
+        scheduleRecover('finish-load-stuck');
+      } else {
+        timers.push(
+          setTimeout(() => {
+            checkVisual().catch(() => {});
+          }, 1800),
+        );
+      }
+    } catch {
+      // ignore
+    }
+  });
+  webContents.on('did-fail-load', (_e, _code, _desc, validatedURL, isMainFrame) => {
+    if (!isMainFrame || !sawIdp) return;
+    timers.push(setTimeout(() => tryRecover('fail-load'), 300));
+    void validatedURL;
   });
 }
 
@@ -10447,6 +10610,7 @@ function createViewForService(service) {
   configureGuestWindowOpen(webContents, service);
   attachGuestContextMenu(webContents);
   attachGuestNavigationGate(webContents, service);
+  attachLinkTabAuthRecovery(webContents, service);
   if (isHeavyPortalApp(service) || isKeepWarmService(service.id)) {
     // Safe Mode: do not spoof Page Visibility on WhatsApp.
     if (!whatsappAutomationBlocked(settings, service.appId)) {
@@ -11251,16 +11415,23 @@ function activateService(id) {
   });
   setGuestHubActiveFlag(wc, true);
 
-  // Recover blank Hub link tabs (redirect was previously cancelled mid-load).
+  // Recover blank Hub link tabs after SSO / failed redirects.
   if (service.isCustom && wc && !wc.isDestroyed()) {
     try {
       const cur = String(wc.getURL() || '');
-      const target = startUrlForService(service) || service.url;
+      const remembered = lastGoodUrls.get(service.id) || '';
+      const home =
+        linkTabSiteHome(cur) ||
+        linkTabSiteHome(remembered) ||
+        linkTabSiteHome(service.url);
+      const target =
+        (home && home.startsWith('http') ? home : '') ||
+        startUrlForService(service) ||
+        service.url;
       if (
         target &&
         target.startsWith('http') &&
-        (!cur ||
-          cur === 'about:blank' ||
+        (isBlankOrErrorGuestUrl(cur) ||
           cur.startsWith('chrome-error://') ||
           cur === 'chrome://blank/')
       ) {
