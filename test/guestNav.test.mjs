@@ -15,6 +15,7 @@ import {
   isMessagingAppId,
   isAllowedMessagingTabUrl,
   isSameEcosystemUrl,
+  gmailWindowOpenAction,
 } from '../src/guestNav.js';
 
 test('isForbiddenGuestNavigation blocks file and javascript', () => {
@@ -151,4 +152,32 @@ test('messaging apps: Google is not same-ecosystem (Hub tab, not in-chat load)',
   assert.equal(isSameEcosystemUrl(wa, 'https://web.whatsapp.com/'), true);
   // Gmail still treats Google as ecosystem.
   assert.equal(isSameEcosystemUrl(gmail, drive), true);
+});
+
+test('gmailWindowOpenAction: email links → hub-tab; OAuth → popup; blank → blank-popup', () => {
+  assert.equal(gmailWindowOpenAction('about:blank'), 'blank-popup');
+  assert.equal(gmailWindowOpenAction(''), 'blank-popup');
+  assert.equal(
+    gmailWindowOpenAction('https://accounts.google.com/o/oauth2/v2/auth?client_id=x'),
+    'oauth-popup',
+  );
+  assert.equal(
+    gmailWindowOpenAction('https://2507573.apps.googleusercontent.com/'),
+    'oauth-popup',
+  );
+  assert.equal(
+    gmailWindowOpenAction('https://drive.google.com/file/d/abc/view'),
+    'hub-tab',
+  );
+  assert.equal(
+    gmailWindowOpenAction('https://www.flexiloans.com/dashboard'),
+    'hub-tab',
+  );
+  assert.equal(
+    gmailWindowOpenAction(
+      'https://www.google.com/url?q=https%3A%2F%2Fcybercrime.gov.in%2F&sa=D',
+    ),
+    'hub-tab',
+  );
+  assert.equal(gmailWindowOpenAction('javascript:alert(1)'), 'deny');
 });

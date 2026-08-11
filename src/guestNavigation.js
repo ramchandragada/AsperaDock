@@ -15,6 +15,7 @@ import {
   shouldOpenZohoSharedDeepLinkAsHubTab,
   isMessagingAppId,
   isAllowedMessagingTabUrl,
+  gmailWindowOpenAction,
 } from './guestNav.js';
 
 /**
@@ -80,6 +81,21 @@ export function configureGuestWindowOpen(wc, service, api) {
         return { action: 'deny' };
       }
 
+      // Gmail: email links → Hub tab. Only OAuth/SSO stays a floating popup.
+      // (about:blank is allowed above; attachGmailPopupAdopt folds it later.)
+      if (isGoogleService(live)) {
+        const action = gmailWindowOpenAction(raw);
+        if (action === 'oauth-popup') {
+          return allowPopup();
+        }
+        if (action === 'hub-tab') {
+          const target = extractGoogleOutboundUrl(raw) || raw;
+          handleOutboundOrNewWindowLink(live, target, wc, { allowHubTab: true });
+          return { action: 'deny' };
+        }
+        return { action: 'deny' };
+      }
+
       // Catalog apps: same-ecosystem window.opens stay in-app (or auth popup).
       // Zoho CRM/Books/One deep links are an exception — open as shared Hub tabs.
       if (!(live?.isCustom || live?.linkTab) && isSameEcosystemUrl(live, raw)) {
@@ -88,10 +104,6 @@ export function configureGuestWindowOpen(wc, service, api) {
           (isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) ||
           mustKeepGoogleUrlInApp(raw)
         ) {
-          return allowPopup();
-        }
-        if (isGoogleService(live) && !isAllowedGmailTabUrl(raw)) {
-          // Calendar/Meet/Drive side UIs — real popup, not a top-bar tab.
           return allowPopup();
         }
         try {
@@ -110,37 +122,6 @@ export function configureGuestWindowOpen(wc, service, api) {
           return { action: 'deny' };
         }
         wc.loadURL(raw).catch(() => {});
-        return { action: 'deny' };
-      }
-
-      if (isGoogleService(live)) {
-        const outbound = extractGoogleOutboundUrl(raw);
-        if (outbound) {
-          if (
-            isGoogleOauthClientUrl(outbound) ||
-            mustKeepGoogleUrlInApp(outbound) ||
-            isGoogleOwnedUrl(outbound)
-          ) {
-            if (isGoogleOauthClientUrl(outbound) || !isAllowedGmailTabUrl(outbound)) {
-              return allowPopup();
-            }
-            wc.loadURL(outbound).catch(() => {});
-            return { action: 'deny' };
-          }
-          // True third-party from an email link wrapper only.
-          handleOutboundOrNewWindowLink(live, outbound, wc, { allowHubTab: true });
-          return { action: 'deny' };
-        }
-        if (isGoogleOauthClientUrl(raw) || isGoogleOwnedUrl(raw)) {
-          if (isGoogleOauthClientUrl(raw) || !isAllowedGmailTabUrl(raw)) {
-            return allowPopup();
-          }
-          wc.loadURL(raw).catch(() => {});
-          return { action: 'deny' };
-        }
-        // Non-Google from Gmail window.open during SSO: never Hub-tab (breaks login).
-        // Open in system browser; user can still "Open in Hub tab" from the menu.
-        handleOutboundOrNewWindowLink(live, raw, wc, { allowHubTab: false });
         return { action: 'deny' };
       }
 
@@ -207,11 +188,17 @@ export function attachGuestNavigationGate(webContents, service, api) {
           mustKeepGoogleUrlInApp(outbound) ||
           isGoogleOwnedUrl(outbound)
         ) {
-          // Keep SSO inside Hub; never Hub-tab OAuth client hosts.
+          const action = gmailWindowOpenAction(outbound);
+          if (action === 'hub-tab') {
+            handleOutboundOrNewWindowLink(live, outbound, webContents, {
+              allowHubTab: true,
+            });
+            return;
+          }
+          // OAuth/SSO: keep Gmail on current page; popup handler covers auth.
           if (isAllowedGmailTabUrl(outbound) && !isGoogleOauthClientUrl(outbound)) {
             webContents.loadURL(outbound).catch(() => {});
           }
-          // else: leave Gmail on current page; popup handler covers OAuth
           return;
         }
         handleOutboundOrNewWindowLink(live, outbound, webContents, {
@@ -221,13 +208,20 @@ export function attachGuestNavigationGate(webContents, service, api) {
       }
       if (isGoogleOauthClientUrl(url) || (isGoogleOwnedUrl(url) && !isAllowedGmailTabUrl(url))) {
         event.preventDefault();
-        // Don't replace Gmail with OAuth/client-channel URLs; stay put.
+        const action = gmailWindowOpenAction(url);
+        if (action === 'hub-tab') {
+          handleOutboundOrNewWindowLink(live, url, webContents, {
+            allowHubTab: true,
+          });
+        }
+        // OAuth: don't replace Gmail; popup handler covers client hosts.
         return;
       }
       if (!isAllowedGmailTabUrl(url)) {
         event.preventDefault();
-        // Never auto Hub-tab during Gmail navigation/SSO noise.
-        handleOutboundOrNewWindowLink(live, url, webContents, { allowHubTab: false });
+        handleOutboundOrNewWindowLink(live, url, webContents, {
+          allowHubTab: true,
+        });
         return;
       }
       return;

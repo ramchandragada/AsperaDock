@@ -329,6 +329,7 @@ import {
   isZohoAssetHost,
   isMessagingAppId,
   isAllowedMessagingTabUrl,
+  gmailWindowOpenAction,
 } from './guestNav.js';
 import {
   resolveLinkHandling,
@@ -2179,13 +2180,33 @@ function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
   }
   // Catalog apps (Gmail/Zoho/…): same-ecosystem URLs stay in-tab — except Zoho
   // CRM/Books/One deep links, which open as shared-login Hub tabs (multi-screen).
+  // Gmail email links pass allowHubTab: true → Hub tab (keep inbox; no popup).
   if (!(service?.isCustom || service?.linkTab) && isSameEcosystemUrl(service, href)) {
     if (
       isGoogleOauthClientUrl(href) ||
       (isAuthOrLoginUrl(href) && isGoogleOwnedUrl(href)) ||
-      mustKeepGoogleUrlInApp(href)
+      (mustKeepGoogleUrlInApp(href) && !allowHubTab)
     ) {
       return false; // real popup
+    }
+    if (
+      allowHubTab &&
+      isGoogleService(service) &&
+      shouldOpenAsHubTab(effectiveLinkHandling(service))
+    ) {
+      const opened = openUrlAsHubAppTab(href, service);
+      if (!opened.ok && opened.error) {
+        const errBox = {
+          type: 'warning',
+          buttons: ['OK'],
+          defaultId: 0,
+          title: 'Could not open Hub tab',
+          message: opened.error,
+        };
+        if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+        else dialog.showMessageBox(errBox).catch(() => {});
+      }
+      return true;
     }
     if (isGoogleService(service) && !isAllowedGmailTabUrl(href)) {
       return false; // allow popup / stay; do not Hub-tab Google side UIs
@@ -2212,7 +2233,7 @@ function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
     return false;
   }
   // Gmail sign-in / SSO must never spawn Hub link tabs (e.g. 2507573.apps…).
-  // Only explicit email-link unwraps pass allowHubTab: true.
+  // Email-link unwraps and window.open targets pass allowHubTab: true.
   if (isGoogleService(service) && !(service?.isCustom || service?.linkTab) && !allowHubTab) {
     if (shouldOpenInSystemBrowser(href)) openExternalSafe(href);
     return true;
@@ -10192,6 +10213,80 @@ function attachZohoPopupAdoptToHubTab(parentWc, childWindow, service) {
   setTimeout(tryAdopt, 400);
 }
 
+/**
+ * Gmail often window.opens about:blank then navigates the popup to the email
+ * link. Under Hub-tab mode, fold that destination into an app-bar tab and
+ * close the floating window — otherwise users see a blank Aspera Hub window.
+ * OAuth/SSO client popups stay floating.
+ */
+function attachGmailPopupAdoptToHubTab(_parentWc, childWindow, service) {
+  if (!isGoogleService(service)) return;
+  if (!shouldOpenAsHubTab(effectiveLinkHandling(service))) return;
+
+  const childWc = childWindow.webContents;
+  let adopting = false;
+
+  const closeChild = () => {
+    setTimeout(() => {
+      try {
+        if (!childWindow.isDestroyed()) childWindow.close();
+      } catch {
+        // ignore
+      }
+    }, 120);
+  };
+
+  const tryAdopt = () => {
+    if (adopting || childWindow.isDestroyed()) return;
+    let popupUrl = '';
+    try {
+      popupUrl = childWc.getURL();
+    } catch {
+      return;
+    }
+    if (!popupUrl || popupUrl === 'about:blank' || popupUrl.startsWith('about:blank')) {
+      return;
+    }
+    if (!popupUrl.startsWith('http')) return;
+
+    const action = gmailWindowOpenAction(popupUrl);
+    if (action === 'oauth-popup') return;
+    if (action !== 'hub-tab') return;
+
+    const target = extractGoogleOutboundUrl(popupUrl) || popupUrl;
+    const opened = openUrlAsHubAppTab(target, service);
+    if (!opened.ok) return;
+    adopting = true;
+    closeChild();
+  };
+
+  childWc.on('did-navigate', tryAdopt);
+  childWc.on('did-navigate-in-page', tryAdopt);
+  childWc.on('did-finish-load', tryAdopt);
+  childWc.on('will-redirect', (_e, url) => {
+    // Redirect targets are visible via getURL after the event; retry shortly.
+    setTimeout(tryAdopt, 0);
+    void url;
+  });
+  setTimeout(tryAdopt, 400);
+  setTimeout(tryAdopt, 1500);
+
+  // Stuck blank popups (opener never assigned a URL) — close so they don't
+  // linger as empty Aspera Hub windows.
+  setTimeout(() => {
+    if (adopting || childWindow.isDestroyed()) return;
+    let u = '';
+    try {
+      u = childWc.getURL();
+    } catch {
+      return;
+    }
+    if (!u || u === 'about:blank' || u.startsWith('about:blank')) {
+      closeChild();
+    }
+  }, 8000);
+}
+
 function createViewForService(service) {
   const cfg = getAppConfig(service.id);
   const partitionSession = session.fromPartition(service.partition);
@@ -10263,6 +10358,7 @@ function createViewForService(service) {
     attachPopupSessionAdopt(webContents, childWindow, service);
     attachLinkTabPopupAdopt(webContents, childWindow, service);
     attachZohoPopupAdoptToHubTab(webContents, childWindow, service);
+    attachGmailPopupAdoptToHubTab(webContents, childWindow, service);
     if (isGoogleService(service)) {
       attachGoogleChromeSpoof(childWc, {
         chromeVersion: CHROME_VERSION,

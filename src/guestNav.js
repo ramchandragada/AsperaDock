@@ -328,6 +328,37 @@ export function isAllowedMessagingTabUrl(service, url) {
 }
 
 /**
+ * How Gmail should treat window.open / outbound targets under Hub-tab mode.
+ *
+ * Gmail often opens `about:blank` first (then navigates). That must stay a
+ * brief real popup so the opener script can assign a URL — a later adopt
+ * folds it into a Hub tab. OAuth/SSO client hosts also need a real popup.
+ * Every other http(s) link becomes a Hub app-bar tab (never a blank floating
+ * Aspera Hub window left on screen).
+ *
+ * @returns {'blank-popup'|'oauth-popup'|'hub-tab'|'deny'}
+ */
+export function gmailWindowOpenAction(url) {
+  const raw = String(url || '');
+  if (!raw || raw === 'about:blank' || raw.startsWith('about:blank')) {
+    return 'blank-popup';
+  }
+  if (!/^https?:\/\//i.test(raw)) return 'deny';
+
+  let target = raw;
+  try {
+    const unwrapped = extractGoogleOutboundUrl(raw);
+    if (unwrapped) target = unwrapped;
+  } catch {
+    // ignore
+  }
+
+  if (isGoogleOauthClientUrl(target)) return 'oauth-popup';
+  if (isAuthOrLoginUrl(target) && isGoogleOwnedUrl(target)) return 'oauth-popup';
+  return 'hub-tab';
+}
+
+/**
  * Same product/ecosystem as the catalog app — must stay in that Hub tab
  * (or a real auth popup). Never becomes a surprise top-bar link tab.
  * Exception: Zoho CRM/Books/One deep links may open as shared Hub tabs (see
