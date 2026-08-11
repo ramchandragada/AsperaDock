@@ -7053,18 +7053,6 @@ function applyProxyToAllSessions() {
 
 /** Partitions that already had permission/download handlers attached. */
 const configuredPartitions = new Set();
-/** partitionKey → timestamp until which accounts.google.com must stay on Chrome UA (Canva SSO). */
-const thirdPartyOauthChromeUntil = new Map();
-
-function markThirdPartyOauthChrome(partitionKey, ms = 15 * 60_000) {
-  if (!partitionKey) return;
-  thirdPartyOauthChromeUntil.set(partitionKey, Date.now() + ms);
-}
-
-function prefersChromeAccountsUa(partitionKey) {
-  const until = thirdPartyOauthChromeUntil.get(partitionKey) || 0;
-  return Date.now() < until;
-}
 
 /** Resolve Hub service for a guest/popup webContents (for UA / spoof policy). */
 function serviceForWebContentsId(wcId) {
@@ -7171,7 +7159,7 @@ function configureSession(partitionSession, partitionKey) {
         firefoxAccountsUA: FIREFOX_ACCOUNTS_UA,
         secChUa: SEC_CH_UA,
         enabled: settings.googleSpoofEnabled !== false,
-        preferChromeAccounts: true,
+        preferChromeAccounts: false,
       });
       callback({ cancel: false, requestHeaders: next });
     },
@@ -10407,6 +10395,91 @@ function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
 }
 
 /**
+ * Soft recovery when Google shows “This browser or app may not be secure”.
+ * Hub already forces Firefox UA on accounts.google.com; if Google still blocks,
+ * offer one reload with the Firefox accounts UA pinned on the webContents.
+ */
+function attachGoogleSecureBrowserGuard(webContents, _service) {
+  if (!webContents || webContents.isDestroyed()) return;
+  let offered = false;
+
+  const pageLooksBlocked = async () => {
+    try {
+      return Boolean(
+        await webContents.executeJavaScript(
+          `(() => {
+            const t = String(document.title || '') + ' ' + String(document.body && document.body.innerText || '').slice(0, 4000);
+            return /couldn.?t sign you in|may not be secure|browser or app may not be secure/i.test(t);
+          })()`,
+          true,
+        ),
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  const maybeOffer = async (url) => {
+    if (offered || webContents.isDestroyed()) return;
+    const href = String(url || '');
+    let blocked = isGoogleInsecureBrowserErrorUrl(href);
+    if (!blocked) {
+      try {
+        const host = new URL(href).hostname.toLowerCase();
+        if (
+          host === 'accounts.google.com' ||
+          host.endsWith('.accounts.google.com')
+        ) {
+          blocked = await pageLooksBlocked();
+        }
+      } catch {
+        return;
+      }
+    }
+    if (!blocked || offered || webContents.isDestroyed()) return;
+    offered = true;
+    try {
+      const box = {
+        type: 'warning',
+        buttons: ['Try again', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1,
+        title: 'Google sign-in',
+        message: "Google blocked this sign-in",
+        detail:
+          'Google reported this browser as not secure. Hub will retry with a safer sign-in profile.',
+      };
+      const result =
+        mainWindow && !mainWindow.isDestroyed()
+          ? await dialog.showMessageBox(mainWindow, box)
+          : await dialog.showMessageBox(box);
+      if (result.response !== 0 || webContents.isDestroyed()) return;
+      try {
+        webContents.setUserAgent(FIREFOX_ACCOUNTS_UA);
+      } catch {
+        // ignore
+      }
+      webContents.reload();
+    } catch {
+      // ignore
+    }
+  };
+
+  const onNav = (_event, url) => {
+    void maybeOffer(url);
+  };
+  webContents.on('did-navigate', onNav);
+  webContents.on('did-navigate-in-page', onNav);
+  webContents.on('did-finish-load', () => {
+    try {
+      void maybeOffer(webContents.getURL());
+    } catch {
+      // ignore
+    }
+  });
+}
+
+/**
  * Same-tab Google SSO / Canva: only recover wiped about:blank documents.
  * Never interrupt OAuth handoffs or white-but-valid Canva shells (visual blank
  * recovery caused login loops). Applies to link tabs and the Canva catalog app.
@@ -10499,7 +10572,6 @@ function attachLinkTabAuthRecovery(webContents, service) {
       recovering = false;
       if (lastNonIdpUrl) captureReturnOrigin(lastNonIdpUrl);
       if (!returnOrigin) captureReturnOrigin(service.url);
-      if (service.partition) markThirdPartyOauthChrome(service.partition);
       return;
     }
     if (href.startsWith('http') && !isGoogleOwnedUrl(href)) {
