@@ -461,6 +461,21 @@ export function isSameEcosystemUrl(service, url) {
   if (isInternalUrl(url, service)) return true;
   const appId = String(service.appId || '');
   if (appId === 'gmail' && isGoogleOwnedUrl(url)) return true;
+  if (appId === 'canva') {
+    try {
+      const host = new URL(String(url || '')).hostname.toLowerCase();
+      if (
+        host === 'canva.com' ||
+        host.endsWith('.canva.com') ||
+        host === 'canva.in' ||
+        host.endsWith('.canva.in')
+      ) {
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+  }
   if (appId.startsWith('zoho') && isZohoOwnedUrl(url)) return true;
   return false;
 }

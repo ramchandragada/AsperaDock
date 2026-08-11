@@ -11,7 +11,8 @@ export function buildAiResultHtml(dark = false) {
 <html>
 <head>
 <meta charset="UTF-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; media-src 'self' blob: mediastream:;" />
+<meta http-equiv="Permissions-Policy" content="microphone=(self), camera=()" />
 <style>
   html, body {
     margin:0; padding:0; width:100%; height:100%;

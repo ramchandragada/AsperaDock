@@ -11,7 +11,7 @@
 import { logBreadcrumb } from '../errorReporter.js';
 import { applyGoogleRequestHeaders } from './googleHeaders.js';
 
-export { applyGoogleRequestHeaders } from './googleHeaders.js';
+export { applyGoogleRequestHeaders, isThirdPartyGoogleOauthRequest, isGoogleAccountsOauthPath } from './googleHeaders.js';
 
 const marketingNoted = new Set();
 

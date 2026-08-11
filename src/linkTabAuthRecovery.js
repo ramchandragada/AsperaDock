@@ -1,10 +1,8 @@
 /**
- * Hub link tabs (Web Search → Canva, etc.): recover blank panes after SSO.
+ * Hub link tabs / Canva SSO recovery helpers.
  *
- * IMPORTANT: never navigate away from OAuth callbacks or live /login handoffs —
- * doing so (v0.5.28) aborted Google SSO and bounced users back to “log in again”.
- * Only recover true blank/error documents; preserve the site’s own host (canva.in
- * must not be rewritten to canva.com).
+ * Never interrupt OAuth handoffs. Only recover wiped about:blank documents.
+ * Preserve canva.in vs canva.com hosts for cookie affinity.
  */
 
 import {
@@ -14,10 +12,6 @@ import {
   isOauthCallbackUrl,
 } from './guestNav.js';
 
-/**
- * Product home for a link-tab URL — keep the same site host/TLD so SSO cookies
- * (e.g. canva.in) are not abandoned by jumping to another domain.
- */
 export function linkTabSiteHome(url) {
   try {
     const u = new URL(String(url || ''));
@@ -49,30 +43,19 @@ export function isBlankOrErrorGuestUrl(url) {
   return false;
 }
 
-/**
- * True while an OAuth / login handoff must not be interrupted.
- */
 export function isOauthHandoffUrl(url) {
   if (!url || !String(url).startsWith('http')) return false;
   if (isIdentityProviderUrl(url)) return true;
   if (isOauthCallbackUrl(url)) return true;
-  // App login shells often finish the Google redirect — leave them alone.
   if (isAuthOrLoginUrl(url) && !isGoogleOwnedUrl(url)) return true;
   return false;
 }
 
-/**
- * Only wiped documents count as “stuck” for forced recovery.
- * Login pages and OAuth callbacks are NOT stuck — they are in progress.
- */
+/** Only wiped documents — never login/callback pages. */
 export function isPostAuthStuckUrl(url) {
   return isBlankOrErrorGuestUrl(url);
 }
 
-/**
- * Only adopt popup URLs into the Hub tab after the popup has visited an IdP,
- * and never fold login/callback shells (that aborts SSO).
- */
 export function shouldAdoptLinkTabPopupUrlAfterIdp(popupUrl, { sawIdp = false } = {}) {
   const raw = String(popupUrl || '').trim();
   if (!raw.startsWith('http')) return false;
@@ -83,5 +66,20 @@ export function shouldAdoptLinkTabPopupUrlAfterIdp(popupUrl, { sawIdp = false } 
   return true;
 }
 
-/** Blank-only checks — give SSO time to finish before any recovery. */
-export const LINK_TAB_POST_AUTH_CHECK_MS = [5000, 9000, 14000];
+/** True if URL should open as the Canva catalog app instead of a link tab. */
+export function isCanvaAppUrl(url) {
+  try {
+    const host = new URL(String(url || '')).hostname.toLowerCase();
+    return (
+      host === 'canva.com' ||
+      host.endsWith('.canva.com') ||
+      host === 'canva.in' ||
+      host.endsWith('.canva.in')
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Blank-only, delayed — give SSO and Canva hydrate time. */
+export const LINK_TAB_POST_AUTH_CHECK_MS = [8000, 14000];
