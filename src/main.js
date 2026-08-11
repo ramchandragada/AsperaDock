@@ -311,6 +311,9 @@ import {
   registerChromeScheme,
   attachChromeProtocolHandler,
   chromeAppUrl,
+  setChromeDynamicHtml,
+  AI_RESULT_CHROME_PATH,
+  aiResultChromeUrl,
 } from './chromeProtocol.js';
 import {
   isInternalUrl,
@@ -4251,12 +4254,31 @@ function openAiResultWindow({ title, meta, dark = false, initialPayload = null }
   } catch {
     // ignore
   }
-  win.loadURL(
-    `data:text/html;charset=utf-8,${encodeURIComponent(buildAiResultHtml(!!dark))}`,
-  );
+  // Serve via privileged asperadock:// (secure context) — data: URLs hide
+  // navigator.mediaDevices, so voice showed "mic not available" with a working headset.
+  setChromeDynamicHtml(AI_RESULT_CHROME_PATH, buildAiResultHtml(!!dark));
+  win.loadURL(aiResultChromeUrl(!!dark)).catch(() => {
+    win
+      .loadURL(
+        `data:text/html;charset=utf-8,${encodeURIComponent(buildAiResultHtml(!!dark))}`,
+      )
+      .catch(() => {});
+  });
   try {
-    win.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
-      callback(permission === 'media' || permission === 'clipboard-read');
+    const sess = win.webContents.session;
+    sess.setPermissionRequestHandler((_wc, permission, callback) => {
+      callback(
+        permission === 'media' ||
+          permission === 'mediaKeySystem' ||
+          permission === 'clipboard-read',
+      );
+    });
+    sess.setPermissionCheckHandler((_wc, permission) => {
+      return (
+        permission === 'media' ||
+        permission === 'mediaKeySystem' ||
+        permission === 'clipboard-read'
+      );
     });
   } catch {
     // ignore

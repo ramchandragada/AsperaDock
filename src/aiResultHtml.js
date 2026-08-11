@@ -374,7 +374,7 @@ export function buildAiResultHtml(dark = false) {
     async function startVoiceRecording() {
       if (!navigator.mediaDevices?.getUserMedia) {
         inboxStatus.textContent =
-          'Microphone not available in this window — paste text instead.';
+          'Microphone API unavailable in this panel — update Aspera Hub, or paste text instead.';
         return;
       }
       if (typeof MediaRecorder === 'undefined') {
@@ -383,7 +383,12 @@ export function buildAiResultHtml(dark = false) {
       }
       try {
         stopVoiceStream();
-        voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        voiceStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+          },
+        });
         voiceChunks = [];
         voiceBlob = null;
         const mimeType = pickVoiceMimeType();
@@ -422,9 +427,20 @@ export function buildAiResultHtml(dark = false) {
       } catch (err) {
         stopVoiceStream();
         resetVoiceUi();
-        inboxStatus.textContent = String(
-          err?.message || err || 'Could not access microphone.',
-        );
+        const name = String(err?.name || '');
+        const msg = String(err?.message || err || '');
+        if (name === 'NotFoundError' || /not found|no device/i.test(msg)) {
+          inboxStatus.textContent =
+            'No microphone found — check Sound settings (Bluetooth headsets need Headset/Handsfree profile) and try again.';
+        } else if (name === 'NotAllowedError' || /permission|denied|not allowed/i.test(msg)) {
+          inboxStatus.textContent =
+            'Microphone permission denied — allow mic access for Aspera Hub and try again.';
+        } else if (name === 'NotReadableError' || /busy|in use|readable/i.test(msg)) {
+          inboxStatus.textContent =
+            'Microphone is busy in another app — close that app or switch the input device, then try again.';
+        } else {
+          inboxStatus.textContent = msg || 'Could not access microphone.';
+        }
       }
     }
 
