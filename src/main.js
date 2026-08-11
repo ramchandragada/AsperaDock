@@ -360,8 +360,7 @@ import {
   isGoogleMailAppUrl,
   attachGoogleChromeSpoof,
   applyGoogleRequestHeaders,
-  isThirdPartyGoogleOauthRequest,
-  isGoogleAccountsOauthPath,
+  isGoogleInsecureBrowserErrorUrl,
   noteGoogleMarketingLanding,
 } from './vendors/google.js';
 import { reclaimServiceHomeIfWrongProduct as reclaimZohoHome } from './vendors/zoho.js';
@@ -7141,42 +7140,25 @@ function configureSession(partitionSession, partitionKey) {
       const isAccounts =
         host === 'accounts.google.com' || host.endsWith('.accounts.google.com');
 
+      // accounts.google.com FIRST — never send Chrome UA here (Google blocks Electron).
+      if (isAccounts) {
+        const next = applyGoogleRequestHeaders(headers, details.url, {
+          chromeUA: CHROME_USER_AGENT,
+          firefoxAccountsUA: FIREFOX_ACCOUNTS_UA,
+          secChUa: SEC_CH_UA,
+          enabled: settings.googleSpoofEnabled !== false,
+          preferChromeAccounts: false,
+        });
+        callback({ cancel: false, requestHeaders: next });
+        return;
+      }
+
       if (isCanvaHost || svc?.appId === 'canva' || svc?.linkTab || svc?.isCustom) {
         // Match real Chrome — Cloudflare (Ray ID …-BOM) rejects mismatched CH.
         headers['User-Agent'] = CHROME_USER_AGENT;
         headers['sec-ch-ua'] = SEC_CH_UA;
         headers['sec-ch-ua-mobile'] = '?0';
         headers['sec-ch-ua-platform'] = '"Linux"';
-      }
-
-      if (isAccounts) {
-        const thirdPartyHit = isThirdPartyGoogleOauthRequest(details.url, headers);
-        if (thirdPartyHit) markThirdPartyOauthChrome(partitionKey);
-        // Sticky Chrome for whole Canva OAuth journey (consent pages omit "canva").
-        if (
-          prefersChromeAccountsUa(partitionKey) &&
-          isGoogleAccountsOauthPath(details.url)
-        ) {
-          markThirdPartyOauthChrome(partitionKey);
-        }
-        const useChromeAccounts =
-          prefersChromeAccountsUa(partitionKey) ||
-          thirdPartyHit ||
-          svc?.appId === 'canva' ||
-          svc?.linkTab ||
-          svc?.isCustom ||
-          (svc != null && !isGoogleService(svc));
-        if (useChromeAccounts) markThirdPartyOauthChrome(partitionKey);
-
-        const next = applyGoogleRequestHeaders(headers, details.url, {
-          chromeUA: CHROME_USER_AGENT,
-          firefoxAccountsUA: FIREFOX_ACCOUNTS_UA,
-          secChUa: SEC_CH_UA,
-          enabled: settings.googleSpoofEnabled !== false,
-          preferChromeAccounts: useChromeAccounts,
-        });
-        callback({ cancel: false, requestHeaders: next });
-        return;
       }
 
       if (isCanvaHost) {
@@ -10724,6 +10706,7 @@ function createViewForService(service) {
   attachGuestContextMenu(webContents);
   attachGuestNavigationGate(webContents, service);
   attachLinkTabAuthRecovery(webContents, service);
+  attachGoogleSecureBrowserGuard(webContents, service);
   if (isHeavyPortalApp(service) || isKeepWarmService(service.id)) {
     // Safe Mode: do not spoof Page Visibility on WhatsApp.
     if (!whatsappAutomationBlocked(settings, service.appId)) {

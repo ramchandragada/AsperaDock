@@ -1,14 +1,16 @@
 /**
  * Pure Google request-header rewrite (unit-tested).
- * Kept separate from Electron inject so CI stays lightweight.
  *
- * IMPORTANT: Firefox UA on accounts.google.com helps Gmail, but mid-OAuth for
- * Canva (consent / "signing back in") often has no "canva" in the URL/Referer.
- * Flipping Chrome→Firefox on Continue breaks SSO and Canva/Cloudflare sessions.
- * Prefer Chrome for third-party OAuth and keep it sticky for the whole journey.
+ * accounts.google.com ALWAYS uses a Firefox UA in Hub. That is intentional:
+ * Google shows “This browser or app may not be secure” for Electron when we
+ * send a Chrome UA on the accounts host (especially first-time sign-in).
+ * Firefox softens that gate for Gmail and Canva OAuth alike.
+ *
+ * Never flip Chrome↔Firefox mid-OAuth. canva.com itself still gets Chrome + CH
+ * elsewhere so Cloudflare is happy — only the accounts host is Firefox.
  */
 
-/** Third-party OAuth (Canva, etc.) must keep Chrome UA. */
+/** @deprecated kept for callers; always false for accounts policy now. */
 export function isThirdPartyGoogleOauthRequest(url, headers = {}) {
   try {
     const u = new URL(String(url || ''));
@@ -18,24 +20,16 @@ export function isThirdPartyGoogleOauthRequest(url, headers = {}) {
     }
     const blob = [
       u.href,
-      u.search,
       u.searchParams.get('continue') || '',
       u.searchParams.get('redirect_uri') || '',
       headers.Referer || headers.referer || '',
-      headers.Origin || headers.origin || '',
     ].join(' ');
-    if (/canva\.|notion\.|figma\.|dropbox\.|slack\.|zoom\./i.test(blob)) {
-      return true;
-    }
-    // Consent / id steps after Canva OAuth often lack canva in URL — caller
-    // should pass preferChromeAccounts / sticky from an earlier match.
-    return false;
+    return /canva\.|notion\.|figma\.|dropbox\.|slack\.|zoom\./i.test(blob);
   } catch {
     return false;
   }
 }
 
-/** Google accounts OAuth paths that continue a sticky third-party journey. */
 export function isGoogleAccountsOauthPath(url) {
   try {
     const u = new URL(String(url || ''));
@@ -43,9 +37,26 @@ export function isGoogleAccountsOauthPath(url) {
     if (host !== 'accounts.google.com' && !host.endsWith('.accounts.google.com')) {
       return false;
     }
-    return /\/(o\/oauth2|signin\/oauth|gsi|oauth|AccountChooser)/i.test(
+    return /\/(o\/oauth2|signin\/oauth|gsi|oauth|AccountChooser|rejected)/i.test(
       `${u.pathname}${u.search}`,
     );
+  } catch {
+    return false;
+  }
+}
+
+/** True when Google blocked embedded sign-in (“browser may not be secure”). */
+export function isGoogleInsecureBrowserErrorUrl(url) {
+  try {
+    const u = new URL(String(url || ''));
+    const host = u.hostname.toLowerCase();
+    if (host !== 'accounts.google.com' && !host.endsWith('.accounts.google.com')) {
+      return false;
+    }
+    const path = u.pathname.toLowerCase();
+    if (/rejected|deniedsigninrejected|signin\/rejected/i.test(path)) return true;
+    if (/browser.?not.?secure|not.?secure/i.test(u.search)) return true;
+    return false;
   } catch {
     return false;
   }
@@ -61,6 +72,8 @@ export function isGoogleAccountsOauthPath(url) {
  *   enabled?: boolean,
  *   preferChromeAccounts?: boolean,
  * }} opts
+ * preferChromeAccounts is ignored for accounts.google.com — Firefox always wins
+ * so first-time Google sign-in does not hit “browser may not be secure”.
  */
 export function applyGoogleRequestHeaders(
   headers,
@@ -74,6 +87,7 @@ export function applyGoogleRequestHeaders(
   },
 ) {
   if (!enabled) return headers;
+  void preferChromeAccounts;
   let host = '';
   try {
     host = new URL(url).hostname.toLowerCase();
@@ -81,13 +95,7 @@ export function applyGoogleRequestHeaders(
     return headers;
   }
   const next = { ...headers };
-  const applyChrome = () => {
-    next['User-Agent'] = chromeUA;
-    next['sec-ch-ua'] = secChUa;
-    next['sec-ch-ua-mobile'] = '?0';
-    next['sec-ch-ua-platform'] = '"Linux"';
-  };
-  const applyFirefox = () => {
+  if (host === 'accounts.google.com' || host.endsWith('.accounts.google.com')) {
     next['User-Agent'] = firefoxAccountsUA;
     delete next['sec-ch-ua'];
     delete next['sec-ch-ua-mobile'];
@@ -95,20 +103,11 @@ export function applyGoogleRequestHeaders(
     delete next['Sec-CH-UA'];
     delete next['Sec-CH-UA-Mobile'];
     delete next['Sec-CH-UA-Platform'];
-  };
-
-  if (host === 'accounts.google.com' || host.endsWith('.accounts.google.com')) {
-    if (
-      preferChromeAccounts ||
-      isThirdPartyGoogleOauthRequest(url, headers)
-    ) {
-      applyChrome();
-    } else {
-      applyFirefox();
-    }
   } else {
-    applyChrome();
-    if (!next['User-Agent']) next['User-Agent'] = chromeUA;
+    next['User-Agent'] = next['User-Agent'] || chromeUA;
+    next['sec-ch-ua'] = secChUa;
+    next['sec-ch-ua-mobile'] = '?0';
+    next['sec-ch-ua-platform'] = '"Linux"';
   }
   return next;
 }
