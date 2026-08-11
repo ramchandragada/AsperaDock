@@ -214,7 +214,6 @@ import {
 } from './ai/attachments.js';
 import { parseSuggestedReplies } from './ai/replyEditor.js';
 import { parseRefinedDrafts, serializeRefinedDrafts } from './ai/refineDraft.js';
-import { transcribeAudio } from './ai/speechToText.js';
 import {
   catalogModelsForProvider,
   getCachedAiModels,
@@ -4402,7 +4401,7 @@ function openAsperaAiInbox({ dark = false, skill = 'summarize', pasteText = null
 
   const inboxPayload = {
     title: 'Aspera AI',
-    meta: 'Paste, speak, or attach → Run → copy result back',
+    meta: 'Paste or attach → Run → copy result back',
     mode: 'inbox',
     skill: skill === 'refine' || skill === 'suggest-reply' ? skill : 'summarize',
     pasteText: seed,
@@ -4410,8 +4409,8 @@ function openAsperaAiInbox({ dark = false, skill = 'summarize', pasteText = null
     hint: hasClipImage
       ? 'Screenshot on clipboard — click Paste from clipboard to attach it for Summarize.'
       : seed
-        ? 'Clipboard text loaded. Choose a skill and Run — or use Voice / attach a file.'
-        : 'Paste text, record your voice (mic), or attach a PDF/image. Hub never sends for you.',
+        ? 'Clipboard text loaded. Choose a skill and Run — or attach a file.'
+        : 'Paste text or attach a PDF/image. Hub never sends for you.',
   };
 
   if (aiResultWindow && !aiResultWindow.isDestroyed()) {
@@ -5273,77 +5272,6 @@ async function runAsperaAiSkill(
       canRefineAgain: false,
       outputLanguages: langSections.payload,
       languageMeta: metaLang,
-    });
-    return { ok: false, error: message };
-  }
-}
-
-async function runVoiceFromAiResult(payload = {}) {
-  if (settings.aiEnabled === false) {
-    return { ok: false, error: 'Aspera AI is turned off in Settings.' };
-  }
-  const { routeOrder, languageMeta } = aiSettingsSnapshot();
-  if (!routeOrder.length) {
-    return {
-      ok: false,
-      error: 'Add at least one AI API key in Settings → Aspera AI.',
-    };
-  }
-
-  const b64 = String(payload?.base64 || '').trim();
-  const mime = String(payload?.mime || 'audio/webm');
-  if (!b64) {
-    return { ok: false, error: 'No audio recorded.' };
-  }
-  let buffer;
-  try {
-    buffer = Buffer.from(b64, 'base64');
-  } catch {
-    return { ok: false, error: 'Invalid audio data.' };
-  }
-  if (!buffer.length) {
-    return { ok: false, error: 'No audio recorded.' };
-  }
-
-  const dark = !!payload?.dark;
-  pushAiResult({
-    title: 'Aspera AI · Voice',
-    meta: 'Transcribing your recording…',
-    mode: '',
-    loading: true,
-    text: 'Converting speech to text…',
-    error: false,
-  });
-
-  try {
-    const stt = await transcribeAudio({ buffer, mime });
-    const heard = String(stt.transcript || '').trim();
-    if (!heard) {
-      throw new Error('Empty transcript — try speaking again.');
-    }
-
-    pushAiResult({
-      title: 'Aspera AI · Voice',
-      meta: [stt.providerName, languageMeta].filter(Boolean).join(' · '),
-      mode: '',
-      loading: true,
-      text: `Heard: “${heard.length > 200 ? `${heard.slice(0, 197)}…` : heard}”\n\nRefining in ${languageMeta}…`,
-      error: false,
-    });
-
-    return runAsperaAiSkill('refine', {
-      selectionText: heard,
-      dark,
-    });
-  } catch (err) {
-    const message = String(err?.message || err || 'Voice input failed.');
-    pushAiResult({
-      title: 'Aspera AI · Voice',
-      meta: '',
-      mode: '',
-      loading: false,
-      text: message,
-      error: true,
     });
     return { ok: false, error: message };
   }
@@ -13129,9 +13057,6 @@ aiResultHandle('ai-result:run-clipboard', async (_e, payload) => {
     attachmentId: hasAttach ? attachmentId : '',
   });
 });
-aiResultHandle('ai-result:transcribe-voice', async (_e, payload) =>
-  runVoiceFromAiResult(payload),
-);
 aiResultHandle('ai-result:attach-file', (_e, payload) => {
   const body = payload && typeof payload === 'object' ? payload : {};
   return stageAiInboxAttachment({

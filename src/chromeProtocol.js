@@ -114,7 +114,7 @@ export function chromeAppUrl(pathname = 'index.html') {
   return `${CHROME_SCHEME}://${CHROME_HOST}/${clean}`;
 }
 
-/** Secure origin URL for the Aspera AI float panel (enables microphone). */
+/** Secure origin URL for the Aspera AI float panel. */
 export const AI_RESULT_CHROME_PATH = 'ai-result.html';
 
 export function aiResultChromeUrl(dark = false) {

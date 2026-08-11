@@ -8,7 +8,7 @@ import {
   stopAiResultServer,
 } from '../src/aiResultServer.js';
 
-test('AI result local URL is loopback http (secure context for mic)', async () => {
+test('AI result local URL is loopback http secure context', async () => {
   setAiResultServerHtml('<!doctype html><title>t</title><body>ok</body>');
   const p = await ensureAiResultServer();
   assert.equal(typeof p, 'number');
@@ -20,7 +20,9 @@ test('AI result local URL is loopback http (secure context for mic)', async () =
   const res = await fetch(`http://127.0.0.1:${p}/`);
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type') || '', /text\/html/);
-  assert.match(res.headers.get('permissions-policy') || '', /microphone/);
+  const policy = res.headers.get('permissions-policy') || '';
+  assert.doesNotMatch(policy, /microphone=\(self\)/);
+  assert.match(policy, /microphone=\(\)/);
   const body = await res.text();
   assert.match(body, /<title>t<\/title>/);
 

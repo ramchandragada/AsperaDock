@@ -1,10 +1,8 @@
 /**
  * Loopback HTTP server for the Aspera AI float panel.
  *
- * Chromium only exposes navigator.mediaDevices in a secure context.
- * data: URLs never qualify; some Electron builds also omit mediaDevices on
- * custom schemes. http://127.0.0.1 is always treated as secure, so voice
- * recording works with system / Bluetooth microphones.
+ * Serves the panel over http://127.0.0.1 so Chromium treats it as a
+ * secure context (needed for clipboard and other privileged APIs).
  */
 import http from 'node:http';
 
@@ -44,8 +42,8 @@ export function ensureAiResultServer() {
         res.writeHead(200, {
           'Content-Type': 'text/html; charset=utf-8',
           'Cache-Control': 'no-store',
-          'Permissions-Policy': 'microphone=(self), camera=()',
-          'Feature-Policy': "microphone 'self'; camera 'none'",
+          'Permissions-Policy': 'microphone=(), camera=()',
+          'Feature-Policy': "microphone 'none'; camera 'none'",
         });
         res.end(html || '<!doctype html><title>Aspera AI</title>');
       } catch (err) {

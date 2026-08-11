@@ -21,6 +21,4 @@ contextBridge.exposeInMainWorld('aiResultApi', {
   refineAgain: (payload) => ipcRenderer.invoke('ai-result:refine-again', payload),
   useInCompose: (payload) => ipcRenderer.invoke('ai-result:use-in-compose', payload),
   syncRefine: (text) => ipcRenderer.invoke('ai-result:sync-refine', text),
-  transcribeVoice: (payload) =>
-    ipcRenderer.invoke('ai-result:transcribe-voice', payload),
 });
