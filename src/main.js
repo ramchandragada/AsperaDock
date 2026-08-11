@@ -10601,13 +10601,13 @@ function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
 }
 
 /**
- * Soft recovery when Google shows “This browser or app may not be secure”.
- * accounts.google.com already uses Firefox via request headers. Never pin
- * Firefox on Canva/link-tab webContents — Cloudflare Ray ID …-BOM follows.
+ * Google “browser may not be secure”: silent one-shot reload.
+ * accounts.google.com already uses Firefox via request headers — no modal,
+ * and never pin Firefox on Canva/link-tab webContents (Cloudflare 403).
  */
 function attachGoogleSecureBrowserGuard(webContents, service) {
   if (!webContents || webContents.isDestroyed()) return;
-  let offered = false;
+  let retried = false;
   const isCanvaLike =
     service?.appId === 'canva' || service?.linkTab || service?.isCustom;
 
@@ -10627,8 +10627,8 @@ function attachGoogleSecureBrowserGuard(webContents, service) {
     }
   };
 
-  const maybeOffer = async (url) => {
-    if (offered || webContents.isDestroyed()) return;
+  const maybeRetry = async (url) => {
+    if (retried || webContents.isDestroyed()) return;
     const href = String(url || '');
     let onAccounts = false;
     try {
@@ -10645,34 +10645,31 @@ function attachGoogleSecureBrowserGuard(webContents, service) {
       return;
     }
     let blocked = isGoogleInsecureBrowserErrorUrl(href);
-    if (!blocked) blocked = await pageLooksBlocked();
-    if (!blocked || offered || webContents.isDestroyed()) return;
-    offered = true;
-    try {
-      const box = {
-        type: 'warning',
-        buttons: ['Try again', 'Cancel'],
-        defaultId: 0,
-        cancelId: 1,
-        title: 'Google sign-in',
-        message: "Google blocked this sign-in",
-        detail:
-          'Google reported this browser as not secure. Hub will retry with a safer sign-in profile.',
-      };
-      const result =
-        mainWindow && !mainWindow.isDestroyed()
-          ? await dialog.showMessageBox(mainWindow, box)
-          : await dialog.showMessageBox(box);
-      if (result.response !== 0 || webContents.isDestroyed()) return;
-      // Header rewrite already forces Firefox on accounts — do not sticky-pin
-      // Firefox on Canva webContents (breaks Cloudflare after SSO).
-      if (!isCanvaLike) {
-        try {
-          webContents.setUserAgent(FIREFOX_ACCOUNTS_UA);
-        } catch {
-          // ignore
+    if (!blocked) {
+      try {
+        const title = String(webContents.getTitle() || '');
+        if (/couldn.?t sign you in|may not be secure/i.test(title)) {
+          blocked = true;
         }
+      } catch {
+        // ignore
       }
+    }
+    if (!blocked) blocked = await pageLooksBlocked();
+    if (!blocked || retried || webContents.isDestroyed()) return;
+    retried = true;
+    try {
+      logBreadcrumb('google-secure-browser-retry', {
+        serviceId: service?.id,
+        url: href.slice(0, 180),
+      });
+    } catch {
+      // ignore
+    }
+    // Header rewrite already forces Firefox on accounts. Do not sticky-pin
+    // Firefox on the webContents (breaks Canva Cloudflare after SSO).
+    if (isCanvaLike) pinChromeUserAgent(webContents);
+    try {
       webContents.reload();
     } catch {
       // ignore
@@ -10680,13 +10677,22 @@ function attachGoogleSecureBrowserGuard(webContents, service) {
   };
 
   const onNav = (_event, url) => {
-    void maybeOffer(url);
+    void maybeRetry(url);
   };
   webContents.on('did-navigate', onNav);
   webContents.on('did-navigate-in-page', onNav);
+  webContents.on('page-title-updated', (_e, title) => {
+    if (/couldn.?t sign you in|may not be secure/i.test(String(title || ''))) {
+      try {
+        void maybeRetry(webContents.getURL());
+      } catch {
+        // ignore
+      }
+    }
+  });
   webContents.on('did-finish-load', () => {
     try {
-      void maybeOffer(webContents.getURL());
+      void maybeRetry(webContents.getURL());
     } catch {
       // ignore
     }
