@@ -347,6 +347,7 @@ import {
   noteGoogleMarketingLanding,
 } from './vendors/google.js';
 import { reclaimServiceHomeIfWrongProduct as reclaimZohoHome } from './vendors/zoho.js';
+import { clearStaleChromiumSingleton } from './chromiumSingleton.js';
 import fs from 'node:fs';
 
 // Custom scheme must be registered before ready (A+ fuse: no file:// privileges).
@@ -404,58 +405,6 @@ if (
 // drop WhatsApp/Zoho sessions + settings.json. Must run before any userData use
 // (including the single-instance lock).
 app.setPath('userData', path.join(app.getPath('appData'), 'Aspera Dock'));
-
-// Only clear Chromium singleton files left by a *dead* session (crash).
-// Never delete a live lock — that would allow a second Hub window on the
-// same profile and can sign WhatsApp / Arattai out.
-function clearStaleChromiumSingleton(userDataPath) {
-  const lockPath = path.join(userDataPath, 'SingletonLock');
-  const cookiePath = path.join(userDataPath, 'SingletonCookie');
-  const socketPath = path.join(userDataPath, 'SingletonSocket');
-  let stale = false;
-
-  try {
-    if (fs.lstatSync(socketPath).isSymbolicLink()) {
-      try {
-        fs.statSync(socketPath);
-      } catch {
-        // Dangling SingletonSocket → previous crash.
-        stale = true;
-      }
-    }
-  } catch {
-    // no socket
-  }
-
-  try {
-    if (fs.lstatSync(lockPath).isSymbolicLink()) {
-      const target = fs.readlinkSync(lockPath);
-      const m = String(target).match(/-(\d+)$/);
-      if (m) {
-        const pid = parseInt(m[1], 10);
-        if (Number.isFinite(pid) && pid > 0) {
-          try {
-            process.kill(pid, 0);
-            // Owner process is alive — keep the lock.
-          } catch {
-            stale = true;
-          }
-        }
-      }
-    }
-  } catch {
-    // no lock
-  }
-
-  if (!stale) return;
-  for (const p of [lockPath, cookiePath, socketPath]) {
-    try {
-      fs.unlinkSync(p);
-    } catch {
-      // ignore
-    }
-  }
-}
 
 try {
   clearStaleChromiumSingleton(app.getPath('userData'));
@@ -10068,6 +10017,7 @@ function guestNavigationApi() {
     startUrlForService,
     handleOutboundOrNewWindowLink,
     guestWebPreferences,
+    getMainWindow: () => mainWindow,
     tryOpenZohoSharedHubTab: (svc, url) => {
       if (!shouldOpenAsHubTab(effectiveLinkHandling(svc))) return false;
       return openInternalLinkAsHubTab(svc, url);
@@ -10346,6 +10296,15 @@ function createViewForService(service) {
   // rules too, and must never be trapped inside a broken denied handle.
   webContents.on('did-create-window', (childWindow) => {
     const childWc = childWindow.webContents;
+    try {
+      // Taskbar: never show guest popups as extra Aspera Hub apps.
+      childWindow.setSkipTaskbar(true);
+      if (mainWindow && !mainWindow.isDestroyed() && childWindow !== mainWindow) {
+        childWindow.setParentWindow(mainWindow);
+      }
+    } catch {
+      // ignore
+    }
     trackServicePopup(service.id, childWindow);
     attachGuestContextMenu(childWc);
     watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
@@ -12232,14 +12191,8 @@ function createWindow() {
     raiseDockWindow();
     return;
   }
-  const existing = BrowserWindow.getAllWindows().find(
-    (w) => w && !w.isDestroyed() && !w.getParentWindow()
-  );
-  if (existing) {
-    mainWindow = existing;
-    raiseDockWindow();
-    return;
-  }
+  // Do NOT adopt guest OAuth/SSO popups as the shell — they are parentless
+  // BrowserWindows and would leave users without a real Hub chrome window.
 
   const icon = electronNativeIcon();
   mainWindow = new BrowserWindow({
@@ -12259,6 +12212,11 @@ function createWindow() {
       sandbox: true,
     },
   });
+  try {
+    mainWindow.__asperaHubShell = true;
+  } catch {
+    // ignore
+  }
 
   installApplicationMenu();
   applyWindowPrefs();
@@ -13797,9 +13755,8 @@ app.on('second-instance', () => {
     raiseDockWindow();
     return;
   }
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
+  // Shell missing — recreate even if guest OAuth popups are still open.
+  createWindow();
 });
 
 app.on('before-quit', () => {

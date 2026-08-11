@@ -26,6 +26,7 @@ import {
  * @property {(service: object, url: string, wc: Electron.WebContents) => boolean} handleOutboundOrNewWindowLink
  * @property {(service: object) => object} guestWebPreferences
  * @property {(service: object, url: string) => boolean} [tryOpenZohoSharedHubTab]
+ * @property {() => (Electron.BrowserWindow|null|undefined)} [getMainWindow]
  */
 
 /**
@@ -41,17 +42,28 @@ export function configureGuestWindowOpen(wc, service, api) {
     handleOutboundOrNewWindowLink,
     guestWebPreferences,
     tryOpenZohoSharedHubTab,
+    getMainWindow,
   } = api;
 
-  const allowPopup = () => ({
-    action: 'allow',
-    overrideBrowserWindowOptions: {
-      autoHideMenuBar: true,
-      width: 1024,
-      height: 720,
-      webPreferences: guestWebPreferences(service),
-    },
-  });
+  const allowPopup = () => {
+    const parent =
+      typeof getMainWindow === 'function' ? getMainWindow() : null;
+    const parentOk = parent && !parent.isDestroyed?.();
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        // Keep SSO/auth popups off the Linux taskbar so they do not look like
+        // extra Aspera Hub instances. Parent ties them to the shell window.
+        ...(parentOk ? { parent } : {}),
+        modal: false,
+        skipTaskbar: true,
+        autoHideMenuBar: true,
+        width: 1024,
+        height: 720,
+        webPreferences: guestWebPreferences(service),
+      },
+    };
+  };
 
   wc.setWindowOpenHandler(({ url }) => {
     const raw = String(url || '');

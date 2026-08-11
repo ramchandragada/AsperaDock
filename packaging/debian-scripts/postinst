@@ -24,13 +24,18 @@ BIN="/usr/lib/asperadock/asperadock"
 UD="${XDG_CONFIG_HOME:-$HOME/.config}/Aspera Dock"
 mkdir -p "$UD" 2>/dev/null || true
 # Only clear stale (dead-process) Chromium singleton files — never a live lock.
-lock="$UD/SingletonLock"; cookie="$UD/SingletonCookie"; socket="$UD/SingletonSocket"; stale=0
-if [ -L "$socket" ] && [ ! -e "$socket" ]; then stale=1; fi
+lock="$UD/SingletonLock"; cookie="$UD/SingletonCookie"; socket="$UD/SingletonSocket"
+live=0
 if [ -L "$lock" ]; then
   target=$(readlink "$lock" 2>/dev/null || true); pid=${target##*-}
-  case "$pid" in ''|*[!0-9]*) ;; *) if ! kill -0 "$pid" 2>/dev/null; then stale=1; fi ;; esac
+  case "$pid" in ''|*[!0-9]*) ;; *) if kill -0 "$pid" 2>/dev/null; then live=1; fi ;; esac
 fi
-if [ "$stale" -eq 1 ]; then rm -f "$lock" "$cookie" "$socket" 2>/dev/null || true; fi
+if [ "$live" -eq 0 ]; then
+  stale=0
+  if [ -L "$lock" ]; then stale=1; fi
+  if [ -L "$socket" ] && [ ! -e "$socket" ]; then stale=1; fi
+  if [ "$stale" -eq 1 ]; then rm -f "$lock" "$cookie" "$socket" 2>/dev/null || true; fi
+fi
 exec "$BIN" --no-sandbox --disable-gpu-sandbox --disable-gpu --disable-software-rasterizer --class=asperadock "$@"
 INNER
 fi
