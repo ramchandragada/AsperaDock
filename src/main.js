@@ -321,7 +321,6 @@ import {
 import {
   linkTabSiteHome,
   isBlankOrErrorGuestUrl,
-  isPostAuthStuckUrl,
   isOauthHandoffUrl,
   shouldAdoptLinkTabPopupUrlAfterIdp,
   LINK_TAB_POST_AUTH_CHECK_MS,
@@ -360,7 +359,6 @@ import {
   isGoogleMailAppUrl,
   attachGoogleChromeSpoof,
   applyGoogleRequestHeaders,
-  isGoogleInsecureBrowserErrorUrl,
   noteGoogleMarketingLanding,
 } from './vendors/google.js';
 import { reclaimServiceHomeIfWrongProduct as reclaimZohoHome } from './vendors/zoho.js';
@@ -7082,8 +7080,8 @@ function configureSession(partitionSession, partitionKey) {
     );
   });
 
-  // Google: keep Chrome UA/Client Hints consistent. Firefox accounts spoof is
-  // Gmail-only and must NOT flip mid-OAuth Continue on third-party link tabs.
+  // Google: Chrome UA/Client Hints on product hosts; Firefox on accounts.google.com
+  // for ALL Google sign-in (Gmail and third-party OAuth). Never flip mid-OAuth.
   partitionSession.webRequest.onBeforeSendHeaders(
     {
       urls: [
@@ -7115,7 +7113,6 @@ function configureSession(partitionSession, partitionKey) {
           firefoxAccountsUA: FIREFOX_ACCOUNTS_UA,
           secChUa: SEC_CH_UA,
           enabled: settings.googleSpoofEnabled !== false,
-          preferChromeAccounts: false,
         });
         callback({ cancel: false, requestHeaders: next });
         return;
@@ -7134,7 +7131,6 @@ function configureSession(partitionSession, partitionKey) {
         firefoxAccountsUA: FIREFOX_ACCOUNTS_UA,
         secChUa: SEC_CH_UA,
         enabled: settings.googleSpoofEnabled !== false,
-        preferChromeAccounts: false,
       });
       callback({ cancel: false, requestHeaders: next });
     },
@@ -10369,106 +10365,9 @@ function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
 }
 
 /**
- * Google “browser may not be secure”: silent one-shot reload.
- * accounts.google.com already uses Firefox via request headers — no modal,
- * and never sticky-pin Firefox on link-tab webContents.
- */
-function attachGoogleSecureBrowserGuard(webContents, service) {
-  if (!webContents || webContents.isDestroyed()) return;
-  let retried = false;
-  const isLinkTabLike = service?.linkTab || service?.isCustom;
-
-  const pageLooksBlocked = async () => {
-    try {
-      return Boolean(
-        await webContents.executeJavaScript(
-          `(() => {
-            const t = String(document.title || '') + ' ' + String(document.body && document.body.innerText || '').slice(0, 4000);
-            return /couldn.?t sign you in|may not be secure|browser or app may not be secure/i.test(t);
-          })()`,
-          true,
-        ),
-      );
-    } catch {
-      return false;
-    }
-  };
-
-  const maybeRetry = async (url) => {
-    if (retried || webContents.isDestroyed()) return;
-    const href = String(url || '');
-    let onAccounts = false;
-    try {
-      const host = new URL(href).hostname.toLowerCase();
-      onAccounts =
-        host === 'accounts.google.com' ||
-        host.endsWith('.accounts.google.com');
-    } catch {
-      return;
-    }
-    // Leaving Google accounts → restore Chrome UA for the destination site.
-    if (!onAccounts) {
-      if (isLinkTabLike) pinChromeUserAgent(webContents);
-      return;
-    }
-    let blocked = isGoogleInsecureBrowserErrorUrl(href);
-    if (!blocked) {
-      try {
-        const title = String(webContents.getTitle() || '');
-        if (/couldn.?t sign you in|may not be secure/i.test(title)) {
-          blocked = true;
-        }
-      } catch {
-        // ignore
-      }
-    }
-    if (!blocked) blocked = await pageLooksBlocked();
-    if (!blocked || retried || webContents.isDestroyed()) return;
-    retried = true;
-    try {
-      logBreadcrumb('google-secure-browser-retry', {
-        serviceId: service?.id,
-        url: href.slice(0, 180),
-      });
-    } catch {
-      // ignore
-    }
-    // Header rewrite already forces Firefox on accounts. Do not sticky-pin
-    // Firefox on the webContents (breaks some third-party CDNs after SSO).
-    if (isLinkTabLike) pinChromeUserAgent(webContents);
-    try {
-      webContents.reload();
-    } catch {
-      // ignore
-    }
-  };
-
-  const onNav = (_event, url) => {
-    void maybeRetry(url);
-  };
-  webContents.on('did-navigate', onNav);
-  webContents.on('did-navigate-in-page', onNav);
-  webContents.on('page-title-updated', (_e, title) => {
-    if (/couldn.?t sign you in|may not be secure/i.test(String(title || ''))) {
-      try {
-        void maybeRetry(webContents.getURL());
-      } catch {
-        // ignore
-      }
-    }
-  });
-  webContents.on('did-finish-load', () => {
-    try {
-      void maybeRetry(webContents.getURL());
-    } catch {
-      // ignore
-    }
-  });
-}
-
-/**
- * Same-tab Google SSO on Hub link tabs: recover wiped about:blank after IdP.
- * Never interrupt OAuth handoffs.
+ * Same-tab Google SSO on Hub link tabs: recover wiped about:blank / chrome-error
+ * after IdP. Never interrupt OAuth handoffs. Never force-home white SPA shells —
+ * only wiped blank documents.
  */
 function attachLinkTabAuthRecovery(webContents, service) {
   if (!(service?.isCustom || service?.linkTab)) return;
@@ -10541,45 +10440,14 @@ function attachLinkTabAuthRecovery(webContents, service) {
     }
     if (!sawIdp) return;
     if (isOauthHandoffUrl(cur)) return;
-    if (!isPostAuthStuckUrl(cur) && !isBlankOrErrorGuestUrl(cur)) return;
+    if (!isBlankOrErrorGuestUrl(cur)) return;
     navigateHome(reason, cur);
-  };
-
-  const checkVisual = async () => {
-    if (!sawIdp || recovering || webContents.isDestroyed()) return;
-    if (service.id !== activeServiceId) return;
-    let cur = '';
-    try {
-      cur = String(webContents.getURL() || '');
-    } catch {
-      return;
-    }
-    if (isOauthHandoffUrl(cur)) return;
-    if (isPostAuthStuckUrl(cur) || isBlankOrErrorGuestUrl(cur)) {
-      navigateHome('visual-url-stuck', cur);
-      return;
-    }
-    try {
-      const blank = await isGuestVisuallyBlank(webContents);
-      if (blank) navigateHome('visual-blank', cur);
-      else {
-        sawIdp = false;
-        clearTimers();
-      }
-    } catch {
-      // ignore
-    }
   };
 
   const scheduleRecover = (reason) => {
     clearTimers();
     for (const ms of LINK_TAB_POST_AUTH_CHECK_MS) {
       timers.push(setTimeout(() => tryRecover(reason), ms));
-      timers.push(
-        setTimeout(() => {
-          checkVisual().catch(() => {});
-        }, ms + 250),
-      );
     }
   };
 
@@ -10615,14 +10483,8 @@ function attachLinkTabAuthRecovery(webContents, service) {
     try {
       const cur = String(webContents.getURL() || '');
       if (isOauthHandoffUrl(cur)) return;
-      if (isBlankOrErrorGuestUrl(cur) || isPostAuthStuckUrl(cur)) {
+      if (isBlankOrErrorGuestUrl(cur)) {
         scheduleRecover('finish-load-stuck');
-      } else {
-        timers.push(
-          setTimeout(() => {
-            checkVisual().catch(() => {});
-          }, 1800),
-        );
       }
     } catch {
       // ignore
@@ -10806,7 +10668,6 @@ function createViewForService(service) {
   attachGuestContextMenu(webContents);
   attachGuestNavigationGate(webContents, service);
   attachLinkTabAuthRecovery(webContents, service);
-  attachGoogleSecureBrowserGuard(webContents, service);
   if (isHeavyPortalApp(service) || isKeepWarmService(service.id)) {
     // Safe Mode: do not spoof Page Visibility on WhatsApp.
     if (!whatsappAutomationBlocked(settings, service.appId)) {

@@ -9,9 +9,8 @@
  * Kill switch: settings.googleSpoofEnabled === false (or edit settings.json).
  */
 import { logBreadcrumb } from '../errorReporter.js';
-import { applyGoogleRequestHeaders } from './googleHeaders.js';
 
-export { applyGoogleRequestHeaders, isThirdPartyGoogleOauthRequest, isGoogleAccountsOauthPath, isGoogleInsecureBrowserErrorUrl } from './googleHeaders.js';
+export { applyGoogleRequestHeaders, isGoogleInsecureBrowserErrorUrl } from './googleHeaders.js';
 
 const marketingNoted = new Set();
 

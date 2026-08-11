@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   applyGoogleRequestHeaders,
-  isThirdPartyGoogleOauthRequest,
   isGoogleInsecureBrowserErrorUrl,
 } from '../src/vendors/googleHeaders.js';
 import { assertHttpsUrl } from '../src/netTrust.js';
@@ -24,17 +23,13 @@ test('accounts.google.com always gets Firefox UA (secure-browser gate)', () => {
   assert.equal(out['sec-ch-ua'], undefined);
 });
 
-test('Canva OAuth on accounts still uses Firefox (never Chrome)', () => {
+test('third-party OAuth referer still uses Firefox on accounts', () => {
   const out = applyGoogleRequestHeaders(
     { Referer: 'https://www.canva.com/login' },
     'https://accounts.google.com/o/oauth2/v2/auth?client_id=x&redirect_uri=https%3A%2F%2Fwww.canva.com%2Flogin',
-    { ...opts, preferChromeAccounts: true },
+    opts,
   );
   assert.equal(out['User-Agent'], 'FIREFOX');
-  assert.equal(isThirdPartyGoogleOauthRequest(
-    'https://accounts.google.com/o/oauth2/v2/auth?redirect_uri=https%3A%2F%2Fwww.canva.com%2F',
-    {},
-  ), true);
 });
 
 test('other Google hosts get Chrome Client Hints', () => {

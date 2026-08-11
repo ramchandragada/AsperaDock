@@ -4,46 +4,12 @@
  * accounts.google.com ALWAYS uses a Firefox UA in Hub. That is intentional:
  * Google shows “This browser or app may not be secure” for Electron when we
  * send a Chrome UA on the accounts host (especially first-time sign-in).
- * Firefox softens that gate for Gmail and Canva OAuth alike.
+ * Firefox softens that gate for ALL Google sign-in — Gmail and third-party
+ * OAuth alike.
  *
- * Never flip Chrome↔Firefox mid-OAuth. canva.com itself still gets Chrome + CH
- * elsewhere so Cloudflare is happy — only the accounts host is Firefox.
+ * Never flip Chrome↔Firefox mid-OAuth. Destination sites still get Chrome + CH
+ * elsewhere so CDNs are happy — only the accounts host is Firefox.
  */
-
-/** @deprecated kept for callers; always false for accounts policy now. */
-export function isThirdPartyGoogleOauthRequest(url, headers = {}) {
-  try {
-    const u = new URL(String(url || ''));
-    const host = u.hostname.toLowerCase();
-    if (host !== 'accounts.google.com' && !host.endsWith('.accounts.google.com')) {
-      return false;
-    }
-    const blob = [
-      u.href,
-      u.searchParams.get('continue') || '',
-      u.searchParams.get('redirect_uri') || '',
-      headers.Referer || headers.referer || '',
-    ].join(' ');
-    return /canva\.|notion\.|figma\.|dropbox\.|slack\.|zoom\./i.test(blob);
-  } catch {
-    return false;
-  }
-}
-
-export function isGoogleAccountsOauthPath(url) {
-  try {
-    const u = new URL(String(url || ''));
-    const host = u.hostname.toLowerCase();
-    if (host !== 'accounts.google.com' && !host.endsWith('.accounts.google.com')) {
-      return false;
-    }
-    return /\/(o\/oauth2|signin\/oauth|gsi|oauth|AccountChooser|rejected)/i.test(
-      `${u.pathname}${u.search}`,
-    );
-  } catch {
-    return false;
-  }
-}
 
 /** True when Google blocked embedded sign-in (“browser may not be secure”). */
 export function isGoogleInsecureBrowserErrorUrl(url) {
@@ -70,10 +36,7 @@ export function isGoogleInsecureBrowserErrorUrl(url) {
  *   firefoxAccountsUA: string,
  *   secChUa: string,
  *   enabled?: boolean,
- *   preferChromeAccounts?: boolean,
  * }} opts
- * preferChromeAccounts is ignored for accounts.google.com — Firefox always wins
- * so first-time Google sign-in does not hit “browser may not be secure”.
  */
 export function applyGoogleRequestHeaders(
   headers,
@@ -83,11 +46,9 @@ export function applyGoogleRequestHeaders(
     firefoxAccountsUA,
     secChUa,
     enabled = true,
-    preferChromeAccounts = false,
   },
 ) {
   if (!enabled) return headers;
-  void preferChromeAccounts;
   let host = '';
   try {
     host = new URL(url).hostname.toLowerCase();

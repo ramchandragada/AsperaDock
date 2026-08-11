@@ -1,8 +1,9 @@
 /**
  * Hub link-tab SSO recovery helpers.
  *
- * Never interrupt OAuth handoffs. Recover wiped about:blank documents after
- * Google (or other IdP) SSO returns to a link tab. Preserve canva.in vs
+ * Never interrupt OAuth handoffs. Recover only wiped blank/error documents
+ * (about:blank, chrome-error) after Google (or other IdP) SSO returns to a
+ * link tab — never force-home white SPA shells. Preserve canva.in vs
  * canva.com hosts when mapping ad-hoc link-tab homes for cookie affinity.
  */
 
@@ -71,5 +72,5 @@ export function shouldAdoptLinkTabPopupUrlAfterIdp(popupUrl, { sawIdp = false } 
   return true;
 }
 
-/** Blank / stuck checks after IdP returns to a link tab. */
-export const LINK_TAB_POST_AUTH_CHECK_MS = [1200, 3500, 8000];
+/** Blank / stuck checks after IdP returns to a link tab (short; no visual scrape). */
+export const LINK_TAB_POST_AUTH_CHECK_MS = [4000, 9000];
