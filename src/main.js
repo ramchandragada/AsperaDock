@@ -14,6 +14,7 @@ import {
   clipboard,
   screen,
   nativeTheme,
+  webContents as electronWebContents,
 } from 'electron';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -329,6 +330,12 @@ import {
   shouldAdoptLinkTabPopupUrlAfterIdp,
   LINK_TAB_POST_AUTH_CHECK_MS,
 } from './linkTabAuthRecovery.js';
+import {
+  isCanvaPrivateDesignTitle,
+  canvaCatalogHome,
+  shouldForceCanvaHome,
+  isAlreadyCanvaHome,
+} from './canvaForceHome.js';
 import {
   isInternalUrl,
   isForbiddenGuestNavigation,
@@ -1905,28 +1912,29 @@ function openUrlAsHubAppTab(url, sourceService = null, opts = {}) {
     return { ok: true, kind: 'shared' };
   }
 
-  // Canva: prefer catalog app (stable Chrome spoof + SSO) over ephemeral link tabs.
-  // Remember design deep-links; load them after SSO when Cloudflare 403s first.
+  // Canva: always open the catalog home. Design deep-links 403 in Hub
+  // (Ray ID …-BOM) and Google SSO “continue” bounces right back onto them.
   if (isCanvaAppUrl(href)) {
+    const home = canvaCatalogHome(href);
     const existingCanva = orderedServices().find((s) => s.appId === 'canva');
     if (existingCanva) {
       const lastServiceUrls = {
         ...(settings.lastServiceUrls || {}),
-        [existingCanva.id]: href,
+        [existingCanva.id]: home,
       };
       settings = saveSettings({ lastServiceUrls });
-      lastGoodUrls.set(existingCanva.id, href);
+      lastGoodUrls.set(existingCanva.id, home);
       activateService(existingCanva.id);
       const wc = views.get(existingCanva.id)?.view?.webContents;
       if (wc && !wc.isDestroyed()) {
         pinChromeUserAgent(wc);
-        wc.loadURL(href).catch(() => {});
+        wc.loadURL(home).catch(() => {});
       }
       return { ok: true, id: existingCanva.id, kind: 'canva' };
     }
     const profileId =
       getProfile(PRIMARY_PROFILE_ID)?.id || PRIMARY_PROFILE_ID;
-    const added = addService('canva', profileId, { startUrl: href });
+    const added = addService('canva', profileId, { startUrl: home });
     if (added.ok) {
       const wc = views.get(added.id)?.view?.webContents;
       if (wc && !wc.isDestroyed()) {
@@ -1934,10 +1942,10 @@ function openUrlAsHubAppTab(url, sourceService = null, opts = {}) {
         try {
           const cur = wc.getURL();
           if (!cur || cur === 'about:blank' || !cur.startsWith('http')) {
-            wc.loadURL(href).catch(() => {});
+            wc.loadURL(home).catch(() => {});
           }
         } catch {
-          wc.loadURL(href).catch(() => {});
+          wc.loadURL(home).catch(() => {});
         }
       }
       return { ok: true, id: added.id, kind: 'canva' };
@@ -7102,6 +7110,112 @@ function pinChromeUserAgent(webContents) {
   }
 }
 
+/** Immediate Canva → home. Title / HTTP 403 — does not wait on IdP or scraping. */
+function forceCanvaHome(webContents, service, reason = 'force-home') {
+  if (!webContents || webContents.isDestroyed()) return false;
+  let cur = '';
+  try {
+    cur = String(webContents.getURL() || '');
+  } catch {
+    cur = '';
+  }
+  if (isAlreadyCanvaHome(cur)) return false;
+  // Never yank the user off Google accounts mid-signin.
+  if (cur && isIdentityProviderUrl(cur)) return false;
+  const home =
+    canvaCatalogHome(cur) ||
+    canvaCatalogHome(service?.url) ||
+    'https://www.canva.com/';
+  if (!home) return false;
+  const until = Number(webContents.__asperaCanvaHomeCoolingUntil) || 0;
+  if (Date.now() < until) return false;
+  webContents.__asperaCanvaHomeCoolingUntil = Date.now() + 3500;
+  pinChromeUserAgent(webContents);
+  try {
+    logBreadcrumb('canva-force-home', {
+      reason,
+      serviceId: service?.id,
+      from: cur,
+      home,
+    });
+  } catch {
+    // ignore
+  }
+  if (service?.id) {
+    lastGoodUrls.set(service.id, home);
+    rememberGoodUrl(service.id, home);
+  }
+  webContents.loadURL(home).catch(() => {});
+  return true;
+}
+
+/**
+ * Hard guard for Canva private-design 403. Uses page title + blank URL —
+ * does not depend on executeJavaScript (often blocked / empty on CF pages).
+ */
+function attachCanvaForceHomeGuard(webContents, service) {
+  const isCanva =
+    service?.appId === 'canva' ||
+    (service && isCanvaAppUrl(service.url)) ||
+    (service?.isCustom && isCanvaAppUrl(service.url));
+  if (!isCanva || !webContents || webContents.isDestroyed()) return;
+  if (webContents.__asperaCanvaForceHome) return;
+  webContents.__asperaCanvaForceHome = true;
+
+  const check = (reason) => {
+    if (webContents.isDestroyed()) return;
+    let cur = '';
+    let title = '';
+    try {
+      cur = String(webContents.getURL() || '');
+      title = String(webContents.getTitle() || '');
+    } catch {
+      return;
+    }
+    if (isIdentityProviderUrl(cur)) return;
+    if (isOauthHandoffUrl(cur) && !isCanvaAppUrl(cur)) return;
+    if (
+      shouldForceCanvaHome({ url: cur, title }) ||
+      isCanvaPrivateDesignTitle(title)
+    ) {
+      forceCanvaHome(webContents, service, reason);
+      return;
+    }
+    if (isBlankOrErrorGuestUrl(cur)) {
+      setTimeout(() => {
+        if (webContents.isDestroyed()) return;
+        try {
+          const now = String(webContents.getURL() || '');
+          const t = String(webContents.getTitle() || '');
+          if (
+            isBlankOrErrorGuestUrl(now) ||
+            isCanvaPrivateDesignTitle(t) ||
+            shouldForceCanvaHome({ url: now, title: t })
+          ) {
+            forceCanvaHome(webContents, service, `${reason}-blank`);
+          }
+        } catch {
+          // ignore
+        }
+      }, 1200);
+    }
+  };
+
+  webContents.on('page-title-updated', (_e, title) => {
+    if (isCanvaPrivateDesignTitle(title)) {
+      forceCanvaHome(webContents, service, 'page-title');
+    }
+  });
+  webContents.on('did-navigate', (_e, url) => {
+    check(`nav:${String(url || '').slice(0, 80)}`);
+  });
+  webContents.on('did-navigate-in-page', () => check('in-page'));
+  webContents.on('did-finish-load', () => check('finish-load'));
+  webContents.on('did-fail-load', (_e, _code, _desc, _url, isMainFrame) => {
+    if (isMainFrame) check('fail-load');
+  });
+}
+
 function configureSession(partitionSession, partitionKey) {
   applyProxy(partitionSession);
   if (configuredPartitions.has(partitionKey)) {
@@ -7194,6 +7308,41 @@ function configureSession(partitionSession, partitionKey) {
         preferChromeAccounts: false,
       });
       callback({ cancel: false, requestHeaders: next });
+    },
+  );
+
+  // Canva main-frame HTTP 403 → force catalog home (title may lag behind).
+  partitionSession.webRequest.onCompleted(
+    {
+      urls: [
+        '*://*.canva.com/*',
+        '*://canva.com/*',
+        '*://*.canva.in/*',
+        '*://canva.in/*',
+      ],
+    },
+    (details) => {
+      if (details.resourceType !== 'mainFrame') return;
+      if (details.statusCode !== 403) return;
+      let wc = null;
+      try {
+        wc = electronWebContents.fromId(details.webContentsId);
+      } catch {
+        wc = null;
+      }
+      if (!wc || wc.isDestroyed()) return;
+      const svc =
+        serviceForWebContentsId(details.webContentsId) ||
+        orderedServices().find((s) => s.appId === 'canva') ||
+        null;
+      if (
+        shouldForceCanvaHome({
+          url: details.url,
+          httpStatus: details.statusCode,
+        })
+      ) {
+        forceCanvaHome(wc, svc || { url: 'https://www.canva.com/' }, 'http-403');
+      }
     },
   );
 
@@ -10964,6 +11113,7 @@ function createViewForService(service) {
   attachGuestContextMenu(webContents);
   attachGuestNavigationGate(webContents, service);
   attachLinkTabAuthRecovery(webContents, service);
+  attachCanvaForceHomeGuard(webContents, service);
   attachGoogleSecureBrowserGuard(webContents, service);
   if (isHeavyPortalApp(service) || isKeepWarmService(service.id)) {
     // Safe Mode: do not spoof Page Visibility on WhatsApp.
@@ -11018,6 +11168,7 @@ function createViewForService(service) {
         enabled: settings.googleSpoofEnabled !== false,
       }).catch(() => {});
     }
+    attachCanvaForceHomeGuard(childWc, service);
   });
 
   webContents.on('console-message', (event, level, message) => {
@@ -11430,12 +11581,23 @@ function hibernateService(id, { force = false } = {}) {
 
 /** Prefer the last in-app page; never cold-start on a login/QR / wrong-app screen. */
 function startUrlForService(service) {
+  // Canva catalog always starts at home — saved /design/ URLs 403 forever in Hub.
+  if (service?.appId === 'canva') {
+    return service.url || 'https://www.canva.com/';
+  }
   const memory = lastGoodUrls.get(service.id);
   const disk = (settings.lastServiceUrls || {})[service.id];
   const last = memory || disk;
   // Link / custom tabs may browse any https host (redirects from wa.me, bit.ly, …).
   if (service?.isCustom) {
     if (last && String(last).startsWith('http') && !isAuthOrLoginUrl(last)) {
+      // Custom tabs that are Canva still must not cold-start on /design/.
+      if (isCanvaAppUrl(last)) {
+        return safeStartUrlForService(
+          { ...service, appId: 'canva', url: canvaCatalogHome(last) },
+          last,
+        );
+      }
       return last;
     }
     return service.url;
@@ -11787,35 +11949,33 @@ function activateService(id) {
   if ((service.isCustom || service.appId === 'canva') && wc && !wc.isDestroyed()) {
     try {
       const cur = String(wc.getURL() || '');
-      const remembered = lastGoodUrls.get(service.id) || '';
-      const home =
-        linkTabSiteHome(cur) ||
-        linkTabSiteHome(remembered) ||
-        linkTabSiteHome(service.url) ||
-        (service.appId === 'canva' ? 'https://www.canva.com/' : '');
-      // Prefer site home over startUrlForService so a sticky /design/ 403
-      // is not reloaded when activating the Canva tab.
-      const target =
-        (home && home.startsWith('http') ? home : '') ||
-        startUrlForService(service) ||
-        service.url;
-      const looksBlank =
-        isBlankOrErrorGuestUrl(cur) ||
-        cur.startsWith('chrome-error://') ||
-        cur === 'chrome://blank/';
-      if (target && target.startsWith('http') && looksBlank) {
-        pinChromeUserAgent(wc);
-        wc.loadURL(target).catch(() => {});
-      } else if (
+      const title = String(wc.getTitle() || '');
+      if (
         service.appId === 'canva' &&
-        isCanvaDesignUrl(cur) &&
-        home &&
-        home.startsWith('http')
+        (isBlankOrErrorGuestUrl(cur) ||
+          isCanvaDesignUrl(cur) ||
+          isCanvaPrivateDesignTitle(title) ||
+          shouldForceCanvaHome({ url: cur, title }))
       ) {
-        // Activating onto a known-fragile design URL → prefer home.
-        pinChromeUserAgent(wc);
-        wc.loadURL(home).catch(() => {});
-        rememberGoodUrl(service.id, home);
+        forceCanvaHome(wc, service, 'activate');
+      } else if (service.isCustom) {
+        const home =
+          linkTabSiteHome(cur) ||
+          linkTabSiteHome(lastGoodUrls.get(service.id) || '') ||
+          linkTabSiteHome(service.url);
+        const target =
+          (home && home.startsWith('http') ? home : '') ||
+          startUrlForService(service) ||
+          service.url;
+        if (
+          target &&
+          target.startsWith('http') &&
+          (isBlankOrErrorGuestUrl(cur) ||
+            cur.startsWith('chrome-error://') ||
+            cur === 'chrome://blank/')
+        ) {
+          wc.loadURL(target).catch(() => {});
+        }
       }
     } catch {
       // ignore
@@ -12001,6 +12161,25 @@ function reloadActive() {
     findBarLastQuery = '';
     findBarRequestId = 0;
     clearGuestFindHighlights(wc);
+  }
+  // Canva: reload of a private-design 403 just shows the same page — go home.
+  try {
+    const service = getService(activeServiceId);
+    if (service?.appId === 'canva' || isCanvaAppUrl(wc.getURL())) {
+      const cur = String(wc.getURL() || '');
+      const title = String(wc.getTitle() || '');
+      if (
+        isCanvaDesignUrl(cur) ||
+        isCanvaPrivateDesignTitle(title) ||
+        shouldForceCanvaHome({ url: cur, title }) ||
+        isBlankOrErrorGuestUrl(cur)
+      ) {
+        forceCanvaHome(wc, service || { url: 'https://www.canva.com/' }, 'reload');
+        return;
+      }
+    }
+  } catch {
+    // fall through
   }
   wc.reload();
 }
@@ -14107,10 +14286,38 @@ dockHandle('dock:app-navigate', (_e, id, action) => {
   } else if (action === 'forward' && wc.canGoForward()) {
     wc.goForward();
     scheduleActiveNavStatePush();
-  } else if (action === 'reload') wc.reload();
-  else if (action === 'home') {
+  } else if (action === 'reload') {
     const service = getService(id);
-    if (service) wc.loadURL(startUrlForService(service) || service.url);
+    if (service?.appId === 'canva' || isCanvaAppUrl(wc.getURL?.() || '')) {
+      let cur = '';
+      let title = '';
+      try {
+        cur = String(wc.getURL() || '');
+        title = String(wc.getTitle() || '');
+      } catch {
+        // ignore
+      }
+      if (
+        isCanvaDesignUrl(cur) ||
+        isCanvaPrivateDesignTitle(title) ||
+        shouldForceCanvaHome({ url: cur, title }) ||
+        isBlankOrErrorGuestUrl(cur)
+      ) {
+        forceCanvaHome(wc, service || { url: 'https://www.canva.com/' }, 'dock-reload');
+        return { ok: true };
+      }
+    }
+    wc.reload();
+  } else if (action === 'home') {
+    const service = getService(id);
+    if (service?.appId === 'canva') {
+      const home = service.url || 'https://www.canva.com/';
+      pinChromeUserAgent(wc);
+      wc.loadURL(home).catch(() => {});
+      rememberGoodUrl(service.id, home);
+    } else if (service) {
+      wc.loadURL(startUrlForService(service) || service.url);
+    }
   } else if (action === 'devtools') {
     if (app.isPackaged && !settings.allowGuestDevTools) {
       return { ok: false, error: 'Guest DevTools disabled' };

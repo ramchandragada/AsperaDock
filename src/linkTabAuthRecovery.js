@@ -86,14 +86,14 @@ export function isCanvaDesignUrl(url) {
 /**
  * Canva (via Cloudflare) “This design is private” / Error 403 · Ray ID …-BOM.
  * Match page text — the URL usually stays on /design/….
+ * Real Canva footer uses “Error: 403 • Ray ID”, not “Error code: 403”.
  */
 export function pageTextLooksLikeCanvaPrivate403(text) {
   const t = String(text || '');
   if (/this design is private/i.test(t)) return true;
-  if (/error code:\s*403/i.test(t) && /ray id/i.test(t)) return true;
-  if (/go to home to keep designing/i.test(t) && /403|ray id/i.test(t)) {
-    return true;
-  }
+  if (/go to home to keep designing/i.test(t)) return true;
+  if (/error:\s*403/i.test(t) && /ray\s*id/i.test(t)) return true;
+  if (/error code:\s*403/i.test(t) && /ray\s*id/i.test(t)) return true;
   return false;
 }
 
