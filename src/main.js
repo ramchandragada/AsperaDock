@@ -321,6 +321,7 @@ import {
   linkTabSiteHome,
   isBlankOrErrorGuestUrl,
   isPostAuthStuckUrl,
+  isOauthHandoffUrl,
   shouldAdoptLinkTabPopupUrlAfterIdp,
   LINK_TAB_POST_AUTH_CHECK_MS,
 } from './linkTabAuthRecovery.js';
@@ -10287,9 +10288,10 @@ function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
 }
 
 /**
- * Same-tab Google SSO (Canva in Web Search tabs): after accounts.google.com
- * returns, the guest often paints white / about:blank with dead Back/Forward.
- * Force the product home once cookies are in the shared partition.
+ * Same-tab Google SSO (Canva in Web Search tabs): only recover wiped
+ * about:blank / chrome-error documents. Never navigate away from OAuth
+ * callbacks or /login handoffs — that aborted SSO and caused login loops
+ * (v0.5.28). Preserve canva.in vs canva.com via linkTabSiteHome.
  */
 function attachLinkTabAuthRecovery(webContents, service) {
   if (!(service?.isCustom || service?.linkTab)) return;
@@ -10326,6 +10328,8 @@ function attachLinkTabAuthRecovery(webContents, service) {
 
   const navigateHome = (reason, cur) => {
     if (recovering || webContents.isDestroyed()) return;
+    // Absolute last line of defense: never interrupt an in-flight SSO handoff.
+    if (isOauthHandoffUrl(cur)) return;
     const home = resolveHome(cur);
     if (!home) return;
     recovering = true;
@@ -10345,7 +10349,7 @@ function attachLinkTabAuthRecovery(webContents, service) {
     setTimeout(() => {
       recovering = false;
       sawIdp = false;
-    }, 2500);
+    }, 4000);
   };
 
   const tryRecover = (reason) => {
@@ -10358,11 +10362,8 @@ function attachLinkTabAuthRecovery(webContents, service) {
       return;
     }
     if (!sawIdp) return;
-    if (isIdentityProviderUrl(cur)) return;
-    if (!isPostAuthStuckUrl(cur) && !isBlankOrErrorGuestUrl(cur)) {
-      // Landed on a normal app URL — clear the journey unless still white (visual).
-      return;
-    }
+    if (isOauthHandoffUrl(cur)) return;
+    if (!isPostAuthStuckUrl(cur)) return;
     navigateHome(reason, cur);
   };
 
@@ -10375,8 +10376,8 @@ function attachLinkTabAuthRecovery(webContents, service) {
     } catch {
       return;
     }
-    if (isIdentityProviderUrl(cur)) return;
-    if (isPostAuthStuckUrl(cur) || isBlankOrErrorGuestUrl(cur)) {
+    if (isOauthHandoffUrl(cur)) return;
+    if (isPostAuthStuckUrl(cur)) {
       navigateHome('visual-url-stuck', cur);
       return;
     }
@@ -10399,7 +10400,7 @@ function attachLinkTabAuthRecovery(webContents, service) {
       timers.push(
         setTimeout(() => {
           checkVisual().catch(() => {});
-        }, ms + 250),
+        }, ms + 400),
       );
     }
   };
@@ -10418,9 +10419,13 @@ function attachLinkTabAuthRecovery(webContents, service) {
       captureReturnOrigin(href);
     }
     if (!sawIdp) return;
+    if (isOauthHandoffUrl(href)) {
+      scheduleRecover('oauth-handoff');
+      return;
+    }
     scheduleRecover('left-idp');
-    if (isBlankOrErrorGuestUrl(href) || isPostAuthStuckUrl(href)) {
-      timers.push(setTimeout(() => tryRecover('immediate-stuck'), 400));
+    if (isBlankOrErrorGuestUrl(href)) {
+      timers.push(setTimeout(() => tryRecover('immediate-blank'), 800));
     }
   };
 
@@ -10430,13 +10435,14 @@ function attachLinkTabAuthRecovery(webContents, service) {
     if (!sawIdp) return;
     try {
       const cur = String(webContents.getURL() || '');
-      if (isBlankOrErrorGuestUrl(cur) || isPostAuthStuckUrl(cur)) {
-        scheduleRecover('finish-load-stuck');
+      if (isOauthHandoffUrl(cur)) return;
+      if (isBlankOrErrorGuestUrl(cur)) {
+        scheduleRecover('finish-load-blank');
       } else {
         timers.push(
           setTimeout(() => {
             checkVisual().catch(() => {});
-          }, 1800),
+          }, 8000),
         );
       }
     } catch {
@@ -10445,7 +10451,7 @@ function attachLinkTabAuthRecovery(webContents, service) {
   });
   webContents.on('did-fail-load', (_e, _code, _desc, validatedURL, isMainFrame) => {
     if (!isMainFrame || !sawIdp) return;
-    timers.push(setTimeout(() => tryRecover('fail-load'), 300));
+    timers.push(setTimeout(() => tryRecover('fail-load'), 600));
     void validatedURL;
   });
 }

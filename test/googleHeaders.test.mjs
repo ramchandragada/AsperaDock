@@ -18,6 +18,21 @@ test('Google accounts host gets Firefox UA and no Client Hints', () => {
   assert.equal(out['sec-ch-ua'], undefined);
 });
 
+test('Canva Google OAuth keeps Chrome UA on accounts.google.com', () => {
+  const out = applyGoogleRequestHeaders(
+    { Referer: 'https://www.canva.com/login' },
+    'https://accounts.google.com/o/oauth2/v2/auth?client_id=x&redirect_uri=https%3A%2F%2Fwww.canva.com%2Flogin',
+    {
+      chromeUA: 'CHROME',
+      firefoxAccountsUA: 'FIREFOX',
+      secChUa: '"Google Chrome";v="138"',
+      enabled: true,
+    },
+  );
+  assert.equal(out['User-Agent'], 'CHROME');
+  assert.equal(out['sec-ch-ua'], '"Google Chrome";v="138"');
+});
+
 test('other Google hosts get Chrome Client Hints', () => {
   const out = applyGoogleRequestHeaders(
     {},

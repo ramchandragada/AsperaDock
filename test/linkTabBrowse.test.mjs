@@ -70,7 +70,8 @@ test('post-IdP adopt skips login shells (fixes 0.5.25 Canva white pane)', () => 
     shouldAdoptLinkTabPopupUrlAfterIdp('https://www.canva.com/', { sawIdp: true }),
     true,
   );
-  assert.equal(linkTabSiteHome('https://www.canva.in/login'), 'https://www.canva.com/');
+  assert.equal(linkTabSiteHome('https://www.canva.in/login'), 'https://www.canva.in/');
+  assert.equal(linkTabSiteHome('https://www.canva.com/login'), 'https://www.canva.com/');
   assert.equal(isIdentityProviderUrl('https://accounts.google.com/'), true);
   assert.equal(isOauthCallbackUrl('https://www.canva.com/?code=x'), true);
   assert.equal(mustKeepGoogleUrlInApp('https://accounts.google.com/'), true);

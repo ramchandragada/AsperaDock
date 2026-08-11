@@ -4,11 +4,13 @@ import {
   linkTabSiteHome,
   isBlankOrErrorGuestUrl,
   isPostAuthStuckUrl,
+  isOauthHandoffUrl,
   shouldAdoptLinkTabPopupUrlAfterIdp,
 } from '../src/linkTabAuthRecovery.js';
 
-test('linkTabSiteHome maps canva.in and canva.com to www.canva.com', () => {
-  assert.equal(linkTabSiteHome('https://www.canva.in/'), 'https://www.canva.com/');
+test('linkTabSiteHome keeps canva.in separate from canva.com', () => {
+  assert.equal(linkTabSiteHome('https://www.canva.in/'), 'https://www.canva.in/');
+  assert.equal(linkTabSiteHome('https://www.canva.in/login'), 'https://www.canva.in/');
   assert.equal(linkTabSiteHome('https://www.canva.com/login'), 'https://www.canva.com/');
   assert.equal(linkTabSiteHome('https://www.canva.com/design/x'), 'https://www.canva.com/');
 });
@@ -19,13 +21,19 @@ test('isBlankOrErrorGuestUrl detects wiped guests', () => {
   assert.equal(isBlankOrErrorGuestUrl('https://www.canva.com/'), false);
 });
 
-test('isPostAuthStuckUrl treats login shells and callbacks as stuck', () => {
-  assert.equal(isPostAuthStuckUrl('https://www.canva.com/login'), true);
+test('login and OAuth callback are handoffs — not stuck (no forced home)', () => {
+  assert.equal(isOauthHandoffUrl('https://www.canva.com/login'), true);
   assert.equal(
-    isPostAuthStuckUrl('https://www.canva.com/login/oauth?code=abc&state=1'),
+    isOauthHandoffUrl('https://www.canva.com/login/oauth?code=abc&state=1'),
     true,
   );
-  assert.equal(isPostAuthStuckUrl('https://accounts.google.com/'), true);
+  assert.equal(isOauthHandoffUrl('https://accounts.google.com/'), true);
+  assert.equal(isPostAuthStuckUrl('https://www.canva.com/login'), false);
+  assert.equal(
+    isPostAuthStuckUrl('https://www.canva.com/login/oauth?code=abc&state=1'),
+    false,
+  );
+  assert.equal(isPostAuthStuckUrl('about:blank'), true);
   assert.equal(isPostAuthStuckUrl('https://www.canva.com/'), false);
 });
 
