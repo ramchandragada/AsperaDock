@@ -220,6 +220,7 @@ import {
   normalizePolishIntent,
   polishIntentLabel,
 } from './ai/skills.js';
+import { buildApplyComposeTextJs } from './aiComposeInsert.js';
 import {
   catalogModelsForProvider,
   getCachedAiModels,
@@ -4777,15 +4778,35 @@ async function markActiveComposeTarget(serviceId = activeServiceId) {
     return !!(await wc.executeJavaScript(
       `(() => {
         try {
+          const composeSel = ${JSON.stringify(guestComposeSelector())};
           const mark = (target) => {
+            if (!target) return false;
             document.querySelectorAll('[data-aspera-ai-compose]').forEach((n) => {
               if (n !== target) n.removeAttribute('data-aspera-ai-compose');
             });
             target.setAttribute('data-aspera-ai-compose', '1');
             return true;
           };
+          const isSearchy = (node) => {
+            const ph = String(
+              node.getAttribute?.('placeholder')
+                || node.getAttribute?.('data-placeholder')
+                || node.getAttribute?.('aria-placeholder')
+                || node.getAttribute?.('aria-label')
+                || node.getAttribute?.('title')
+                || '',
+            ).toLowerCase();
+            if (/search/.test(ph)) return true;
+            if (node.closest?.('[data-testid="chat-list"], [data-testid="chat-list-search"], [class*="chat-list" i]')) {
+              return true;
+            }
+            // WhatsApp left-pane search uses data-tab="3".
+            if (String(node.getAttribute?.('data-tab') || '') === '3') return true;
+            return false;
+          };
           const isCompose = (node) => {
             if (!node) return false;
+            if (isSearchy(node)) return false;
             const tag = String(node.tagName || '');
             const inputOk =
               tag === 'TEXTAREA' ||
@@ -4802,8 +4823,14 @@ async function markActiveComposeTarget(serviceId = activeServiceId) {
           }
           const active = document.activeElement;
           if (isCompose(active)) return mark(active);
-          // Keep a previous mark when the AI panel stole focus (Refine again).
+          // Keep a previous mark when the AI panel stole focus (Polish again).
           if (document.querySelector('[data-aspera-ai-compose="1"]')) return true;
+          // Fall back: open chat send box (WA / Arattai).
+          const wa = document.querySelector('[data-testid="conversation-compose-box-input"]');
+          if (wa && !isSearchy(wa)) return mark(wa);
+          for (const candidate of document.querySelectorAll(composeSel)) {
+            if (isCompose(candidate)) return mark(candidate);
+          }
         } catch (e) {}
         return false;
       })()`,
@@ -4814,6 +4841,10 @@ async function markActiveComposeTarget(serviceId = activeServiceId) {
   }
 }
 
+/**
+ * Put polished text back into the open send box.
+ * Prefer the marked node; if WhatsApp/Arattai remounted it, find the live composer.
+ */
 async function applyTextToMarkedCompose(serviceId, text, originalText) {
   if (!serviceId) return { ok: false, error: 'No chat app selected.' };
   const entry = views.get(serviceId);
@@ -4826,53 +4857,39 @@ async function applyTextToMarkedCompose(serviceId, text, originalText) {
   if (!refined.trim()) {
     return { ok: false, error: 'Nothing to insert.' };
   }
+  const expression = buildApplyComposeTextJs({
+    text: refined,
+    original,
+    composeSelector: guestComposeSelector(),
+  });
+
   try {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
-    wc.focus();
-    const result = await wc.executeJavaScript(
-      `(() => {
-        const text = ${JSON.stringify(refined)};
-        const original = ${JSON.stringify(original)};
-        const el = document.querySelector('[data-aspera-ai-compose="1"]');
-        if (!el) return { ok: false, reason: 'no-target' };
-        el.focus();
-        const tag = String(el.tagName || '');
-        if (tag === 'TEXTAREA' || tag === 'INPUT') {
-          const value = String(el.value || '');
-          if (original && value.includes(original)) {
-            const i = value.indexOf(original);
-            el.value = value.slice(0, i) + text + value.slice(i + original.length);
-          } else {
-            el.value = text;
-          }
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-          return { ok: true };
-        }
-        if (el.isContentEditable) {
-          const current = String(el.innerText || el.textContent || '');
-          const sel = window.getSelection?.();
-          const range = document.createRange();
-          range.selectNodeContents(el);
-          sel?.removeAllRanges?.();
-          sel?.addRange?.(range);
-          if (original && current.includes(original) && current.trim() !== original.trim()) {
-            // Replace only the original draft substring when the box has more text.
-            const next = current.replace(original, text);
-            el.focus();
-            document.execCommand('selectAll', false, null);
-            document.execCommand('insertText', false, next);
-            return { ok: true };
-          }
-          document.execCommand('selectAll', false, null);
-          document.execCommand('insertText', false, text);
-          return { ok: true };
-        }
-        return { ok: false, reason: 'not-editable' };
-      })()`,
-      true,
-    );
-    if (result?.ok) return { ok: true };
+    try {
+      wc.focus();
+    } catch {
+      /* ignore */
+    }
+    // Bring the guest compose into focus before insert (AI panel stole focus).
+    try {
+      await focusGuestCompose(wc);
+    } catch {
+      /* ignore */
+    }
+    let result = null;
+    try {
+      result = await cdpEvaluate(wc, expression, { awaitPromise: false });
+    } catch {
+      result = null;
+    }
+    if (!result?.ok) {
+      try {
+        result = await wc.executeJavaScript(expression, true);
+      } catch {
+        result = null;
+      }
+    }
+    if (result?.ok) return { ok: true, via: result.via };
     return {
       ok: false,
       error:
@@ -5347,14 +5364,24 @@ async function runUseRefinedInCompose(payload = {}) {
     return { ok: false, error: 'Nothing to insert.' };
   }
   ctx.refinedText = text;
-  const applied = await applyTextToMarkedCompose(
-    ctx.serviceId || activeServiceId,
-    text,
-    ctx.originalComposeText || ctx.selectionText || '',
-  );
-  if (applied.ok) {
-    closeAiResultWindow();
-    return { ok: true };
+  const original = ctx.originalComposeText || ctx.selectionText || '';
+  const tryIds = [
+    ctx.serviceId,
+    activeServiceId,
+  ].filter((id, i, arr) => id && arr.indexOf(id) === i);
+
+  let applied = { ok: false };
+  for (const sid of tryIds) {
+    try {
+      if (sid && sid !== activeServiceId) activateService(sid);
+    } catch {
+      /* ignore */
+    }
+    applied = await applyTextToMarkedCompose(sid, text, original);
+    if (applied.ok) {
+      closeAiResultWindow();
+      return { ok: true, via: applied.via };
+    }
   }
   clipboard.writeText(text);
   return {
