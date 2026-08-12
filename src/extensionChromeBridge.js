@@ -43,8 +43,11 @@ function tabsCreateHandler(partitionSession) {
   return async (event, details = {}) => {
     if (event?.sender?.isDestroyed?.()) return undefined;
     const session = sessionFromEvent(event, partitionSession);
+    const parent =
+      typeof mainWindowProvider === 'function' ? mainWindowProvider() : null;
     return createAuthTab(session, details, {
       attachPopupHandler: attachExtensionPopupWindowOpen,
+      parent,
     });
   };
 }
@@ -246,14 +249,10 @@ export function wireExtensionSessionPreload(partitionSession) {
   return reloadExtensions;
 }
 
-export function attachExtensionAuthClickBridge(webContents) {
-  if (!webContents || webContents.isDestroyed?.()) return;
-  const inject = () => {
-    if (webContents.isDestroyed()) return;
-    webContents.executeJavaScript(EXTENSION_AUTH_CLICK_BRIDGE_JS, true).catch(() => {});
-  };
-  webContents.on('did-finish-load', inject);
-  webContents.on('dom-ready', inject);
+export function attachExtensionAuthClickBridge(_webContents) {
+  // Intentionally no-op: intercepting Grammarly Log in / Sign up clicks opens
+  // www.grammarly.com and skips extension OAuth. Auth must go through
+  // launchAuthFlow → tabs.create → Hub auth tab + redirect relay.
 }
 
 export function attachExtensionWebContentsHandlers(webContents) {

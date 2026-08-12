@@ -1,8 +1,6 @@
 /**
- * Session preload: patch chrome.tabs.create in extension contexts so Grammarly
- * and similar extensions can open sign-in windows inside Aspera Hub.
- *
- * Runs in chrome-extension:// frames and extension MV3 service workers.
+ * Session preload: patch chrome.tabs / identity in extension contexts and
+ * forward auth-tab events into the service worker main world.
  */
 const { ipcRenderer, contextBridge } = require('electron');
 
@@ -20,9 +18,7 @@ if (isExtensionContext) {
   const patchTabsCreate = () => {
     const root = typeof chrome !== 'undefined' ? chrome : undefined;
     if (!root) return false;
-    if (!root.tabs) {
-      root.tabs = {};
-    }
+    root.tabs = root.tabs || {};
     const base = root.tabs;
     if (base.__asperaTabsCreatePatched) return true;
 
@@ -65,11 +61,35 @@ if (isExtensionContext) {
     setTimeout(() => clearInterval(timer), 15000);
   };
 
+  const dispatchTabEvent = (payload) => {
+    try {
+      if (typeof contextBridge.executeInMainWorld === 'function') {
+        contextBridge.executeInMainWorld({
+          func: (message) => {
+            try {
+              globalThis.__asperaDispatchTabEvent?.(message);
+            } catch (_) {}
+          },
+          args: [payload || {}],
+        });
+      }
+    } catch (_) {}
+  };
+
   try {
     contextBridge.exposeInMainWorld('__asperaExtBridge', bridge);
     if (typeof contextBridge.executeInMainWorld === 'function') {
       contextBridge.executeInMainWorld({ func: patchWhenReady });
     }
+    ipcRenderer.on('aspera-ext:tab-event', (_event, payload) => {
+      dispatchTabEvent(payload);
+    });
+    ipcRenderer.on('aspera-ext:tab-updated', (_event, payload) => {
+      dispatchTabEvent(payload);
+    });
+    ipcRenderer.on('aspera-ext:tab-removed', (_event, payload) => {
+      dispatchTabEvent(payload);
+    });
   } catch (error) {
     console.error('[aspera-ext-preload] failed', error);
   }

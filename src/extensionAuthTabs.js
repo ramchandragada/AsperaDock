@@ -1,9 +1,13 @@
 /**
  * Simulated extension auth tabs in the main process.
  * Electron does not fire chrome.tabs.onUpdated for BrowserWindows — we relay
- * navigation events back to extension service workers via guest page bridges.
+ * navigation events back to extension service workers via guest page bridges
+ * and direct service-worker IPC when available.
  */
 import { BrowserWindow, webContents } from 'electron';
+import { isExtensionOAuthRedirectUrl } from './extensionPreloadWire.js';
+
+export { isExtensionOAuthRedirectUrl } from './extensionPreloadWire.js';
 
 let nextTabId = 900_001;
 
@@ -47,40 +51,105 @@ function broadcastToSession(session, channel, payload) {
   }
 }
 
+async function notifyServiceWorkers(session, payload) {
+  if (!session?.serviceWorkers || !session.extensions) return;
+  let extensions = [];
+  try {
+    extensions = session.extensions.getAllExtensions?.() || [];
+  } catch {
+    extensions = [];
+  }
+  for (const ext of extensions) {
+    const id = String(ext?.id || '').trim();
+    if (!id) continue;
+    try {
+      const sw = await session.serviceWorkers.startWorkerForScope(
+        `chrome-extension://${id}/`,
+      );
+      sw?.send?.('aspera-ext:tab-event', payload);
+    } catch {
+      // ignore
+    }
+  }
+}
+
 function emitTabUpdated(session, tabId, changeInfo, tab) {
-  broadcastToSession(session, 'aspera-ext:tab-updated', {
+  const payload = {
     __asperaHub: 'tab-updated',
     tabId,
     changeInfo,
     tab,
-  });
+  };
+  broadcastToSession(session, 'aspera-ext:tab-updated', payload);
+  notifyServiceWorkers(session, payload).catch(() => {});
 }
 
 function emitTabRemoved(session, tabId, removeInfo = {}) {
-  broadcastToSession(session, 'aspera-ext:tab-removed', {
+  const payload = {
     __asperaHub: 'tab-removed',
     tabId,
     removeInfo,
-  });
+  };
+  broadcastToSession(session, 'aspera-ext:tab-removed', payload);
+  notifyServiceWorkers(session, payload).catch(() => {});
 }
 
 function attachAuthTabListeners(tabId, entry) {
   const { win, wc, session } = entry;
+  let redirectHandled = false;
+
   const notify = (changeInfo) => {
     if (!authTabs.has(tabId)) return;
-    emitTabUpdated(session, tabId, changeInfo, tabSnapshot(tabId, wc, changeInfo.url));
+    const snap = tabSnapshot(tabId, wc, changeInfo.url || entry.url);
+    emitTabUpdated(session, tabId, changeInfo, snap);
   };
 
+  const handlePossibleRedirect = (url, event) => {
+    if (!isExtensionOAuthRedirectUrl(url) || redirectHandled) return false;
+    redirectHandled = true;
+    entry.url = url;
+    try {
+      event?.preventDefault?.();
+    } catch {
+      // ignore
+    }
+    notify({ url, status: 'complete' });
+    // Give the extension a moment to exchange the code, then close.
+    setTimeout(() => {
+      try {
+        if (!win.isDestroyed()) win.close();
+      } catch {
+        // ignore
+      }
+    }, 750);
+    return true;
+  };
+
+  wc.on('will-redirect', (event, url) => {
+    handlePossibleRedirect(url, event);
+  });
+  wc.on('will-navigate', (event, url) => {
+    handlePossibleRedirect(url, event);
+  });
   wc.on('did-navigate', (_event, url) => {
     entry.url = url;
+    if (handlePossibleRedirect(url)) return;
     notify({ url, status: 'loading' });
   });
   wc.on('did-navigate-in-page', (_event, url) => {
     entry.url = url;
+    if (handlePossibleRedirect(url)) return;
     notify({ url });
   });
   wc.on('did-finish-load', () => {
-    notify({ status: 'complete' });
+    let url = entry.url;
+    try {
+      url = String(wc.getURL() || url);
+    } catch {
+      // ignore
+    }
+    if (handlePossibleRedirect(url)) return;
+    notify({ status: 'complete', url });
   });
   wc.on('page-title-updated', (_event, title) => {
     notify({ title });
@@ -105,10 +174,12 @@ export function removeAuthTab(tabId) {
   return true;
 }
 
-export function createAuthTab(session, details = {}, { attachPopupHandler } = {}) {
+export function createAuthTab(session, details = {}, { attachPopupHandler, parent } = {}) {
   const url = String(details?.url || '').trim();
   const tabId = nextTabId++;
+  const parentOk = parent && !parent.isDestroyed?.();
   const win = new BrowserWindow({
+    ...(parentOk ? { parent } : {}),
     modal: false,
     skipTaskbar: true,
     autoHideMenuBar: true,

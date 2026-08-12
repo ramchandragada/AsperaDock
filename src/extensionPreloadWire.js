@@ -46,3 +46,15 @@ export function planPreloadRegistration(scripts, preloadAbs, guestPreloadAbs = '
 export function isExtensionServiceWorkerScope(scope) {
   return String(scope || '').startsWith('chrome-extension://');
 }
+
+export function isExtensionOAuthRedirectUrl(url) {
+  const raw = String(url || '');
+  if (!raw) return false;
+  if (raw.startsWith('chrome-extension://')) return true;
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    return host.endsWith('.chromiumapp.org');
+  } catch {
+    return /chromiumapp\.org/i.test(raw);
+  }
+}

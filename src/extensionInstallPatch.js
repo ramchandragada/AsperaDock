@@ -8,6 +8,7 @@ import path from 'node:path';
 import {
   ASPERA_EXT_SW_BOOTSTRAP,
   ASPERA_EXT_SW_MARKER,
+  ASPERA_EXT_SW_VERSION,
 } from './asperaExtSwBootstrap.js';
 import {
   ASPERA_EXT_AUTH_BRIDGE_CONTENT,
@@ -16,6 +17,7 @@ import {
 
 const MANIFEST_PATCH_ID = 'aspera-hub-auth-bridge';
 const SW_PATCH_MARKER = '/* aspera-hub-sw-bootstrap */';
+const SW_PATCH_END = '/* aspera-hub-sw-bootstrap-end */';
 
 export function isAuthPatchableExtension(manifest) {
   if (!manifest || typeof manifest !== 'object') return false;
@@ -34,16 +36,35 @@ function writeJson(filePath, value) {
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+function stripOldBootstrap(content) {
+  if (content.includes(SW_PATCH_END)) {
+    const start = content.indexOf(SW_PATCH_MARKER);
+    const end = content.indexOf(SW_PATCH_END);
+    if (start >= 0 && end > start) {
+      return (
+        content.slice(0, start) + content.slice(end + SW_PATCH_END.length)
+      ).replace(/^\n+/, '');
+    }
+  }
+  // Legacy single-marker inject: strip until first real importScripts/line.
+  if (content.includes(SW_PATCH_MARKER) || content.includes(ASPERA_EXT_SW_MARKER)) {
+    const importIdx = content.search(/\bimportScripts\s*\(/);
+    if (importIdx > 0) return content.slice(importIdx);
+  }
+  return content;
+}
+
 function patchServiceWorker(extPath, manifest) {
   const rel = String(manifest.background?.service_worker || '').trim();
   if (!rel) return false;
   const swPath = path.join(extPath, rel);
   if (!fs.existsSync(swPath)) return false;
   let content = fs.readFileSync(swPath, 'utf8');
-  if (content.includes(ASPERA_EXT_SW_MARKER) || content.includes(SW_PATCH_MARKER)) {
+  if (content.includes(ASPERA_EXT_SW_VERSION)) {
     return false;
   }
-  const patched = `${SW_PATCH_MARKER}\n${ASPERA_EXT_SW_BOOTSTRAP}\n${content}`;
+  content = stripOldBootstrap(content);
+  const patched = `${SW_PATCH_MARKER}\n${ASPERA_EXT_SW_BOOTSTRAP}\n${SW_PATCH_END}\n${content}`;
   fs.writeFileSync(swPath, patched, 'utf8');
   return true;
 }

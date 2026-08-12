@@ -15,6 +15,7 @@ import {
   screen,
   nativeTheme,
   webContents as electronWebContents,
+  net,
 } from 'electron';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -156,16 +157,19 @@ import { aboutDetailText, ASPERA_HUB_WEBSITE } from './aboutCopy.js';
 import { spawnSync } from 'node:child_process';
 import {
   installUnpackedExtension,
+  injectManifestPublicKey,
   listInstalledExtensions,
   normalizeExtensionList,
   uninstallExtensionFiles,
 } from './extensionsStore.js';
 import {
   chromeWebStoreUrl,
+  crxDownloadUrl,
   downloadAndUnpackChromeExtension,
   parseChromeExtensionId,
   unpackExtensionPackage,
 } from './chromeWebStore.js';
+import { publicKeyForExtensionId } from './crxPublicKey.js';
 import {
   AI_ALLOWED_APP_IDS,
   AI_LANGUAGES,
@@ -7256,11 +7260,37 @@ function listLoadedSessionExtensions(partitionSession) {
   return [];
 }
 
+async function ensureStableExtensionPublicKey(ext) {
+  const chromeId = String(ext?.chromeId || '').trim().toLowerCase();
+  if (!chromeId || !ext?.path || !fs.existsSync(ext.path)) return false;
+  const manifestPath = path.join(ext.path, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) return false;
+  try {
+    const manifest = JSON.parse(
+      fs.readFileSync(manifestPath, 'utf8').replace(/^\uFEFF/, ''),
+    );
+    if (manifest.key) return false;
+  } catch {
+    return false;
+  }
+  try {
+    const url = crxDownloadUrl(chromeId);
+    const res = await net.fetch(url, { redirect: 'follow' });
+    if (!res.ok) return false;
+    const crxBuf = Buffer.from(await res.arrayBuffer());
+    const key = publicKeyForExtensionId(crxBuf, chromeId);
+    if (!key) return false;
+    return injectManifestPublicKey(ext.path, key);
+  } catch {
+    return false;
+  }
+}
+
 async function syncExtensionsIntoSession(partitionSession) {
   const api = getSessionExtensionsApi(partitionSession);
   if (!api || typeof api.loadExtension !== 'function') return;
 
-  const swPreloadNew = wireExtensionSessionPreload(partitionSession);
+  const reloadNeeded = wireExtensionSessionPreload(partitionSession);
 
   const catalog = listInstalledExtensions(settings.extensions);
   const enabledPaths = new Set(
@@ -7271,16 +7301,38 @@ async function syncExtensionsIntoSession(partitionSession) {
   let extensionPatchChanged = false;
   for (const ext of catalog) {
     if (!ext.enabled || !ext.exists) continue;
+    if (await ensureStableExtensionPublicKey(ext)) {
+      extensionPatchChanged = true;
+    }
     if (patchExtensionForAuth(ext.path)) {
       extensionPatchChanged = true;
     }
   }
 
-  if (swPreloadNew || extensionPatchChanged) {
+  if (reloadNeeded || extensionPatchChanged) {
     for (const loaded of listLoadedSessionExtensions(partitionSession)) {
       const loadedPath = path.resolve(String(loaded.path || ''));
       if (!loadedPath.startsWith(root + path.sep)) continue;
       if (!enabledPaths.has(loadedPath)) continue;
+      try {
+        if (typeof api.removeExtension === 'function') {
+          api.removeExtension(loaded.id);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  // Also reload when Electron assigned a non-store ID (missing manifest key).
+  for (const loaded of listLoadedSessionExtensions(partitionSession)) {
+    const loadedPath = path.resolve(String(loaded.path || ''));
+    if (!loadedPath.startsWith(root + path.sep)) continue;
+    const catalogExt = catalog.find(
+      (ext) => path.resolve(ext.path) === loadedPath,
+    );
+    const chromeId = String(catalogExt?.chromeId || '').toLowerCase();
+    if (chromeId && String(loaded.id || '').toLowerCase() !== chromeId) {
       try {
         if (typeof api.removeExtension === 'function') {
           api.removeExtension(loaded.id);
@@ -7321,8 +7373,11 @@ async function syncExtensionsIntoSession(partitionSession) {
     try {
       const info = await api.loadExtension(abs, { allowFileAccess: true });
       if (info?.id && info.id !== ext.chromeId) {
-        ext.chromeId = info.id;
-        chromeIdChanged = true;
+        // Prefer keeping store chromeId when present; still record actual id.
+        if (!ext.chromeId) {
+          ext.chromeId = info.id;
+          chromeIdChanged = true;
+        }
       }
     } catch (error) {
       console.warn('[extensions] load failed', ext.name, error?.message || error);
@@ -10632,7 +10687,7 @@ function createViewForService(service) {
   attachGuestContextMenu(webContents);
   attachGuestNavigationGate(webContents, service);
   if (listInstalledExtensions(settings.extensions).some((e) => e.enabled && e.exists)) {
-    attachExtensionAuthClickBridge(webContents);
+    // Guest click bridge intentionally disabled — see attachExtensionAuthClickBridge.
   }
   attachLinkTabAuthRecovery(webContents, service);
   if (isHeavyPortalApp(service) || isKeepWarmService(service.id)) {
@@ -13309,6 +13364,7 @@ extensionsHandle('extensions:install-webstore', async (_e, input) => {
     const installed = installUnpackedExtension(unpacked.path, {
       chromeId,
       replaceId: existing?.id || `ext-${chromeId}`,
+      publicKey: unpacked.publicKey,
     });
     await commitInstalledExtension(installed);
     return { ok: true, extension: installed };
@@ -13340,7 +13396,9 @@ extensionsHandle('extensions:install-package', async () => {
   try {
     const unpacked = unpackExtensionPackage(picked[0]);
     workRoot = unpacked.workRoot;
-    const installed = installUnpackedExtension(unpacked.path);
+    const installed = installUnpackedExtension(unpacked.path, {
+      publicKey: unpacked.publicKey,
+    });
     await commitInstalledExtension(installed);
     return { ok: true, extension: installed };
   } catch (error) {

@@ -1,4 +1,147 @@
 /** Injected at the top of extension service workers (before importScripts). */
-export const ASPERA_EXT_SW_BOOTSTRAP = String.raw`(()=>{if(self.__asperaExtAuthBootstrap)return;self.__asperaExtAuthBootstrap=!0;const u=[],m=[];function p(){if("undefined"==typeof chrome)return void setTimeout(p,5);chrome.tabs||(chrome.tabs={});if(chrome.tabs.__asperaHubPatched)return;const e=chrome.tabs.create?.bind?.(chrome.tabs),t=chrome.tabs.onUpdated,n=chrome.tabs.onRemoved,r=chrome.tabs.remove?.bind?.(chrome.tabs);function o(e,t){chrome.runtime.sendMessage({__asperaHub:"tabs-create",details:e||{}},e=>{t(e?.tab)})}chrome.tabs.create=function(t,n){const r=t=>{"function"==typeof n&&n(t)};if(e)try{return void e(t,e=>e?.id?r(e):o(t,r))}catch{}o(t,r)},chrome.tabs.onUpdated={addListener(e){"function"==typeof e&&u.push(e),t?.addListener?.(e)},removeListener(e){const t=u.indexOf(e);t>=0&&u.splice(t,1)},hasListener:e=>u.includes(e),hasListeners:()=>u.length>0},chrome.tabs.onRemoved={addListener(e){"function"==typeof e&&m.push(e),n?.addListener?.(e)},removeListener(e){const t=m.indexOf(e);t>=0&&m.splice(t,1)},hasListener:e=>m.includes(e),hasListeners:()=>m.length>0},r&&(chrome.tabs.remove=function(e,t){chrome.runtime.sendMessage({__asperaHub:"tabs-remove",tabIds:e},()=>{try{r(e,t)}catch{"function"==typeof t&&t()}})}),chrome.runtime.onMessage.addListener(e=>{e?.__asperaHub==="tab-updated"&&u.forEach(t=>{try{t(e.tabId,e.changeInfo||{},e.tab||{})}catch{}}),e?.__asperaHub==="tab-removed"&&m.forEach(t=>{try{t(e.tabId,e.removeInfo||{})}catch{}})}),chrome.tabs.__asperaHubPatched=!0}p()})();`;
+export const ASPERA_EXT_SW_BOOTSTRAP = String.raw`(() => {
+  if (self.__asperaExtAuthBootstrap_v2) return;
+  self.__asperaExtAuthBootstrap_v2 = true;
+  self.__asperaExtAuthBootstrap = true;
+  const updatedListeners = [];
+  const removedListeners = [];
+
+  function patchWhenReady() {
+    if (typeof chrome === 'undefined') {
+      setTimeout(patchWhenReady, 5);
+      return;
+    }
+
+    // Stable OAuth redirect for Chrome Web Store extensions.
+    chrome.identity = chrome.identity || {};
+    if (typeof chrome.identity.getRedirectURL !== 'function') {
+      chrome.identity.getRedirectURL = (path) => {
+        const id = chrome.runtime?.id || '';
+        const suffix = path ? String(path).replace(/^\\/+/, '') : '';
+        return 'https://' + id + '.chromiumapp.org/' + suffix;
+      };
+    }
+
+    chrome.tabs = chrome.tabs || {};
+    if (chrome.tabs.__asperaHubPatched) return;
+
+    const nativeCreate = chrome.tabs.create?.bind?.(chrome.tabs);
+    const nativeUpdated = chrome.tabs.onUpdated;
+    const nativeRemoved = chrome.tabs.onRemoved;
+    const nativeRemove = chrome.tabs.remove?.bind?.(chrome.tabs);
+
+    function createViaBridge(details, done) {
+      const bridge = globalThis.__asperaExtBridge?.tabsCreate;
+      if (typeof bridge === 'function') {
+        Promise.resolve(bridge(details || {}))
+          .then((tab) => done(tab))
+          .catch(() => done(undefined));
+        return;
+      }
+      chrome.runtime.sendMessage(
+        { __asperaHub: 'tabs-create', details: details || {} },
+        (response) => done(response?.tab),
+      );
+    }
+
+    chrome.tabs.create = function (details, callback) {
+      const finish = (tab) => {
+        if (typeof callback === 'function') callback(tab);
+      };
+      if (nativeCreate) {
+        try {
+          nativeCreate(details, (tab) => {
+            if (tab?.id) finish(tab);
+            else createViaBridge(details, finish);
+          });
+          return;
+        } catch (_) {}
+      }
+      createViaBridge(details, finish);
+    };
+
+    chrome.tabs.onUpdated = {
+      addListener(listener) {
+        if (typeof listener === 'function') updatedListeners.push(listener);
+        nativeUpdated?.addListener?.(listener);
+      },
+      removeListener(listener) {
+        const idx = updatedListeners.indexOf(listener);
+        if (idx >= 0) updatedListeners.splice(idx, 1);
+        nativeUpdated?.removeListener?.(listener);
+      },
+      hasListener: (listener) => updatedListeners.includes(listener),
+      hasListeners: () => updatedListeners.length > 0,
+    };
+
+    chrome.tabs.onRemoved = {
+      addListener(listener) {
+        if (typeof listener === 'function') removedListeners.push(listener);
+        nativeRemoved?.addListener?.(listener);
+      },
+      removeListener(listener) {
+        const idx = removedListeners.indexOf(listener);
+        if (idx >= 0) removedListeners.splice(idx, 1);
+        nativeRemoved?.removeListener?.(listener);
+      },
+      hasListener: (listener) => removedListeners.includes(listener),
+      hasListeners: () => removedListeners.length > 0,
+    };
+
+    chrome.tabs.remove = function (tabIds, callback) {
+      chrome.runtime.sendMessage(
+        { __asperaHub: 'tabs-remove', tabIds },
+        () => {
+          try {
+            if (nativeRemove) nativeRemove(tabIds, callback);
+            else if (typeof callback === 'function') callback();
+          } catch (_) {
+            if (typeof callback === 'function') callback();
+          }
+        },
+      );
+    };
+
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message?.__asperaHub === 'tab-updated') {
+        for (const listener of updatedListeners.slice()) {
+          try {
+            listener(message.tabId, message.changeInfo || {}, message.tab || {});
+          } catch (_) {}
+        }
+      }
+      if (message?.__asperaHub === 'tab-removed') {
+        for (const listener of removedListeners.slice()) {
+          try {
+            listener(message.tabId, message.removeInfo || {});
+          } catch (_) {}
+        }
+      }
+    });
+
+    self.__asperaDispatchTabEvent = (message) => {
+      chrome.runtime.onMessage?.dispatch?.(message);
+      if (message?.__asperaHub === 'tab-updated') {
+        for (const listener of updatedListeners.slice()) {
+          try {
+            listener(message.tabId, message.changeInfo || {}, message.tab || {});
+          } catch (_) {}
+        }
+      }
+      if (message?.__asperaHub === 'tab-removed') {
+        for (const listener of removedListeners.slice()) {
+          try {
+            listener(message.tabId, message.removeInfo || {});
+          } catch (_) {}
+        }
+      }
+    };
+
+    chrome.tabs.__asperaHubPatched = true;
+  }
+
+  patchWhenReady();
+})();`;
 
 export const ASPERA_EXT_SW_MARKER = '__asperaExtAuthBootstrap';
+export const ASPERA_EXT_SW_VERSION = '__asperaExtAuthBootstrap_v2';

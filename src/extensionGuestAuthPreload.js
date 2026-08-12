@@ -7,6 +7,8 @@ const { ipcRenderer, contextBridge } = require('electron');
 const bridge = {
   tabsCreate: (details) =>
     ipcRenderer.invoke('aspera-ext:tabs-create', details || {}),
+  tabsRemove: (tabIds) =>
+    ipcRenderer.invoke('aspera-ext:tabs-remove', tabIds),
 };
 
 try {
@@ -28,20 +30,25 @@ ipcRenderer.on('aspera-ext:tab-removed', relayToPage);
 
 window.addEventListener('message', (event) => {
   if (event.source !== window || !event.data) return;
-  if (event.data.__asperaHub !== 'tabs-create') return;
-  const reqId = event.data.reqId;
-  bridge
-    .tabsCreate(event.data.details || {})
-    .then((tab) => {
-      window.postMessage(
-        { __asperaHub: 'tabs-create-result', reqId, tab },
-        '*',
-      );
-    })
-    .catch(() => {
-      window.postMessage(
-        { __asperaHub: 'tabs-create-result', reqId, tab: undefined },
-        '*',
-      );
-    });
+  if (event.data.__asperaHub === 'tabs-create') {
+    const reqId = event.data.reqId;
+    bridge
+      .tabsCreate(event.data.details || {})
+      .then((tab) => {
+        window.postMessage(
+          { __asperaHub: 'tabs-create-result', reqId, tab },
+          '*',
+        );
+      })
+      .catch(() => {
+        window.postMessage(
+          { __asperaHub: 'tabs-create-result', reqId, tab: undefined },
+          '*',
+        );
+      });
+    return;
+  }
+  if (event.data.__asperaHub === 'tabs-remove') {
+    bridge.tabsRemove(event.data.tabIds).catch(() => {});
+  }
 });
