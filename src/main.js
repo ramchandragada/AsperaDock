@@ -15,7 +15,6 @@ import {
   screen,
   nativeTheme,
   webContents as electronWebContents,
-  net,
 } from 'electron';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -157,19 +156,17 @@ import { aboutDetailText, ASPERA_HUB_WEBSITE } from './aboutCopy.js';
 import { spawnSync } from 'node:child_process';
 import {
   installUnpackedExtension,
-  injectManifestPublicKey,
   listInstalledExtensions,
   normalizeExtensionList,
   uninstallExtensionFiles,
 } from './extensionsStore.js';
 import {
   chromeWebStoreUrl,
-  crxDownloadUrl,
   downloadAndUnpackChromeExtension,
   parseChromeExtensionId,
   unpackExtensionPackage,
 } from './chromeWebStore.js';
-import { publicKeyForExtensionId } from './crxPublicKey.js';
+import { stripLegacyExtensionAuthPatches } from './stripLegacyExtensionAuthPatches.js';
 import {
   AI_ALLOWED_APP_IDS,
   AI_LANGUAGES,
@@ -286,15 +283,6 @@ import {
   getUpdateStatus,
   updateReadyForQuit,
 } from './updater.js';
-import {
-  configureExtensionChromeBridge,
-  wireExtensionSessionPreload,
-  attachExtensionAuthClickBridge,
-  attachExtensionWebContentsHandlers,
-} from './extensionChromeBridge.js';
-import { patchExtensionForAuth } from './extensionInstallPatch.js';
-import { adoptAuthPopupWebContents } from './extensionAuthTabs.js';
-import { isExtensionOAuthRedirectUrl } from './extensionPreloadWire.js';
 import { initSentryMain } from './sentryMain.js';
 import {
   configureGuestWindowOpen as configureGuestWindowOpenImpl,
@@ -7003,13 +6991,10 @@ function configureSession(partitionSession, partitionKey) {
   applyProxy(partitionSession);
   if (configuredPartitions.has(partitionKey)) {
     // Partition already wired — still (re)load extensions on later calls.
-    wireExtensionSessionPreload(partitionSession);
     syncExtensionsIntoSession(partitionSession).catch(() => {});
     return;
   }
   configuredPartitions.add(partitionKey);
-
-  wireExtensionSessionPreload(partitionSession);
 
   partitionSession.setUserAgent(CHROME_USER_AGENT);
   partitionSession.setPermissionRequestHandler((_wc, permission, callback) => {
@@ -7262,52 +7247,9 @@ function listLoadedSessionExtensions(partitionSession) {
   return [];
 }
 
-import { knownPublicKeyForChromeId } from './knownExtensionPublicKeys.js';
-
-async function ensureStableExtensionPublicKey(ext) {
-  const chromeId = String(ext?.chromeId || '').trim().toLowerCase();
-  if (!chromeId || !ext?.path || !fs.existsSync(ext.path)) return false;
-  const manifestPath = path.join(ext.path, 'manifest.json');
-  if (!fs.existsSync(manifestPath)) return false;
-  try {
-    const manifest = JSON.parse(
-      fs.readFileSync(manifestPath, 'utf8').replace(/^\uFEFF/, ''),
-    );
-    if (manifest.key) return false;
-  } catch {
-    return false;
-  }
-
-  const known = knownPublicKeyForChromeId(chromeId);
-  if (known) {
-    return injectManifestPublicKey(ext.path, known);
-  }
-
-  // Network fallback with a hard timeout — never block Reload apps / startup.
-  try {
-    const url = crxDownloadUrl(chromeId);
-    const crxBuf = await Promise.race([
-      (async () => {
-        const res = await net.fetch(url, { redirect: 'follow' });
-        if (!res.ok) return null;
-        return Buffer.from(await res.arrayBuffer());
-      })(),
-      new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
-    ]);
-    if (!crxBuf) return false;
-    const key = publicKeyForExtensionId(crxBuf, chromeId);
-    if (!key) return false;
-    return injectManifestPublicKey(ext.path, key);
-  } catch {
-    return false;
-  }
-}
-
 async function syncExtensionsIntoSession(partitionSession) {
   const api = getSessionExtensionsApi(partitionSession);
   if (!api || typeof api.loadExtension !== 'function') return;
-
-  const reloadNeeded = wireExtensionSessionPreload(partitionSession);
 
   const catalog = listInstalledExtensions(settings.extensions);
   const enabledPaths = new Set(
@@ -7315,41 +7257,16 @@ async function syncExtensionsIntoSession(partitionSession) {
   );
   const root = path.join(app.getPath('userData'), 'extensions');
 
-  let extensionPatchChanged = false;
+  // Undo earlier Grammarly auth-bridge experiments that patched extensions in place.
+  let stripped = false;
   for (const ext of catalog) {
-    if (!ext.enabled || !ext.exists) continue;
-    if (await ensureStableExtensionPublicKey(ext)) {
-      extensionPatchChanged = true;
-    }
-    if (patchExtensionForAuth(ext.path)) {
-      extensionPatchChanged = true;
-    }
+    if (!ext.exists) continue;
+    if (stripLegacyExtensionAuthPatches(ext.path)) stripped = true;
   }
-
-  if (reloadNeeded || extensionPatchChanged) {
+  if (stripped) {
     for (const loaded of listLoadedSessionExtensions(partitionSession)) {
       const loadedPath = path.resolve(String(loaded.path || ''));
       if (!loadedPath.startsWith(root + path.sep)) continue;
-      if (!enabledPaths.has(loadedPath)) continue;
-      try {
-        if (typeof api.removeExtension === 'function') {
-          api.removeExtension(loaded.id);
-        }
-      } catch {
-        // ignore
-      }
-    }
-  }
-
-  // Also reload when Electron assigned a non-store ID (missing manifest key).
-  for (const loaded of listLoadedSessionExtensions(partitionSession)) {
-    const loadedPath = path.resolve(String(loaded.path || ''));
-    if (!loadedPath.startsWith(root + path.sep)) continue;
-    const catalogExt = catalog.find(
-      (ext) => path.resolve(ext.path) === loadedPath,
-    );
-    const chromeId = String(catalogExt?.chromeId || '').toLowerCase();
-    if (chromeId && String(loaded.id || '').toLowerCase() !== chromeId) {
       try {
         if (typeof api.removeExtension === 'function') {
           api.removeExtension(loaded.id);
@@ -7390,11 +7307,8 @@ async function syncExtensionsIntoSession(partitionSession) {
     try {
       const info = await api.loadExtension(abs, { allowFileAccess: true });
       if (info?.id && info.id !== ext.chromeId) {
-        // Prefer keeping store chromeId when present; still record actual id.
-        if (!ext.chromeId) {
-          ext.chromeId = info.id;
-          chromeIdChanged = true;
-        }
+        ext.chromeId = info.id;
+        chromeIdChanged = true;
       }
     } catch (error) {
       console.warn('[extensions] load failed', ext.name, error?.message || error);
@@ -7510,9 +7424,6 @@ function guestWebPreferences(service) {
     nodeIntegration: false,
     sandbox: true,
     spellcheck: true,
-    // Always attach the auth tab relay — session preloads alone are easy to miss
-    // after extension reloads / --no-sandbox SW preload gaps.
-    preload: path.join(__dirname, 'extensionGuestAuthPreload.js'),
   };
 }
 
@@ -10706,9 +10617,6 @@ function createViewForService(service) {
   configureGuestWindowOpen(webContents, service);
   attachGuestContextMenu(webContents);
   attachGuestNavigationGate(webContents, service);
-  if (listInstalledExtensions(settings.extensions).some((e) => e.enabled && e.exists)) {
-    // Guest click bridge intentionally disabled — see attachExtensionAuthClickBridge.
-  }
   attachLinkTabAuthRecovery(webContents, service);
   if (isHeavyPortalApp(service) || isKeepWarmService(service.id)) {
     // Safe Mode: do not spoof Page Visibility on WhatsApp.
@@ -10737,29 +10645,6 @@ function createViewForService(service) {
     trackServicePopup(service.id, childWindow);
     attachGuestContextMenu(childWc);
     watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
-
-    const adoptExtensionAuthPopup = () => {
-      if (childWindow.isDestroyed() || childWindow.__hubExtAuthAdopted) return;
-      let popupUrl = '';
-      try {
-        popupUrl = String(childWc.getURL() || '');
-      } catch {
-        return;
-      }
-      if (!popupUrl || popupUrl === 'about:blank') return;
-      if (
-        isExtensionAuthPopupUrl(popupUrl) ||
-        isExtensionOAuthRedirectUrl(popupUrl) ||
-        /auth\.grammarly\.com/i.test(popupUrl)
-      ) {
-        childWindow.__hubExtAuthAdopted = true;
-        adoptAuthPopupWebContents(childWc, childWc.session, popupUrl);
-        configureGuestWindowOpen(childWc, service);
-      }
-    };
-    childWc.on('did-navigate', adoptExtensionAuthPopup);
-    childWc.on('will-redirect', adoptExtensionAuthPopup);
-    setTimeout(adoptExtensionAuthPopup, 50);
 
     // WhatsApp/Arattai: blob previews stay read-only; extension auth popups
     // need window.open rules but must not get the messenger navigation gate
@@ -13407,7 +13292,6 @@ extensionsHandle('extensions:install-webstore', async (_e, input) => {
     const installed = installUnpackedExtension(unpacked.path, {
       chromeId,
       replaceId: existing?.id || `ext-${chromeId}`,
-      publicKey: unpacked.publicKey,
     });
     await commitInstalledExtension(installed);
     return { ok: true, extension: installed };
@@ -13439,9 +13323,7 @@ extensionsHandle('extensions:install-package', async () => {
   try {
     const unpacked = unpackExtensionPackage(picked[0]);
     workRoot = unpacked.workRoot;
-    const installed = installUnpackedExtension(unpacked.path, {
-      publicKey: unpacked.publicKey,
-    });
+    const installed = installUnpackedExtension(unpacked.path);
     await commitInstalledExtension(installed);
     return { ok: true, extension: installed };
   } catch (error) {
@@ -13505,20 +13387,11 @@ extensionsHandle('extensions:remove', async (_e, id) => {
 });
 extensionsHandle('extensions:reload-guests', async () => {
   try {
-    await Promise.race([
-      syncExtensionsToAllGuestSessions(),
-      new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Extension sync timed out')), 12000);
-      }),
-    ]);
+    await syncExtensionsToAllGuestSessions();
   } catch (error) {
     console.warn('[extensions] reload-guests sync', error?.message || error);
   }
-  try {
-    reloadAllGuestViews();
-  } catch (error) {
-    console.warn('[extensions] reload-guests views', error?.message || error);
-  }
+  reloadAllGuestViews();
   pushExtensionsManagerData();
   return { ok: true };
 });
@@ -14203,11 +14076,6 @@ app.whenReady().then(async () => {
   }
 
   attachChromeProtocolHandler();
-
-  configureExtensionChromeBridge({ getMainWindow: () => mainWindow });
-  app.on('web-contents-created', (_event, contents) => {
-    attachExtensionWebContentsHandlers(contents);
-  });
 
   // Keep a friendly name in menus/About; WM class stays "asperadock" for the dock icon.
   if (process.platform !== 'linux') {

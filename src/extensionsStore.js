@@ -6,7 +6,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { app } from 'electron';
-import { patchExtensionForAuth } from './extensionInstallPatch.js';
 
 function extensionsRoot() {
   return path.join(app.getPath('userData'), 'extensions');
@@ -111,7 +110,7 @@ export function listInstalledExtensions(settingsExtensions) {
 /**
  * Copy an unpacked extension into userData and return catalog metadata.
  * @param {string} sourceDir
- * @param {{ chromeId?: string, replaceId?: string, publicKey?: string }} [opts]
+ * @param {{ chromeId?: string, replaceId?: string }} [opts]
  */
 export function installUnpackedExtension(sourceDir, opts = {}) {
   const src = path.resolve(String(sourceDir || ''));
@@ -129,11 +128,6 @@ export function installUnpackedExtension(sourceDir, opts = {}) {
     removeDirRecursive(dest);
   }
   copyDirRecursive(src, dest);
-  const publicKey = String(opts.publicKey || '').trim();
-  if (publicKey) {
-    injectManifestPublicKey(dest, publicKey);
-  }
-  patchExtensionForAuth(dest);
   const name =
     resolveManifestString(manifest.name, dest) ||
     path.basename(src) ||
@@ -148,21 +142,6 @@ export function installUnpackedExtension(sourceDir, opts = {}) {
     path: dest,
     chromeId,
   };
-}
-
-/** Write Chrome Web Store public key into manifest so Electron keeps a stable ID. */
-export function injectManifestPublicKey(extPath, publicKey) {
-  const key = String(publicKey || '').trim();
-  if (!key) return false;
-  const manifestPath = path.join(extPath, 'manifest.json');
-  if (!fs.existsSync(manifestPath)) return false;
-  const manifest = JSON.parse(
-    fs.readFileSync(manifestPath, 'utf8').replace(/^\uFEFF/, ''),
-  );
-  if (manifest.key === key) return false;
-  manifest.key = key;
-  fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-  return true;
 }
 
 export function uninstallExtensionFiles(ext) {

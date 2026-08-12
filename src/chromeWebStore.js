@@ -7,7 +7,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { publicKeyForExtensionId } from './crxPublicKey.js';
 
 const require = createRequire(import.meta.url);
 
@@ -186,8 +185,7 @@ export async function downloadAndUnpackChromeExtension(extensionId, {
   unzipToDir(zipPath, unpackDir);
   const manifestDir = findManifestDir(unpackDir);
   stripMetadataDir(manifestDir);
-  const publicKey = publicKeyForExtensionId(crxBuf, id);
-  return { id, path: manifestDir, workRoot: root, publicKey };
+  return { id, path: manifestDir, workRoot: root };
 }
 
 /**
@@ -220,6 +218,5 @@ export function unpackExtensionPackage(filePath, workRoot = '') {
   unzipToDir(zipPath, unpackDir);
   const manifestDir = findManifestDir(unpackDir);
   stripMetadataDir(manifestDir);
-  const publicKey = publicKeyForExtensionId(raw, '');
-  return { path: manifestDir, workRoot: root, publicKey };
+  return { path: manifestDir, workRoot: root };
 }

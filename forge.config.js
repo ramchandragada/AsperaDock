@@ -144,16 +144,6 @@ module.exports = {
             config: 'vite.preload.config.mjs',
             target: 'preload',
           },
-          {
-            entry: 'src/extensionChromePreload.js',
-            config: 'vite.preload.config.mjs',
-            target: 'preload',
-          },
-          {
-            entry: 'src/extensionGuestAuthPreload.js',
-            config: 'vite.preload.config.mjs',
-            target: 'preload',
-          },
         ],
         renderer: [
           {
