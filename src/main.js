@@ -282,6 +282,12 @@ import {
   getUpdateStatus,
   updateReadyForQuit,
 } from './updater.js';
+import {
+  configureExtensionChromeBridge,
+  wireExtensionSessionPreload,
+  attachExtensionAuthClickBridge,
+  attachExtensionWebContentsHandlers,
+} from './extensionChromeBridge.js';
 import { initSentryMain } from './sentryMain.js';
 import {
   configureGuestWindowOpen as configureGuestWindowOpenImpl,
@@ -6990,10 +6996,13 @@ function configureSession(partitionSession, partitionKey) {
   applyProxy(partitionSession);
   if (configuredPartitions.has(partitionKey)) {
     // Partition already wired — still (re)load extensions on later calls.
+    wireExtensionSessionPreload(partitionSession);
     syncExtensionsIntoSession(partitionSession).catch(() => {});
     return;
   }
   configuredPartitions.add(partitionKey);
+
+  wireExtensionSessionPreload(partitionSession);
 
   partitionSession.setUserAgent(CHROME_USER_AGENT);
   partitionSession.setPermissionRequestHandler((_wc, permission, callback) => {
@@ -10596,6 +10605,9 @@ function createViewForService(service) {
   configureGuestWindowOpen(webContents, service);
   attachGuestContextMenu(webContents);
   attachGuestNavigationGate(webContents, service);
+  if (listInstalledExtensions(settings.extensions).some((e) => e.enabled && e.exists)) {
+    attachExtensionAuthClickBridge(webContents);
+  }
   attachLinkTabAuthRecovery(webContents, service);
   if (isHeavyPortalApp(service) || isKeepWarmService(service.id)) {
     // Safe Mode: do not spoof Page Visibility on WhatsApp.
@@ -14051,6 +14063,11 @@ app.whenReady().then(async () => {
   }
 
   attachChromeProtocolHandler();
+
+  configureExtensionChromeBridge({ getMainWindow: () => mainWindow });
+  app.on('web-contents-created', (_event, contents) => {
+    attachExtensionWebContentsHandlers(contents);
+  });
 
   // Keep a friendly name in menus/About; WM class stays "asperadock" for the dock icon.
   if (process.platform !== 'linux') {
