@@ -293,6 +293,8 @@ import {
   attachExtensionWebContentsHandlers,
 } from './extensionChromeBridge.js';
 import { patchExtensionForAuth } from './extensionInstallPatch.js';
+import { adoptAuthPopupWebContents } from './extensionAuthTabs.js';
+import { isExtensionOAuthRedirectUrl } from './extensionPreloadWire.js';
 import { initSentryMain } from './sentryMain.js';
 import {
   configureGuestWindowOpen as configureGuestWindowOpenImpl,
@@ -7260,6 +7262,8 @@ function listLoadedSessionExtensions(partitionSession) {
   return [];
 }
 
+import { knownPublicKeyForChromeId } from './knownExtensionPublicKeys.js';
+
 async function ensureStableExtensionPublicKey(ext) {
   const chromeId = String(ext?.chromeId || '').trim().toLowerCase();
   if (!chromeId || !ext?.path || !fs.existsSync(ext.path)) return false;
@@ -7273,11 +7277,24 @@ async function ensureStableExtensionPublicKey(ext) {
   } catch {
     return false;
   }
+
+  const known = knownPublicKeyForChromeId(chromeId);
+  if (known) {
+    return injectManifestPublicKey(ext.path, known);
+  }
+
+  // Network fallback with a hard timeout — never block Reload apps / startup.
   try {
     const url = crxDownloadUrl(chromeId);
-    const res = await net.fetch(url, { redirect: 'follow' });
-    if (!res.ok) return false;
-    const crxBuf = Buffer.from(await res.arrayBuffer());
+    const crxBuf = await Promise.race([
+      (async () => {
+        const res = await net.fetch(url, { redirect: 'follow' });
+        if (!res.ok) return null;
+        return Buffer.from(await res.arrayBuffer());
+      })(),
+      new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
+    ]);
+    if (!crxBuf) return false;
     const key = publicKeyForExtensionId(crxBuf, chromeId);
     if (!key) return false;
     return injectManifestPublicKey(ext.path, key);
@@ -7493,6 +7510,9 @@ function guestWebPreferences(service) {
     nodeIntegration: false,
     sandbox: true,
     spellcheck: true,
+    // Always attach the auth tab relay — session preloads alone are easy to miss
+    // after extension reloads / --no-sandbox SW preload gaps.
+    preload: path.join(__dirname, 'extensionGuestAuthPreload.js'),
   };
 }
 
@@ -10718,6 +10738,29 @@ function createViewForService(service) {
     attachGuestContextMenu(childWc);
     watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
 
+    const adoptExtensionAuthPopup = () => {
+      if (childWindow.isDestroyed() || childWindow.__hubExtAuthAdopted) return;
+      let popupUrl = '';
+      try {
+        popupUrl = String(childWc.getURL() || '');
+      } catch {
+        return;
+      }
+      if (!popupUrl || popupUrl === 'about:blank') return;
+      if (
+        isExtensionAuthPopupUrl(popupUrl) ||
+        isExtensionOAuthRedirectUrl(popupUrl) ||
+        /auth\.grammarly\.com/i.test(popupUrl)
+      ) {
+        childWindow.__hubExtAuthAdopted = true;
+        adoptAuthPopupWebContents(childWc, childWc.session, popupUrl);
+        configureGuestWindowOpen(childWc, service);
+      }
+    };
+    childWc.on('did-navigate', adoptExtensionAuthPopup);
+    childWc.on('will-redirect', adoptExtensionAuthPopup);
+    setTimeout(adoptExtensionAuthPopup, 50);
+
     // WhatsApp/Arattai: blob previews stay read-only; extension auth popups
     // need window.open rules but must not get the messenger navigation gate
     // (that would block Grammarly / password-manager login mid-flow).
@@ -13461,8 +13504,21 @@ extensionsHandle('extensions:remove', async (_e, id) => {
   return { ok: true };
 });
 extensionsHandle('extensions:reload-guests', async () => {
-  await syncExtensionsToAllGuestSessions();
-  reloadAllGuestViews();
+  try {
+    await Promise.race([
+      syncExtensionsToAllGuestSessions(),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Extension sync timed out')), 12000);
+      }),
+    ]);
+  } catch (error) {
+    console.warn('[extensions] reload-guests sync', error?.message || error);
+  }
+  try {
+    reloadAllGuestViews();
+  } catch (error) {
+    console.warn('[extensions] reload-guests views', error?.message || error);
+  }
   pushExtensionsManagerData();
   return { ok: true };
 });

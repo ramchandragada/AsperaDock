@@ -174,6 +174,45 @@ export function removeAuthTab(tabId) {
   return true;
 }
 
+/**
+ * Watch an already-created popup (e.g. window.open fallback) for OAuth redirects.
+ * Returns the synthetic tab id used in extension onUpdated events.
+ */
+export function adoptAuthPopupWebContents(wc, session, startUrl = '') {
+  if (!wc || wc.isDestroyed?.()) return null;
+  for (const [id, entry] of authTabs.entries()) {
+    if (entry.wc === wc) return id;
+  }
+  const tabId = nextTabId++;
+  let win = null;
+  try {
+    win = BrowserWindow.fromWebContents(wc);
+  } catch {
+    win = null;
+  }
+  const entry = {
+    win: win || {
+      isDestroyed: () => wc.isDestroyed?.() || false,
+      close: () => {
+        try {
+          wc.close?.();
+        } catch {
+          // ignore
+        }
+      },
+    },
+    wc,
+    session: session || wc.session,
+    url: String(startUrl || ''),
+  };
+  authTabs.set(tabId, entry);
+  attachAuthTabListeners(tabId, entry);
+  if (entry.url) {
+    emitTabUpdated(entry.session, tabId, { url: entry.url, status: 'loading' }, tabSnapshot(tabId, wc, entry.url));
+  }
+  return tabId;
+}
+
 export function createAuthTab(session, details = {}, { attachPopupHandler, parent } = {}) {
   const url = String(details?.url || '').trim();
   const tabId = nextTabId++;

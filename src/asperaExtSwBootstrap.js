@@ -1,7 +1,7 @@
 /** Injected at the top of extension service workers (before importScripts). */
 export const ASPERA_EXT_SW_BOOTSTRAP = String.raw`(() => {
-  if (self.__asperaExtAuthBootstrap_v2) return;
-  self.__asperaExtAuthBootstrap_v2 = true;
+  if (self.__asperaExtAuthBootstrap_v3) return;
+  self.__asperaExtAuthBootstrap_v3 = true;
   self.__asperaExtAuthBootstrap = true;
   const updatedListeners = [];
   const removedListeners = [];
@@ -144,4 +144,4 @@ export const ASPERA_EXT_SW_BOOTSTRAP = String.raw`(() => {
 })();`;
 
 export const ASPERA_EXT_SW_MARKER = '__asperaExtAuthBootstrap';
-export const ASPERA_EXT_SW_VERSION = '__asperaExtAuthBootstrap_v2';
+export const ASPERA_EXT_SW_VERSION = '__asperaExtAuthBootstrap_v3';
