@@ -216,6 +216,11 @@ import {
 import { parseSuggestedReplies } from './ai/replyEditor.js';
 import { parseRefinedDrafts, serializeRefinedDrafts } from './ai/refineDraft.js';
 import {
+  POLISH_INTENTS,
+  normalizePolishIntent,
+  polishIntentLabel,
+} from './ai/skills.js';
+import {
   catalogModelsForProvider,
   getCachedAiModels,
   getProviderModelPreference,
@@ -4887,9 +4892,13 @@ function activeAiService() {
   return service;
 }
 
-function asperaAiSkillTitle(skill) {
+function asperaAiSkillTitle(skill, intent = '') {
   if (skill === 'catch-up') return 'Catch me up';
-  if (skill === 'refine') return 'Refine draft';
+  if (skill === 'refine') {
+    const id = normalizePolishIntent(intent);
+    if (id === 'polish') return 'Polish draft';
+    return `Polish · ${polishIntentLabel(id)}`;
+  }
   if (skill === 'suggest-reply') return 'Suggest reply';
   return 'Summarize';
 }
@@ -5035,6 +5044,9 @@ async function runAsperaAiSkill(
     clickX = 0,
     clickY = 0,
     attachmentId = '',
+    intent = '',
+    composeMarked = false,
+    serviceId = '',
   } = {},
 ) {
   if (settings.aiEnabled === false) {
@@ -5055,7 +5067,8 @@ async function runAsperaAiSkill(
   const langLabel = getAiLanguage(language).id === 'en'
     ? 'English'
     : `${getAiLanguage(language).name} (${getAiLanguage(language).native})`;
-  const skillTitle = asperaAiSkillTitle(skill);
+  const polishIntent = skill === 'refine' ? normalizePolishIntent(intent) : '';
+  const skillTitle = asperaAiSkillTitle(skill, polishIntent);
   const routeHint = routeOrder.map((p) => p.name).join(' → ');
   const metaLang =
     skill === 'summarize' || skill === 'refine' || skill === 'suggest-reply'
@@ -5081,6 +5094,7 @@ async function runAsperaAiSkill(
     let refineAppName = '';
     let refineServiceId = '';
     let refineHasComposeTarget = false;
+    let refineIntent = polishIntent || 'polish';
     const wantAttach =
       attachmentId &&
       aiInboxAttachment &&
@@ -5088,7 +5102,7 @@ async function runAsperaAiSkill(
 
     if (wantAttach && skill !== 'summarize') {
       throw new Error(
-        'PDF/image attachments only work with Summarize. Clear the file for Refine or Suggest reply.',
+        'PDF/image attachments only work with Summarize. Clear the file for Polish or Suggest reply.',
       );
     }
 
@@ -5175,15 +5189,23 @@ async function runAsperaAiSkill(
           'Paste a draft into Aspera AI first (copy from the send box, then paste here).',
         );
       }
-      const service = activeAiService();
-      refineServiceId = service?.id || '';
-      refineHasComposeTarget = false;
+      const preferredId = String(serviceId || '').trim();
+      const service =
+        (preferredId && getService(preferredId)) || activeAiService();
+      refineServiceId =
+        preferredId || service?.id || activeServiceId || '';
+      refineHasComposeTarget = !!composeMarked;
       refineSelection = text;
       refineAppName =
-        service?.name || service?.defaultName || service?.appId || 'Clipboard';
+        service?.name ||
+        service?.defaultName ||
+        service?.appId ||
+        'Clipboard';
+      refineIntent = normalizePolishIntent(intent);
       prompt = promptForSkill('refine', {
         text,
         appName: refineAppName,
+        intent: refineIntent,
         ...langPayload,
       });
     } else {
@@ -5218,7 +5240,8 @@ async function runAsperaAiSkill(
         originalComposeText: refineSelection,
         appName: refineAppName,
         serviceId: refineServiceId,
-        hasComposeTarget: false,
+        hasComposeTarget: refineHasComposeTarget,
+        intent: refineIntent,
         dark: !!dark,
         refinedText: resultText,
         outputLanguages: langSections.payload,
@@ -5242,7 +5265,7 @@ async function runAsperaAiSkill(
       mode: skill === 'refine' ? 'refine' : skill === 'catch-up' ? 'catch-up' : 'summarize',
       showTrilingual: skill === 'summarize' || skill === 'suggest-reply',
       canSuggestReply: skill === 'summarize' || skill === 'suggest-reply',
-      canUseInCompose: false,
+      canUseInCompose: skill === 'refine' && refineHasComposeTarget,
       canRefineAgain: skill === 'refine',
       refineSections: refineSections || undefined,
       repliesText: '',
@@ -5296,14 +5319,19 @@ async function runRefineAgainFromAiResult(payload = {}) {
   const result = await runAsperaAiSkill('refine', {
     selectionText: draft,
     dark: !!ctx.dark,
+    intent: ctx.intent || 'polish',
+    composeMarked: !!ctx.hasComposeTarget,
+    serviceId: serviceId || '',
   });
-  // Keep the send-box original so "Use in send box" still matches the typed draft.
+  // Keep the send-box original so "Use in chat" still matches the typed draft.
   if (result?.ok && aiResultContext?.skill === 'refine') {
     aiResultContext = {
       ...aiResultContext,
       originalComposeText,
       selectionText: originalComposeText || aiResultContext.selectionText,
       serviceId: serviceId || aiResultContext.serviceId,
+      hasComposeTarget: !!ctx.hasComposeTarget,
+      intent: ctx.intent || aiResultContext.intent || 'polish',
     };
   }
   return result;
@@ -9971,12 +9999,18 @@ function attachGuestContextMenu(webContents) {
         alwaysOnMessaging: true,
       })
     );
-    const canSummarize = false; // Aspera AI opens from the bar wordmark — not right-click.
+    const canSummarize = false; // Summarize opens from the bar wordmark — not right-click.
+    const canPolish = !!(
+      editable &&
+      hasSelection &&
+      settings.aiEnabled !== false &&
+      String(params.selectionText || '').trim()
+    );
     const canCrmLookup = !!(
       hasSelection && settings.zohoCrmEnabled !== false
     );
 
-    // With selected message text: Summarize → CRM lookup → Forward (Pin does not apply).
+    // With selected compose text: Polish → CRM lookup → Forward (Pin does not apply).
     // On chat-list rows (no selection, not an image): Pin → Forward.
     // Never show Pin on photos / PDF preview tiles in an open chat.
     const canPin = canOfferHubPin({
@@ -10029,22 +10063,56 @@ function attachGuestContextMenu(webContents) {
       });
     };
     const pushSummarizeItems = () => {
-      // Intentionally empty — Aspera AI is opened from the top-bar wordmark.
+      // Intentionally empty — Summarize opens from the top-bar wordmark.
+    };
+    const pushPolishItems = () => {
+      if (!canPolish) return;
+      const theme = String(settings.theme || 'system');
+      const dark =
+        theme === 'dark' ||
+        theme === 'darkest' ||
+        (theme === 'system' && nativeTheme.shouldUseDarkColors);
+      const text = String(params.selectionText || '').trim();
+      if (!text) return;
+      const sid = sourceServiceId || activeServiceId || '';
+      const runPolish = (intentId) => {
+        Promise.resolve()
+          .then(async () => {
+            const marked = await markActiveComposeTarget(sid);
+            return runAsperaAiSkill('refine', {
+              selectionText: text,
+              intent: intentId,
+              dark,
+              composeMarked: !!marked,
+              serviceId: sid,
+            });
+          })
+          .catch(() => {});
+      };
+      template.push({
+        label: 'Polish with Aspera AI',
+        submenu: POLISH_INTENTS.map((item) => ({
+          label: item.label,
+          click: () => runPolish(item.id),
+        })),
+      });
     };
     for (const action of guestContextMenuActionOrder({
       hasSelection,
       canSummarize,
+      canPolish,
       canForward,
       canPin,
       canCrmLookup,
     })) {
       if (action === 'summarize') pushSummarizeItems();
+      else if (action === 'polish') pushPolishItems();
       else if (action === 'crm-lookup') pushCrmLookupItem();
       else if (action === 'forward') pushForwardItem();
       else if (action === 'pin') pushPinItem();
     }
 
-    if (canSummarize || canCrmLookup || canForward || canPin) {
+    if (canSummarize || canPolish || canCrmLookup || canForward || canPin) {
       template.push({ type: 'separator' });
     }
 
@@ -13100,7 +13168,7 @@ aiResultHandle('ai-result:run-clipboard', async (_e, payload) => {
     return {
       ok: false,
       error:
-        'PDF/image attachments only work with Summarize. Clear the file for Refine or Suggest reply.',
+        'PDF/image attachments only work with Summarize. Clear the file for Polish or Suggest reply.',
     };
   }
   return runAsperaAiSkill(skill, {

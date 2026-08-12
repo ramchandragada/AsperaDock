@@ -1,29 +1,33 @@
 /**
  * Guest-page context menu action order for Aspera Hub.
  *
- * Selected message text → Summarize, CRM lookup, then Forward (Pin is for chat rows only).
+ * Selected compose text → Polish, CRM lookup, then Forward (Pin is for chat rows only).
+ * Selected message text (no polish) → CRM lookup, then Forward.
  * Chat list / no selection → Pin, then Forward.
  * Never offer Pin on images / media in an open chat — Pin is contacts only.
  *
  * @param {{
  *   hasSelection?: boolean,
  *   canSummarize?: boolean,
+ *   canPolish?: boolean,
  *   canForward?: boolean,
  *   canPin?: boolean,
  *   canCrmLookup?: boolean,
  * }} opts
- * @returns {('summarize'|'crm-lookup'|'forward'|'pin')[]}
+ * @returns {('summarize'|'polish'|'crm-lookup'|'forward'|'pin')[]}
  */
 export function guestContextMenuActionOrder({
   hasSelection = false,
   canSummarize = false,
+  canPolish = false,
   canForward = false,
   canPin = false,
   canCrmLookup = false,
 } = {}) {
   const out = [];
-  // Same Aspera AI clipboard panel on every app (with or without a selection).
+  // Clipboard Summarize panel (when enabled) and compose Polish.
   if (canSummarize) out.push('summarize');
+  if (canPolish) out.push('polish');
   if (hasSelection) {
     if (canCrmLookup) out.push('crm-lookup');
     if (canForward) out.push('forward');

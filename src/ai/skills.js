@@ -137,27 +137,63 @@ export function buildSuggestReplyPrompt({
   ].filter((line, i, arr) => !(line === '' && arr[i - 1] === '')).join('\n');
 }
 
+/** @typedef {'polish'|'grammar'|'shorter'|'polite'|'formal'} PolishIntent */
+
+export const POLISH_INTENTS = [
+  { id: 'polish', label: 'Fix grammar & clarity' },
+  { id: 'grammar', label: 'Grammar & spelling only' },
+  { id: 'shorter', label: 'Make shorter' },
+  { id: 'polite', label: 'More polite' },
+  { id: 'formal', label: 'More formal' },
+];
+
+const POLISH_INTENT_LINES = {
+  polish:
+    'Improve grammar, spelling, clarity, and tone. Keep the same meaning and language. Do not add new ideas.',
+  grammar:
+    'Fix grammar, spelling, and punctuation only. Keep meaning and length similar. Do not rewrite style.',
+  shorter:
+    'Make it shorter and clearer. Keep the same meaning and language.',
+  polite:
+    'Make it more polite and professional while keeping the same meaning and language.',
+  formal:
+    'Make it more formal while keeping the same meaning and language.',
+};
+
+export function normalizePolishIntent(intent) {
+  const id = String(intent || '').trim().toLowerCase();
+  return POLISH_INTENT_LINES[id] ? id : 'polish';
+}
+
+export function polishIntentLabel(intent) {
+  const id = normalizePolishIntent(intent);
+  return POLISH_INTENTS.find((item) => item.id === id)?.label || 'Fix grammar & clarity';
+}
+
 /** Polish a message the employee typed in the send/compose box before sending. */
 export function buildRefineDraftPrompt({
   text,
   appName,
+  intent,
   languages,
   extraLanguages,
 } = {}) {
   const body = String(text || '').trim().slice(0, 6_000);
   const langs = outputLanguagesFrom({ languages, extraLanguages });
+  const polishIntent = normalizePolishIntent(intent);
   return [
     'You are Aspera AI inside Aspera Hub, a company workspace for employees.',
-    'Skill: Refine a message the employee is about to send.',
+    'Skill: Polish a message the employee is about to send.',
     `App context: ${appName || 'Messaging / Mail'}.`,
-    'Improve clarity, grammar, spelling, and professional tone.',
+    `Polish intent: ${polishIntentLabel(polishIntent)}.`,
+    POLISH_INTENT_LINES[polishIntent],
     promptHeadingsBlock(langs, { replies: false }),
-    'Under each heading: ONLY the refined message text (same meaning/intent).',
+    'Under each heading: ONLY the polished message text (same meaning/intent).',
     scriptInstructionsForLanguages(langs),
     'Do not invent facts or add commitments.',
     'Do not make it longer unless needed for clarity. No preamble outside the headings.',
     '',
-    'Draft to refine:',
+    'Draft to polish:',
     body,
   ].join('\n');
 }

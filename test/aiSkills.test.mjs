@@ -140,11 +140,27 @@ test('refine-draft prompt polishes send-box text in EN HI MR', () => {
     appName: 'Arattai',
   });
   assert.match(prompt, /new features do suggest/);
-  assert.match(prompt, /Refine a message/);
+  assert.match(prompt, /Polish a message/);
   assert.match(prompt, /Arattai/);
   assert.match(prompt, /## English/);
   assert.match(prompt, /## Hindi/);
   assert.match(prompt, /## Marathi/);
+});
+
+test('refine-draft prompt honors polish intents', () => {
+  const shorter = buildRefineDraftPrompt({
+    text: 'Please find attached the documents for your kind perusal and do the needful',
+    appName: 'WhatsApp',
+    intent: 'shorter',
+  });
+  assert.match(shorter, /Make it shorter/);
+  assert.match(shorter, /Polish intent: Make shorter/);
+
+  const polite = buildRefineDraftPrompt({
+    text: 'send the file now',
+    intent: 'polite',
+  });
+  assert.match(polite, /more polite/);
 });
 test('catch-up prompt lists notification items', () => {
   const prompt = buildCatchMeUpPrompt({

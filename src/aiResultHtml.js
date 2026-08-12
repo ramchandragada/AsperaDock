@@ -198,7 +198,7 @@ export function buildAiResultHtml(dark = false) {
       <div class="inbox-skills" role="radiogroup" aria-label="Aspera AI skill">
         <div class="section-label">What do you need?</div>
         <label><input type="radio" name="inbox-skill" value="summarize" checked /> Summarize</label>
-        <label id="skill-refine-label"><input type="radio" name="inbox-skill" value="refine" /> Refine draft</label>
+        <label id="skill-refine-label"><input type="radio" name="inbox-skill" value="refine" /> Polish draft</label>
         <label id="skill-suggest-label"><input type="radio" name="inbox-skill" value="suggest-reply" /> Suggest reply</label>
       </div>
       <div class="actions">
@@ -218,9 +218,10 @@ export function buildAiResultHtml(dark = false) {
       <span class="hint" id="reply-hint">Rough drafts — copy and paste into the app yourself</span>
     </div>
     <div class="toolbar" id="refine-bar">
-      <button type="button" class="btn" id="refine-again">Refine again</button>
+      <button type="button" class="btn primary" id="use-in-compose" hidden>Use in chat</button>
+      <button type="button" class="btn" id="refine-again">Polish again</button>
       <button type="button" class="btn" id="new-paste">New paste</button>
-      <span class="hint" id="refine-hint">Pick a language — then Copy and paste yourself</span>
+      <span class="hint" id="refine-hint">Pick a language — then Use in chat or Copy</span>
     </div>
     <div class="scroll" id="scroll">
       <div class="section-label" id="summary-label" hidden>Summary</div>
@@ -229,7 +230,7 @@ export function buildAiResultHtml(dark = false) {
         <div id="summary-editor"></div>
       </div>
       <div class="refine-wrap" id="refine-wrap">
-        <div class="section-label" id="refine-section-label">Refined message</div>
+        <div class="section-label" id="refine-section-label">Polished message</div>
         <div id="refine-editor"></div>
         <div class="reply-status" id="refine-status" hidden></div>
       </div>
@@ -240,7 +241,7 @@ export function buildAiResultHtml(dark = false) {
         <div class="body" id="replies" hidden></div>
       </div>
       <p class="inbox-foot" id="result-foot" hidden>
-        Next: Copy result, then paste into the app yourself. Hub will not auto-send.
+        Next: Copy (or Use in chat), then you still press Send. Hub never auto-sends.
       </p>
     </div>
     </div>
@@ -262,6 +263,7 @@ export function buildAiResultHtml(dark = false) {
     const refineStatus = document.getElementById('refine-status');
     const refineHint = document.getElementById('refine-hint');
     const refineAgainBtn = document.getElementById('refine-again');
+    const useInComposeBtn = document.getElementById('use-in-compose');
     const summaryWrap = document.getElementById('summary-wrap');
     const summaryEditor = document.getElementById('summary-editor');
     const suggestBtn = document.getElementById('suggest-reply');
@@ -276,6 +278,7 @@ export function buildAiResultHtml(dark = false) {
     let latestReplies = '';
     let latestRefine = '';
     let mode = '';
+    let canUseInCompose = false;
     let sections = [];
     let refineSections = [];
     let summarySections = [];
@@ -470,9 +473,9 @@ export function buildAiResultHtml(dark = false) {
       const refineLabel = document.getElementById('refine-section-label');
       const repliesLabel = document.getElementById('replies-section-label');
       if (suggestBtn) suggestBtn.textContent = 'Suggest replies (' + languageMeta + ')';
-      if (refineAgainBtn) refineAgainBtn.textContent = 'Refine again (' + languageMeta + ')';
+      if (refineAgainBtn) refineAgainBtn.textContent = 'Polish again (' + languageMeta + ')';
       if (summaryLabel) summaryLabel.textContent = 'Summary · ' + languageMeta;
-      if (refineLabel) refineLabel.textContent = 'Refined message · ' + languageMeta;
+      if (refineLabel) refineLabel.textContent = 'Polished message · ' + languageMeta;
       if (repliesLabel) repliesLabel.textContent = 'Suggested replies · ' + languageMeta;
     }
 
@@ -656,20 +659,54 @@ export function buildAiResultHtml(dark = false) {
         const ta = document.createElement('textarea');
         ta.value = section.text || '';
         ta.rows = 3;
-        ta.placeholder = 'Refined draft in ' + section.label + '…';
+        ta.placeholder = 'Polished draft in ' + section.label + '…';
         ta.oninput = () => {
           section.text = ta.value;
           scheduleRefineSync();
           copyBtn.disabled = !anyRefineText();
           refineAgainBtn.disabled = !anyRefineText();
+          if (useInComposeBtn) useInComposeBtn.disabled = !anyRefineText();
         };
 
+        const actions = document.createElement('div');
+        actions.className = 'refine-lang-actions';
         const copyOne = document.createElement('button');
         bindCopyButton(copyOne, () => ta.value);
+        actions.appendChild(copyOne);
+        if (canUseInCompose && api.useInCompose) {
+          const useOne = document.createElement('button');
+          useOne.type = 'button';
+          useOne.className = 'btn small primary';
+          useOne.textContent = 'Use in chat';
+          useOne.onclick = async () => {
+            const t = String(ta.value || '').trim();
+            if (!t) return;
+            useOne.disabled = true;
+            setRefineStatus('Inserting into send box…');
+            try {
+              const result = await api.useInCompose({ text: t });
+              if (result?.ok) {
+                setRefineStatus('Inserted — review in chat, then press Send.');
+                return;
+              }
+              setRefineStatus(
+                String(
+                  result?.error ||
+                    'Could not insert. Text was copied — paste with Ctrl+V.',
+                ),
+              );
+            } catch (err) {
+              setRefineStatus(String(err?.message || err || 'Could not insert.'));
+            } finally {
+              useOne.disabled = false;
+            }
+          };
+          actions.appendChild(useOne);
+        }
         head.appendChild(title);
-        head.appendChild(copyOne);
         wrap.appendChild(head);
         wrap.appendChild(ta);
+        wrap.appendChild(actions);
         refineEditor.appendChild(wrap);
       });
     }
@@ -821,6 +858,7 @@ export function buildAiResultHtml(dark = false) {
       document.getElementById('meta').textContent = data?.meta || '';
       applyOutputLanguages(data?.outputLanguages, data?.languageMeta || data?.meta);
       mode = String(data?.mode || (data?.canUseInCompose ? 'refine' : ''));
+      canUseInCompose = !!data?.canUseInCompose;
       latestSummary = String(data?.text || '');
       latestReplies = String(data?.repliesText || '');
       const err = !!data?.error;
@@ -847,6 +885,7 @@ export function buildAiResultHtml(dark = false) {
           'Paste text or a screenshot, or attach a PDF/image for Summarize. Hub never sends for you.';
         inboxRun.disabled = false;
         copyBtn.disabled = true;
+        if (useInComposeBtn) useInComposeBtn.hidden = true;
         return;
       }
 
@@ -873,6 +912,9 @@ export function buildAiResultHtml(dark = false) {
         summaryLabel.hidden = true;
         copyBtn.textContent = 'Copy all';
         resultFoot.hidden = false;
+        resultFoot.textContent = canUseInCompose
+          ? 'Use in chat puts text in the send box — you still press Send. Hub never auto-sends.'
+          : 'Copy a language, paste into the app, then press Send. Hub never auto-sends.';
       } else if (
         data?.showTrilingual &&
         !loading &&
@@ -901,6 +943,8 @@ export function buildAiResultHtml(dark = false) {
         }
         copyBtn.textContent = 'Copy all';
         resultFoot.hidden = false;
+        resultFoot.textContent =
+          'Next: Copy (or Use in chat), then you still press Send. Hub never auto-sends.';
       } else {
         body.hidden = false;
         refineWrap.classList.remove('show');
@@ -923,7 +967,14 @@ export function buildAiResultHtml(dark = false) {
       replyBar.classList.toggle('show', showReplyToolbar);
       refineBar.classList.toggle('show', !!(isRefine && !loading && !err));
       refineAgainBtn.disabled = isRefine ? !anyRefineText() : true;
-      refineHint.textContent = 'Edit any language, then Copy and paste into the app yourself';
+      if (useInComposeBtn) {
+        const showUse = !!(isRefine && !loading && !err && canUseInCompose);
+        useInComposeBtn.hidden = !showUse;
+        useInComposeBtn.disabled = showUse ? !anyRefineText() : true;
+      }
+      refineHint.textContent = canUseInCompose
+        ? 'Edit any language, then Use in chat (or Copy). You still press Send.'
+        : 'Edit any language, then Copy and paste into the app yourself';
 
       suggestBtn.disabled = !!data?.repliesLoading;
       suggestBtn.textContent = latestReplies || data?.repliesError
@@ -1059,7 +1110,7 @@ export function buildAiResultHtml(dark = false) {
       }
       if (stagedAttachment && skill !== 'summarize') {
         inboxStatus.textContent =
-          'PDF/image attachments only work with Summarize. Clear the file for Refine or Suggest reply.';
+          'PDF/image attachments only work with Summarize. Clear the file for Polish or Suggest reply.';
         setInboxSkill('summarize');
         return;
       }
@@ -1085,9 +1136,40 @@ export function buildAiResultHtml(dark = false) {
 
     refineAgainBtn.onclick = async () => {
       refineAgainBtn.disabled = true;
-      setRefineStatus('Refining again in English, Hindi, and Marathi…');
+      if (useInComposeBtn) useInComposeBtn.disabled = true;
+      setRefineStatus('Polishing again (' + languageMeta + ')…');
       await api.refineAgain({});
     };
+
+    if (useInComposeBtn) {
+      useInComposeBtn.onclick = async () => {
+        const preferred =
+          refineSections.find((s) => s.id === 'en' && String(s.text || '').trim()) ||
+          refineSections.find((s) => String(s.text || '').trim()) ||
+          null;
+        const t = String(preferred?.text || latestRefine || '').trim();
+        if (!t || !api.useInCompose) return;
+        useInComposeBtn.disabled = true;
+        setRefineStatus('Inserting into send box…');
+        try {
+          const result = await api.useInCompose({ text: t });
+          if (result?.ok) {
+            setRefineStatus('Inserted — review in chat, then press Send.');
+            return;
+          }
+          setRefineStatus(
+            String(
+              result?.error ||
+                'Could not insert. Text was copied — paste with Ctrl+V.',
+            ),
+          );
+        } catch (err) {
+          setRefineStatus(String(err?.message || err || 'Could not insert.'));
+        } finally {
+          useInComposeBtn.disabled = !anyRefineText();
+        }
+      };
+    }
 
     suggestBtn.onclick = async () => {
       suggestBtn.disabled = true;
