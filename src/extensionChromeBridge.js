@@ -1,15 +1,17 @@
 /**
- * Minimal chrome.tabs.create bridge for extension auth (Grammarly sign-in, etc.).
- * Electron supports only part of the tabs API — extensions that call tabs.create
- * from MV3 service workers otherwise fail silently.
+ * Minimal chrome.tabs bridge for extension auth (Grammarly sign-in, etc.).
+ * Electron lacks tabs.create/onUpdated — patched extensions relay through guest
+ * pages; this module opens auth windows and emits tab navigation events.
  */
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
 import path from 'node:path';
 import { isExtensionAuthPopupUrl } from './guestNav.js';
 import { EXTENSION_AUTH_CLICK_BRIDGE_JS } from './extensionAuthClickBridge.js';
+import { createAuthTab, removeAuthTab } from './extensionAuthTabs.js';
 import {
   PRELOAD_FRAME_ID,
   TABS_CREATE_CHANNEL,
+  TABS_REMOVE_CHANNEL,
   planPreloadRegistration,
   isExtensionServiceWorkerScope,
 } from './extensionPreloadWire.js';
@@ -18,100 +20,60 @@ export { EXTENSION_AUTH_CLICK_BRIDGE_JS } from './extensionAuthClickBridge.js';
 export {
   PRELOAD_FRAME_ID,
   PRELOAD_SW_ID,
+  PRELOAD_GUEST_AUTH_ID,
   TABS_CREATE_CHANNEL,
+  TABS_REMOVE_CHANNEL,
   planPreloadRegistration,
   isExtensionServiceWorkerScope,
 } from './extensionPreloadWire.js';
 
-const TABS_CREATE_CHANNEL_LOCAL = TABS_CREATE_CHANNEL;
-
 let ipcReady = false;
 
-/** @type {() => (BrowserWindow|null|undefined)} */
+/** @type {() => (import('electron').BrowserWindow|null|undefined)} */
 let mainWindowProvider = () => null;
-
-/** @type {WeakSet<object>} */
-const wiredSessions = new WeakSet();
 
 /** @type {WeakSet<object>} */
 const swIpcWiredSessions = new WeakSet();
 
-function extensionSession(partitionSession) {
-  return partitionSession || null;
-}
-
-async function openExtensionAuthTab(partitionSession, details = {}) {
-  const session = extensionSession(partitionSession);
-  const url = String(details?.url || '').trim();
-  const parent =
-    typeof mainWindowProvider === 'function' ? mainWindowProvider() : null;
-  const parentOk = parent && !parent.isDestroyed?.();
-
-  const win = new BrowserWindow({
-    ...(parentOk ? { parent } : {}),
-    modal: false,
-    skipTaskbar: true,
-    autoHideMenuBar: true,
-    show: true,
-    width: 1024,
-    height: 720,
-    webPreferences: {
-      ...(session ? { session } : {}),
-      contextIsolation: true,
-      sandbox: true,
-    },
-  });
-
-  attachExtensionPopupWindowOpen(win.webContents);
-
-  if (url) {
-    try {
-      await win.webContents.loadURL(url);
-    } catch {
-      // OAuth may still proceed if the popup stays open.
-    }
-  }
-
-  return {
-    id: win.webContents.id,
-    windowId: win.id,
-    index: 0,
-    active: details?.active !== false,
-    pinned: false,
-    audible: false,
-    discarded: false,
-    autoDiscardable: true,
-    highlighted: true,
-    incognito: false,
-    url: url || 'about:blank',
-    title: '',
-    status: url ? 'loading' : 'complete',
-  };
+function sessionFromEvent(event, fallback = null) {
+  return event?.session || event?.sender?.session || fallback || null;
 }
 
 function tabsCreateHandler(partitionSession) {
   return async (event, details = {}) => {
-    const session =
-      event?.session || event?.sender?.session || partitionSession || null;
-    if (event?.sender?.isDestroyed?.()) {
-      return undefined;
-    }
-    return openExtensionAuthTab(session, details);
+    if (event?.sender?.isDestroyed?.()) return undefined;
+    const session = sessionFromEvent(event, partitionSession);
+    return createAuthTab(session, details, {
+      attachPopupHandler: attachExtensionPopupWindowOpen,
+    });
   };
 }
 
-function attachServiceWorkerTabsCreateHandler(partitionSession, serviceWorker) {
+function tabsRemoveHandler() {
+  return async (_event, tabIds) => {
+    const ids = Array.isArray(tabIds) ? tabIds : [tabIds];
+    for (const id of ids) {
+      removeAuthTab(id);
+    }
+    return undefined;
+  };
+}
+
+function attachServiceWorkerHandlers(partitionSession, serviceWorker) {
   if (!serviceWorker || serviceWorker.isDestroyed?.()) return;
-  try {
-    serviceWorker.ipc.removeHandler?.(TABS_CREATE_CHANNEL_LOCAL);
-  } catch {
-    // ignore
+  for (const channel of [TABS_CREATE_CHANNEL, TABS_REMOVE_CHANNEL]) {
+    try {
+      serviceWorker.ipc.removeHandler?.(channel);
+    } catch {
+      // ignore
+    }
   }
   try {
     serviceWorker.ipc.handle(
-      TABS_CREATE_CHANNEL_LOCAL,
+      TABS_CREATE_CHANNEL,
       tabsCreateHandler(partitionSession),
     );
+    serviceWorker.ipc.handle(TABS_REMOVE_CHANNEL, tabsRemoveHandler());
   } catch {
     // ignore
   }
@@ -125,17 +87,32 @@ function wireServiceWorkerIpc(partitionSession) {
   partitionSession.serviceWorkers.on(
     'registration-completed',
     async (_event, { scope }) => {
-      const rawScope = String(scope || '');
-      if (!isExtensionServiceWorkerScope(rawScope)) return;
+      if (!isExtensionServiceWorkerScope(scope)) return;
       try {
         const sw =
-          await partitionSession.serviceWorkers.startWorkerForScope(rawScope);
-        attachServiceWorkerTabsCreateHandler(partitionSession, sw);
+          await partitionSession.serviceWorkers.startWorkerForScope(scope);
+        attachServiceWorkerHandlers(partitionSession, sw);
       } catch {
         // ignore
       }
     },
   );
+
+  const api = partitionSession.extensions;
+  if (api && typeof api.on === 'function') {
+    api.on('extension-ready', async (_event, extension) => {
+      const extId = String(extension?.id || '').trim();
+      if (!extId) return;
+      const scope = `chrome-extension://${extId}/`;
+      try {
+        const sw =
+          await partitionSession.serviceWorkers.startWorkerForScope(scope);
+        attachServiceWorkerHandlers(partitionSession, sw);
+      } catch {
+        // ignore
+      }
+    });
+  }
 }
 
 export function configureExtensionChromeBridge({ getMainWindow } = {}) {
@@ -145,7 +122,8 @@ export function configureExtensionChromeBridge({ getMainWindow } = {}) {
   if (ipcReady) return;
   ipcReady = true;
 
-  ipcMain.handle(TABS_CREATE_CHANNEL_LOCAL, tabsCreateHandler(null));
+  ipcMain.handle(TABS_CREATE_CHANNEL, tabsCreateHandler(null));
+  ipcMain.handle(TABS_REMOVE_CHANNEL, tabsRemoveHandler());
 }
 
 function allowExtensionPopup(webContents) {
@@ -201,6 +179,10 @@ export function extensionChromePreloadPath() {
   return path.join(__dirname, 'extensionChromePreload.js');
 }
 
+export function extensionGuestAuthPreloadPath() {
+  return path.join(__dirname, 'extensionGuestAuthPreload.js');
+}
+
 function preloadScriptRegisteredOnSession(partitionSession, id) {
   try {
     const scripts = partitionSession.getPreloadScripts?.() || [];
@@ -210,18 +192,26 @@ function preloadScriptRegisteredOnSession(partitionSession, id) {
   }
 }
 
-/** Attach session preload once per guest partition (extension sign-in bridge). */
+/**
+ * Register extension + guest auth preloads and wire service-worker IPC.
+ * Returns true when a new service-worker or guest auth preload was registered.
+ */
 export function wireExtensionSessionPreload(partitionSession) {
   if (!partitionSession) return false;
 
   const preloadAbs = extensionChromePreloadPath();
-  let swPreloadNew = false;
+  const guestPreloadAbs = extensionGuestAuthPreloadPath();
+  let reloadExtensions = false;
 
   if (typeof partitionSession.registerPreloadScript === 'function') {
     try {
       const existing = partitionSession.getPreloadScripts?.() || [];
-      const plan = planPreloadRegistration(existing, preloadAbs);
-      swPreloadNew = plan.swPreloadNew;
+      const plan = planPreloadRegistration(
+        existing,
+        preloadAbs,
+        guestPreloadAbs,
+      );
+      reloadExtensions = plan.swPreloadNew || plan.guestPreloadNew;
       for (const entry of plan.registrations) {
         partitionSession.registerPreloadScript(entry);
       }
@@ -243,11 +233,17 @@ export function wireExtensionSessionPreload(partitionSession) {
     if (!existing.includes(preloadAbs)) {
       partitionSession.setPreloads([...existing, preloadAbs]);
     }
+    if (!existing.includes(guestPreloadAbs)) {
+      partitionSession.setPreloads([
+        ...partitionSession.getPreloads?.(),
+        guestPreloadAbs,
+      ]);
+      reloadExtensions = true;
+    }
   }
 
   wireServiceWorkerIpc(partitionSession);
-  wiredSessions.add(partitionSession);
-  return swPreloadNew;
+  return reloadExtensions;
 }
 
 export function attachExtensionAuthClickBridge(webContents) {

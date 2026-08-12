@@ -1,0 +1,4 @@
+/** Content script copied into patched extensions — relays tabs API calls to Aspera Hub guest pages. */
+export const ASPERA_EXT_AUTH_BRIDGE_CONTENT = String.raw`(()=>{if(globalThis.__asperaExtAuthBridgeCs)return;globalThis.__asperaExtAuthBridgeCs=!0;chrome.runtime.onMessage.addListener((e,t,s)=>{if(!e||"tabs-create"!==e.__asperaHub)return;const a="ac-"+Date.now()+"-"+Math.random().toString(36).slice(2),r=o=>{o.source===window&&o.data&&"tabs-create-result"===o.data.__asperaHub&&o.data.reqId===a&&(window.removeEventListener("message",r),s({tab:o.data.tab}))};return window.addEventListener("message",r),window.postMessage({__asperaHub:"tabs-create",reqId:a,details:e.details||{}},"*"),!0}),window.addEventListener("message",e=>{e.source===window&&e.data&&("tab-updated"===e.data.__asperaHub||"tab-removed"===e.data.__asperaHub)&&chrome.runtime.sendMessage(e.data)})})();`;
+
+export const ASPERA_EXT_AUTH_BRIDGE_FILENAME = 'aspera-ext-auth-bridge.js';

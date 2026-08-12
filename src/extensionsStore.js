@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { app } from 'electron';
+import { patchExtensionForAuth } from './extensionInstallPatch.js';
 
 function extensionsRoot() {
   return path.join(app.getPath('userData'), 'extensions');
@@ -128,6 +129,7 @@ export function installUnpackedExtension(sourceDir, opts = {}) {
     removeDirRecursive(dest);
   }
   copyDirRecursive(src, dest);
+  patchExtensionForAuth(dest);
   const name =
     resolveManifestString(manifest.name, dest) ||
     path.basename(src) ||

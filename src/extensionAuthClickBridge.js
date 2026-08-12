@@ -2,7 +2,16 @@
 export const EXTENSION_AUTH_CLICK_BRIDGE_JS = String.raw`(() => {
   if (window.__asperaExtAuthClickBridge) return;
   window.__asperaExtAuthClickBridge = true;
-  const authRe = /^(https?:\\/\\/)?(account\\.)?grammarly\\.com/i;
+  const authRe = /^https?:\/\/([\w-]+\.)*grammarly\.com(\/|$)/i;
+  const openAuth = (url) => {
+    if (window.__asperaExtBridge?.tabsCreate) {
+      window.__asperaExtBridge.tabsCreate({ url, active: true }).catch(() => {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      });
+      return;
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
   document.addEventListener('click', (event) => {
     try {
       for (const node of event.composedPath()) {
@@ -10,7 +19,7 @@ export const EXTENSION_AUTH_CLICK_BRIDGE_JS = String.raw`(() => {
         if (node instanceof HTMLAnchorElement && node.href && authRe.test(node.href)) {
           event.stopImmediatePropagation();
           event.preventDefault();
-          window.open(node.href, '_blank', 'noopener,noreferrer');
+          openAuth(node.href);
           return;
         }
         const part = node.getAttribute && node.getAttribute('data-grammarly-part');
@@ -19,7 +28,7 @@ export const EXTENSION_AUTH_CLICK_BRIDGE_JS = String.raw`(() => {
           if (anchor && anchor.href && authRe.test(anchor.href)) {
             event.stopImmediatePropagation();
             event.preventDefault();
-            window.open(anchor.href, '_blank', 'noopener,noreferrer');
+            openAuth(anchor.href);
             return;
           }
         }

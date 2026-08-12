@@ -288,6 +288,7 @@ import {
   attachExtensionAuthClickBridge,
   attachExtensionWebContentsHandlers,
 } from './extensionChromeBridge.js';
+import { patchExtensionForAuth } from './extensionInstallPatch.js';
 import { initSentryMain } from './sentryMain.js';
 import {
   configureGuestWindowOpen as configureGuestWindowOpenImpl,
@@ -7267,7 +7268,15 @@ async function syncExtensionsIntoSession(partitionSession) {
   );
   const root = path.join(app.getPath('userData'), 'extensions');
 
-  if (swPreloadNew) {
+  let extensionPatchChanged = false;
+  for (const ext of catalog) {
+    if (!ext.enabled || !ext.exists) continue;
+    if (patchExtensionForAuth(ext.path)) {
+      extensionPatchChanged = true;
+    }
+  }
+
+  if (swPreloadNew || extensionPatchChanged) {
     for (const loaded of listLoadedSessionExtensions(partitionSession)) {
       const loadedPath = path.resolve(String(loaded.path || ''));
       if (!loadedPath.startsWith(root + path.sep)) continue;
