@@ -7259,11 +7259,28 @@ async function syncExtensionsIntoSession(partitionSession) {
   const api = getSessionExtensionsApi(partitionSession);
   if (!api || typeof api.loadExtension !== 'function') return;
 
+  const swPreloadNew = wireExtensionSessionPreload(partitionSession);
+
   const catalog = listInstalledExtensions(settings.extensions);
   const enabledPaths = new Set(
     catalog.filter((e) => e.enabled && e.exists).map((e) => path.resolve(e.path)),
   );
   const root = path.join(app.getPath('userData'), 'extensions');
+
+  if (swPreloadNew) {
+    for (const loaded of listLoadedSessionExtensions(partitionSession)) {
+      const loadedPath = path.resolve(String(loaded.path || ''));
+      if (!loadedPath.startsWith(root + path.sep)) continue;
+      if (!enabledPaths.has(loadedPath)) continue;
+      try {
+        if (typeof api.removeExtension === 'function') {
+          api.removeExtension(loaded.id);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
 
   for (const loaded of listLoadedSessionExtensions(partitionSession)) {
     const loadedPath = path.resolve(String(loaded.path || ''));
