@@ -376,6 +376,31 @@ export function shouldOpenZohoCrmDeepLinkAsHubTab(service, url) {
   return shouldOpenZohoSharedDeepLinkAsHubTab(service, url);
 }
 
+/**
+ * Extension sign-in / OAuth popups (Grammarly, password managers, etc.).
+ * These must open as real floating windows — never Hub tabs or denied handles.
+ */
+export function isExtensionAuthPopupUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw || raw === 'about:blank' || raw.startsWith('about:blank')) {
+    return false;
+  }
+  if (raw.startsWith('chrome-extension://')) return true;
+  if (!raw.startsWith('http')) return false;
+  if (isIdentityProviderUrl(raw)) return true;
+  if (isAuthOrLoginUrl(raw)) return true;
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    // Grammarly uses several first-party hosts outside /login paths.
+    if (host === 'grammarly.com' || host.endsWith('.grammarly.com')) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 /** WhatsApp / Arattai — messengers must never be replaced by Drive/Docs/etc. */
 export function isMessagingAppId(appId) {
   const id = String(appId || '');

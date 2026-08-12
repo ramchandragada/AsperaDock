@@ -16,6 +16,7 @@ import {
   isAllowedMessagingTabUrl,
   isSameEcosystemUrl,
   gmailWindowOpenAction,
+  isExtensionAuthPopupUrl,
 } from '../src/guestNav.js';
 
 test('isForbiddenGuestNavigation blocks file and javascript', () => {
@@ -180,4 +181,17 @@ test('gmailWindowOpenAction: email links → hub-tab; OAuth → popup; blank →
     'hub-tab',
   );
   assert.equal(gmailWindowOpenAction('javascript:alert(1)'), 'deny');
+});
+
+test('isExtensionAuthPopupUrl detects extension login targets', () => {
+  assert.equal(
+    isExtensionAuthPopupUrl('chrome-extension://kbfnbcaeplbcioakkpcpgfkobkghlhen/src/popup.html'),
+    true,
+  );
+  assert.equal(isExtensionAuthPopupUrl('https://account.grammarly.com/login'), true);
+  assert.equal(isExtensionAuthPopupUrl('https://www.grammarly.com/signup'), true);
+  assert.equal(isExtensionAuthPopupUrl('https://accounts.google.com/o/oauth2/v2/auth'), true);
+  assert.equal(isExtensionAuthPopupUrl('https://web.whatsapp.com/'), false);
+  assert.equal(isExtensionAuthPopupUrl('https://news.example.com/article'), false);
+  assert.equal(isExtensionAuthPopupUrl('about:blank'), false);
 });

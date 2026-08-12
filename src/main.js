@@ -344,6 +344,7 @@ import {
   isMessagingAppId,
   isAllowedMessagingTabUrl,
   gmailWindowOpenAction,
+  isExtensionAuthPopupUrl,
 } from './guestNav.js';
 import {
   resolveLinkHandling,
@@ -10624,8 +10625,38 @@ function createViewForService(service) {
     attachGuestContextMenu(childWc);
     watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
 
-    // WhatsApp/Arattai PDF and photo previews are read-only blob windows.
-    if (isMessagingApp(service)) return;
+    // WhatsApp/Arattai: blob previews stay read-only; extension auth popups
+    // need window.open rules but must not get the messenger navigation gate
+    // (that would block Grammarly / password-manager login mid-flow).
+    if (isMessagingApp(service)) {
+      const attachMessagingPopupHandlers = () => {
+        if (childWindow.isDestroyed() || childWindow.__hubMessagingPopupReady) {
+          return;
+        }
+        let popupUrl = '';
+        try {
+          popupUrl = String(childWc.getURL() || '');
+        } catch {
+          return;
+        }
+        if (/^blob:|^data:/i.test(popupUrl)) {
+          childWindow.__hubMessagingPopupReady = true;
+          return;
+        }
+        if (!popupUrl || popupUrl === 'about:blank') return;
+        childWindow.__hubMessagingPopupReady = true;
+        if (
+          isExtensionAuthPopupUrl(popupUrl) ||
+          popupUrl.startsWith('chrome-extension://')
+        ) {
+          configureGuestWindowOpen(childWc, service);
+        }
+      };
+      childWc.on('did-navigate', attachMessagingPopupHandlers);
+      childWc.on('did-navigate-in-page', attachMessagingPopupHandlers);
+      setTimeout(attachMessagingPopupHandlers, 50);
+      return;
+    }
 
     configureGuestWindowOpen(childWc, service);
     attachGuestNavigationGate(childWc, service);

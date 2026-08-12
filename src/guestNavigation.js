@@ -17,6 +17,7 @@ import {
   isMessagingAppId,
   isAllowedMessagingTabUrl,
   gmailWindowOpenAction,
+  isExtensionAuthPopupUrl,
 } from './guestNav.js';
 
 /**
@@ -70,6 +71,16 @@ export function configureGuestWindowOpen(wc, service, api) {
     const raw = String(url || '');
     const live = liveService(service);
     if (!raw || raw === 'about:blank' || raw.startsWith('about:blank')) {
+      return allowPopup();
+    }
+
+    // Chrome extensions (Grammarly login pages, options, etc.) — never deny.
+    if (raw.startsWith('chrome-extension://')) {
+      return allowPopup();
+    }
+
+    // Extension vendor OAuth / sign-in — real popup in every app (incl. WhatsApp).
+    if (isExtensionAuthPopupUrl(raw)) {
       return allowPopup();
     }
 
