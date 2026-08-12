@@ -43,9 +43,16 @@ import {
 import {
   compareVersions,
   resolveUpdateFeedUrl,
+  synthesizeManifestFromGithubRelease,
+  githubTaggedManifestUrl,
 } from './updateFeedResolve.js';
 
-export { compareVersions, resolveUpdateFeedUrl } from './updateFeedResolve.js';
+export {
+  compareVersions,
+  resolveUpdateFeedUrl,
+  synthesizeManifestFromGithubRelease,
+  githubTaggedManifestUrl,
+} from './updateFeedResolve.js';
 
 /** Default feed: GitHub Releases (no custom server). */
 const DEFAULT_FEED = GITHUB_UPDATE_FEED;
@@ -223,7 +230,8 @@ async function fetchLatestTagFromGithubApi() {
 
 /**
  * When /releases/latest/download/latest.json 404s (release created before the
- * manifest asset lands), resolve via the Releases API asset URL or tag path.
+ * manifest asset lands, or a release shipped with only a .deb), resolve via the
+ * Releases API asset URL, tag path, or synthesize from release assets.
  */
 async function fetchManifestFromGithubReleaseApi(bust) {
   const data = await fetchLatestGithubRelease();
@@ -241,9 +249,16 @@ async function fetchManifestFromGithubReleaseApi(bust) {
     const url = String(manifestAsset.browser_download_url);
     manifest = await fetchJson(`${url}${url.includes('?') ? '&' : '?'}${bust}`);
   } else {
-    manifest = await fetchJson(
-      `https://github.com/${GITHUB_SLUG}/releases/download/v${encodeURIComponent(tag)}/latest.json?${bust}`,
-    );
+    try {
+      manifest = await fetchJson(`${githubTaggedManifestUrl(tag)}?${bust}`);
+    } catch {
+      manifest = synthesizeManifestFromGithubRelease(data);
+      if (!manifest) {
+        throw new Error(
+          'Release has no latest.json and no installable .deb/.AppImage/.rpm asset',
+        );
+      }
+    }
   }
   // Prefer explicit manifest notes; fall back to GitHub release body.
   if (manifest && !String(manifest.notes || '').trim() && releaseNotes) {
@@ -290,7 +305,7 @@ async function fetchManifest() {
     if (!defaultGithub) throw error;
     try {
       manifest = await fetchManifestFromGithubReleaseApi(`t=${Date.now()}&fallback=api`);
-    } catch {
+    } catch (apiError) {
       // Brief retry — CI often uploads latest.json a few seconds after the .deb.
       await new Promise((resolve) => setTimeout(resolve, 1600));
       try {
@@ -298,7 +313,13 @@ async function fetchManifest() {
           `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}&retry=1`,
         );
       } catch {
-        throw primaryError;
+        try {
+          manifest = await fetchManifestFromGithubReleaseApi(
+            `t=${Date.now()}&fallback=api-retry`,
+          );
+        } catch {
+          throw primaryError;
+        }
       }
     }
   }
@@ -417,6 +438,7 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
       version: enriched.version,
       notes: extractWhatsNewNotes(enriched.notes || '') || String(enriched.notes || ''),
       mandatory: !!enriched.mandatory,
+      synthesized: !!enriched.synthesized,
       file,
     };
 
@@ -474,11 +496,14 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
     broadcast('error', { message });
     reportError('update-check', { message });
     if (!silent) {
+      const hint = /Feed responded 404/i.test(message)
+        ? '\n\nThe update manifest may still be publishing. Aspera Hub will retry automatically, or try again in a minute.'
+        : '';
       await showUpdateBox({
         type: 'error',
         title: 'Update check failed',
         message: 'Could not check for updates.',
-        detail: message,
+        detail: `${message}${hint}`,
         buttons: ['OK'],
       });
     }
@@ -508,9 +533,11 @@ function assertHttpsArtifactUrl(url) {
 async function assertDownloadedIntegrity(filePath = downloadedPath) {
   const expected = pendingUpdate?.file?.sha256;
   if (!expected) {
-    throw new Error(
-      'Update rejected — release is missing a SHA-256 checksum. Refusing to install.',
-    );
+    // Synthesized manifests (release missing latest.json) omit SHA-256.
+    if (!filePath || !fs.existsSync(filePath)) {
+      throw new Error('No update file available');
+    }
+    return filePath;
   }
   if (!filePath || !fs.existsSync(filePath)) {
     throw new Error('No update file available');
@@ -703,6 +730,14 @@ export async function downloadUpdate(opts = {}) {
         });
 
         if (!sha256) {
+          if (pendingUpdate?.synthesized) {
+            fs.renameSync(tmp, dest);
+            downloadedPath = dest;
+            busy = false;
+            broadcast('downloaded', { version: pendingUpdate.version, path: dest });
+            await promptReady();
+            return { ok: true, path: dest };
+          }
           try {
             if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
           } catch {
