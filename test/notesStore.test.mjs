@@ -70,6 +70,7 @@ test('main and chrome wire a Notes panel without Use in chat', () => {
   assert.match(main, /openNotesWindow/);
   assert.ok(main.includes('notesPreload.js'));
   assert.ok(main.includes("from './notesHtml.js'"));
+  assert.match(main, /asperaPanelBounds/);
   assert.doesNotMatch(html, /Use in chat/);
   assert.match(html, /Copy/);
 });

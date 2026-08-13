@@ -3531,19 +3531,11 @@ function openNotesWindow({ dark = null } = {}) {
   closeAiResultWindow();
 
   const content = mainWindow.getContentBounds();
-  const margin = 10;
-  const menuW = Math.min(560, Math.max(420, Math.floor(content.width * 0.42)));
-  const menuH = Math.min(580, Math.max(420, content.height - margin * 2));
-  const pos = clampFloatPosition(
-    content.x + content.width - menuW - margin,
-    content.y + margin,
-    menuW,
-    menuH,
-  );
+  const pos = asperaPanelBounds(content);
 
   notesWindow = createFloatBrowserWindow({
-    width: menuW,
-    height: menuH,
+    width: pos.width,
+    height: pos.height,
     x: pos.x,
     y: pos.y,
     preload: 'notesPreload.js',
@@ -3829,6 +3821,23 @@ function clampFloatPosition(screenX, screenY, menuW, menuH) {
   if (x < wa.x + 8) x = wa.x + 8;
   if (y < wa.y + 8) y = wa.y + 8;
   return { x: Math.round(x), y: Math.round(y) };
+}
+
+/** Shared size/position for Aspera AI and Notes — same floating card. */
+function asperaPanelBounds(content) {
+  const margin = 10;
+  const width = Math.min(
+    580,
+    Math.max(440, Math.floor((content?.width || 0) * 0.45)),
+  );
+  const height = Math.max(360, (content?.height || 0) - margin * 2);
+  const pos = clampFloatPosition(
+    (content?.x || 0) + (content?.width || 0) - width - margin,
+    (content?.y || 0) + margin,
+    width,
+    height,
+  );
+  return { width, height, x: pos.x, y: pos.y };
 }
 
 function createFloatBrowserWindow({
@@ -4371,23 +4380,11 @@ function openAiResultWindow({ title, meta, dark = false, initialPayload = null }
   closeNotesWindow();
 
   const content = mainWindow.getContentBounds();
-  const margin = 10;
-  // Use nearly the full guest/workspace height so long EN/HI/MR text is readable.
-  const menuW = Math.min(
-    580,
-    Math.max(440, Math.floor(content.width * 0.45)),
-  );
-  const menuH = Math.max(360, content.height - margin * 2);
-  const pos = clampFloatPosition(
-    content.x + content.width - menuW - margin,
-    content.y + margin,
-    menuW,
-    menuH,
-  );
+  const pos = asperaPanelBounds(content);
 
   aiResultWindow = createFloatBrowserWindow({
-    width: menuW,
-    height: menuH,
+    width: pos.width,
+    height: pos.height,
     x: pos.x,
     y: pos.y,
     preload: 'aiResultPreload.js',
