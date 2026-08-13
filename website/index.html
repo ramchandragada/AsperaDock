@@ -3,10 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="description" content="Aspera Hub — free forever Linux workspace for WhatsApp, Arattai, Gmail & Zoho. Warm/cold RAM control, Hub pins, Aspera AI (EN·HI·MR), lock, tray, and SHA-256 updates. Debian/Ubuntu/Mint.">
+<meta name="description" content="Aspera Hub — free forever Linux workspace for WhatsApp, Arattai, Gmail & Zoho. Warm/cold RAM, Hub pins, Aspera Notes, Chrome extensions, Aspera AI (summarize & polish, EN + Indic), lock, tray, SHA-256 updates. Debian/Ubuntu/Mint.">
 <meta name="author" content="Aspera Technologies">
 <meta property="og:title" content="Aspera Hub — one workspace for WhatsApp, Gmail & Zoho on Linux">
-<meta property="og:description" content="Free forever Linux workspace: warm/cold apps, isolated logins, Hub pins, Aspera AI, lock & tray. asperahub.com">
+<meta property="og:description" content="Free forever Linux workspace: warm/cold apps, isolated logins, Hub pins, Notes, extensions, Aspera AI, lock & tray. asperahub.com">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://asperahub.com/">
 <meta property="og:image" content="https://opengraph.githubassets.com/1/ramchandragada/AsperaDock">
@@ -159,7 +159,7 @@ img{max-width:100%}
 .feat h3{font-size:17px;margin-bottom:6px;color:var(--t1)}
 .feat p{font-size:14px;color:var(--t2);line-height:1.65}
 .feat b{color:var(--t1);font-weight:600}
-.feat code{font-family:var(--fm);background:#eef0ff;color:#4338ca;padding:1px 6px;border-radius:4px;font-size:12px;font-weight:600}
+.feat code,.msg-card code,.key-row span code,.faq .ans code{font-family:var(--fm);background:#eef0ff;color:#4338ca;padding:1px 6px;border-radius:4px;font-size:12px;font-weight:600}
 
 /* apps chips */
 .apps{display:flex;flex-wrap:wrap;gap:11px;justify-content:center}
@@ -304,6 +304,10 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
   <symbol id="g-palette" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.5 0 2-1 2-2s-.6-1.4-.6-2.2c0-.8.6-1.3 1.4-1.3H17a4 4 0 0 0 4-4c0-4.4-4-8.5-9-8.5z"/><circle cx="7.5" cy="12" r="1"/><circle cx="10" cy="8" r="1"/><circle cx="14.5" cy="8" r="1"/></symbol>
   <symbol id="g-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v4h-4"/></symbol>
   <symbol id="g-keys" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2.5"/><path d="M7 10h.01M11 10h.01M15 10h.01M7 14h10"/></symbol>
+  <symbol id="g-note" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h8l6 6v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M15 3v6h6M8 13h8M8 17h5"/></symbol>
+  <symbol id="g-puzzle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a2.4 2.4 0 0 1 2.4 2.4V7h2.2A2.4 2.4 0 0 1 19 9.4v1.2a2.2 2.2 0 1 0 0 2.8v1.2A2.4 2.4 0 0 1 16.6 17H14.4v1.6A2.4 2.4 0 1 1 9.6 18.6V17H7.4A2.4 2.4 0 0 1 5 14.6v-1.2a2.2 2.2 0 1 0 0-2.8V9.4A2.4 2.4 0 0 1 7.4 7H9.6V5.4A2.4 2.4 0 0 1 12 3z"/></symbol>
+  <symbol id="g-spark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M6.2 6.2l2.1 2.1M15.7 15.7l2.1 2.1M15.7 8.3l2.1-2.1M6.2 17.8l2.1-2.1"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="g-file" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v13a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></symbol>
 </defs></svg>
 
 <!-- NAV -->
@@ -318,6 +322,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <a href="#idea">The idea</a>
       <a href="#features">Shell</a>
       <a href="#messaging">Messaging</a>
+      <a href="#tools">Tools</a>
       <a href="#apps">Apps</a>
       <a href="#compare">Compare</a>
       <a href="#install">Install</a>
@@ -333,6 +338,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     <a href="#who" onclick="closeM()">Who it’s for</a>
     <a href="#features" onclick="closeM()">Shell</a>
     <a href="#messaging" onclick="closeM()">Messaging &amp; AI</a>
+    <a href="#tools" onclick="closeM()">Everyday tools</a>
     <a href="#apps" onclick="closeM()">Apps</a>
     <a href="#security" onclick="closeM()">Security</a>
     <a href="#shortcuts" onclick="closeM()">Shortcuts</a>
@@ -350,13 +356,13 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <div class="fade">
         <span class="hero-tag">Free forever · Linux desktop workspace</span>
         <h1 class="hero-h1">Aspera Hub<br><span class="grad">one warm workspace.</span></h1>
-        <p class="hero-sub">Run your <b>WhatsApp, Arattai, Gmail and Zoho</b> apps together in a single Linux window. The ones you use all day stay <b>warm</b> for instant switching — the rest go <b>cold</b> so they don't eat your RAM.</p>
+        <p class="hero-sub">Run your <b>WhatsApp, Arattai, Gmail and Zoho</b> apps together in a single Linux window. Daily apps stay <b>warm</b> for instant switching — the rest go <b>cold</b> so they don't eat your RAM. Hub pins, <b>Notes</b>, Chrome extensions, and optional Aspera AI are built in.</p>
         <div class="hero-ctas">
           <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest"><svg><use href="#g-dl"/></svg> Download .deb for Linux</a>
           <a class="btn btn-s" href="https://github.com/ramchandragada/AsperaDock" target="_blank" rel="noopener"><svg><use href="#g-link"/></svg> View on GitHub</a>
         </div>
         <div class="stats">
-          <div><span class="grad" data-version>v0.5.37</span><span>Latest</span></div>
+          <div><span class="grad" data-version>v0.5.53</span><span>Latest</span></div>
           <div><span class="grad">₹0</span><span>Free forever</span></div>
           <div><span class="grad">MIT</span><span>Open source</span></div>
           <div><span class="grad">.deb</span><span>Debian · Ubuntu · Mint</span></div>
@@ -425,7 +431,8 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <a href="#who">Who it’s for</a>
       <a href="#idea">Warm &amp; cold</a>
       <a href="#features">Desktop shell</a>
-      <a href="#messaging">Pins · AI</a>
+      <a href="#messaging">Pins · AI · Notes</a>
+      <a href="#tools">Everyday tools</a>
       <a href="#apps">App catalog</a>
       <a href="#security">Security</a>
       <a href="#shortcuts">Shortcuts</a>
@@ -473,7 +480,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     <div class="flow">
       <div class="flow-step fade"><div class="n">1</div><h3>Install once</h3><p>Download the <b>.deb</b>, install, launch <b>Aspera Hub</b> from your app menu. Electron is bundled — you never manage Chromium yourself.</p></div>
       <div class="flow-step fade"><div class="n">2</div><h3>Add your catalog apps</h3><p>WhatsApp, Arattai, Gmail, Zoho Mail, CRM, Books, Zoho One. Flame-mark the handful you live in. Cap: <b>10 apps</b> in the dock.</p></div>
-      <div class="flow-step fade"><div class="n">3</div><h3>Work lighter</h3><p>Unread badges, tray, mute, focus, lock, Hub pins, and optional Aspera AI — without five browser windows open forever.</p></div>
+      <div class="flow-step fade"><div class="n">3</div><h3>Work lighter</h3><p>Unread badges, tray, mute, focus, lock, Hub pins, Notes, Chrome extensions, and optional Aspera AI — without five browser windows open forever.</p></div>
     </div>
   </div>
 </section>
@@ -486,15 +493,15 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <p class="sh-sub">The polish of a native app, wrapped around the web apps you already live in.</p>
     </div>
     <div class="fgrid">
-      <div class="feat fade"><div class="fi"><svg><use href="#g-id"/></svg></div><h3>Separate logins</h3><p>Named profiles keep sessions isolated, so several <b>WhatsApp</b> or <b>Gmail</b> accounts never share cookies.</p></div>
-      <div class="feat fade"><div class="fi"><svg><use href="#g-bell"/></svg></div><h3>Unread badges</h3><p>Per-app counts, a global bell and an optional tray badge — see what needs you at a glance.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-id"/></svg></div><h3>Separate logins</h3><p>Named profiles keep sessions isolated, so several <b>WhatsApp</b> or <b>Gmail</b> accounts never share cookies. Zoho Mail is isolated the same way.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-bell"/></svg></div><h3>Notification center</h3><p>Per-app unread counts, a global bell, and a notification center — mark all read, clear, or jump back to the chat. Optional tray badge too.</p></div>
       <div class="feat fade"><div class="fi"><svg><use href="#g-focus"/></svg></div><h3>Focus &amp; mute</h3><p>Silence notifications or clear every badge with a shortcut when you need to concentrate.</p></div>
-      <div class="feat fade"><div class="fi"><svg><use href="#g-bolt"/></svg></div><h3>Jump anywhere</h3><p>Switch apps with <code>Ctrl+1…9</code>, quick-search with <code>Ctrl+/</code>, find in page with <code>Ctrl+F</code>.</p></div>
-      <div class="feat fade"><div class="fi"><svg><use href="#g-shield"/></svg></div><h3>Password lock</h3><p>Lock the whole workspace behind a password, and auto-lock when your PC goes idle or sleeps.</p></div>
-      <div class="feat fade"><div class="fi"><svg><use href="#g-dl"/></svg></div><h3>Downloads &amp; tray</h3><p>Pick a downloads folder, open files when they finish, and keep Hub in the tray or close-to-tray.</p></div>
-      <div class="feat fade"><div class="fi"><svg><use href="#g-palette"/></svg></div><h3>Themes</h3><p>System, light, dark, darkest, glossy or mint — make the shell match your desktop.</p></div>
-      <div class="feat fade"><div class="fi"><svg><use href="#g-refresh"/></svg></div><h3>Safe auto-update</h3><p>Updates come from GitHub Releases and are verified with <b>SHA-256</b> before they're applied.</p></div>
-      <div class="feat fade"><div class="fi"><svg><use href="#g-keys"/></svg></div><h3>Keyboard-driven</h3><p>Reorder tabs, reload an app, toggle focus, hibernate the background, or lock — all from the keyboard.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-bolt"/></svg></div><h3>Jump anywhere</h3><p>Switch apps with <code>Ctrl+1…9</code>, quick-search chats with <code>Ctrl+/</code>, find in page with <code>Ctrl+F</code>, Google the web with <code>Ctrl+E</code>.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-shield"/></svg></div><h3>Password lock</h3><p>Lock the whole workspace behind a password (toolbar button or <code>Ctrl+Shift+L</code>), and auto-lock when your PC goes idle or sleeps.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-dl"/></svg></div><h3>Downloads &amp; tray</h3><p>Pick a downloads folder, open files when they finish, keep Hub in the tray or close-to-tray. Copy the current page link from the toolbar.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-palette"/></svg></div><h3>Themes</h3><p>System, light, dark, darkest, glossy or mint — plus density and icon size so the shell matches your desktop.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-refresh"/></svg></div><h3>Safe auto-update</h3><p>Updates come from GitHub Releases and are verified with <b>SHA-256</b> before they're applied. Check from the toolbar or the menu.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-keys"/></svg></div><h3>Keyboard-driven</h3><p>Reorder tabs, reload, print, toggle focus, hibernate, or lock — all from the keyboard. Remap every shortcut in Settings.</p></div>
     </div>
   </div>
 </section>
@@ -504,7 +511,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
   <div class="container">
     <div class="sec-head fade">
       <h2 class="sh">Messaging power tools — <span class="grad">beyond tabs</span></h2>
-      <p class="sh-sub">WhatsApp and Arattai get Hub-native pins. Select text in chat or mail to summarize and refine with your own AI keys.</p>
+      <p class="sh-sub">WhatsApp and Arattai get Hub-native pins. Select text to summarize or polish with your own AI keys. Keep a Notes pad open for links you paste yourself — Hub never auto-sends.</p>
     </div>
     <div class="msg-grid">
       <div class="msg-card fade">
@@ -518,25 +525,54 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
         </ul>
       </div>
       <div class="msg-card fade">
-        <div class="fi"><svg><use href="#g-focus"/></svg></div>
+        <div class="fi"><svg><use href="#g-spark"/></svg></div>
         <h3>Aspera AI (BYOK)</h3>
-        <p>Optional. Bring your own API key — Aspera hosts no model. Works on WhatsApp, Arattai, Gmail, and Zoho Mail.</p>
+        <p>Optional. Bring your own API key — Aspera hosts no model. Works on WhatsApp, Arattai, Gmail, and Zoho Mail. <b>Hub never auto-sends</b> — you insert or paste, then send yourself.</p>
         <ul>
-          <li><b>Summarize</b> pasted text — English always, plus up to 2 Indian languages you choose</li>
-          <li><b>Paste a screenshot</b> or <b>upload</b> a PDF/image → Summarize (vision / text extract)</li>
-          <li><b>Refine</b> / <b>Suggest reply</b> in the same language set (EN + up to 2)</li>
+          <li><b>Summarize</b> selected text — English always, plus up to 2 Indian languages you choose</li>
+          <li><b>Polish</b> the compose box — fix grammar, shorter, more polite, or more formal → <b>Use in chat</b></li>
+          <li><b>Suggest reply</b> in the same language set (EN + up to 2)</li>
+          <li><b>Paste a screenshot</b> or <b>upload</b> a PDF/image → Summarize</li>
           <li><b>Catch me up</b> in one language (EN / Hindi / Marathi / Bengali / Telugu / Tamil / Gujarati / Kannada / Odia / Malayalam)</li>
         </ul>
         <div class="prov">
           <span>Gemini</span><span>Sarvam</span><span>Grok</span><span>DeepSeek</span><span>SambaNova</span><span>OpenRouter</span><span>Anthropic</span>
         </div>
       </div>
+      <div class="msg-card fade">
+        <div class="fi"><svg><use href="#g-note"/></svg></div>
+        <h3>Aspera Notes</h3>
+        <p>A floating copy pad — same idea as Aspera AI. Store links and repeated text, copy, then paste where you want. <b>Hub never sends</b> from Notes.</p>
+        <ul>
+          <li>Toolbar button or <code>Ctrl+Shift+N</code></li>
+          <li>Search your notes; copy title or body in one click</li>
+          <li>Stays on your machine — no Hub cloud account</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- EVERYDAY TOOLS -->
+<section class="sec" id="tools">
+  <div class="container">
+    <div class="sec-head fade">
+      <h2 class="sh">Everyday tools — <span class="grad">in the shell</span></h2>
+      <p class="sh-sub">Extensions, Google search, CRM lookup, and page tools sit in the Hub chrome — not in five extra browser windows.</p>
+    </div>
+    <div class="fgrid">
+      <div class="feat fade"><div class="fi"><svg><use href="#g-puzzle"/></svg></div><h3>Chrome extensions</h3><p>Install from the <b>Chrome Web Store</b> into WhatsApp, Arattai, and other Hub apps. Toolbar puzzle icon opens the manager — paste a store link, then Install.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-search"/></svg></div><h3>Google web search</h3><p>Toolbar search or <code>Ctrl+E</code> opens a Google search popup. Not <code>Ctrl+K</code> — WhatsApp and Arattai already use that for chat search.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-users"/></svg></div><h3>Zoho CRM lookup</h3><p>Optional. Select a name or keyword, right-click → look up matching <b>Deals</b> (stage, amount, account). Turn on in Settings → Integrations.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-file"/></svg></div><h3>PDF preview</h3><p>Open PDFs in Hub’s viewer instead of bouncing to a separate app. From Aspera AI you can also <b>upload a PDF</b> and summarize it.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-link"/></svg></div><h3>Copy link &amp; history</h3><p>Copy the current page URL from the toolbar. Back / forward / reload work like a browser. Print the page with <code>Ctrl+P</code>.</p></div>
+      <div class="feat fade"><div class="fi"><svg><use href="#g-grid"/></svg></div><h3>Links as Hub tabs</h3><p>Outbound links open as a real app-bar tab (never a blank popup). Zoho CRM / One / Books tabs can share one login so Sales and Leads stay side by side.</p></div>
     </div>
   </div>
 </section>
 
 <!-- APPS -->
-<section class="sec" id="apps">
+<section class="sec sec-alt" id="apps">
   <div class="container">
     <div class="sec-head fade">
       <h2 class="sh">What lives in the dock</h2>
@@ -552,13 +588,13 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <span class="achip"><span class="ib" style="background:linear-gradient(160deg,#3b83d6,#1f5aa0)"><svg><use href="#g-grid"/></svg></span> Zoho One</span>
     </div>
     <div class="app-desc fade">
-      <article><h4><span class="ib" style="background:linear-gradient(160deg,#2bd06a,#128a3f);width:22px;height:22px;border-radius:6px;display:inline-grid;place-items:center"><svg style="width:12px;height:12px;color:#fff"><use href="#g-chat"/></svg></span> WhatsApp</h4><p>web.whatsapp.com — team and client chat with Hub pins and Aspera AI.</p></article>
-      <article><h4>Arattai</h4><p>web.arattai.in — Indian messaging with the same Hub pins and AI skills.</p></article>
-      <article><h4>Gmail</h4><p>mail.google.com — work mail with summarize / refine and isolated multi-login.</p></article>
-      <article><h4>Zoho Mail</h4><p>mail.zoho.in — Zoho inbox deep link; AI summarize &amp; refine supported.</p></article>
-      <article><h4>Zoho CRM</h4><p>crm.zoho.in — keep cold until you need pipeline; warm when sales is your day.</p></article>
-      <article><h4>Zoho Books</h4><p>books.zoho.in — accounting when you need it, hibernating when you don’t.</p></article>
-      <article><h4>Zoho One</h4><p>one.zoho.in — Zoho One portal for the rest of the suite.</p></article>
+      <article><h4><span class="ib" style="background:linear-gradient(160deg,#2bd06a,#128a3f);width:22px;height:22px;border-radius:6px;display:inline-grid;place-items:center"><svg style="width:12px;height:12px;color:#fff"><use href="#g-chat"/></svg></span> WhatsApp</h4><p>web.whatsapp.com — team and client chat with Hub pins, Aspera AI, Polish, and Notes.</p></article>
+      <article><h4>Arattai</h4><p>web.arattai.in — Indian messaging with the same Hub pins, AI skills, and Notes.</p></article>
+      <article><h4>Gmail</h4><p>mail.google.com — work mail with summarize / polish and isolated multi-login.</p></article>
+      <article><h4>Zoho Mail</h4><p>mail.zoho.in — each mailbox is its own session (like Gmail). AI summarize &amp; polish supported.</p></article>
+      <article><h4>Zoho CRM</h4><p>crm.zoho.in — keep cold until you need pipeline. Optional Deals lookup from any app. Extra CRM tabs can share one login.</p></article>
+      <article><h4>Zoho Books</h4><p>books.zoho.in — accounting when you need it, hibernating when you don’t. Can share a Zoho login with CRM/One tabs.</p></article>
+      <article><h4>Zoho One</h4><p>one.zoho.in — Zoho One portal for the rest of the suite. Links open as Hub tabs, not popups.</p></article>
       <article><h4>Profiles</h4><p>Duplicate any catalog app with a named profile for a clean second login.</p></article>
     </div>
     <p class="more fade">More apps coming — the catalog grows over time. Company catalog only (no arbitrary HTTPS apps).</p>
@@ -579,6 +615,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <li><b>Isolated partitions</b>Each profile is its own Electron persist session — no cookie bleed.</li>
       <li><b>Single instance</b>One Hub window per profile data dir — no accidental double sessions.</li>
       <li><b>Open source MIT</b>Read it, modify it, share it. Free forever — no subscription, no ads.</li>
+      <li><b>Notes stay local</b>Aspera Notes and your AI keys never leave this PC unless you paste them yourself.</li>
     </ul>
   </div>
 </section>
@@ -588,19 +625,22 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
   <div class="container">
     <div class="sec-head fade">
       <h2 class="sh">Keyboard-driven <span class="grad">from day one</span></h2>
-      <p class="sh-sub">Defaults you can remap in Settings. Jump, search, mute, hibernate, lock — without leaving the keyboard.</p>
+      <p class="sh-sub">Defaults you can remap in Settings → Keyboard shortcuts. Jump, search, Notes, mute, hibernate, lock — without leaving the keyboard.</p>
     </div>
     <div class="keys fade">
       <div class="key-row"><kbd>Ctrl+1…9</kbd><span>Jump to app by dock position</span></div>
       <div class="key-row"><kbd>Ctrl+Tab</kbd><span>Next app (Shift+Tab for previous)</span></div>
       <div class="key-row"><kbd>Ctrl+/</kbd><span>Quick search — apps, chats, message text</span></div>
       <div class="key-row"><kbd>Ctrl+F</kbd><span>Find in the active page</span></div>
+      <div class="key-row"><kbd>Ctrl+E</kbd><span>Google web search (not Ctrl+K — chats use that)</span></div>
+      <div class="key-row"><kbd>Ctrl+Shift+N</kbd><span>Aspera Notes</span></div>
       <div class="key-row"><kbd>Ctrl+Shift+D</kbd><span>Focus mode</span></div>
       <div class="key-row"><kbd>Ctrl+Shift+M</kbd><span>Mute notifications</span></div>
       <div class="key-row"><kbd>Ctrl+Shift+H</kbd><span>Hibernate background (Free RAM)</span></div>
       <div class="key-row"><kbd>Ctrl+Shift+L</kbd><span>Lock workspace (if enabled)</span></div>
       <div class="key-row"><kbd>Ctrl+,</kbd><span>Open Settings</span></div>
       <div class="key-row"><kbd>Ctrl+R</kbd><span>Reload active app</span></div>
+      <div class="key-row"><kbd>Ctrl+P</kbd><span>Print the active page</span></div>
       <div class="key-row"><kbd>Alt+← / →</kbd><span>Back / forward inside the app</span></div>
       <div class="key-row"><kbd>Right-click icon</kbd><span>Hibernate a non-active warm app</span></div>
     </div>
@@ -624,7 +664,9 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
           <tr><td>Isolated multi-login</td><td class="yes">Named profiles</td><td class="partial">Browser profiles (clunky)</td><td class="yes">Usually yes</td></tr>
           <tr><td>Desktop shell (tray, mute, lock)</td><td class="yes">Built in</td><td class="no">Limited</td><td class="yes">Varies</td></tr>
           <tr><td>Hub pins</td><td class="yes">WhatsApp ↔ Arattai</td><td class="no">No</td><td class="no">Rare</td></tr>
-          <tr><td>Workplace AI EN · HI · MR</td><td class="yes">BYOK, optional</td><td class="partial">External tools</td><td class="partial">Paid add-ons often</td></tr>
+          <tr><td>Aspera Notes</td><td class="yes">Copy pad — Hub never sends</td><td class="no">Separate apps</td><td class="partial">Varies</td></tr>
+          <tr><td>Chrome extensions</td><td class="yes">Chrome Web Store in Hub apps</td><td class="yes">Yes</td><td class="partial">Varies</td></tr>
+          <tr><td>Workplace AI (summarize + polish)</td><td class="yes">BYOK, optional, never auto-sends</td><td class="partial">External tools</td><td class="partial">Paid add-ons often</td></tr>
           <tr><td>Price</td><td class="yes">₹0 forever · MIT</td><td class="yes">Free browser</td><td class="partial">Often freemium / paid</td></tr>
           <tr><td>Cloud account required</td><td class="yes">None</td><td class="yes">None</td><td class="partial">Sometimes</td></tr>
           <tr><td>Linux-first packaging</td><td class="yes">.deb · Mint/Ubuntu/Debian</td><td class="yes">—</td><td class="partial">Mixed</td></tr>
@@ -680,10 +722,13 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     <div class="faq">
       <details class="fade" open><summary>Is it really free?</summary><div class="ans">Yes — free, forever. No subscription, no trial wall, no ads. Open source under the MIT license. 100% free for life.</div></details>
       <details class="fade"><summary>Which Linux distros are supported?</summary><div class="ans">Debian, Ubuntu and Linux Mint (amd64). Other Debian-based distributions usually work with the same <b>.deb</b>. Tuned especially for Mint Cinnamon and XFCE fleets.</div></details>
-      <details class="fade"><summary>How is it different from Rambox or a browser?</summary><div class="ans">The warm/cold design keeps your daily apps instant while letting the rest sleep — typically lighter on RAM — and it's free and Linux-first. You also get a real desktop shell: badges, tray, mute, focus, lock, downloads, Hub pins, and isolated logins.</div></details>
+      <details class="fade"><summary>How is it different from Rambox or a browser?</summary><div class="ans">The warm/cold design keeps your daily apps instant while letting the rest sleep — typically lighter on RAM — and it's free and Linux-first. You also get a real desktop shell: badges, notification center, tray, mute, focus, lock, downloads, Hub pins, Notes, Chrome extensions, Google web search, and isolated logins.</div></details>
       <details class="fade"><summary>Where do my logins live?</summary><div class="ans">On your machine under <code class="mono" style="font-size:12px;background:#eef0ff;padding:2px 6px;border-radius:4px">~/.config/Aspera Dock</code>. Clearing a session in Hub signs that app out locally. There is no Hub cloud account.</div></details>
       <details class="fade"><summary>How many apps can stay warm?</summary><div class="ans">By default <b>5</b> warm apps stay fully loaded. You can raise the cap to <b>7</b> in Settings. Everything else loads on click and can hibernate after idle. Max <b>10</b> apps in the dock.</div></details>
-      <details class="fade"><summary>Does Aspera AI cost money?</summary><div class="ans">Hub never charges. AI is optional and <b>bring-your-own-key</b> (Gemini, Sarvam, Grok, DeepSeek, SambaNova, OpenRouter, or Anthropic). Many providers offer free tiers. Keys stay on your machine.</div></details>
+      <details class="fade"><summary>Does Aspera AI cost money?</summary><div class="ans">Hub never charges. AI is optional and <b>bring-your-own-key</b> (Gemini, Sarvam, Grok, DeepSeek, SambaNova, OpenRouter, or Anthropic). Many providers offer free tiers. Keys stay on your machine. Polish and summarize never auto-send — you insert or paste, then send yourself.</div></details>
+      <details class="fade"><summary>What is Aspera Notes?</summary><div class="ans">A floating copy pad (<code>Ctrl+Shift+N</code>) for links and repeated text. Copy from Notes, then paste where you want. Hub never sends from Notes.</div></details>
+      <details class="fade"><summary>Can I install Chrome extensions?</summary><div class="ans">Yes. Open the Extensions toolbar icon, paste a <b>Chrome Web Store</b> link, and Install. Extensions run in Hub guest apps (WhatsApp, Arattai, Gmail, Zoho, and the rest of the catalog).</div></details>
+      <details class="fade"><summary>How does Zoho CRM lookup work?</summary><div class="ans">Optional. Enable it in Settings → Integrations, then select a keyword in any app, right-click, and look up matching Deals (stage, amount, account). Office fleets can pull credentials from a Vercel fleet API so secrets are not pasted onto each PC.</div></details>
       <details class="fade"><summary>Can I add any website?</summary><div class="ans">Today Hub uses the <b>Aspera catalog only</b> (WhatsApp, Arattai, Gmail, Zoho Mail/CRM/Books/One). You can run multiple copies of the same app with separate profiles. The catalog will grow over time.</div></details>
     </div>
     <div class="lim fade" style="margin-top:28px">
@@ -691,7 +736,9 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <ul>
         <li>Primary package is <b>amd64 .deb</b> for Debian-family desktops.</li>
         <li>Hub pins are for <b>WhatsApp ↔ Arattai</b>.</li>
-        <li>Aspera AI skills apply to WhatsApp, Arattai, Gmail, and Zoho Mail.</li>
+        <li>Aspera AI skills apply to WhatsApp, Arattai, Gmail, and Zoho Mail. Hub <b>never auto-sends</b>.</li>
+        <li>Notes is a copy pad — you paste yourself; Hub never sends from Notes.</li>
+        <li>Chrome extensions come from the Chrome Web Store into Hub guest apps.</li>
         <li>Hardware acceleration defaults <b>off</b> on Linux for Mint stability (you can enable it).</li>
       </ul>
     </div>
@@ -708,7 +755,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
         <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest"><svg><use href="#g-dl"/></svg> Download .deb for Linux</a>
         <a class="btn btn-s" href="https://github.com/ramchandragada/AsperaDock" target="_blank" rel="noopener"><svg><use href="#g-link"/></svg> View on GitHub</a>
       </div>
-      <p class="fine"><span data-version>v0.5.37</span> · Debian / Ubuntu / Mint · amd64 · MIT licensed</p>
+      <p class="fine"><span data-version>v0.5.53</span> · Debian / Ubuntu / Mint · amd64 · MIT licensed</p>
     </div>
   </div>
 </section>
@@ -726,6 +773,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
         <h5>Product</h5>
         <a href="#features">Shell</a>
         <a href="#messaging">Messaging &amp; AI</a>
+        <a href="#tools">Everyday tools</a>
         <a href="#apps">Apps</a>
         <a href="#compare">Compare</a>
         <a href="#install">Install</a>
