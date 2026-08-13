@@ -9,6 +9,7 @@ export const ASPERA_HUB_WEBSITE_HOST = 'asperahub.com';
 /** Early supporters listed in About (alphabetical by given name). Cap: 25. */
 export const EARLY_CONTRIBUTORS = [
   'Amar Vallakati',
+  'Annapurna Margam',
   'Arati Gandhal',
   'Diksha Garade',
   'Gokul Zanwar',

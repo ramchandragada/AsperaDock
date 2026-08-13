@@ -15,6 +15,7 @@ test('early contributors stay alphabetical and under the 25-name cap', () => {
   );
   assert.deepEqual(sortedContributors(EARLY_CONTRIBUTORS), [
     'Amar Vallakati',
+    'Annapurna Margam',
     'Arati Gandhal',
     'Diksha Garade',
     'Gokul Zanwar',
@@ -33,6 +34,7 @@ test('About text lists contributors as alphabetical', () => {
   assert.match(detail, /Early contributors \(alphabetical order\):/);
   assert.match(detail, /Website: https:\/\/asperahub\.com/);
   const amar = detail.indexOf('Amar Vallakati');
+  const annapurna = detail.indexOf('Annapurna Margam');
   const arati = detail.indexOf('Arati Gandhal');
   const diksha = detail.indexOf('Diksha Garade');
   const gokul = detail.indexOf('Gokul Zanwar');
@@ -42,7 +44,8 @@ test('About text lists contributors as alphabetical', () => {
   const tarun = detail.indexOf('Tarun Pandal');
   assert.ok(
     amar > 0 &&
-      arati > amar &&
+      annapurna > amar &&
+      arati > annapurna &&
       diksha > arati &&
       gokul > diksha &&
       rajeshwari > gokul &&
