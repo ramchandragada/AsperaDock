@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const html = fs.readFileSync(path.join(root, 'website/index.html'), 'utf8');
+const vercel = fs.readFileSync(path.join(root, 'website/vercel.json'), 'utf8');
 
 const REQUIRED = [
   'Hub pins',
@@ -32,6 +33,11 @@ const REQUIRED = [
   'Zoho CRM',
   'Zoho Books',
   'Zoho One',
+  'WhatsApp Safe Mode',
+  '5 by default, up to 7',
+  'screen locks or your PC sleeps',
+  'Keep warm',
+  'Local only',
 ];
 
 test('asperahub.com lists current Hub features', () => {
@@ -48,4 +54,20 @@ test('asperahub.com does not advertise disabled Forward or custom apps', () => {
   );
   assert.match(html, /Aspera catalog only/);
   assert.equal(/arbitrary HTTPS apps/i.test(html), true);
+});
+
+test('website audit P0 copy and a11y guards', () => {
+  assert.equal(/you can enable it/i.test(html), false);
+  assert.equal(/Every tab stays alive/.test(html), false);
+  assert.equal(/Linus Torvalds/.test(html), false);
+  assert.match(html, /scroll-padding-top:76px/);
+  assert.match(html, /<main id="main">/);
+  assert.match(html, /scope="row"/);
+  assert.match(html, /:focus-visible/);
+  assert.match(html, /assets\/og-1200x630\.jpg/);
+  assert.match(html, /application\/ld\+json/);
+  assert.equal(html.includes('fonts.googleapis.com'), false);
+  assert.match(html, /sudo apt install \.\/asperadock_'\+ver\+'/);
+  assert.match(vercel, /stale-while-revalidate/);
+  assert.match(vercel, /frame-ancestors 'none'/);
 });

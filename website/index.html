@@ -9,27 +9,49 @@
 <meta property="og:description" content="Free forever Linux workspace: warm/cold apps, isolated logins, Hub pins, Notes, extensions, Aspera AI, lock & tray. asperahub.com">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://asperahub.com/">
-<meta property="og:image" content="https://opengraph.githubassets.com/1/ramchandragada/AsperaDock">
-<meta name="theme-color" content="#f8f7ff">
+<meta property="og:image" content="https://asperahub.com/assets/og-1200x630.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Aspera Hub — one warm workspace for Linux">
+<meta property="og:site_name" content="Aspera Hub">
+<meta property="og:locale" content="en_IN">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Aspera Hub — one warm workspace for Linux">
+<meta name="twitter:description" content="Free forever Linux workspace for WhatsApp, Arattai, Gmail and Zoho. Warm/cold apps, Hub pins, Notes, extensions, Aspera AI.">
+<meta name="twitter:image" content="https://asperahub.com/assets/og-1200x630.jpg">
+<meta name="theme-color" content="#f8f7ff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; connect-src 'self' https://api.github.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'">
 <link rel="icon" type="image/png" sizes="64x64" href="favicon-64.png">
-<link rel="icon" type="image/png" href="assets/icon.png">
+<link rel="icon" type="image/png" href="favicon-64.png">
 <link rel="canonical" href="https://asperahub.com/">
 <title>Aspera Hub — one warm workspace for Linux</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="preload" href="assets/fonts/inter-400-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/space-grotesk-700-latin.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+@font-face{font-family:'Inter';font-style:normal;font-weight:400;font-display:swap;src:url('assets/fonts/inter-400-latin.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'Inter';font-style:normal;font-weight:600;font-display:swap;src:url('assets/fonts/inter-600-latin.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'Inter';font-style:normal;font-weight:700;font-display:swap;src:url('assets/fonts/inter-700-latin.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'Space Grotesk';font-style:normal;font-weight:600;font-display:swap;src:url('assets/fonts/space-grotesk-600-latin.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:'Space Grotesk';font-style:normal;font-weight:700;font-display:swap;src:url('assets/fonts/space-grotesk-700-latin.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
 /* ── Design system ── */
 :root{
   --bg:#f8f7ff;--surface:#ffffff;--card:#fafaff;--border:#e4e2f5;--bh:#c7c3e8;
   --green:#6366f1;--green-2:#4f46e5;--blue:#3b82f6;--orange:#f59e0b;
   --purple:#a855f7;--yellow:#eab308;--red:#ef4444;
-  --t1:#0f172a;--t2:#475569;--t3:#94a3b8;
-  --r:12px;--r-lg:18px;--fd:'Space Grotesk',sans-serif;--fb:'Inter',sans-serif;--fm:'JetBrains Mono',monospace;
+  --t1:#0f172a;--t2:#475569;--t3:#5b6577;
+  --r:12px;--r-lg:18px;--fd:'Space Grotesk',system-ui,sans-serif;--fb:'Inter',system-ui,sans-serif;--fm:ui-monospace,'SFMono-Regular',Menlo,Consolas,monospace;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html{scroll-behavior:smooth}
-body{font-family:var(--fb);background:var(--bg);color:var(--t1);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+html{scroll-behavior:smooth;scroll-padding-top:76px}
+@media(max-width:900px){html{scroll-padding-top:68px}}
+body{font-family:var(--fb);background:var(--bg);color:var(--t1);line-height:1.6;-webkit-font-smoothing:antialiased}
+a:focus-visible,button:focus-visible,summary:focus-visible{outline:3px solid #4f46e5;outline-offset:3px;border-radius:6px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media(prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  .fade{opacity:1;transform:none;transition:none}
+}
 h1,h2,h3{font-family:var(--fd);font-weight:700;letter-spacing:-.02em}
 .mono{font-family:var(--fm)}
 a{color:inherit}
@@ -41,8 +63,8 @@ img{max-width:100%}
 .fade.vis{opacity:1;transform:translateY(0)}
 .btn{display:inline-flex;align-items:center;gap:8px;padding:12px 22px;border-radius:10px;font-weight:600;font-size:14px;text-decoration:none;border:none;cursor:pointer;transition:all .2s}
 .btn svg{width:17px;height:17px}
-.btn-p{background:var(--green);color:#fff;box-shadow:0 4px 14px -4px rgba(99,102,241,.45)}
-.btn-p:hover{background:var(--green-2);transform:translateY(-2px);box-shadow:0 12px 30px -8px rgba(99,102,241,.55)}
+.btn-p{background:var(--green-2);color:#fff;box-shadow:0 4px 14px -4px rgba(79,70,229,.45)}
+.btn-p:hover{background:#4338ca;transform:translateY(-2px);box-shadow:0 12px 30px -8px rgba(79,70,229,.55)}
 .btn-s{background:#fff;color:var(--t1);border:1px solid var(--border)}
 .btn-s:hover{border-color:var(--green);background:#f5f4ff;color:var(--green-2);transform:translateY(-2px)}
 .pill{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--border);border-radius:20px;padding:5px 12px;font-size:12px;font-weight:500;color:var(--t2);transition:all .2s}
@@ -66,7 +88,7 @@ img{max-width:100%}
 .hero{padding:74px 0 84px;position:relative;overflow:hidden;background:radial-gradient(ellipse 70% 55% at 12% -10%,rgba(99,102,241,.18) 0%,transparent 55%),radial-gradient(ellipse 55% 45% at 88% 110%,rgba(245,158,11,.12) 0%,transparent 55%),var(--bg)}
 .hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:60px;align-items:center}
 .hero-tag{display:inline-flex;align-items:center;gap:8px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.22);border-radius:20px;padding:5px 14px;font-size:12px;font-weight:600;color:var(--green-2);margin-bottom:22px}
-.hero-h1{font-size:clamp(38px,5.2vw,60px);font-weight:800;line-height:1.06;letter-spacing:-1.5px;margin-bottom:20px}
+.hero-h1{font-size:clamp(38px,5.2vw,60px);font-weight:700;line-height:1.06;letter-spacing:-1.5px;margin-bottom:20px}
 .hero-sub{font-size:17px;color:var(--t2);line-height:1.7;margin-bottom:26px;max-width:520px}
 .hero-sub b{color:var(--t1);font-weight:600}
 .hero-ctas{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:26px}
@@ -75,7 +97,7 @@ img{max-width:100%}
 .stats span:first-child{font-family:var(--fd);font-size:24px;font-weight:800}
 .stats span:last-child{font-size:11px;color:var(--t3);font-weight:500;text-transform:uppercase;letter-spacing:.07em}
 /* SECTION TITLES */
-.sh{font-size:clamp(28px,3.8vw,40px);font-weight:800;letter-spacing:-1px;margin-bottom:10px}
+.sh{font-size:clamp(28px,3.8vw,40px);font-weight:700;letter-spacing:-1px;margin-bottom:10px}
 .sh-sub{font-size:16px;color:var(--t2);max-width:600px;margin:0 auto}
 .sec-head{text-align:center;margin-bottom:48px}
 .sec-alt{background:#fff;border-top:1px solid var(--border);border-bottom:1px solid var(--border)}
@@ -254,7 +276,8 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
 .cmp th,.cmp td{padding:14px 16px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
 .cmp th{font-family:var(--fd);font-size:13px;font-weight:700;background:#f5f4ff;color:var(--t1)}
 .cmp tr:last-child td{border-bottom:none}
-.cmp td:first-child{font-weight:600;color:var(--t1);width:28%}
+.cmp td:first-child,.cmp th:first-child{font-weight:600;color:var(--t1);width:28%}
+.cmp caption{text-align:left;font-weight:700;padding:12px 16px 0;color:var(--t1)}
 .cmp .yes{color:#047857;font-weight:700}
 .cmp .no{color:var(--t3)}
 .cmp .partial{color:#b45309;font-weight:600}
@@ -275,9 +298,21 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
 .app-desc h4{font-size:15px;margin-bottom:4px;display:flex;align-items:center;gap:8px}
 .app-desc p{font-size:13.5px;color:var(--t2);margin:0;line-height:1.55}
 .note-warn{max-width:760px;margin:16px auto 0;font-size:13px;color:var(--t3);text-align:center;font-family:var(--fm)}
+@media(prefers-contrast:more){:root{--t2:#334155;--t3:#334155}}
 
 </style>
 <noscript><style>.fade{opacity:1!important;transform:none!important}</style></noscript>
+<script type="application/ld+json">
+{"@context":"https://schema.org","@graph":[
+  {"@type":"SoftwareApplication","name":"Aspera Hub","url":"https://asperahub.com/","applicationCategory":"DesktopApplication","operatingSystem":"Linux","license":"https://github.com/ramchandragada/AsperaDock/blob/master/LICENSE","softwareVersion":"0.5.53","downloadUrl":"https://github.com/ramchandragada/AsperaDock/releases/latest","offers":{"@type":"Offer","price":"0","priceCurrency":"INR"},"author":{"@type":"Organization","name":"Aspera Technologies"}},
+  {"@type":"FAQPage","mainEntity":[
+    {"@type":"Question","name":"Is it really free?","acceptedAnswer":{"@type":"Answer","text":"Yes — free, forever. No subscription, no trial wall, no ads. Open source under the MIT license."}},
+    {"@type":"Question","name":"Which Linux distros are supported?","acceptedAnswer":{"@type":"Answer","text":"Debian, Ubuntu and Linux Mint (amd64). Other Debian-based distributions usually work with the same .deb."}},
+    {"@type":"Question","name":"Does Aspera AI cost money?","acceptedAnswer":{"@type":"Answer","text":"Hub never charges. AI is optional and bring-your-own-key. Polish and summarize never auto-send."}},
+    {"@type":"Question","name":"What is Aspera Notes?","acceptedAnswer":{"@type":"Answer","text":"A floating copy pad (Ctrl+Shift+N) for links and repeated text. Hub never sends from Notes."}}
+  ]}
+]}
+</script>
 </head>
 <body>
 <a href="#main" style="position:absolute;top:-40px;left:8px;padding:8px 14px;background:var(--green);color:#fff;border-radius:0 0 8px 8px;font-size:13px;font-weight:600;text-decoration:none;z-index:999;transition:top .2s" onfocus="this.style.top='0'" onblur="this.style.top='-40px'">Skip to main content</a>
@@ -312,11 +347,12 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
 
 <!-- NAV -->
 <div id="top"></div>
+<header>
 <nav class="nav">
   <div class="nav-in">
     <a href="#top" class="nav-logo" aria-label="Aspera Hub home">
-      <img src="assets/icon.png" alt="" width="30" height="30" style="display:block;border-radius:7px">
-      <span style="font-family:var(--fd);font-size:18px;font-weight:800" class="grad">Aspera Hub</span>
+      <img src="favicon-64.png" alt="" width="30" height="30" style="display:block;border-radius:7px">
+      <span style="font-family:var(--fd);font-size:18px;font-weight:700" class="grad">Aspera Hub</span>
     </a>
     <div class="nav-links">
       <a href="#idea">The idea</a>
@@ -329,9 +365,9 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <a href="#faq">FAQ</a>
     </div>
     <div class="nav-btns">
-      <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest"><svg><use href="#g-dl"/></svg> Download</a>
+      <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.53/asperadock_0.5.53_amd64.deb"><svg aria-hidden="true" focusable="false"><use href="#g-dl"/></svg> Download</a>
     </div>
-    <button class="hb" id="hb" aria-label="Open menu" onclick="toggleM()"><span></span><span></span><span></span></button>
+    <button class="hb" id="hb" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="mob" onclick="toggleM()"><span></span><span></span><span></span></button>
   </div>
   <div class="mob" id="mob">
     <a href="#idea" onclick="closeM()">The idea</a>
@@ -345,25 +381,27 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     <a href="#compare" onclick="closeM()">Compare</a>
     <a href="#install" onclick="closeM()">Install</a>
     <a href="#faq" onclick="closeM()">FAQ</a>
-    <a data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest" onclick="closeM()" style="color:var(--green-2);font-weight:700">Download Aspera Hub</a>
+    <a data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.53/asperadock_0.5.53_amd64.deb" onclick="closeM()" style="color:var(--green-2);font-weight:700">Download Aspera Hub</a>
   </div>
 </nav>
+</header>
 
+<main id="main">
 <!-- HERO -->
-<section id="main" class="hero">
+<section class="hero">
   <div class="container">
     <div class="hero-grid">
       <div class="fade">
         <span class="hero-tag">Free forever · Linux desktop workspace</span>
         <h1 class="hero-h1">Aspera Hub<br><span class="grad">one warm workspace.</span></h1>
-        <p class="hero-sub">Run your <b>WhatsApp, Arattai, Gmail and Zoho</b> apps together in a single Linux window. Daily apps stay <b>warm</b> for instant switching — the rest go <b>cold</b> so they don't eat your RAM. Hub pins, <b>Notes</b>, Chrome extensions, and optional Aspera AI are built in.</p>
+        <p class="hero-sub">Run your <b>WhatsApp, Arattai, Gmail and Zoho</b> apps together in a single Linux window. Daily apps stay <b>warm</b> for instant switching — the rest go <b>cold</b> so they don't quietly hold memory. Hub pins, <b>Notes</b>, Chrome extensions, and optional Aspera AI are built in.</p>
         <div class="hero-ctas">
-          <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest"><svg><use href="#g-dl"/></svg> Download .deb for Linux</a>
+          <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.53/asperadock_0.5.53_amd64.deb"><svg aria-hidden="true" focusable="false"><use href="#g-dl"/></svg> Download .deb for Linux</a>
           <a class="btn btn-s" href="https://github.com/ramchandragada/AsperaDock" target="_blank" rel="noopener"><svg><use href="#g-link"/></svg> View on GitHub</a>
         </div>
         <div class="stats">
           <div><span class="grad" data-version>v0.5.53</span><span>Latest</span></div>
-          <div><span class="grad">₹0</span><span>Free forever</span></div>
+          <div><span class="grad">Free</span><span>Forever · MIT</span></div>
           <div><span class="grad">MIT</span><span>Open source</span></div>
           <div><span class="grad">.deb</span><span>Debian · Ubuntu · Mint</span></div>
         </div>
@@ -448,17 +486,17 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
   <div class="container">
     <div class="sec-head fade">
       <h2 class="sh">Warm where it counts. <span class="grad">Cold everywhere else.</span></h2>
-      <p class="sh-sub">A browser keeps every tab alive; a big suite keeps everything running. Aspera Hub does neither — you decide what stays hot.</p>
+      <p class="sh-sub">A browser keeps every tab alive or discards them without asking; a big suite keeps everything running. Aspera Hub does neither — you decide what stays hot.</p>
     </div>
     <div class="temp">
       <div class="tcard warm fade">
         <h3><span class="ti"><svg><use href="#g-flame"/></svg></span> Warm apps</h3>
-        <p>Mark the handful you use all day to <b>keep warm</b> — up to <b>5</b> stay fully loaded, so switching to WhatsApp or Gmail is instant, with no cold-start spinner.</p>
+        <p>Mark the handful you use all day to <b>keep warm</b> — <b>5 by default, up to 7 in Settings</b> stay fully loaded, so switching to WhatsApp or Gmail is instant, with no cold-start spinner.</p>
         <p class="tcap">Default 5 warm · raise to 7 in Settings · instant switch</p>
       </div>
       <div class="tcard cold fade">
         <h3><span class="ti"><svg><use href="#g-snow"/></svg></span> Cold on demand</h3>
-        <p>Everything else loads only when you click it, and can <b>hibernate</b> after it's been idle — so the apps you rarely open aren't quietly holding memory.</p>
+        <p>Everything else loads only when you click it, and can <b>hibernate</b> after about <b>45 minutes</b> idle (configurable) — so the apps you rarely open aren't quietly holding memory.</p>
         <p class="tcap">Sensible on a ~16&nbsp;GB laptop</p>
       </div>
     </div>
@@ -494,14 +532,14 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     </div>
     <div class="fgrid">
       <div class="feat fade"><div class="fi"><svg><use href="#g-id"/></svg></div><h3>Separate logins</h3><p>Named profiles keep sessions isolated, so several <b>WhatsApp</b> or <b>Gmail</b> accounts never share cookies. Zoho Mail is isolated the same way.</p></div>
-      <div class="feat fade"><div class="fi"><svg><use href="#g-bell"/></svg></div><h3>Notification center</h3><p>Per-app unread counts, a global bell, and a notification center — mark all read, clear, or jump back to the chat. Optional tray badge too.</p></div>
+      <div class="feat fade"><div class="fi"><svg aria-hidden="true" focusable="false"><use href="#g-bell"/></svg></div><h3>Notification center</h3><p>Per-app unread counts, a global bell, and a notification center — mark all read, clear, jump back to the chat, or type an inline <b>quick reply</b>. Optional tray badge too.</p></div>
       <div class="feat fade"><div class="fi"><svg><use href="#g-focus"/></svg></div><h3>Focus &amp; mute</h3><p>Silence notifications or clear every badge with a shortcut when you need to concentrate.</p></div>
       <div class="feat fade"><div class="fi"><svg><use href="#g-bolt"/></svg></div><h3>Jump anywhere</h3><p>Switch apps with <code>Ctrl+1…9</code>, quick-search chats with <code>Ctrl+/</code>, find in page with <code>Ctrl+F</code>, Google the web with <code>Ctrl+E</code>.</p></div>
-      <div class="feat fade"><div class="fi"><svg><use href="#g-shield"/></svg></div><h3>Password lock</h3><p>Lock the whole workspace behind a password (toolbar button or <code>Ctrl+Shift+L</code>), and auto-lock when your PC goes idle or sleeps.</p></div>
+      <div class="feat fade"><div class="fi"><svg aria-hidden="true" focusable="false"><use href="#g-shield"/></svg></div><h3>Password lock</h3><p>Lock the whole workspace behind a password (toolbar button or <code>Ctrl+Shift+L</code>), and auto-lock when your <b>screen locks or your PC sleeps</b>.</p></div>
       <div class="feat fade"><div class="fi"><svg><use href="#g-dl"/></svg></div><h3>Downloads &amp; tray</h3><p>Pick a downloads folder, open files when they finish, keep Hub in the tray or close-to-tray. Copy the current page link from the toolbar.</p></div>
       <div class="feat fade"><div class="fi"><svg><use href="#g-palette"/></svg></div><h3>Themes</h3><p>System, light, dark, darkest, glossy or mint — plus density and icon size so the shell matches your desktop.</p></div>
       <div class="feat fade"><div class="fi"><svg><use href="#g-refresh"/></svg></div><h3>Safe auto-update</h3><p>Updates come from GitHub Releases and are verified with <b>SHA-256</b> before they're applied. Check from the toolbar or the menu.</p></div>
-      <div class="feat fade"><div class="fi"><svg><use href="#g-keys"/></svg></div><h3>Keyboard-driven</h3><p>Reorder tabs, reload, print, toggle focus, hibernate, or lock — all from the keyboard. Remap every shortcut in Settings.</p></div>
+      <div class="feat fade"><div class="fi"><svg aria-hidden="true" focusable="false"><use href="#g-keys"/></svg></div><h3>Keyboard-driven</h3><p>Reorder tabs, reload, print, toggle focus, hibernate, or lock — all from the keyboard. Most shortcuts remap in the <b>Shortcuts</b> panel (Hub menu). <code>Ctrl+R</code> is reserved.</p></div>
     </div>
   </div>
 </section>
@@ -517,7 +555,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <div class="msg-card fade">
         <div class="fi"><svg><use href="#g-bolt"/></svg></div>
         <h3>Hub pins</h3>
-        <p>Right-click a chat in <b>WhatsApp</b> or <b>Arattai</b> → <b>Pin with Aspera Hub</b>. Up to <b>10 Hub pins</b> in the strip — separate from WhatsApp’s own 3-pin limit.</p>
+        <p>Right-click a chat in <b>WhatsApp</b> or <b>Arattai</b> → <b>Pin with Aspera Hub</b>. Up to <b>10 Hub pins</b> in the strip — separate from WhatsApp’s own 3-pin limit. <b>WhatsApp Safe Mode is on by default</b> (ban-risk protection) — turn it off in Settings → Security to enable Hub pins, AI, and automation on WhatsApp. Arattai is unaffected.</p>
         <ul>
           <li>Open pinned contacts from the Hub rail instantly</li>
           <li>Works across both messaging apps</li>
@@ -527,7 +565,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <div class="msg-card fade">
         <div class="fi"><svg><use href="#g-spark"/></svg></div>
         <h3>Aspera AI (BYOK)</h3>
-        <p>Optional. Bring your own API key — Aspera hosts no model. Works on WhatsApp, Arattai, Gmail, and Zoho Mail. <b>Hub never auto-sends</b> — you insert or paste, then send yourself.</p>
+        <p>Optional. Bring your own API key — Aspera hosts no model. Selected text (and a little surrounding chat context) is sent only to the provider whose key you saved. Works on WhatsApp, Arattai, Gmail, and Zoho Mail. <b>Hub never auto-sends</b> — you insert or paste, then send yourself. WhatsApp needs Safe Mode off for AI.</p>
         <ul>
           <li><b>Summarize</b> selected text — English always, plus up to 2 Indian languages you choose</li>
           <li><b>Polish</b> the compose box — fix grammar, shorter, more polite, or more formal → <b>Use in chat</b></li>
@@ -562,8 +600,8 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     </div>
     <div class="fgrid">
       <div class="feat fade"><div class="fi"><svg><use href="#g-puzzle"/></svg></div><h3>Chrome extensions</h3><p>Install from the <b>Chrome Web Store</b> into WhatsApp, Arattai, and other Hub apps. Toolbar puzzle icon opens the manager — paste a store link, then Install.</p></div>
-      <div class="feat fade"><div class="fi"><svg><use href="#g-search"/></svg></div><h3>Google web search</h3><p>Toolbar search or <code>Ctrl+E</code> opens a Google search popup. Not <code>Ctrl+K</code> — WhatsApp and Arattai already use that for chat search.</p></div>
-      <div class="feat fade"><div class="fi"><svg><use href="#g-users"/></svg></div><h3>Zoho CRM lookup</h3><p>Optional. Select a name or keyword, right-click → look up matching <b>Deals</b> (stage, amount, account). Turn on in Settings → Integrations.</p></div>
+      <div class="feat fade"><div class="fi"><svg aria-hidden="true" focusable="false"><use href="#g-search"/></svg></div><h3>Google web search</h3><p>Toolbar search or <code>Ctrl+E</code> opens a Google search popup. Not <code>Ctrl+K</code> — WhatsApp and Arattai already use that for chat search. Quick search (<code>Ctrl+/</code>) covers apps plus chats in <b>currently loaded</b> WhatsApp/Arattai tabs — hibernated accounts are skipped.</p></div>
+      <div class="feat fade"><div class="fi"><svg aria-hidden="true" focusable="false"><use href="#g-users"/></svg></div><h3>Zoho CRM lookup</h3><p>Optional. Select a name or keyword, right-click → look up matching <b>Deals</b> (stage, amount, account). Turn on in Settings → Integrations. Office fleets can pull secrets from a <b>Fleet API</b> so staff never paste Client ID/Secret onto each PC.</p></div>
       <div class="feat fade"><div class="fi"><svg><use href="#g-file"/></svg></div><h3>PDF preview</h3><p>Open PDFs in Hub’s viewer instead of bouncing to a separate app. From Aspera AI you can also <b>upload a PDF</b> and summarize it.</p></div>
       <div class="feat fade"><div class="fi"><svg><use href="#g-link"/></svg></div><h3>Copy link &amp; history</h3><p>Copy the current page URL from the toolbar. Back / forward / reload work like a browser. Print the page with <code>Ctrl+P</code>.</p></div>
       <div class="feat fade"><div class="fi"><svg><use href="#g-grid"/></svg></div><h3>Links as Hub tabs</h3><p>Outbound links open as a real app-bar tab (never a blank popup). Zoho CRM / One / Books tabs can share one login so Sales and Leads stay side by side.</p></div>
@@ -609,13 +647,14 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <p class="sh-sub">Aspera Hub is a desktop app. Your WhatsApp and Zoho logins stay under your user profile. There is no Hub cloud account and no Aspera server in the middle.</p>
     </div>
     <ul class="sec-list fade">
-      <li><b>SHA-256 verified updates</b>GitHub Releases only. A corrupted or tampered download is refused before install.</li>
-      <li><b>Guest sandbox</b>Web apps run with contextIsolation and sandbox — no Node in the page.</li>
-      <li><b>Password lock</b>Optional whole-workspace lock; auto-lock on idle or sleep. Shortcut: Ctrl+Shift+L.</li>
+      <li><b>SHA-256 verified updates</b>GitHub Releases only. A corrupted download is refused before install. This checks integrity (not code-signing) — it cannot stop a compromised GitHub release.</li>
+      <li><b>Isolated web apps</b>Pages run with contextIsolation and no Node. The Linux .deb starts Chromium with <code>--no-sandbox</code> so it launches reliably on Mint.</li>
+      <li><b>Password lock</b>Optional whole-workspace lock; auto-lock when the screen locks or the PC sleeps. Shortcut: Ctrl+Shift+L.</li>
       <li><b>Isolated partitions</b>Each profile is its own Electron persist session — no cookie bleed.</li>
       <li><b>Single instance</b>One Hub window per profile data dir — no accidental double sessions.</li>
       <li><b>Open source MIT</b>Read it, modify it, share it. Free forever — no subscription, no ads.</li>
       <li><b>Notes stay local</b>Aspera Notes and your AI keys never leave this PC unless you paste them yourself.</li>
+      <li><b>Error reports</b>Crash reports go to Sentry by default. Switch to <b>Local only</b> in Settings → Error reporting.</li>
     </ul>
   </div>
 </section>
@@ -625,12 +664,12 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
   <div class="container">
     <div class="sec-head fade">
       <h2 class="sh">Keyboard-driven <span class="grad">from day one</span></h2>
-      <p class="sh-sub">Defaults you can remap in Settings → Keyboard shortcuts. Jump, search, Notes, mute, hibernate, lock — without leaving the keyboard.</p>
+      <p class="sh-sub">Most defaults remap in the Shortcuts panel (Hub menu). Jump, search, Notes, mute, hibernate, lock — without leaving the keyboard. <code>Ctrl+R</code> reload is reserved.</p>
     </div>
     <div class="keys fade">
       <div class="key-row"><kbd>Ctrl+1…9</kbd><span>Jump to app by dock position</span></div>
       <div class="key-row"><kbd>Ctrl+Tab</kbd><span>Next app (Shift+Tab for previous)</span></div>
-      <div class="key-row"><kbd>Ctrl+/</kbd><span>Quick search — apps, chats, message text</span></div>
+      <div class="key-row"><kbd>Ctrl+/</kbd><span>Quick search — apps, plus chats in loaded WhatsApp/Arattai tabs</span></div>
       <div class="key-row"><kbd>Ctrl+F</kbd><span>Find in the active page</span></div>
       <div class="key-row"><kbd>Ctrl+E</kbd><span>Google web search (not Ctrl+K — chats use that)</span></div>
       <div class="key-row"><kbd>Ctrl+Shift+N</kbd><span>Aspera Notes</span></div>
@@ -642,7 +681,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <div class="key-row"><kbd>Ctrl+R</kbd><span>Reload active app</span></div>
       <div class="key-row"><kbd>Ctrl+P</kbd><span>Print the active page</span></div>
       <div class="key-row"><kbd>Alt+← / →</kbd><span>Back / forward inside the app</span></div>
-      <div class="key-row"><kbd>Right-click icon</kbd><span>Hibernate a non-active warm app</span></div>
+      <div class="key-row"><kbd>Right-click icon</kbd><span>Untick Keep warm to hibernate a non-active app</span></div>
     </div>
   </div>
 </section>
@@ -656,21 +695,22 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     </div>
     <div class="fade" style="overflow-x:auto">
       <table class="cmp">
+        <caption class="sr-only">Aspera Hub compared with browser tabs and heavy Electron suites</caption>
         <thead>
-          <tr><th>Capability</th><th>Aspera Hub</th><th>Browser tabs</th><th>Heavy Electron suites</th></tr>
+          <tr><th scope="col">Capability</th><th scope="col">Aspera Hub</th><th scope="col">Browser tabs</th><th scope="col">Heavy Electron suites</th></tr>
         </thead>
         <tbody>
-          <tr><td>Warm / cold RAM control</td><td class="yes">Yes — default 5 warm, up to 7</td><td class="no">Every tab stays alive</td><td class="partial">Often loads everything</td></tr>
-          <tr><td>Isolated multi-login</td><td class="yes">Named profiles</td><td class="partial">Browser profiles (clunky)</td><td class="yes">Usually yes</td></tr>
-          <tr><td>Desktop shell (tray, mute, lock)</td><td class="yes">Built in</td><td class="no">Limited</td><td class="yes">Varies</td></tr>
-          <tr><td>Hub pins</td><td class="yes">WhatsApp ↔ Arattai</td><td class="no">No</td><td class="no">Rare</td></tr>
-          <tr><td>Aspera Notes</td><td class="yes">Copy pad — Hub never sends</td><td class="no">Separate apps</td><td class="partial">Varies</td></tr>
-          <tr><td>Chrome extensions</td><td class="yes">Chrome Web Store in Hub apps</td><td class="yes">Yes</td><td class="partial">Varies</td></tr>
-          <tr><td>Workplace AI (summarize + polish)</td><td class="yes">BYOK, optional, never auto-sends</td><td class="partial">External tools</td><td class="partial">Paid add-ons often</td></tr>
-          <tr><td>Price</td><td class="yes">₹0 forever · MIT</td><td class="yes">Free browser</td><td class="partial">Often freemium / paid</td></tr>
-          <tr><td>Cloud account required</td><td class="yes">None</td><td class="yes">None</td><td class="partial">Sometimes</td></tr>
-          <tr><td>Linux-first packaging</td><td class="yes">.deb · Mint/Ubuntu/Debian</td><td class="yes">—</td><td class="partial">Mixed</td></tr>
-          <tr><td>Verified auto-update</td><td class="yes">SHA-256 from GitHub</td><td class="partial">OS / browser</td><td class="partial">Varies</td></tr>
+          <tr><th scope="row">Warm / cold RAM control</th><td class="yes">Yes — default 5 warm, up to 7</td><td class="no">Discards tabs unpredictably — you don’t choose which</td><td class="partial">Often loads everything</td></tr>
+          <tr><th scope="row">Isolated multi-login</th><td class="yes">Named profiles</td><td class="partial">Browser profiles (clunky)</td><td class="yes">Usually yes</td></tr>
+          <tr><th scope="row">Desktop shell (tray, mute, lock)</th><td class="yes">Built in</td><td class="no">Limited</td><td class="yes">Varies</td></tr>
+          <tr><th scope="row">Hub pins</th><td class="yes">WhatsApp ↔ Arattai</td><td class="no">No</td><td class="no">Rare</td></tr>
+          <tr><th scope="row">Aspera Notes</th><td class="yes">Copy pad — Hub never sends</td><td class="no">Separate apps</td><td class="partial">Varies</td></tr>
+          <tr><th scope="row">Chrome extensions</th><td class="yes">Chrome Web Store in Hub apps</td><td class="yes">Yes</td><td class="partial">Varies</td></tr>
+          <tr><th scope="row">Workplace AI (summarize + polish)</th><td class="yes">BYOK, optional, never auto-sends</td><td class="partial">External tools</td><td class="partial">Paid add-ons often</td></tr>
+          <tr><th scope="row">Price</th><td class="yes">Free forever · MIT</td><td class="yes">Free browser</td><td class="partial">Often freemium / paid</td></tr>
+          <tr><th scope="row">Cloud account required</th><td class="yes">None</td><td class="yes">None</td><td class="partial">Sometimes</td></tr>
+          <tr><th scope="row">Linux-first packaging</th><td class="yes">.deb · Mint/Ubuntu/Debian</td><td class="yes">—</td><td class="partial">Mixed</td></tr>
+          <tr><th scope="row">Verified auto-update</th><td class="yes">SHA-256 from GitHub</td><td class="partial">OS / browser</td><td class="partial">Varies</td></tr>
         </tbody>
       </table>
     </div>
@@ -684,7 +724,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <p class="pill pill-g" style="margin-bottom:18px">Our intention</p>
       <h2 class="sh" style="margin-bottom:16px">Not built to earn money.<br><span class="grad">Built to give Linux a reliable Hub.</span></h2>
       <p>Aspera Hub is free — and it always will be. We built it so Linux users have a secure, easy, lifetime-free workspace for the apps they already trust. No paywall. No freemium. No ads.</p>
-      <p class="quote">Long live Linux. Long live Linus Torvalds.</p>
+      <p class="quote">Built in the spirit of the Linux community.</p>
       <p>Aspera Hub is the warm workspace for WhatsApp, Arattai, Gmail, and Zoho — made for Linux desktops that need speed without a heavy suite.</p>
       <p style="font-size:14px;color:var(--t3)">Built by Aspera Technologies · asperahub.com</p>
     </div>
@@ -703,14 +743,14 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <div class="term fade">
         <div class="term-hd"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="t">bash</span><button class="copy" id="copyBtn" type="button">📋 Copy</button></div>
 <pre id="cmd"><span class="c"># Recommended — or just double-click the downloaded .deb</span>
-<span class="g">sudo apt install</span> ./asperadock_<span class="v">&lt;version&gt;</span>_amd64.deb
+<span class="g">sudo apt install</span> ./asperadock_<span class="v" id="deb-ver">0.5.53</span>_amd64.deb
 
-<span class="c"># Or with dpkg, then pull in any missing dependencies</span>
+<span class="c"># Alternative if apt install of a local file is unavailable</span>
 <span class="g">sudo dpkg -i</span> asperadock_*_amd64.deb
 <span class="g">sudo apt-get install -f</span></pre>
       </div>
       <p class="note fade">The package is named <b>asperadock</b> (kept stable so your logins survive updates) — the launcher and About screen show <b>Aspera Hub</b>. After that, updates arrive in-app from GitHub Releases.</p>
-      <div class="fade" style="text-align:center;margin-top:24px"><a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest"><svg><use href="#g-dl"/></svg> Download the latest .deb</a></div>
+      <div class="fade" style="text-align:center;margin-top:24px"><a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.53/asperadock_0.5.53_amd64.deb"><svg aria-hidden="true" focusable="false"><use href="#g-dl"/></svg> Download the latest .deb</a></div>
     </div>
   </div>
 </section>
@@ -722,13 +762,14 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     <div class="faq">
       <details class="fade" open><summary>Is it really free?</summary><div class="ans">Yes — free, forever. No subscription, no trial wall, no ads. Open source under the MIT license. 100% free for life.</div></details>
       <details class="fade"><summary>Which Linux distros are supported?</summary><div class="ans">Debian, Ubuntu and Linux Mint (amd64). Other Debian-based distributions usually work with the same <b>.deb</b>. Tuned especially for Mint Cinnamon and XFCE fleets.</div></details>
-      <details class="fade"><summary>How is it different from Rambox or a browser?</summary><div class="ans">The warm/cold design keeps your daily apps instant while letting the rest sleep — typically lighter on RAM — and it's free and Linux-first. You also get a real desktop shell: badges, notification center, tray, mute, focus, lock, downloads, Hub pins, Notes, Chrome extensions, Google web search, and isolated logins.</div></details>
-      <details class="fade"><summary>Where do my logins live?</summary><div class="ans">On your machine under <code class="mono" style="font-size:12px;background:#eef0ff;padding:2px 6px;border-radius:4px">~/.config/Aspera Dock</code>. Clearing a session in Hub signs that app out locally. There is no Hub cloud account.</div></details>
-      <details class="fade"><summary>How many apps can stay warm?</summary><div class="ans">By default <b>5</b> warm apps stay fully loaded. You can raise the cap to <b>7</b> in Settings. Everything else loads on click and can hibernate after idle. Max <b>10</b> apps in the dock.</div></details>
+      <details class="fade"><summary>How is it different from Rambox or a browser?</summary><div class="ans">You choose which apps stay warm. Browsers may discard background tabs without asking; heavy suites often keep everything loaded. Hub also gives you badges, a notification center, tray, mute, focus, lock, downloads, Hub pins, Notes, Chrome extensions, Google web search, and isolated logins — free and Linux-first.</div></details>
+      <details class="fade"><summary>Where do my logins live?</summary><div class="ans">On your machine under <code class="mono" style="font-size:12px;background:#eef0ff;padding:2px 6px;border-radius:4px">~/.config/Aspera Dock</code>. Clearing a session in Hub signs that app out locally. There is no Hub cloud account. Crash reports go to Sentry by default — set Settings → Error reporting to <b>Local only</b> to keep them on this PC.</div></details>
+      <details class="fade"><summary>How many apps can stay warm?</summary><div class="ans">By default <b>5</b> warm apps stay fully loaded. You can raise the cap to <b>7</b> in Settings. Everything else loads on click and can hibernate after about <b>45 minutes</b> idle. Max <b>10</b> apps in the dock.</div></details>
       <details class="fade"><summary>Does Aspera AI cost money?</summary><div class="ans">Hub never charges. AI is optional and <b>bring-your-own-key</b> (Gemini, Sarvam, Grok, DeepSeek, SambaNova, OpenRouter, or Anthropic). Many providers offer free tiers. Keys stay on your machine. Polish and summarize never auto-send — you insert or paste, then send yourself.</div></details>
       <details class="fade"><summary>What is Aspera Notes?</summary><div class="ans">A floating copy pad (<code>Ctrl+Shift+N</code>) for links and repeated text. Copy from Notes, then paste where you want. Hub never sends from Notes.</div></details>
       <details class="fade"><summary>Can I install Chrome extensions?</summary><div class="ans">Yes. Open the Extensions toolbar icon, paste a <b>Chrome Web Store</b> link, and Install. Extensions run in Hub guest apps (WhatsApp, Arattai, Gmail, Zoho, and the rest of the catalog).</div></details>
       <details class="fade"><summary>How does Zoho CRM lookup work?</summary><div class="ans">Optional. Enable it in Settings → Integrations, then select a keyword in any app, right-click, and look up matching Deals (stage, amount, account). Office fleets can pull credentials from a Vercel fleet API so secrets are not pasted onto each PC.</div></details>
+      <details class="fade"><summary>What is WhatsApp Safe Mode?</summary><div class="ans">It is <b>on by default</b> to reduce ban risk. Hub pins, Aspera AI, chat scrape/search, and other WhatsApp automation stay off until you turn Safe Mode off in Settings → Security. Arattai and mail apps are unaffected. Multiple WhatsApp tabs are still fine when each uses a separate profile and phone number.</div></details>
       <details class="fade"><summary>Can I add any website?</summary><div class="ans">Today Hub uses the <b>Aspera catalog only</b> (WhatsApp, Arattai, Gmail, Zoho Mail/CRM/Books/One). You can run multiple copies of the same app with separate profiles. The catalog will grow over time.</div></details>
     </div>
     <div class="lim fade" style="margin-top:28px">
@@ -739,7 +780,8 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
         <li>Aspera AI skills apply to WhatsApp, Arattai, Gmail, and Zoho Mail. Hub <b>never auto-sends</b>.</li>
         <li>Notes is a copy pad — you paste yourself; Hub never sends from Notes.</li>
         <li>Chrome extensions come from the Chrome Web Store into Hub guest apps.</li>
-        <li>Hardware acceleration defaults <b>off</b> on Linux for Mint stability (you can enable it).</li>
+        <li>Hardware acceleration is <b>off</b> on Linux so Hub starts reliably on Mint.</li>
+        <li><b>WhatsApp Safe Mode</b> is on by default — turn it off to use Hub pins and AI on WhatsApp.</li>
       </ul>
     </div>
   </div>
@@ -752,7 +794,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <h2>Get <span class="grad">Aspera Hub</span></h2>
       <p>One warm workspace for WhatsApp, Arattai, Gmail and Zoho — free, for Linux.</p>
       <div class="hero-ctas">
-        <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest"><svg><use href="#g-dl"/></svg> Download .deb for Linux</a>
+        <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.53/asperadock_0.5.53_amd64.deb"><svg aria-hidden="true" focusable="false"><use href="#g-dl"/></svg> Download .deb for Linux</a>
         <a class="btn btn-s" href="https://github.com/ramchandragada/AsperaDock" target="_blank" rel="noopener"><svg><use href="#g-link"/></svg> View on GitHub</a>
       </div>
       <p class="fine"><span data-version>v0.5.53</span> · Debian / Ubuntu / Mint · amd64 · MIT licensed</p>
@@ -760,14 +802,16 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
   </div>
 </section>
 
+</main>
+
 <!-- FOOTER -->
 <footer>
   <div class="container">
     <div class="foot-grid">
       <div class="foot-col">
-        <a href="#top" style="display:inline-flex;align-items:center;gap:8px;margin-bottom:14px;font-family:var(--fd);font-size:18px;font-weight:800;text-decoration:none" aria-label="Aspera Hub home"><img src="assets/icon.png" alt="" width="28" height="28" style="display:block;border-radius:7px"><span class="grad">Aspera Hub</span></a>
+        <a href="#top" style="display:inline-flex;align-items:center;gap:8px;margin-bottom:14px;font-family:var(--fd);font-size:18px;font-weight:700;text-decoration:none" aria-label="Aspera Hub home"><img src="favicon-64.png" alt="" width="28" height="28" style="display:block;border-radius:7px"><span class="grad">Aspera Hub</span></a>
         <p>Free Linux workspace by Aspera Technologies. One warm window for WhatsApp, Arattai, Gmail, and Zoho.</p>
-        <p style="color:var(--t3);font-size:12px;margin-top:4px">asperahub.com · Dedicated to Linus Torvalds</p>
+        <p style="color:var(--t3);font-size:12px;margin-top:4px">asperahub.com · Built in the spirit of the Linux community</p>
       </div>
       <div class="foot-col">
         <h5>Product</h5>
@@ -781,7 +825,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       </div>
       <div class="foot-col">
         <h5>Download</h5>
-        <a data-download href="https://github.com/ramchandragada/AsperaDock/releases/latest">Latest .deb</a>
+        <a data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.53/asperadock_0.5.53_amd64.deb">Latest .deb</a>
         <a href="https://github.com/ramchandragada/AsperaDock/releases" target="_blank" rel="noopener">All releases</a>
         <a href="#install">Install guide</a>
       </div>
@@ -801,36 +845,83 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
 </footer>
 
 <script>
-function toggleM(){var m=document.getElementById('mob');var b=document.getElementById('hb');b.setAttribute('aria-expanded',m.classList.toggle('open'));}
-function closeM(){document.getElementById('mob').classList.remove('open');}
-document.addEventListener('click',function(e){var n=document.querySelector('.nav');if(!n.contains(e.target))closeM();});
+var HUB_VERSION='0.5.53';
+function copyText(text, btn, label){
+  function ok(){btn.textContent='✓ Copied';setTimeout(function(){btn.textContent=label;},1600);}
+  function fail(){btn.textContent='Copy failed';setTimeout(function(){btn.textContent=label;},1600);}
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(ok).catch(function(){
+      try{
+        var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();
+        document.execCommand('copy');document.body.removeChild(ta);ok();
+      }catch(e){fail();}
+    });
+    return;
+  }
+  try{
+    var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();
+    document.execCommand('copy');document.body.removeChild(ta);ok();
+  }catch(e){fail();}
+}
+function toggleM(){
+  var m=document.getElementById('mob');
+  var b=document.getElementById('hb');
+  var open=m.classList.toggle('open');
+  b.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if(open){
+    var first=m.querySelector('a');
+    if(first) first.focus();
+  }else{
+    b.focus();
+  }
+}
+function closeM(){
+  var m=document.getElementById('mob');
+  var b=document.getElementById('hb');
+  if(!m.classList.contains('open')) return;
+  m.classList.remove('open');
+  b.setAttribute('aria-expanded','false');
+  b.focus();
+}
+document.addEventListener('click',function(e){var n=document.querySelector('.nav');if(n&&!n.contains(e.target)){var m=document.getElementById('mob');if(m.classList.contains('open')){m.classList.remove('open');document.getElementById('hb').setAttribute('aria-expanded','false');}}});
+document.addEventListener('keydown',function(e){if(e.key==='Escape') closeM();});
 
-// Scroll reveal
 var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('vis');io.unobserve(e.target);}})},{threshold:.08});
 document.querySelectorAll('.fade').forEach(function(el){io.observe(el);});
+document.querySelectorAll('svg:not([aria-hidden])').forEach(function(s){if(!s.closest('a[aria-label],button[aria-label]')){s.setAttribute('aria-hidden','true');s.setAttribute('focusable','false');}});
 
-// Copy install commands
+function scrollHash(){
+  if(!location.hash) return;
+  var t=document.querySelector(location.hash);
+  if(t) t.scrollIntoView({behavior:'auto',block:'start'});
+}
+if(document.fonts&&document.fonts.ready){document.fonts.ready.then(scrollHash);}
+else{window.addEventListener('load',scrollHash);}
+
 (function(){
   var btn=document.getElementById('copyBtn');
   if(!btn) return;
   btn.addEventListener('click',function(){
-    var text="sudo apt install ./asperadock_<version>_amd64.deb\nsudo dpkg -i asperadock_*_amd64.deb\nsudo apt-get install -f";
-    if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(function(){btn.textContent='✓ Copied';setTimeout(function(){btn.textContent='📋 Copy';},1600);});}
+    var ver=(document.getElementById('deb-ver')||{}).textContent||HUB_VERSION;
+    copyText('sudo apt install ./asperadock_'+ver+'_amd64.deb', btn, '📋 Copy');
   });
 })();
 
-// Resolve the latest amd64 .deb from GitHub Releases; fall back to the releases page
 (function(){
   var REPO="ramchandragada/AsperaDock";
-  var RELEASES="https://github.com/"+REPO+"/releases/latest";
+  var FALLBACK="https://github.com/"+REPO+"/releases/download/v"+HUB_VERSION+"/asperadock_"+HUB_VERSION+"_amd64.deb";
   var btns=document.querySelectorAll("[data-download]");
-  btns.forEach(function(b){if(!b.getAttribute("href"))b.setAttribute("href",RELEASES);});
+  btns.forEach(function(b){if(!b.getAttribute("href")) b.setAttribute("href",FALLBACK);});
   try{
     fetch("https://api.github.com/repos/"+REPO+"/releases/latest",{headers:{"Accept":"application/vnd.github+json"}})
       .then(function(r){return r.ok?r.json():null;})
       .then(function(d){
         if(!d) return;
-        if(d.tag_name){document.querySelectorAll("[data-version]").forEach(function(e){e.textContent=d.tag_name;});}
+        var tag=String(d.tag_name||'').replace(/^v/,'');
+        if(d.tag_name){
+          document.querySelectorAll("[data-version]").forEach(function(e){e.textContent=d.tag_name;});
+          var dv=document.getElementById('deb-ver'); if(dv) dv.textContent=tag;
+        }
         var assets=d.assets||[];
         var debs=assets.filter(function(a){return /\.deb$/i.test(a.name||"");});
         var amd=debs.filter(function(a){return /amd64/i.test(a.name||"");});
