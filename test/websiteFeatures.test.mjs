@@ -52,6 +52,11 @@ test('asperahub.com does not advertise disabled Forward or custom apps', () => {
     false,
     'Forward with Hub is disabled — do not list it as a product feature',
   );
+  assert.equal(/Hub pins \+ cross-app Forward/i.test(html), false);
+  assert.equal(/Works across both messaging apps/.test(html), false);
+  assert.match(html, /does <b>not<\/b> forward messages between WhatsApp and Arattai/);
+  assert.match(html, /Can Hub forward a WhatsApp message to Arattai/);
+  assert.match(html, /Arattai now; WhatsApp after Safe Mode off/);
   assert.match(html, /Aspera catalog only/);
   assert.equal(/arbitrary HTTPS apps/i.test(html), true);
 });

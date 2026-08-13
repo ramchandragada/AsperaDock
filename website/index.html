@@ -309,7 +309,9 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     {"@type":"Question","name":"Is it really free?","acceptedAnswer":{"@type":"Answer","text":"Yes — free, forever. No subscription, no trial wall, no ads. Open source under the MIT license."}},
     {"@type":"Question","name":"Which Linux distros are supported?","acceptedAnswer":{"@type":"Answer","text":"Debian, Ubuntu and Linux Mint (amd64). Other Debian-based distributions usually work with the same .deb."}},
     {"@type":"Question","name":"Does Aspera AI cost money?","acceptedAnswer":{"@type":"Answer","text":"Hub never charges. AI is optional and bring-your-own-key. Polish and summarize never auto-send."}},
-    {"@type":"Question","name":"What is Aspera Notes?","acceptedAnswer":{"@type":"Answer","text":"A floating copy pad (Ctrl+Shift+N) for links and repeated text. Hub never sends from Notes."}}
+    {"@type":"Question","name":"What is Aspera Notes?","acceptedAnswer":{"@type":"Answer","text":"A floating copy pad (Ctrl+Shift+N) for links and repeated text. Hub never sends from Notes."}},
+    {"@type":"Question","name":"Can Hub forward a WhatsApp message to Arattai?","acceptedAnswer":{"@type":"Answer","text":"No. Cross-app Forward is disabled. Copy the text or file yourself, or use Aspera Notes as a paste pad."}},
+    {"@type":"Question","name":"Do Hub pins work on WhatsApp?","acceptedAnswer":{"@type":"Answer","text":"On Arattai, yes. On WhatsApp, Safe Mode is on by default, so Hub pins stay off until you turn Safe Mode off in Settings → Security."}}
   ]}
 ]}
 </script>
@@ -394,7 +396,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <div class="fade">
         <span class="hero-tag">Free forever · Linux desktop workspace</span>
         <h1 class="hero-h1">Aspera Hub<br><span class="grad">one warm workspace.</span></h1>
-        <p class="hero-sub">Run your <b>WhatsApp, Arattai, Gmail and Zoho</b> apps together in a single Linux window. Daily apps stay <b>warm</b> for instant switching — the rest go <b>cold</b> so they don't quietly hold memory. Hub pins, <b>Notes</b>, Chrome extensions, and optional Aspera AI are built in.</p>
+        <p class="hero-sub">Run your <b>WhatsApp, Arattai, Gmail and Zoho</b> apps together in a single Linux window. Daily apps stay <b>warm</b> for instant switching — the rest go <b>cold</b> so they don't quietly hold memory. <b>Notes</b>, Chrome extensions, and optional Aspera AI are built in. Hub does <b>not</b> forward messages between apps.</p>
         <div class="hero-ctas">
           <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.53/asperadock_0.5.53_amd64.deb"><svg aria-hidden="true" focusable="false"><use href="#g-dl"/></svg> Download .deb for Linux</a>
           <a class="btn btn-s" href="https://github.com/ramchandragada/AsperaDock" target="_blank" rel="noopener"><svg><use href="#g-link"/></svg> View on GitHub</a>
@@ -518,7 +520,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     <div class="flow">
       <div class="flow-step fade"><div class="n">1</div><h3>Install once</h3><p>Download the <b>.deb</b>, install, launch <b>Aspera Hub</b> from your app menu. Electron is bundled — you never manage Chromium yourself.</p></div>
       <div class="flow-step fade"><div class="n">2</div><h3>Add your catalog apps</h3><p>WhatsApp, Arattai, Gmail, Zoho Mail, CRM, Books, Zoho One. Flame-mark the handful you live in. Cap: <b>10 apps</b> in the dock.</p></div>
-      <div class="flow-step fade"><div class="n">3</div><h3>Work lighter</h3><p>Unread badges, tray, mute, focus, lock, Hub pins, Notes, Chrome extensions, and optional Aspera AI — without five browser windows open forever.</p></div>
+      <div class="flow-step fade"><div class="n">3</div><h3>Work lighter</h3><p>Unread badges, tray, mute, focus, lock, Notes, Chrome extensions, and optional Aspera AI — without five browser windows open forever. Hub does not forward chats between WhatsApp and Arattai.</p></div>
     </div>
   </div>
 </section>
@@ -532,7 +534,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     </div>
     <div class="fgrid">
       <div class="feat fade"><div class="fi"><svg><use href="#g-id"/></svg></div><h3>Separate logins</h3><p>Named profiles keep sessions isolated, so several <b>WhatsApp</b> or <b>Gmail</b> accounts never share cookies. Zoho Mail is isolated the same way.</p></div>
-      <div class="feat fade"><div class="fi"><svg aria-hidden="true" focusable="false"><use href="#g-bell"/></svg></div><h3>Notification center</h3><p>Per-app unread counts, a global bell, and a notification center — mark all read, clear, jump back to the chat, or type an inline <b>quick reply</b>. Optional tray badge too.</p></div>
+      <div class="feat fade"><div class="fi"><svg aria-hidden="true" focusable="false"><use href="#g-bell"/></svg></div><h3>Notification center</h3><p>Per-app unread counts, a global bell, and a notification center — mark all read, clear, or jump back to the chat. Inline <b>quick reply</b> works on Arattai; on WhatsApp it stays off while Safe Mode is on (the default).</p></div>
       <div class="feat fade"><div class="fi"><svg><use href="#g-focus"/></svg></div><h3>Focus &amp; mute</h3><p>Silence notifications or clear every badge with a shortcut when you need to concentrate.</p></div>
       <div class="feat fade"><div class="fi"><svg><use href="#g-bolt"/></svg></div><h3>Jump anywhere</h3><p>Switch apps with <code>Ctrl+1…9</code>, quick-search chats with <code>Ctrl+/</code>, find in page with <code>Ctrl+F</code>, Google the web with <code>Ctrl+E</code>.</p></div>
       <div class="feat fade"><div class="fi"><svg aria-hidden="true" focusable="false"><use href="#g-shield"/></svg></div><h3>Password lock</h3><p>Lock the whole workspace behind a password (toolbar button or <code>Ctrl+Shift+L</code>), and auto-lock when your <b>screen locks or your PC sleeps</b>.</p></div>
@@ -549,23 +551,24 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
   <div class="container">
     <div class="sec-head fade">
       <h2 class="sh">Messaging power tools — <span class="grad">beyond tabs</span></h2>
-      <p class="sh-sub">WhatsApp and Arattai get Hub-native pins. Select text to summarize or polish with your own AI keys. Keep a Notes pad open for links you paste yourself — Hub never auto-sends.</p>
+      <p class="sh-sub">Pin chats in <b>Arattai</b> right away. WhatsApp Hub pins and AI stay off until you turn off Safe Mode. Hub never auto-sends, and it does <b>not</b> forward messages between WhatsApp and Arattai.</p>
     </div>
     <div class="msg-grid">
       <div class="msg-card fade">
         <div class="fi"><svg><use href="#g-bolt"/></svg></div>
         <h3>Hub pins</h3>
-        <p>Right-click a chat in <b>WhatsApp</b> or <b>Arattai</b> → <b>Pin with Aspera Hub</b>. Up to <b>10 Hub pins</b> in the strip — separate from WhatsApp’s own 3-pin limit. <b>WhatsApp Safe Mode is on by default</b> (ban-risk protection) — turn it off in Settings → Security to enable Hub pins, AI, and automation on WhatsApp. Arattai is unaffected.</p>
+        <p>Right-click a chat → <b>Pin with Aspera Hub</b>. Up to <b>10 Hub pins</b> in the strip — separate from WhatsApp’s own 3-pin limit.</p>
         <ul>
-          <li>Open pinned contacts from the Hub rail instantly</li>
-          <li>Works across both messaging apps</li>
-          <li>Does not fight WhatsApp’s in-app pins</li>
+          <li><b>Arattai:</b> pins work out of the box</li>
+          <li><b>WhatsApp:</b> Safe Mode is <b>on by default</b>. Turn it off in Settings → Security if you want Hub pins (and accept the ban risk)</li>
+          <li>Open a pin from the Hub rail. Does not replace WhatsApp’s in-app pins</li>
+          <li>Hub does <b>not</b> forward a message from WhatsApp to Arattai (or the other way)</li>
         </ul>
       </div>
       <div class="msg-card fade">
         <div class="fi"><svg><use href="#g-spark"/></svg></div>
         <h3>Aspera AI (BYOK)</h3>
-        <p>Optional. Bring your own API key — Aspera hosts no model. Selected text (and a little surrounding chat context) is sent only to the provider whose key you saved. Works on WhatsApp, Arattai, Gmail, and Zoho Mail. <b>Hub never auto-sends</b> — you insert or paste, then send yourself. WhatsApp needs Safe Mode off for AI.</p>
+        <p>Optional. Bring your own API key — Aspera hosts no model. Selected text (and a little surrounding chat context) is sent only to the provider whose key you saved. Works on Arattai, Gmail, and Zoho Mail. On <b>WhatsApp</b>, turn Safe Mode off first. <b>Hub never auto-sends</b> — you insert or paste, then send yourself.</p>
         <ul>
           <li><b>Summarize</b> selected text — English always, plus up to 2 Indian languages you choose</li>
           <li><b>Polish</b> the compose box — fix grammar, shorter, more polite, or more formal → <b>Use in chat</b></li>
@@ -600,7 +603,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     </div>
     <div class="fgrid">
       <div class="feat fade"><div class="fi"><svg><use href="#g-puzzle"/></svg></div><h3>Chrome extensions</h3><p>Install from the <b>Chrome Web Store</b> into WhatsApp, Arattai, and other Hub apps. Toolbar puzzle icon opens the manager — paste a store link, then Install.</p></div>
-      <div class="feat fade"><div class="fi"><svg aria-hidden="true" focusable="false"><use href="#g-search"/></svg></div><h3>Google web search</h3><p>Toolbar search or <code>Ctrl+E</code> opens a Google search popup. Not <code>Ctrl+K</code> — WhatsApp and Arattai already use that for chat search. Quick search (<code>Ctrl+/</code>) covers apps plus chats in <b>currently loaded</b> WhatsApp/Arattai tabs — hibernated accounts are skipped.</p></div>
+      <div class="feat fade"><div class="fi"><svg aria-hidden="true" focusable="false"><use href="#g-search"/></svg></div><h3>Google web search</h3><p>Toolbar search or <code>Ctrl+E</code> opens a Google search popup. Not <code>Ctrl+K</code> — WhatsApp and Arattai already use that for chat search. Quick search (<code>Ctrl+/</code>) covers apps plus chats in <b>currently loaded</b> tabs. WhatsApp chat scrape/search stays off while Safe Mode is on.</p></div>
       <div class="feat fade"><div class="fi"><svg aria-hidden="true" focusable="false"><use href="#g-users"/></svg></div><h3>Zoho CRM lookup</h3><p>Optional. Select a name or keyword, right-click → look up matching <b>Deals</b> (stage, amount, account). Turn on in Settings → Integrations. Office fleets can pull secrets from a <b>Fleet API</b> so staff never paste Client ID/Secret onto each PC.</p></div>
       <div class="feat fade"><div class="fi"><svg><use href="#g-file"/></svg></div><h3>PDF preview</h3><p>Open PDFs in Hub’s viewer instead of bouncing to a separate app. From Aspera AI you can also <b>upload a PDF</b> and summarize it.</p></div>
       <div class="feat fade"><div class="fi"><svg><use href="#g-link"/></svg></div><h3>Copy link &amp; history</h3><p>Copy the current page URL from the toolbar. Back / forward / reload work like a browser. Print the page with <code>Ctrl+P</code>.</p></div>
@@ -626,8 +629,8 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <span class="achip"><span class="ib" style="background:linear-gradient(160deg,#3b83d6,#1f5aa0)"><svg><use href="#g-grid"/></svg></span> Zoho One</span>
     </div>
     <div class="app-desc fade">
-      <article><h4><span class="ib" style="background:linear-gradient(160deg,#2bd06a,#128a3f);width:22px;height:22px;border-radius:6px;display:inline-grid;place-items:center"><svg style="width:12px;height:12px;color:#fff"><use href="#g-chat"/></svg></span> WhatsApp</h4><p>web.whatsapp.com — team and client chat with Hub pins, Aspera AI, Polish, and Notes.</p></article>
-      <article><h4>Arattai</h4><p>web.arattai.in — Indian messaging with the same Hub pins, AI skills, and Notes.</p></article>
+      <article><h4><span class="ib" style="background:linear-gradient(160deg,#2bd06a,#128a3f);width:22px;height:22px;border-radius:6px;display:inline-grid;place-items:center"><svg style="width:12px;height:12px;color:#fff"><use href="#g-chat"/></svg></span> WhatsApp</h4><p>web.whatsapp.com — a human-driven tab. Hub pins and Aspera AI stay off while Safe Mode is on (the default). Notes still work. Hub does not forward chats to Arattai.</p></article>
+      <article><h4>Arattai</h4><p>web.arattai.in — Indian messaging with Hub pins and AI skills out of the box. Notes work here too. No cross-app Forward.</p></article>
       <article><h4>Gmail</h4><p>mail.google.com — work mail with summarize / polish and isolated multi-login.</p></article>
       <article><h4>Zoho Mail</h4><p>mail.zoho.in — each mailbox is its own session (like Gmail). AI summarize &amp; polish supported.</p></article>
       <article><h4>Zoho CRM</h4><p>crm.zoho.in — keep cold until you need pipeline. Optional Deals lookup from any app. Extra CRM tabs can share one login.</p></article>
@@ -703,7 +706,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
           <tr><th scope="row">Warm / cold RAM control</th><td class="yes">Yes — default 5 warm, up to 7</td><td class="no">Discards tabs unpredictably — you don’t choose which</td><td class="partial">Often loads everything</td></tr>
           <tr><th scope="row">Isolated multi-login</th><td class="yes">Named profiles</td><td class="partial">Browser profiles (clunky)</td><td class="yes">Usually yes</td></tr>
           <tr><th scope="row">Desktop shell (tray, mute, lock)</th><td class="yes">Built in</td><td class="no">Limited</td><td class="yes">Varies</td></tr>
-          <tr><th scope="row">Hub pins</th><td class="yes">WhatsApp ↔ Arattai</td><td class="no">No</td><td class="no">Rare</td></tr>
+          <tr><th scope="row">Hub pins</th><td class="yes">Arattai now; WhatsApp after Safe Mode off</td><td class="no">No</td><td class="no">Rare</td></tr>
           <tr><th scope="row">Aspera Notes</th><td class="yes">Copy pad — Hub never sends</td><td class="no">Separate apps</td><td class="partial">Varies</td></tr>
           <tr><th scope="row">Chrome extensions</th><td class="yes">Chrome Web Store in Hub apps</td><td class="yes">Yes</td><td class="partial">Varies</td></tr>
           <tr><th scope="row">Workplace AI (summarize + polish)</th><td class="yes">BYOK, optional, never auto-sends</td><td class="partial">External tools</td><td class="partial">Paid add-ons often</td></tr>
@@ -762,26 +765,28 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     <div class="faq">
       <details class="fade" open><summary>Is it really free?</summary><div class="ans">Yes — free, forever. No subscription, no trial wall, no ads. Open source under the MIT license. 100% free for life.</div></details>
       <details class="fade"><summary>Which Linux distros are supported?</summary><div class="ans">Debian, Ubuntu and Linux Mint (amd64). Other Debian-based distributions usually work with the same <b>.deb</b>. Tuned especially for Mint Cinnamon and XFCE fleets.</div></details>
-      <details class="fade"><summary>How is it different from Rambox or a browser?</summary><div class="ans">You choose which apps stay warm. Browsers may discard background tabs without asking; heavy suites often keep everything loaded. Hub also gives you badges, a notification center, tray, mute, focus, lock, downloads, Hub pins, Notes, Chrome extensions, Google web search, and isolated logins — free and Linux-first.</div></details>
+      <details class="fade"><summary>How is it different from Rambox or a browser?</summary><div class="ans">You choose which apps stay warm. Browsers may discard background tabs without asking; heavy suites often keep everything loaded. Hub also gives you badges, a notification center, tray, mute, focus, lock, downloads, Notes, Chrome extensions, Google web search, and isolated logins — free and Linux-first. It does not forward chats between WhatsApp and Arattai.</div></details>
       <details class="fade"><summary>Where do my logins live?</summary><div class="ans">On your machine under <code class="mono" style="font-size:12px;background:#eef0ff;padding:2px 6px;border-radius:4px">~/.config/Aspera Dock</code>. Clearing a session in Hub signs that app out locally. There is no Hub cloud account. Crash reports go to Sentry by default — set Settings → Error reporting to <b>Local only</b> to keep them on this PC.</div></details>
       <details class="fade"><summary>How many apps can stay warm?</summary><div class="ans">By default <b>5</b> warm apps stay fully loaded. You can raise the cap to <b>7</b> in Settings. Everything else loads on click and can hibernate after about <b>45 minutes</b> idle. Max <b>10</b> apps in the dock.</div></details>
       <details class="fade"><summary>Does Aspera AI cost money?</summary><div class="ans">Hub never charges. AI is optional and <b>bring-your-own-key</b> (Gemini, Sarvam, Grok, DeepSeek, SambaNova, OpenRouter, or Anthropic). Many providers offer free tiers. Keys stay on your machine. Polish and summarize never auto-send — you insert or paste, then send yourself.</div></details>
       <details class="fade"><summary>What is Aspera Notes?</summary><div class="ans">A floating copy pad (<code>Ctrl+Shift+N</code>) for links and repeated text. Copy from Notes, then paste where you want. Hub never sends from Notes.</div></details>
       <details class="fade"><summary>Can I install Chrome extensions?</summary><div class="ans">Yes. Open the Extensions toolbar icon, paste a <b>Chrome Web Store</b> link, and Install. Extensions run in Hub guest apps (WhatsApp, Arattai, Gmail, Zoho, and the rest of the catalog).</div></details>
       <details class="fade"><summary>How does Zoho CRM lookup work?</summary><div class="ans">Optional. Enable it in Settings → Integrations, then select a keyword in any app, right-click, and look up matching Deals (stage, amount, account). Office fleets can pull credentials from a Vercel fleet API so secrets are not pasted onto each PC.</div></details>
-      <details class="fade"><summary>What is WhatsApp Safe Mode?</summary><div class="ans">It is <b>on by default</b> to reduce ban risk. Hub pins, Aspera AI, chat scrape/search, and other WhatsApp automation stay off until you turn Safe Mode off in Settings → Security. Arattai and mail apps are unaffected. Multiple WhatsApp tabs are still fine when each uses a separate profile and phone number.</div></details>
+      <details class="fade"><summary>Can Hub forward a WhatsApp message to Arattai?</summary><div class="ans"><b>No.</b> Cross-app Forward is disabled. Copy the text or file yourself, or use Aspera Notes as a paste pad. Hub never sends on your behalf.</div></details>
+      <details class="fade"><summary>Do Hub pins work on WhatsApp?</summary><div class="ans">On <b>Arattai</b>, yes — right-click a chat → Pin with Aspera Hub (up to 10). On <b>WhatsApp</b>, Safe Mode is on by default, so Hub pins stay off until you turn Safe Mode off in Settings → Security.</div></details>
+      <details class="fade"><summary>What is WhatsApp Safe Mode?</summary><div class="ans">It is <b>on by default</b> to reduce ban risk. Hub pins, Aspera AI, chat scrape/search, notification patches, and quick-reply send stay off on WhatsApp until you turn Safe Mode off in Settings → Security. Arattai and mail apps are unaffected. Multiple WhatsApp tabs are still fine when each uses a separate profile and phone number.</div></details>
       <details class="fade"><summary>Can I add any website?</summary><div class="ans">Today Hub uses the <b>Aspera catalog only</b> (WhatsApp, Arattai, Gmail, Zoho Mail/CRM/Books/One). You can run multiple copies of the same app with separate profiles. The catalog will grow over time.</div></details>
     </div>
     <div class="lim fade" style="margin-top:28px">
       <h3>Honest limits</h3>
       <ul>
         <li>Primary package is <b>amd64 .deb</b> for Debian-family desktops.</li>
-        <li>Hub pins are for <b>WhatsApp ↔ Arattai</b>.</li>
-        <li>Aspera AI skills apply to WhatsApp, Arattai, Gmail, and Zoho Mail. Hub <b>never auto-sends</b>.</li>
+        <li>Hub pins work on <b>Arattai</b> immediately. On WhatsApp they require turning <b>Safe Mode</b> off.</li>
+        <li>Hub does <b>not</b> forward messages between WhatsApp and Arattai.</li>
+        <li>Aspera AI skills apply to Arattai, Gmail, and Zoho Mail. WhatsApp AI requires Safe Mode off. Hub <b>never auto-sends</b>.</li>
         <li>Notes is a copy pad — you paste yourself; Hub never sends from Notes.</li>
         <li>Chrome extensions come from the Chrome Web Store into Hub guest apps.</li>
         <li>Hardware acceleration is <b>off</b> on Linux so Hub starts reliably on Mint.</li>
-        <li><b>WhatsApp Safe Mode</b> is on by default — turn it off to use Hub pins and AI on WhatsApp.</li>
       </ul>
     </div>
   </div>
