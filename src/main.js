@@ -1602,7 +1602,8 @@ async function deleteProfile(id) {
 /**
  * Auto-assign a dedicated profile named like "WhatsApp 1" / "Gmail 2".
  * First copy and extras each get their own partition (separate logins).
- * Zoho suite tabs share one profile so workspace login stays linked.
+ * Zoho CRM / One / Books tabs share one profile so workspace login stays linked.
+ * Zoho Mail is isolated like Gmail (one mailbox per profile).
  */
 function profileIdForNewApp(appId, entry) {
   const existing = (settings.serviceInstances || []).filter((i) => i.appId === appId);

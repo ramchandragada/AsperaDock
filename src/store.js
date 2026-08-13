@@ -10,6 +10,7 @@ import {
 } from './services.js';
 import { defaultShortcutsMap, migrateShortcutsMap } from './shortcutsConfig.js';
 import { sanitizePinnedPeople } from './guestInbox.js';
+import { isolateSharedZohoMailProfiles } from './zohoMailProfiles.js';
 import {
   getAiLanguage,
   sanitizeAiDisabledProviders,
@@ -588,33 +589,36 @@ export function loadSettings() {
   try {
     const raw = fs.readFileSync(settingsPath(), 'utf8');
     const parsed = JSON.parse(raw);
-    cache = migrateWarmKeepAlive(
-      migrateUnifyLinkHandling(
-        migrateProfiles(
-          dropRetiredApps(
-            migrateRemoveCanvaApp({
-              ...DEFAULTS,
-              ...parsed,
-              shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
-              serviceLabels: parsed.serviceLabels || {},
-              serviceConfigs: parsed.serviceConfigs || {},
-              serviceInstances: parsed.serviceInstances || [],
-              profiles: parsed.profiles,
-              pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
-              aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
-              aiDisabledProviders: sanitizeAiDisabledProviders(
-                parsed.aiDisabledProviders,
-              ),
-              aiLanguage: getAiLanguage(parsed.aiLanguage || 'en').id,
-              aiExtraLanguages: sanitizeAiExtraLanguages(
-                Object.prototype.hasOwnProperty.call(parsed, 'aiExtraLanguages')
-                  ? parsed.aiExtraLanguages
-                  : undefined,
-              ),
-            }),
+    cache = isolateSharedZohoMailProfiles(
+      migrateWarmKeepAlive(
+        migrateUnifyLinkHandling(
+          migrateProfiles(
+            dropRetiredApps(
+              migrateRemoveCanvaApp({
+                ...DEFAULTS,
+                ...parsed,
+                shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
+                serviceLabels: parsed.serviceLabels || {},
+                serviceConfigs: parsed.serviceConfigs || {},
+                serviceInstances: parsed.serviceInstances || [],
+                profiles: parsed.profiles,
+                pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
+                aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
+                aiDisabledProviders: sanitizeAiDisabledProviders(
+                  parsed.aiDisabledProviders,
+                ),
+                aiLanguage: getAiLanguage(parsed.aiLanguage || 'en').id,
+                aiExtraLanguages: sanitizeAiExtraLanguages(
+                  Object.prototype.hasOwnProperty.call(parsed, 'aiExtraLanguages')
+                    ? parsed.aiExtraLanguages
+                    : undefined,
+                ),
+              }),
+            ),
           ),
         ),
       ),
+      { makeProfile },
     );
     // Persist migration so partitions/profileIds are stable next launch.
     try {
