@@ -11,6 +11,7 @@ import {
 import { defaultShortcutsMap, migrateShortcutsMap } from './shortcutsConfig.js';
 import { sanitizePinnedPeople } from './guestInbox.js';
 import { isolateSharedZohoMailProfiles } from './zohoMailProfiles.js';
+import { sanitizeNotes } from './notesStore.js';
 import {
   getAiLanguage,
   sanitizeAiDisabledProviders,
@@ -257,6 +258,12 @@ export const DEFAULTS = {
    * @type {{ id: string, serviceId: string, chatKey: string, name: string, appId?: string }[]}
    */
   pinnedPeople: [],
+
+  /**
+   * Local copy-pad notes (links / repeated text). This PC only.
+   * @type {{ id: string, title: string, body: string, updatedAt: number }[]}
+   */
+  notes: [],
 };
 
 let cache = null;
@@ -603,6 +610,7 @@ export function loadSettings() {
                 serviceInstances: parsed.serviceInstances || [],
                 profiles: parsed.profiles,
                 pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
+                notes: sanitizeNotes(parsed.notes || []),
                 aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
                 aiDisabledProviders: sanitizeAiDisabledProviders(
                   parsed.aiDisabledProviders,
@@ -657,6 +665,9 @@ export function saveSettings(patch) {
     Object.prototype.hasOwnProperty.call(patch, 'aiExtraLanguages')
   ) {
     cache.aiExtraLanguages = sanitizeAiExtraLanguages(patch.aiExtraLanguages);
+  }
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'notes')) {
+    cache.notes = sanitizeNotes(patch.notes);
   }
   try {
     fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });

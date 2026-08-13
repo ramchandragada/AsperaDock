@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('asperadock', {
   openWebSearch: (payload) =>
     ipcRenderer.invoke('dock:open-web-search', payload || {}),
   closeWebSearch: () => ipcRenderer.invoke('dock:close-web-search'),
+  openNotes: (payload) => ipcRenderer.invoke('dock:open-notes', payload || {}),
+  closeNotes: () => ipcRenderer.invoke('dock:close-notes'),
   printActive: () => ipcRenderer.invoke('dock:print-active'),
   removeService: (id) => ipcRenderer.invoke('dock:remove-service', id),
   createProfile: (name) => ipcRenderer.invoke('dock:create-profile', name),

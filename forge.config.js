@@ -120,6 +120,11 @@ module.exports = {
             target: 'preload',
           },
           {
+            entry: 'src/notesPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
             entry: 'src/notifCenterPreload.js',
             config: 'vite.preload.config.mjs',
             target: 'preload',

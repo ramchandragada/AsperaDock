@@ -60,6 +60,13 @@ export const SHORTCUT_CATALOG = Object.freeze([
     defaultAccel: 'Control+E',
   },
   {
+    id: 'notes',
+    group: 'Sections and features',
+    label: 'Notes',
+    kind: 'simple',
+    defaultAccel: 'Control+Shift+N',
+  },
+  {
     id: 'print',
     group: 'Sections and features',
     label: 'Print page',

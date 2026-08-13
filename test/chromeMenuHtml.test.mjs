@@ -26,6 +26,7 @@ test('chrome menu is hub controls only — no toolbar duplicates', () => {
     'copy-link',
     'free-ram',
     'profiles',
+    'notes',
     'lock',
     'settings',
     'shortcuts',

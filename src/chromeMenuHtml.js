@@ -119,7 +119,10 @@ export const CHROME_MENU_SECTIONS = [
   {
     id: 'workspace',
     title: 'Workspace',
-    items: [{ action: 'profiles', label: 'Profiles' }],
+    items: [
+      { action: 'notes', label: 'Notes…' },
+      { action: 'profiles', label: 'Profiles' },
+    ],
   },
   {
     id: 'security',
@@ -156,6 +159,7 @@ const ACTION_ICON = {
   'free-ram': ICO.ram,
   'add-app': ICO.plus,
   profiles: ICO.users,
+  notes: ICO.list,
   extensions: ICO.puzzle,
   lock: ICO.lock,
   settings: ICO.settings,

@@ -27,6 +27,13 @@
             </button>
             <button
               type="button"
+              id="notes-btn"
+              class="icon-btn"
+              title="Notes — copy links and repeated text (Ctrl+Shift+N)"
+              aria-label="Notes"
+            ></button>
+            <button
+              type="button"
               id="web-search-btn"
               class="icon-btn"
               title="Web search — Google (Ctrl+E)"
@@ -103,6 +110,9 @@
                 <hr />
                 <div class="chrome-menu-section" role="group" aria-label="Workspace">
                   <div class="chrome-menu-section-title">Workspace</div>
+                  <button type="button" data-action="notes" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="list"></span> Notes…
+                  </button>
                   <button type="button" data-action="profiles" class="chrome-menu-item">
                     <span class="chrome-menu-ico" data-ico="users"></span> Profiles
                   </button>

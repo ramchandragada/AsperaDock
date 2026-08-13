@@ -25,6 +25,12 @@ import {
 } from './chromeMenuHtml.js';
 import { buildFindBarHtml } from './findBarHtml.js';
 import { buildWebSearchHtml } from './webSearchHtml.js';
+import { buildNotesHtml } from './notesHtml.js';
+import {
+  deleteNote,
+  sanitizeNotes,
+  upsertNote,
+} from './notesStore.js';
 import {
   resolveWebSearchInput,
   webSearchTabName,
@@ -604,6 +610,8 @@ let findBarRequestId = 0;
 let webSearchWindow = null;
 /** Last web-search query so Ctrl+K reopens with the same text selected. */
 let webSearchLastQuery = '';
+/** Floating Aspera Notes copy pad. */
+let notesWindow = null;
 /** Floating notification center. */
 let notifCenterWindow = null;
 /** Floating Aspera AI result panel. */
@@ -2470,6 +2478,19 @@ function webSearchHandle(channel, handler) {
   });
 }
 
+function notesHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !notesWindow ||
+      notesWindow.isDestroyed() ||
+      event.sender !== notesWindow.webContents
+    ) {
+      throw new Error('Unauthorized notes IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
 function notifCenterHandle(channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
     if (
@@ -3467,6 +3488,102 @@ function openWebSearchWindow({ dark = null } = {}) {
   return { ok: true };
 }
 
+function isNotesOpen() {
+  return !!(notesWindow && !notesWindow.isDestroyed());
+}
+
+function pushNotes(payload) {
+  if (!notesWindow || notesWindow.isDestroyed()) return;
+  try {
+    notesWindow.webContents.send('notes:init', payload);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Floating Notes pad (Aspera AI pattern): copy links / repeated text,
+ * paste yourself. Hub never sends.
+ */
+function openNotesWindow({ dark = null } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  const notes = sanitizeNotes(settings.notes || []);
+  const darkNow =
+    typeof dark === 'boolean' ? dark : !!nativeTheme.shouldUseDarkColors;
+
+  if (isNotesOpen()) {
+    try {
+      notesWindow.show();
+      notesWindow.focus();
+      notesWindow.webContents.focus();
+      pushNotes({ notes });
+    } catch {
+      // ignore
+    }
+    return { ok: true, focused: true };
+  }
+
+  closeFindBarWindow({ clear: false });
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAppContextMenu();
+  closeAiResultWindow();
+
+  const content = mainWindow.getContentBounds();
+  const margin = 10;
+  const menuW = Math.min(560, Math.max(420, Math.floor(content.width * 0.42)));
+  const menuH = Math.min(580, Math.max(420, content.height - margin * 2));
+  const pos = clampFloatPosition(
+    content.x + content.width - menuW - margin,
+    content.y + margin,
+    menuW,
+    menuH,
+  );
+
+  notesWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'notesPreload.js',
+    dark: darkNow,
+  });
+
+  const win = notesWindow;
+  try {
+    win.setAlwaysOnTop(false);
+  } catch {
+    // ignore
+  }
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildNotesHtml(darkNow))}`,
+  );
+  win.webContents.once('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    pushNotes({ notes });
+  });
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return;
+    win.show();
+    try {
+      if (typeof win.moveTop === 'function') win.moveTop();
+    } catch {
+      // ignore
+    }
+    win.focus();
+    try {
+      win.webContents.focus();
+    } catch {
+      // ignore
+    }
+  });
+  win.on('closed', () => {
+    if (notesWindow === win) notesWindow = null;
+  });
+  return { ok: true };
+}
+
 function runWebSearch(text) {
   const query = String(text || '');
   webSearchLastQuery = query.trim();
@@ -3596,6 +3713,20 @@ function closeAiResultWindow() {
   }
 }
 
+function closeNotesWindow() {
+  if (!notesWindow || notesWindow.isDestroyed()) {
+    notesWindow = null;
+    return;
+  }
+  const win = notesWindow;
+  notesWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
 function closeCrmLookupWindow() {
   if (!crmLookupWindow || crmLookupWindow.isDestroyed()) {
     crmLookupWindow = null;
@@ -3683,6 +3814,7 @@ function closeAllFloatMenus() {
   closeFindBarWindow({ clear: true });
   closeNotifCenterWindow();
   closeAiResultWindow();
+  closeNotesWindow();
   closeForwardPickerWindow();
   closeExtensionsWindow();
 }
@@ -4236,6 +4368,7 @@ function openAiResultWindow({ title, meta, dark = false, initialPayload = null }
   closeChromeMenuWindow();
   closeNotifCenterWindow();
   closeAiResultWindow();
+  closeNotesWindow();
 
   const content = mainWindow.getContentBounds();
   const margin = 10;
@@ -5620,6 +5753,10 @@ function handleChromeMenuAction(type) {
   }
   if (type === 'web-search') {
     openWebSearchWindow();
+    return { ok: true };
+  }
+  if (type === 'notes') {
+    openNotesWindow();
     return { ok: true };
   }
   if (type === 'search') {
@@ -11966,6 +12103,11 @@ function attachShortcuts(webContents) {
       closeWebSearchWindow();
       return;
     }
+    if (key === 'escape' && isNotesOpen()) {
+      event.preventDefault();
+      closeNotesWindow();
+      return;
+    }
     if (key === 'escape' && isFindBarOpen()) {
       event.preventDefault();
       closeFindBarWindow({ clear: true });
@@ -11987,6 +12129,7 @@ function attachShortcuts(webContents) {
       'settings',
       'search',
       'webSearch',
+      'notes',
       'find',
       'print',
       'focusMode',
@@ -12021,6 +12164,10 @@ function attachShortcuts(webContents) {
       }
       if (id === 'webSearch') {
         openWebSearchWindow();
+        return;
+      }
+      if (id === 'notes') {
+        openNotesWindow();
         return;
       }
       if (id === 'find') {
@@ -12486,6 +12633,11 @@ function installApplicationMenu() {
           label: 'Web search…',
           accelerator: 'CommandOrControl+E',
           click: () => openWebSearchWindow(),
+        },
+        {
+          label: 'Notes…',
+          accelerator: 'CommandOrControl+Shift+N',
+          click: () => openNotesWindow(),
         },
       ],
     },
@@ -13053,6 +13205,15 @@ dockHandle('dock:close-web-search', () => {
   closeWebSearchWindow();
   return { ok: true };
 });
+dockHandle('dock:open-notes', (_e, payload) =>
+  openNotesWindow({
+    dark: typeof payload?.dark === 'boolean' ? payload.dark : null,
+  }),
+);
+dockHandle('dock:close-notes', () => {
+  closeNotesWindow();
+  return { ok: true };
+});
 findBarHandle('find-bar:find', (_e, text, options) =>
   findInActivePage(text, options || {}),
 );
@@ -13063,6 +13224,30 @@ findBarHandle('find-bar:close', () => {
 webSearchHandle('web-search:go', (_e, text) => runWebSearch(text));
 webSearchHandle('web-search:close', () => {
   closeWebSearchWindow();
+  return { ok: true };
+});
+notesHandle('notes:save', (_e, payload) => {
+  const result = upsertNote(settings.notes || [], payload || {});
+  if (result.ok) {
+    settings = saveSettings({ notes: result.notes });
+    pushNotes({ notes: result.notes });
+  }
+  return result;
+});
+notesHandle('notes:delete', (_e, id) => {
+  const result = deleteNote(settings.notes || [], id);
+  settings = saveSettings({ notes: result.notes });
+  pushNotes({ notes: result.notes });
+  return result;
+});
+notesHandle('notes:copy', (_e, text) => {
+  const value = String(text || '');
+  if (!value.trim()) return { ok: false, error: 'Nothing to copy.' };
+  clipboard.writeText(value);
+  return { ok: true };
+});
+notesHandle('notes:close', () => {
+  closeNotesWindow();
   return { ok: true };
 });
 dockHandle('dock:print-active', () => printActivePage());

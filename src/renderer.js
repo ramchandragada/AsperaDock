@@ -39,6 +39,7 @@ const els = {
   reloadBtn: document.getElementById('nav-reload-btn'),
   menuBtn: document.getElementById('menu-btn'),
   asperaAiBtn: document.getElementById('aspera-ai-btn'),
+  notesBtn: document.getElementById('notes-btn'),
   chromeMenu: document.getElementById('app-chrome-menu'),
   downloadsBtn: document.getElementById('downloads-btn'),
   webSearchBtn: document.getElementById('web-search-btn'),
@@ -206,6 +207,7 @@ function paintToolbarIcons() {
   if (els.extensionsBtn) els.extensionsBtn.innerHTML = icon('puzzle');
   if (els.checkUpdatesBtn) els.checkUpdatesBtn.innerHTML = icon('sync');
   if (els.webSearchBtn) els.webSearchBtn.innerHTML = icon('search');
+  if (els.notesBtn) els.notesBtn.innerHTML = icon('list');
   if (els.menuBtn) els.menuBtn.innerHTML = asperaAppIconSvg(24);
   if (els.lockBtn) els.lockBtn.innerHTML = icon('lock');
   if (els.addAppBtn) els.addAppBtn.innerHTML = icon('plus');
@@ -1919,6 +1921,10 @@ function handleChromeAction(action) {
     openWebSearch();
     return;
   }
+  if (action === 'notes') {
+    openNotes();
+    return;
+  }
   if (action === 'search') openSearch();
   if (action === 'settings') openSettings();
   if (action === 'ai-settings') openAiSettings();
@@ -2152,6 +2158,12 @@ els.webSearchBtn?.addEventListener('click', (event) => {
   closeChromeMenu();
   closeAppMenu();
   openWebSearch();
+});
+els.notesBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  closeChromeMenu();
+  closeAppMenu();
+  openNotes();
 });
 els.settingsClose.addEventListener('click', closeSettings);
 els.settingsModal?.querySelector('.settings-nav')?.addEventListener('click', (event) => {
@@ -2674,6 +2686,16 @@ function closeWebSearch() {
   window.asperadock.closeWebSearch?.();
 }
 
+function openNotes() {
+  window.asperadock.openNotes?.({
+    dark: document.body.classList.contains('theme-dark'),
+  });
+}
+
+function closeNotes() {
+  window.asperadock.closeNotes?.();
+}
+
 els.editAppModal.addEventListener('click', (event) => {
   if (event.target === els.editAppModal) closeEditApp();
 });
@@ -2691,6 +2713,7 @@ document.addEventListener('keydown', (event) => {
     else {
       closeFindBar();
       closeWebSearch();
+      closeNotes();
       closeChromeMenu();
       closeNotificationCenter();
       closeAppMenu();

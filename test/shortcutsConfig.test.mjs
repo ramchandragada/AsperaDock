@@ -35,6 +35,12 @@ test('web search Control+K migrates to Control+E for chat search', () => {
   assert.equal(defaultWebSearchAccel(), 'Control+E');
 });
 
+test('notes shortcut defaults to Control+Shift+N', () => {
+  const map = migrateShortcutsMap({});
+  assert.equal(map.notes.enabled, true);
+  assert.equal(map.notes.accel, 'Control+Shift+N');
+});
+
 function defaultWebSearchAccel() {
   return migrateShortcutsMap({}).webSearch.accel;
 }
