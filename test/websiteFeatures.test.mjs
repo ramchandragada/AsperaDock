@@ -9,7 +9,6 @@ const html = fs.readFileSync(path.join(root, 'website/index.html'), 'utf8');
 const vercel = fs.readFileSync(path.join(root, 'website/vercel.json'), 'utf8');
 
 const REQUIRED = [
-  'Hub pins',
   'Aspera Notes',
   'Aspera AI',
   'Polish',
@@ -38,6 +37,8 @@ const REQUIRED = [
   'screen locks or your PC sleeps',
   'Keep warm',
   'Local only',
+  'Hub pins (Arattai only)',
+  'Arattai only',
 ];
 
 test('asperahub.com lists current Hub features', () => {
@@ -46,17 +47,26 @@ test('asperahub.com lists current Hub features', () => {
   }
 });
 
-test('asperahub.com does not advertise disabled Forward or custom apps', () => {
+test('asperahub.com is truthful about pins and Forward', () => {
   assert.equal(
     /Forward with Aspera Hub/i.test(html),
     false,
-    'Forward with Hub is disabled — do not list it as a product feature',
+    'Forward with Hub must not be advertised',
   );
   assert.equal(/Hub pins \+ cross-app Forward/i.test(html), false);
   assert.equal(/Works across both messaging apps/.test(html), false);
-  assert.match(html, /does <b>not<\/b> forward messages between WhatsApp and Arattai/);
+  assert.equal(/WhatsApp after Safe Mode off/.test(html), false);
+  assert.equal(
+    /Right-click a chat in <b>WhatsApp<\/b> or <b>Arattai<\/b>/.test(html),
+    false,
+    'Must not claim WhatsApp Hub pins',
+  );
+  assert.match(html, /Hub pins \(Arattai only\)/);
+  assert.match(html, /WhatsApp Hub pins are not offered/);
+  assert.match(html, /Do Hub pins work on WhatsApp\?/);
   assert.match(html, /Can Hub forward a WhatsApp message to Arattai/);
-  assert.match(html, /Arattai now; WhatsApp after Safe Mode off/);
+  assert.match(html, /Cross-app Forward/);
+  assert.match(html, /Not available/);
   assert.match(html, /Aspera catalog only/);
   assert.equal(/arbitrary HTTPS apps/i.test(html), true);
 });
