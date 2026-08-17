@@ -20,11 +20,26 @@ test('selected message menu is Summarize, CRM lookup, then Forward (no Pin)', ()
   );
 });
 
+test('compose selection menu is Polish, CRM lookup, then Forward', () => {
+  assert.deepEqual(
+    guestContextMenuActionOrder({
+      hasSelection: true,
+      canSummarize: false,
+      canPolish: true,
+      canForward: true,
+      canPin: true,
+      canCrmLookup: true,
+    }),
+    ['polish', 'crm-lookup', 'forward'],
+  );
+});
+
 test('selection menu can be CRM-only when AI is off', () => {
   assert.deepEqual(
     guestContextMenuActionOrder({
       hasSelection: true,
       canSummarize: false,
+      canPolish: false,
       canForward: false,
       canPin: true,
       canCrmLookup: true,
@@ -127,13 +142,15 @@ test('main guest context menu follows guestContextMenuActionOrder', () => {
   assert.match(src, /guestContextMenuActionOrder/);
   assert.match(src, /canOfferHubPin/);
   assert.match(src, /action === 'summarize'/);
+  assert.match(src, /action === 'polish'/);
   assert.match(src, /action === 'crm-lookup'/);
   assert.match(src, /action === 'forward'/);
   assert.match(src, /action === 'pin'/);
   assert.doesNotMatch(src, /Aspera AI…/);
   assert.doesNotMatch(src, /Copy to Aspera AI…/);
   assert.match(src, /Lookup in Zoho CRM/);
-  assert.match(src, /Aspera AI is opened from the top-bar wordmark/);
+  assert.match(src, /Polish with Aspera AI/);
+  assert.match(src, /Summarize opens from the (?:bar |top-bar )?wordmark/);
   assert.match(src, /Forward with Aspera Hub/);
   assert.match(src, /FORWARD_WITH_HUB_ENABLED/);
   // PDF summarize feature removed — select text in the PDF preview instead.

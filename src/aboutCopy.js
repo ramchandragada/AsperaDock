@@ -2,10 +2,20 @@
  * About Aspera Hub — shared copy for the in-app About dialog.
  */
 
+/** Product website (display + openExternal). */
+export const ASPERA_HUB_WEBSITE = 'https://asperahub.com';
+export const ASPERA_HUB_WEBSITE_HOST = 'asperahub.com';
+
 /** Early supporters listed in About (alphabetical by given name). Cap: 25. */
 export const EARLY_CONTRIBUTORS = [
   'Amar Vallakati',
+  'Annapurna Margam',
+  'Arati Gandhal',
   'Diksha Garade',
+  'Gokul Zanwar',
+  'Rajeshwari Penta',
+  'Shlok Naik',
+  'Shubham Jog',
   'Tarun Pandal',
 ];
 
@@ -49,6 +59,8 @@ export function aboutDetailText({
     'Long live Linux. Long live Linus Torvalds.',
     '',
     'Aspera Hub is open source and always free: use it, modify it, share it. 100% free, forever.',
+    '',
+    `Website: ${ASPERA_HUB_WEBSITE}`,
     contributorsBlock,
     runtime ? `\n${runtime}` : '',
   ]

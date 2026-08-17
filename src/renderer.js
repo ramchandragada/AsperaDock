@@ -29,16 +29,20 @@ const els = {
   addAppBtn: document.getElementById('add-app-btn'),
   navBackBtn: document.getElementById('nav-back-btn'),
   navForwardBtn: document.getElementById('nav-forward-btn'),
+  navReloadBtn: document.getElementById('nav-reload-btn'),
+  navCopyLinkBtn: document.getElementById('nav-copy-link-btn'),
   emptyState: document.getElementById('empty-state'),
   emptyAddBtn: document.getElementById('empty-add-btn'),
   focusBtn: document.getElementById('focus-btn'),
   muteBtn: document.getElementById('mute-btn'),
   freeRamBtn: null,
-  reloadBtn: null,
+  reloadBtn: document.getElementById('nav-reload-btn'),
   menuBtn: document.getElementById('menu-btn'),
   asperaAiBtn: document.getElementById('aspera-ai-btn'),
+  notesBtn: document.getElementById('notes-btn'),
   chromeMenu: document.getElementById('app-chrome-menu'),
   downloadsBtn: document.getElementById('downloads-btn'),
+  webSearchBtn: document.getElementById('web-search-btn'),
   extensionsBtn: document.getElementById('extensions-btn'),
   checkUpdatesBtn: document.getElementById('check-updates-btn'),
   searchBtn: document.getElementById('search-btn'),
@@ -202,11 +206,15 @@ function paintToolbarIcons() {
   if (els.downloadsBtn) els.downloadsBtn.innerHTML = icon('download');
   if (els.extensionsBtn) els.extensionsBtn.innerHTML = icon('puzzle');
   if (els.checkUpdatesBtn) els.checkUpdatesBtn.innerHTML = icon('sync');
+  if (els.webSearchBtn) els.webSearchBtn.innerHTML = icon('search');
+  if (els.notesBtn) els.notesBtn.innerHTML = icon('list');
   if (els.menuBtn) els.menuBtn.innerHTML = asperaAppIconSvg(24);
   if (els.lockBtn) els.lockBtn.innerHTML = icon('lock');
   if (els.addAppBtn) els.addAppBtn.innerHTML = icon('plus');
   if (els.navBackBtn) els.navBackBtn.innerHTML = icon('back');
   if (els.navForwardBtn) els.navForwardBtn.innerHTML = icon('forward');
+  if (els.navReloadBtn) els.navReloadBtn.innerHTML = icon('reload');
+  if (els.navCopyLinkBtn) els.navCopyLinkBtn.innerHTML = icon('link');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
   if (els.appMenuEdit) els.appMenuEdit.innerHTML = icon('settings');
   if (els.appMenuHome) els.appMenuHome.innerHTML = icon('home');
@@ -465,7 +473,19 @@ function paintAppVersion() {
   if (running) running.textContent = full;
 
   const menuVer = document.getElementById('chrome-menu-version');
-  if (menuVer) menuVer.textContent = full;
+  if (menuVer) {
+    menuVer.textContent = '';
+    menuVer.append(document.createTextNode(full));
+    const site = document.createElement('span');
+    site.className = 'chrome-menu-site';
+    site.textContent = 'asperahub.com';
+    menuVer.appendChild(site);
+  }
+}
+
+function openAsperaWebsite(event) {
+  event?.preventDefault?.();
+  window.asperadock.openExternal?.('https://asperahub.com');
 }
 
 function renderChromeActions() {
@@ -483,6 +503,9 @@ function renderChromeActions() {
   }
   if (els.navForwardBtn) {
     els.navForwardBtn.disabled = !nav.canGoForward || state.locked;
+  }
+  if (els.navReloadBtn) {
+    els.navReloadBtn.disabled = !!state.locked || !state.activeServiceId;
   }
 
   const total = state.totalUnread || 0;
@@ -683,12 +706,8 @@ function renderNotificationCenter() {
 let lastChromeReport = '';
 function reportChromeSize() {
   if (!els.topBar) return;
-  let top = Math.round(els.topBar.getBoundingClientRect().height);
-  // Find bar is fixed under the top bar; push the guest down so Ctrl+F stays visible.
-  if (els.findBar && !els.findBar.classList.contains('hidden')) {
-    const findH = Math.round(els.findBar.getBoundingClientRect().height) || 48;
-    top += findH + 12;
-  }
+  // Find is a floating child window above the guest — never resize chrome for it.
+  const top = Math.round(els.topBar.getBoundingClientRect().height);
   const key = `0:0:${top}`;
   if (key === lastChromeReport) return;
   lastChromeReport = key;
@@ -834,6 +853,41 @@ async function setAiProviderEnabled(providerId, enabled) {
 
 /** Providers currently showing the key input (new key or edit). */
 const aiKeyEditMode = new Set();
+
+function readAiExtraLanguages() {
+  const a = String(document.getElementById('set-ai-extra-1')?.value || '').trim();
+  const b = String(document.getElementById('set-ai-extra-2')?.value || '').trim();
+  const out = [];
+  for (const id of [a, b]) {
+    if (!id || id === 'en' || out.includes(id)) continue;
+    out.push(id);
+    if (out.length >= 2) break;
+  }
+  return out;
+}
+
+/** Hide a language already chosen in the other extra select. */
+function syncAiExtraLanguageOptions() {
+  const sel1 = document.getElementById('set-ai-extra-1');
+  const sel2 = document.getElementById('set-ai-extra-2');
+  if (!sel1 || !sel2) return;
+  const v1 = String(sel1.value || '');
+  const v2 = String(sel2.value || '');
+  for (const opt of sel1.options) {
+    if (!opt.value) {
+      opt.hidden = false;
+      continue;
+    }
+    opt.hidden = !!v2 && opt.value === v2;
+  }
+  for (const opt of sel2.options) {
+    if (!opt.value) {
+      opt.hidden = false;
+      continue;
+    }
+    opt.hidden = !!v1 && opt.value === v1;
+  }
+}
 
 function renderAiProviderKeys() {
   const root = document.getElementById('ai-provider-keys');
@@ -1153,6 +1207,16 @@ function fillSettingsForm() {
   set('set-whatsapp-safe-mode', s.whatsappSafeMode !== false);
   set('set-ai-enabled', s.aiEnabled !== false);
   set('set-ai-language', s.aiLanguage || 'en');
+  {
+    const extras = Array.isArray(s.aiExtraLanguages)
+      ? s.aiExtraLanguages
+      : Array.isArray(s.ai?.extraLanguages)
+        ? s.ai.extraLanguages
+        : ['hi', 'mr'];
+    set('set-ai-extra-1', extras[0] || '');
+    set('set-ai-extra-2', extras[1] || '');
+    syncAiExtraLanguageOptions();
+  }
   aiKeyEditMode.clear();
   renderAiProviderKeys();
   set('set-zoho-crm-enabled', s.zohoCrmEnabled !== false);
@@ -1231,6 +1295,7 @@ function readSettingsForm() {
     whatsappSafeMode: checked('set-whatsapp-safe-mode'),
     aiEnabled: checked('set-ai-enabled'),
     aiLanguage: val('set-ai-language'),
+    aiExtraLanguages: readAiExtraLanguages(),
     zohoCrmEnabled: checked('set-zoho-crm-enabled'),
     zohoCrmDc: val('set-zoho-crm-dc') || 'in',
     zohoCrmFleetUrl: val('set-zoho-crm-fleet-url').trim(),
@@ -1852,6 +1917,14 @@ async function lockHubFromUi() {
 }
 
 function handleChromeAction(action) {
+  if (action === 'web-search') {
+    openWebSearch();
+    return;
+  }
+  if (action === 'notes') {
+    openNotes();
+    return;
+  }
   if (action === 'search') openSearch();
   if (action === 'settings') openSettings();
   if (action === 'ai-settings') openAiSettings();
@@ -1871,6 +1944,9 @@ function handleChromeAction(action) {
   }
   if (action === 'check-updates') {
     runUpdateCheck();
+  }
+  if (action === 'website') {
+    openAsperaWebsite();
   }
 }
 
@@ -2077,6 +2153,18 @@ els.asperaAiBtn?.addEventListener('click', (event) => {
     skill: 'summarize',
   });
 });
+els.webSearchBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  closeChromeMenu();
+  closeAppMenu();
+  openWebSearch();
+});
+els.notesBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  closeChromeMenu();
+  closeAppMenu();
+  openNotes();
+});
 els.settingsClose.addEventListener('click', closeSettings);
 els.settingsModal?.querySelector('.settings-nav')?.addEventListener('click', (event) => {
   const btn = event.target.closest('[data-settings-panel]');
@@ -2088,6 +2176,26 @@ els.lockBtn?.addEventListener('click', () => {
 });
 els.navBackBtn?.addEventListener('click', () => navigateActive('back'));
 els.navForwardBtn?.addEventListener('click', () => navigateActive('forward'));
+els.navReloadBtn?.addEventListener('click', () => {
+  window.asperadock.reloadActive?.();
+});
+els.navCopyLinkBtn?.addEventListener('click', async () => {
+  const btn = els.navCopyLinkBtn;
+  const result = await window.asperadock.copyActiveLink?.();
+  if (!btn) return;
+  const prevTitle = btn.getAttribute('title') || 'Copy link — current page URL';
+  if (result?.ok) {
+    btn.setAttribute('title', 'Copied!');
+    btn.setAttribute('aria-label', 'Copied');
+    setTimeout(() => {
+      btn.setAttribute('title', prevTitle);
+      btn.setAttribute('aria-label', 'Copy link');
+    }, 1600);
+  } else if (result?.error) {
+    btn.setAttribute('title', result.error);
+    setTimeout(() => btn.setAttribute('title', prevTitle), 2200);
+  }
+});
 els.addAppBtn.addEventListener('click', openAppsSettings);
 els.emptyAddBtn.addEventListener('click', openAppsSettings);
 
@@ -2107,8 +2215,16 @@ els.chromeMenu?.addEventListener('click', (event) => {
     if (id) window.asperadock.appNavigate?.(id, 'home');
   }
   if (action === 'free-ram') window.asperadock.hibernateBackground();
+  if (action === 'copy-link') window.asperadock.copyActiveLink?.();
   if (action === 'about') window.asperadock.showAbout?.();
+  if (action === 'website') openAsperaWebsite();
 });
+
+document.getElementById('empty-website-link')?.addEventListener('click', openAsperaWebsite);
+document.getElementById('settings-website-link')?.addEventListener('click', openAsperaWebsite);
+document
+  .getElementById('settings-general-website-link')
+  ?.addEventListener('click', openAsperaWebsite);
 
 function paintZohoCrmStatus(status) {
   const el = document.getElementById('zoho-crm-status');
@@ -2370,14 +2486,6 @@ window.asperadock.onOpenAppsSettings?.(openAppsSettings);
 window.asperadock.onOpenProfiles?.(openProfiles);
 window.asperadock.onOpenSearch?.(openSearch);
 window.asperadock.onOpenFind?.(openFindBar);
-window.asperadock.onFindResult?.((data) => {
-  if (!els.findStatus || !data) return;
-  if (!data.matches) {
-    els.findStatus.textContent = '0/0';
-    return;
-  }
-  els.findStatus.textContent = `${data.activeMatchOrdinal || 0}/${data.matches}`;
-});
 window.asperadock.onSyncOverlay?.(syncOverlayFromModals);
 window.asperadock.onOpenEditApp?.((id) => {
   if (id) openEditApp(id);
@@ -2395,6 +2503,12 @@ document.getElementById('ai-catch-up-btn')?.addEventListener('click', () => {
   window.asperadock.aiCatchUp?.({
     dark: document.body.classList.contains('theme-dark'),
   });
+});
+document.getElementById('set-ai-extra-1')?.addEventListener('change', () => {
+  syncAiExtraLanguageOptions();
+});
+document.getElementById('set-ai-extra-2')?.addEventListener('change', () => {
+  syncAiExtraLanguageOptions();
 });
 
 async function patchMenuFlag(key, checked) {
@@ -2549,46 +2663,38 @@ els.customAppUrl?.addEventListener('keydown', (event) => {
 });
 
 function openFindBar() {
-  if (!els.findBar) return;
-  els.findBar.classList.remove('hidden');
-  els.findInput.value = '';
-  els.findStatus.textContent = '';
-  lastChromeReport = '';
-  requestAnimationFrame(() => {
-    reportChromeSize();
-    els.findInput?.focus();
-    els.findInput?.select();
+  // Keep legacy in-page bar hidden — guest WebContentsView covers it, so Find
+  // is a floating popup that does not push the page down.
+  els.findBar?.classList.add('hidden');
+  window.asperadock.openFindBar?.({
+    dark: document.body.classList.contains('theme-dark'),
   });
 }
 
 function closeFindBar() {
   els.findBar?.classList.add('hidden');
-  window.asperadock.stopFind?.();
-  els.findStatus.textContent = '';
-  lastChromeReport = '';
-  requestAnimationFrame(reportChromeSize);
+  window.asperadock.closeFindBar?.();
 }
 
-async function runFind({ findNext = false, forward = true } = {}) {
-  const text = els.findInput?.value || '';
-  await window.asperadock.findInPage?.(text, { findNext, forward });
-  els.findStatus.textContent = text ? 'Searching…' : '';
+function openWebSearch() {
+  window.asperadock.openWebSearch?.({
+    dark: document.body.classList.contains('theme-dark'),
+  });
 }
 
-els.findClose?.addEventListener('click', closeFindBar);
-els.findNext?.addEventListener('click', () => runFind({ findNext: true, forward: true }));
-els.findPrev?.addEventListener('click', () => runFind({ findNext: true, forward: false }));
-els.findInput?.addEventListener('input', () => runFind({ findNext: false }));
-els.findInput?.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    runFind({ findNext: true, forward: !event.shiftKey });
-  }
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    closeFindBar();
-  }
-});
+function closeWebSearch() {
+  window.asperadock.closeWebSearch?.();
+}
+
+function openNotes() {
+  window.asperadock.openNotes?.({
+    dark: document.body.classList.contains('theme-dark'),
+  });
+}
+
+function closeNotes() {
+  window.asperadock.closeNotes?.();
+}
 
 els.editAppModal.addEventListener('click', (event) => {
   if (event.target === els.editAppModal) closeEditApp();
@@ -2596,8 +2702,8 @@ els.editAppModal.addEventListener('click', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
-    if (!els.findBar?.classList.contains('hidden')) closeFindBar();
-    else if (!els.customAppModal?.classList.contains('hidden')) closeCustomAppModal();
+    // Floating Find handles Escape in its own window / guest shortcut path.
+    if (!els.customAppModal?.classList.contains('hidden')) closeCustomAppModal();
     else if (!els.profileNameModal?.classList.contains('hidden')) closeProfileNameModal(null);
     else if (!els.profilesModal?.classList.contains('hidden')) closeProfiles();
     else if (!els.editAppModal.classList.contains('hidden')) closeEditApp();
@@ -2605,6 +2711,9 @@ document.addEventListener('keydown', (event) => {
     else if (!els.settingsModal.classList.contains('hidden')) closeSettings();
     else if (!els.searchModal.classList.contains('hidden')) closeSearch();
     else {
+      closeFindBar();
+      closeWebSearch();
+      closeNotes();
       closeChromeMenu();
       closeNotificationCenter();
       closeAppMenu();

@@ -25,9 +25,25 @@
               <img id="chrome-wordmark" class="chrome-wordmark" alt="" draggable="false" />
               <span class="chrome-brand-ai-hint" aria-hidden="true">AI</span>
             </button>
+            <button
+              type="button"
+              id="notes-btn"
+              class="icon-btn"
+              title="Notes — copy links and repeated text (Ctrl+Shift+N)"
+              aria-label="Notes"
+            ></button>
+            <button
+              type="button"
+              id="web-search-btn"
+              class="icon-btn"
+              title="Web search — Google (Ctrl+E)"
+              aria-label="Web search"
+            ></button>
             <div class="nav-history" role="group" aria-label="Page history">
               <button id="nav-back-btn" type="button" class="icon-btn nav-btn" title="Back (Alt+Left)" aria-label="Back" disabled></button>
               <button id="nav-forward-btn" type="button" class="icon-btn nav-btn" title="Forward (Alt+Right)" aria-label="Forward" disabled></button>
+              <button id="nav-reload-btn" type="button" class="icon-btn nav-btn" title="Reload (Ctrl+R)" aria-label="Reload"></button>
+              <button id="nav-copy-link-btn" type="button" class="icon-btn nav-btn" title="Copy link — current page URL" aria-label="Copy link"></button>
             </div>
             <span class="chrome-divider" aria-hidden="true"></span>
             <button id="lock-btn" type="button" class="icon-btn lock-btn" title="Lock Aspera Hub (Ctrl+Shift+L)" aria-label="Lock Aspera Hub"></button>
@@ -61,9 +77,6 @@
               <div id="app-chrome-menu" class="chrome-menu hidden" role="menu" aria-label="Aspera Hub menu">
                 <div class="chrome-menu-section" role="group" aria-label="Presence">
                   <div class="chrome-menu-section-title">Presence</div>
-                  <button type="button" data-action="search" class="chrome-menu-item">
-                    <span class="chrome-menu-ico" data-ico="search"></span> Quick search
-                  </button>
                   <button type="button" data-action="focus" class="chrome-menu-item" id="focus-item">
                     <span class="chrome-menu-ico" data-ico="focus"></span> Focus mode
                   </button>
@@ -74,11 +87,11 @@
                 <hr />
                 <div class="chrome-menu-section" role="group" aria-label="Aspera AI">
                   <div class="chrome-menu-section-title">Aspera AI</div>
+                  <button type="button" data-action="aspera-ai" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="spark"></span> Aspera AI…
+                  </button>
                   <button type="button" data-action="catch-up" class="chrome-menu-item">
                     <span class="chrome-menu-ico" data-ico="list"></span> Catch me up
-                  </button>
-                  <button type="button" data-action="summarize" class="chrome-menu-item">
-                    <span class="chrome-menu-ico" data-ico="spark"></span> Summarize selection
                   </button>
                   <button type="button" data-action="ai-settings" class="chrome-menu-item">
                     <span class="chrome-menu-ico" data-ico="aiSettings"></span> AI settings
@@ -87,17 +100,8 @@
                 <hr />
                 <div class="chrome-menu-section" role="group" aria-label="Current app">
                   <div class="chrome-menu-section-title">Current app</div>
-                  <button type="button" data-action="back" class="chrome-menu-item">
-                    <span class="chrome-menu-ico" data-ico="back"></span> Back
-                  </button>
-                  <button type="button" data-action="forward" class="chrome-menu-item">
-                    <span class="chrome-menu-ico" data-ico="forward"></span> Forward
-                  </button>
-                  <button type="button" data-action="reload" class="chrome-menu-item">
-                    <span class="chrome-menu-ico" data-ico="reload"></span> Reload
-                  </button>
-                  <button type="button" data-action="home" class="chrome-menu-item">
-                    <span class="chrome-menu-ico" data-ico="home"></span> Go to home
+                  <button type="button" data-action="copy-link" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="link"></span> Copy link
                   </button>
                   <button type="button" data-action="free-ram" class="chrome-menu-item">
                     <span class="chrome-menu-ico" data-ico="ram"></span> Free RAM
@@ -106,14 +110,11 @@
                 <hr />
                 <div class="chrome-menu-section" role="group" aria-label="Workspace">
                   <div class="chrome-menu-section-title">Workspace</div>
-                  <button type="button" data-action="add-app" class="chrome-menu-item">
-                    <span class="chrome-menu-ico" data-ico="plus"></span> Add app
+                  <button type="button" data-action="notes" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="list"></span> Notes…
                   </button>
                   <button type="button" data-action="profiles" class="chrome-menu-item">
                     <span class="chrome-menu-ico" data-ico="users"></span> Profiles
-                  </button>
-                  <button type="button" data-action="extensions" class="chrome-menu-item">
-                    <span class="chrome-menu-ico" data-ico="puzzle"></span> Extensions
                   </button>
                 </div>
                 <hr />
@@ -130,10 +131,13 @@
                 <button type="button" data-action="check-updates" class="chrome-menu-item">
                   <span class="chrome-menu-ico" data-ico="download"></span> Check for updates
                 </button>
+                <button type="button" data-action="website" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="link"></span> asperahub.com
+                </button>
                 <button type="button" data-action="about" class="chrome-menu-item">
                   <span class="chrome-menu-ico" data-ico="info"></span> About Aspera Hub
                 </button>
-                <div id="chrome-menu-version" class="chrome-menu-version">Aspera Hub</div>
+                <div id="chrome-menu-version" class="chrome-menu-version">Aspera Hub<span class="chrome-menu-site">asperahub.com</span></div>
               </div>
             </div>
           </div>
@@ -154,6 +158,9 @@
               <h1>Aspera Hub</h1>
               <p id="empty-version" class="app-version-label">Version …</p>
               <p>Add WhatsApp, Arattai, Gmail, and Zoho from the Aspera catalog. Up to 10 apps. Names max 10 characters.</p>
+              <p class="empty-site">
+                <a href="https://asperahub.com" id="empty-website-link" class="site-link">asperahub.com</a>
+              </p>
               <button id="empty-add-btn" type="button" class="primary">Add your first app</button>
             </div>
           </div>
@@ -204,6 +211,10 @@
 
           <section class="settings-panel active" data-panel="general" aria-label="General">
           <h3 class="settings-panel-title">General</h3>
+          <p class="hint-text">
+            Product site:
+            <a href="https://asperahub.com" id="settings-general-website-link" class="site-link">asperahub.com</a>
+          </p>
 
           <label class="field">
             <span>Theme</span>
@@ -349,7 +360,8 @@
             Default failover is
             <strong>Gemini → Sarvam → Grok → DeepSeek → SambaNova → OpenRouter → Anthropic</strong>
             — reorder or disable providers below for full control.
-            <strong>Summarize</strong> returns English + Hindi + Marathi, with optional reply drafts.
+            <strong>Summarize / Refine / Suggest reply</strong> always include English,
+            plus up to <strong>2</strong> extra Indian languages you choose below.
           </p>
           <label class="switch-row">
             <input id="set-ai-enabled" type="checkbox" />
@@ -361,8 +373,48 @@
               <option value="en">English</option>
               <option value="hi">Hindi (हिन्दी)</option>
               <option value="mr">Marathi (मराठी)</option>
+              <option value="bn">Bengali (বাংলা)</option>
+              <option value="te">Telugu (తెలుగు)</option>
+              <option value="ta">Tamil (தமிழ்)</option>
+              <option value="gu">Gujarati (ગુજરાતી)</option>
+              <option value="kn">Kannada (ಕನ್ನಡ)</option>
+              <option value="or">Odia (ଓଡ଼ିଆ)</option>
+              <option value="ml">Malayalam (മലയാളം)</option>
             </select>
           </label>
+          <div class="field ai-extra-langs">
+            <span>Also include in Summarize / Refine / Suggest reply</span>
+            <p class="hint-text" style="margin:4px 0 8px;">
+              English is always included. Choose up to 2 more (default Hindi + Marathi).
+            </p>
+            <div class="ai-extra-langs-row">
+              <span class="ai-lang-chip locked" title="Always included">English</span>
+              <select id="set-ai-extra-1" aria-label="Extra language 1">
+                <option value="">None</option>
+                <option value="hi">Hindi (हिन्दी)</option>
+                <option value="mr">Marathi (मराठी)</option>
+                <option value="bn">Bengali (বাংলা)</option>
+                <option value="te">Telugu (తెలుగు)</option>
+                <option value="ta">Tamil (தமிழ்)</option>
+                <option value="gu">Gujarati (ગુજરાતી)</option>
+                <option value="kn">Kannada (ಕನ್ನಡ)</option>
+                <option value="or">Odia (ଓଡ଼ିଆ)</option>
+                <option value="ml">Malayalam (മലയാളം)</option>
+              </select>
+              <select id="set-ai-extra-2" aria-label="Extra language 2">
+                <option value="">None</option>
+                <option value="hi">Hindi (हिन्दी)</option>
+                <option value="mr">Marathi (मराठी)</option>
+                <option value="bn">Bengali (বাংলা)</option>
+                <option value="te">Telugu (తెలుగు)</option>
+                <option value="ta">Tamil (தமிழ்)</option>
+                <option value="gu">Gujarati (ગુજરાતી)</option>
+                <option value="kn">Kannada (ಕನ್ನಡ)</option>
+                <option value="or">Odia (ଓଡ଼ିଆ)</option>
+                <option value="ml">Malayalam (മലയാളം)</option>
+              </select>
+            </div>
+          </div>
           <div class="ai-route-toolbar">
             <div class="ai-route-toolbar-text">
               <strong>Failover order</strong>
@@ -486,12 +538,12 @@
           <label class="field">
             <span>Hibernate after (minutes)</span>
             <input id="set-hibernate" type="number" min="1" max="120" />
-            <p class="hint-text">Unselected apps unload when you switch away. This timer applies to other idle background activity.</p>
+            <p class="hint-text">Recently used tabs stay loaded when you switch away so form drafts are kept. Idle tabs unload after this many minutes.</p>
           </label>
           <label class="field">
             <span>Max warm apps in RAM</span>
             <input id="set-max-warm" type="number" min="1" max="7" />
-            <p class="hint-text">Warm apps stay fully loaded for instant switching (includes the active tab). Default is 5; you can raise up to 7 in Settings. Flame-mark background apps within that limit. Non-warm apps load only when you click them.</p>
+            <p class="hint-text">Warm apps stay fully loaded for instant switching (includes the active tab). Default is 5; you can raise up to 7 in Settings. Flame-mark background apps within that limit. Other recently used tabs also stay resident briefly so CRM/Books drafts are not wiped.</p>
           </label>
           <label class="switch-row">
             <input id="set-consumption" type="checkbox" />
@@ -558,6 +610,8 @@
           <h3 class="settings-panel-title">Updates</h3>
           <p class="settings-banner" id="settings-version-banner">
             You are running <strong id="settings-running-version">Aspera Hub</strong>.
+            Learn more at
+            <a href="https://asperahub.com" id="settings-website-link" class="site-link">asperahub.com</a>.
           </p>
           <label class="switch-row">
             <input id="set-auto-update" type="checkbox" />
@@ -910,6 +964,7 @@
       <div class="lock-card">
         <div class="brand-mark" id="lock-brand" aria-hidden="true"></div>
         <h1>Aspera Hub is locked</h1>
+        <p class="lock-site">asperahub.com</p>
         <input id="lock-password" type="password" placeholder="Password" />
         <button id="unlock-btn" type="button" class="primary">Unlock</button>
         <p id="lock-error" class="error"></p>

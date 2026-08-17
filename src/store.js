@@ -10,8 +10,12 @@ import {
 } from './services.js';
 import { defaultShortcutsMap, migrateShortcutsMap } from './shortcutsConfig.js';
 import { sanitizePinnedPeople } from './guestInbox.js';
+import { isolateSharedZohoMailProfiles } from './zohoMailProfiles.js';
+import { sanitizeNotes } from './notesStore.js';
 import {
+  getAiLanguage,
   sanitizeAiDisabledProviders,
+  sanitizeAiExtraLanguages,
   sanitizeAiProviderOrder,
 } from './ai/catalog.js';
 
@@ -153,7 +157,13 @@ export const DEFAULTS = {
    * @type {Record<string, string>}
    */
   aiProviderModels: {},
-  aiLanguage: 'en', // en | hi | mr
+  aiLanguage: 'en', // Catch me up language (any AI_LANGUAGE_CATALOG id)
+  /**
+   * Extra languages for Summarize / Refine / Suggest reply (max 2).
+   * English is always included. Default Hindi + Marathi.
+   * @type {string[]}
+   */
+  aiExtraLanguages: ['hi', 'mr'],
   /**
    * Custom Aspera AI failover sequence (provider ids).
    * Empty / omitted → built-in default (Gemini → … → Anthropic).
@@ -248,6 +258,12 @@ export const DEFAULTS = {
    * @type {{ id: string, serviceId: string, chatKey: string, name: string, appId?: string }[]}
    */
   pinnedPeople: [],
+
+  /**
+   * Local copy-pad notes (links / repeated text). This PC only.
+   * @type {{ id: string, title: string, body: string, updatedAt: number }[]}
+   */
+  notes: [],
 };
 
 let cache = null;
@@ -271,6 +287,43 @@ function dropRetiredApps(settings) {
     lastActiveServiceId: kept.has(settings.lastActiveServiceId)
       ? settings.lastActiveServiceId
       : null,
+  };
+}
+
+/**
+ * One-shot: remove the retired Canva catalog app from persisted docks so
+ * existing installs lose the Canva icon (link tabs to canva.com still work).
+ */
+function migrateRemoveCanvaApp(settings) {
+  if (settings.removeCanvaAppV1) return settings;
+  const instances = settings.serviceInstances || [];
+  const canvaIds = new Set(
+    instances.filter((i) => i?.appId === 'canva').map((i) => i.id),
+  );
+  if (!canvaIds.size) {
+    return { ...settings, removeCanvaAppV1: true };
+  }
+
+  const serviceLabels = { ...(settings.serviceLabels || {}) };
+  const serviceConfigs = { ...(settings.serviceConfigs || {}) };
+  const lastServiceUrls = { ...(settings.lastServiceUrls || {}) };
+  for (const id of canvaIds) {
+    delete serviceLabels[id];
+    delete serviceConfigs[id];
+    delete lastServiceUrls[id];
+  }
+
+  return {
+    ...settings,
+    removeCanvaAppV1: true,
+    serviceInstances: instances.filter((i) => !canvaIds.has(i.id)),
+    serviceOrder: (settings.serviceOrder || []).filter((id) => !canvaIds.has(id)),
+    serviceLabels,
+    serviceConfigs,
+    lastServiceUrls,
+    lastActiveServiceId: canvaIds.has(settings.lastActiveServiceId)
+      ? null
+      : settings.lastActiveServiceId,
   };
 }
 
@@ -543,25 +596,37 @@ export function loadSettings() {
   try {
     const raw = fs.readFileSync(settingsPath(), 'utf8');
     const parsed = JSON.parse(raw);
-    cache = migrateWarmKeepAlive(
-      migrateUnifyLinkHandling(
-        migrateProfiles(
-          dropRetiredApps({
-            ...DEFAULTS,
-            ...parsed,
-            shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
-            serviceLabels: parsed.serviceLabels || {},
-            serviceConfigs: parsed.serviceConfigs || {},
-            serviceInstances: parsed.serviceInstances || [],
-            profiles: parsed.profiles,
-            pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
-            aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
-            aiDisabledProviders: sanitizeAiDisabledProviders(
-              parsed.aiDisabledProviders,
+    cache = isolateSharedZohoMailProfiles(
+      migrateWarmKeepAlive(
+        migrateUnifyLinkHandling(
+          migrateProfiles(
+            dropRetiredApps(
+              migrateRemoveCanvaApp({
+                ...DEFAULTS,
+                ...parsed,
+                shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
+                serviceLabels: parsed.serviceLabels || {},
+                serviceConfigs: parsed.serviceConfigs || {},
+                serviceInstances: parsed.serviceInstances || [],
+                profiles: parsed.profiles,
+                pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
+                notes: sanitizeNotes(parsed.notes || []),
+                aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
+                aiDisabledProviders: sanitizeAiDisabledProviders(
+                  parsed.aiDisabledProviders,
+                ),
+                aiLanguage: getAiLanguage(parsed.aiLanguage || 'en').id,
+                aiExtraLanguages: sanitizeAiExtraLanguages(
+                  Object.prototype.hasOwnProperty.call(parsed, 'aiExtraLanguages')
+                    ? parsed.aiExtraLanguages
+                    : undefined,
+                ),
+              }),
             ),
-          }),
+          ),
         ),
       ),
+      { makeProfile },
     );
     // Persist migration so partitions/profileIds are stable next launch.
     try {
@@ -591,6 +656,18 @@ export function saveSettings(patch) {
     cache.aiDisabledProviders = sanitizeAiDisabledProviders(
       patch.aiDisabledProviders,
     );
+  }
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'aiLanguage')) {
+    cache.aiLanguage = getAiLanguage(patch.aiLanguage || 'en').id;
+  }
+  if (
+    patch &&
+    Object.prototype.hasOwnProperty.call(patch, 'aiExtraLanguages')
+  ) {
+    cache.aiExtraLanguages = sanitizeAiExtraLanguages(patch.aiExtraLanguages);
+  }
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'notes')) {
+    cache.notes = sanitizeNotes(patch.notes);
   }
   try {
     fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });

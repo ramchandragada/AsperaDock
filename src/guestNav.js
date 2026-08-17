@@ -169,6 +169,93 @@ export function mustKeepGoogleUrlInApp(url) {
 }
 
 /**
+ * External IdP / SSO hosts that must stay in a real popup — never fold into
+ * a Hub link tab (would break opener handoff and one-time OAuth codes).
+ */
+export function isIdentityProviderUrl(url) {
+  if (!url) return false;
+  if (isGoogleOauthClientUrl(url)) return true;
+  if (mustKeepGoogleUrlInApp(url)) return true;
+  try {
+    const host = new URL(String(url)).hostname.toLowerCase();
+    if (host.startsWith('accounts.')) return true;
+    if (host === 'login.microsoftonline.com' || host.endsWith('.login.microsoftonline.com')) {
+      return true;
+    }
+    if (host === 'login.live.com' || host.endsWith('.login.live.com')) return true;
+    if (host === 'appleid.apple.com' || host.endsWith('.appleid.apple.com')) return true;
+    if (host === 'auth0.com' || host.endsWith('.auth0.com')) return true;
+    if (host === 'okta.com' || host.endsWith('.okta.com')) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * OAuth redirect that still carries an authorization code / id_token.
+ * The popup must consume these; loadURL into the parent would double-spend.
+ */
+export function isOauthCallbackUrl(url) {
+  try {
+    const u = new URL(String(url || ''));
+    if (u.searchParams.has('code') || u.searchParams.has('id_token')) return true;
+    if (
+      u.searchParams.has('state') &&
+      /\/(oauth|callback|redirect|authorize)/i.test(u.pathname)
+    ) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Hub link tabs (Web Search → Canva, etc.): when should we fold a popup URL
+ * back into the dock tab?
+ *
+ * Unlike isAuthOrLoginUrl (used for "don't restore as home"), third-party
+ * paths like canva.com/login/... are adoptable once they leave the IdP —
+ * that is where OAuth often finishes while the parent tab stays blank.
+ */
+export function shouldAdoptLinkTabPopupUrl(popupUrl) {
+  const raw = String(popupUrl || '').trim();
+  if (!raw.startsWith('http')) return false;
+  if (isIdentityProviderUrl(raw)) return false;
+  if (isOauthCallbackUrl(raw)) return false;
+  // Keep Google Search / Maps / etc. in the popup until a third-party app lands.
+  if (isGoogleOwnedUrl(raw)) return false;
+  return true;
+}
+
+/**
+ * Link-tab window.open policy: real popup for IdP/Google auth; otherwise
+ * stay in the same Hub tab. Google /url wrappers unwrap to the destination.
+ * @returns {'popup'|'in-tab'} 
+ */
+export function linkTabWindowOpenAction(url) {
+  const raw = String(url || '').trim();
+  if (!raw || raw === 'about:blank' || raw.startsWith('about:blank')) {
+    return 'popup';
+  }
+  if (!raw.startsWith('http')) return 'in-tab';
+  const outbound = extractGoogleOutboundUrl(raw);
+  if (outbound) {
+    // Organic search results → load destination in the same tab (no floating popup).
+    if (isIdentityProviderUrl(outbound) || mustKeepGoogleUrlInApp(outbound)) {
+      return 'popup';
+    }
+    return 'in-tab';
+  }
+  if (isIdentityProviderUrl(raw)) return 'popup';
+  if (isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) return 'popup';
+  if (mustKeepGoogleUrlInApp(raw)) return 'popup';
+  return 'in-tab';
+}
+
+/**
  * True only for http(s) links that are safe to hand to the OS browser.
  * Blocks Google session/SSO URLs that 400 outside Hub.
  */
@@ -249,12 +336,153 @@ export function isZohoOwnedUrl(url) {
   }
 }
 
+/** Static/CDN hosts — never become Hub app-bar tabs. */
+export function isZohoAssetHost(url) {
+  try {
+    const host = new URL(String(url || '')).hostname.toLowerCase();
+    return (
+      host.includes('zohocdn.') ||
+      host.includes('zohostatic.') ||
+      host.includes('zohowebstatic.') ||
+      host.includes('zohopublic.')
+    );
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Zoho CRM / Books / One multi-screen workflows need shared-login Hub tabs —
+ * like WhatsApp/Arattai third-party links. CDN/auth URLs stay out of the
+ * app bar (those caused blank/reload loops when mistaken for deep links).
+ */
+export function shouldOpenZohoSharedDeepLinkAsHubTab(service, url) {
+  const appId = String(service?.appId || '');
+  if (appId !== 'zoho-crm' && appId !== 'zoho-books' && appId !== 'zoho-one') {
+    return false;
+  }
+  const href = String(url || '');
+  if (!href.startsWith('http')) return false;
+  if (isAuthOrLoginUrl(href)) return false;
+  if (isZohoAssetHost(href)) return false;
+  // Zoho One fragile portal deep routes stay in-place (blank/reload loops).
+  if (appId === 'zoho-one' && isFragileZohoOneDeepUrl(href)) return false;
+  if (!isZohoOwnedUrl(href) && !isInternalUrl(href, service)) return false;
+  return true;
+}
+
+/** @deprecated Use shouldOpenZohoSharedDeepLinkAsHubTab */
+export function shouldOpenZohoCrmDeepLinkAsHubTab(service, url) {
+  return shouldOpenZohoSharedDeepLinkAsHubTab(service, url);
+}
+
+/**
+ * Extension sign-in / OAuth popups (Grammarly, password managers, etc.).
+ * These must open as real floating windows — never Hub tabs or denied handles.
+ */
+export function isExtensionAuthPopupUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw || raw === 'about:blank' || raw.startsWith('about:blank')) {
+    return false;
+  }
+  if (raw.startsWith('chrome-extension://')) return true;
+  if (!raw.startsWith('http')) return false;
+  if (isIdentityProviderUrl(raw)) return true;
+  if (isAuthOrLoginUrl(raw)) return true;
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    // Grammarly uses several first-party hosts outside /login paths.
+    if (host === 'grammarly.com' || host.endsWith('.grammarly.com')) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
+/** WhatsApp / Arattai — messengers must never be replaced by Drive/Docs/etc. */
+export function isMessagingAppId(appId) {
+  const id = String(appId || '');
+  return id === 'whatsapp' || id === 'arattai';
+}
+
+/**
+ * URLs allowed to load inside a WhatsApp or Arattai guest tab.
+ * Everything else (Google Drive, Docs, news, Canva, …) opens as a Hub tab.
+ * Do NOT use isInternalUrl here — that allowlist includes google.com for Gmail.
+ */
+export function isAllowedMessagingTabUrl(service, url) {
+  if (!service || !url || isForbiddenGuestNavigation(url)) return false;
+  if (!isMessagingAppId(service.appId)) return false;
+  try {
+    const u = new URL(String(url));
+    const protocol = u.protocol.toLowerCase();
+    if (protocol === 'about:' || protocol === 'blob:' || protocol === 'data:') {
+      return true;
+    }
+    const host = u.hostname.toLowerCase();
+    if (service.appId === 'arattai') {
+      return host === 'arattai.in' || host.endsWith('.arattai.in');
+    }
+    if (service.appId === 'whatsapp') {
+      return (
+        host === 'whatsapp.com' ||
+        host.endsWith('.whatsapp.com') ||
+        host === 'whatsapp.net' ||
+        host.endsWith('.whatsapp.net')
+      );
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * How Gmail should treat window.open / outbound targets under Hub-tab mode.
+ *
+ * Gmail often opens `about:blank` first (then navigates). That must stay a
+ * brief real popup so the opener script can assign a URL — a later adopt
+ * folds it into a Hub tab. OAuth/SSO client hosts also need a real popup.
+ * Every other http(s) link becomes a Hub app-bar tab (never a blank floating
+ * Aspera Hub window left on screen).
+ *
+ * @returns {'blank-popup'|'oauth-popup'|'hub-tab'|'deny'}
+ */
+export function gmailWindowOpenAction(url) {
+  const raw = String(url || '');
+  if (!raw || raw === 'about:blank' || raw.startsWith('about:blank')) {
+    return 'blank-popup';
+  }
+  if (!/^https?:\/\//i.test(raw)) return 'deny';
+
+  let target = raw;
+  try {
+    const unwrapped = extractGoogleOutboundUrl(raw);
+    if (unwrapped) target = unwrapped;
+  } catch {
+    // ignore
+  }
+
+  if (isGoogleOauthClientUrl(target)) return 'oauth-popup';
+  if (isAuthOrLoginUrl(target) && isGoogleOwnedUrl(target)) return 'oauth-popup';
+  return 'hub-tab';
+}
+
 /**
  * Same product/ecosystem as the catalog app — must stay in that Hub tab
  * (or a real auth popup). Never becomes a surprise top-bar link tab.
+ * Exception: Zoho CRM/Books/One deep links may open as shared Hub tabs (see
+ * shouldOpenZohoSharedDeepLinkAsHubTab).
  */
 export function isSameEcosystemUrl(service, url) {
   if (!service || !url) return false;
+  // WhatsApp / Arattai: only first-party messenger hosts — never Google via
+  // INTERNAL_HOSTS (that list exists for Gmail and was swallowing Drive clicks).
+  if (isMessagingAppId(service.appId)) {
+    return isAllowedMessagingTabUrl(service, url);
+  }
   if (isInternalUrl(url, service)) return true;
   const appId = String(service.appId || '');
   if (appId === 'gmail' && isGoogleOwnedUrl(url)) return true;

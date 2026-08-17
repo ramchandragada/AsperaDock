@@ -5,6 +5,7 @@ export default defineConfig({
     rollupOptions: {
       // Bundle @sentry into main.js — externalizing it left require() broken in
       // the packaged asar (OnlyLoadAppFromAsar + no node_modules/@sentry).
+      // pdfjs loads at runtime from resources/pdfjs-runtime (see forge extraResource).
       external: ['electron'],
     },
   },

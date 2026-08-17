@@ -12,6 +12,11 @@ import {
   isGoogleOwnedUrl,
   mustKeepGoogleUrlInApp,
   shouldOpenInSystemBrowser,
+  isMessagingAppId,
+  isAllowedMessagingTabUrl,
+  isSameEcosystemUrl,
+  gmailWindowOpenAction,
+  isExtensionAuthPopupUrl,
 } from '../src/guestNav.js';
 
 test('isForbiddenGuestNavigation blocks file and javascript', () => {
@@ -114,4 +119,79 @@ test('Google SSO/consent URLs must stay in Hub (not Chrome)', () => {
   assert.equal(shouldOpenInSystemBrowser('https://accounts.google.com/o/oauth2/v2/auth'), false);
   assert.equal(shouldOpenInSystemBrowser('https://cybercrime.gov.in/'), true);
   assert.equal(shouldOpenInSystemBrowser('https://mail.google.com/mail/u/0/#inbox'), true);
+});
+
+test('messaging apps: Drive/Google must not stay in WhatsApp or Arattai tab', () => {
+  const arattai = { url: 'https://web.arattai.in', appId: 'arattai' };
+  const wa = { url: 'https://web.whatsapp.com', appId: 'whatsapp' };
+  const drive =
+    'https://drive.google.com/file/d/1lyfP_FwVO_vcT3Q7UFpkDcVxhryQaDgo/view?usp=sharing';
+  const accounts = 'https://accounts.google.com/v3/signin/identifier';
+  assert.equal(isMessagingAppId('arattai'), true);
+  assert.equal(isMessagingAppId('whatsapp'), true);
+  assert.equal(isMessagingAppId('gmail'), false);
+  assert.equal(isAllowedMessagingTabUrl(arattai, 'https://web.arattai.in/app'), true);
+  assert.equal(isAllowedMessagingTabUrl(arattai, 'https://files.arattai.in/webdownload?x=1'), true);
+  assert.equal(isAllowedMessagingTabUrl(arattai, drive), false);
+  assert.equal(isAllowedMessagingTabUrl(arattai, accounts), false);
+  assert.equal(isAllowedMessagingTabUrl(wa, 'https://web.whatsapp.com/'), true);
+  assert.equal(isAllowedMessagingTabUrl(wa, 'https://mmg.whatsapp.net/v/t62.x'), true);
+  assert.equal(isAllowedMessagingTabUrl(wa, drive), false);
+  assert.equal(isAllowedMessagingTabUrl(wa, accounts), false);
+});
+
+test('messaging apps: Google is not same-ecosystem (Hub tab, not in-chat load)', () => {
+  const arattai = { url: 'https://web.arattai.in', appId: 'arattai' };
+  const wa = { url: 'https://web.whatsapp.com', appId: 'whatsapp' };
+  const gmail = { url: 'https://mail.google.com', appId: 'gmail' };
+  const drive = 'https://drive.google.com/file/d/abc/view';
+  // INTERNAL_HOSTS includes google.com — must NOT make Drive “in-app” for messengers.
+  assert.equal(isInternalUrl(drive, arattai), true);
+  assert.equal(isSameEcosystemUrl(arattai, drive), false);
+  assert.equal(isSameEcosystemUrl(wa, drive), false);
+  assert.equal(isSameEcosystemUrl(arattai, 'https://web.arattai.in/chats'), true);
+  assert.equal(isSameEcosystemUrl(wa, 'https://web.whatsapp.com/'), true);
+  // Gmail still treats Google as ecosystem.
+  assert.equal(isSameEcosystemUrl(gmail, drive), true);
+});
+
+test('gmailWindowOpenAction: email links → hub-tab; OAuth → popup; blank → blank-popup', () => {
+  assert.equal(gmailWindowOpenAction('about:blank'), 'blank-popup');
+  assert.equal(gmailWindowOpenAction(''), 'blank-popup');
+  assert.equal(
+    gmailWindowOpenAction('https://accounts.google.com/o/oauth2/v2/auth?client_id=x'),
+    'oauth-popup',
+  );
+  assert.equal(
+    gmailWindowOpenAction('https://2507573.apps.googleusercontent.com/'),
+    'oauth-popup',
+  );
+  assert.equal(
+    gmailWindowOpenAction('https://drive.google.com/file/d/abc/view'),
+    'hub-tab',
+  );
+  assert.equal(
+    gmailWindowOpenAction('https://www.flexiloans.com/dashboard'),
+    'hub-tab',
+  );
+  assert.equal(
+    gmailWindowOpenAction(
+      'https://www.google.com/url?q=https%3A%2F%2Fcybercrime.gov.in%2F&sa=D',
+    ),
+    'hub-tab',
+  );
+  assert.equal(gmailWindowOpenAction('javascript:alert(1)'), 'deny');
+});
+
+test('isExtensionAuthPopupUrl detects extension login targets', () => {
+  assert.equal(
+    isExtensionAuthPopupUrl('chrome-extension://kbfnbcaeplbcioakkpcpgfkobkghlhen/src/popup.html'),
+    true,
+  );
+  assert.equal(isExtensionAuthPopupUrl('https://account.grammarly.com/login'), true);
+  assert.equal(isExtensionAuthPopupUrl('https://www.grammarly.com/signup'), true);
+  assert.equal(isExtensionAuthPopupUrl('https://accounts.google.com/o/oauth2/v2/auth'), true);
+  assert.equal(isExtensionAuthPopupUrl('https://web.whatsapp.com/'), false);
+  assert.equal(isExtensionAuthPopupUrl('https://news.example.com/article'), false);
+  assert.equal(isExtensionAuthPopupUrl('about:blank'), false);
 });

@@ -1,5 +1,22 @@
+const fs = require('node:fs');
+const path = require('node:path');
 const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
+
+function syncPdfjsRuntime() {
+  const src = path.join(
+    __dirname,
+    'node_modules',
+    'pdfjs-dist',
+    'legacy',
+    'build',
+  );
+  const dest = path.join(__dirname, 'packaging', 'pdfjs-runtime');
+  fs.mkdirSync(dest, { recursive: true });
+  for (const file of ['pdf.mjs', 'pdf.worker.mjs']) {
+    fs.copyFileSync(path.join(src, file), path.join(dest, file));
+  }
+}
 
 module.exports = {
   packagerConfig: {
@@ -22,7 +39,14 @@ module.exports = {
       './assets/icon-256.png',
       './assets/icon-512.png',
       './packaging/asperadock-wrapper.sh',
+      // Loaded at runtime by Aspera AI PDF text extract (not bundled into asar).
+      './packaging/pdfjs-runtime',
     ],
+  },
+  hooks: {
+    generateAssets: async () => {
+      syncPdfjsRuntime();
+    },
   },
   rebuildConfig: {},
   makers: [
@@ -82,6 +106,21 @@ module.exports = {
           },
           {
             entry: 'src/chromeMenuPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/findBarPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/webSearchPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/notesPreload.js',
             config: 'vite.preload.config.mjs',
             target: 'preload',
           },

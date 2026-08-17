@@ -1,44 +1,60 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { applyGoogleRequestHeaders } from '../src/vendors/googleHeaders.js';
+import {
+  applyGoogleRequestHeaders,
+  isGoogleInsecureBrowserErrorUrl,
+} from '../src/vendors/googleHeaders.js';
 import { assertHttpsUrl } from '../src/netTrust.js';
 
-test('Google accounts host gets Firefox UA and no Client Hints', () => {
+const opts = {
+  chromeUA: 'CHROME',
+  firefoxAccountsUA: 'FIREFOX',
+  secChUa: '"Google Chrome";v="138"',
+  enabled: true,
+};
+
+test('accounts.google.com always gets Firefox UA (secure-browser gate)', () => {
   const out = applyGoogleRequestHeaders(
     { 'User-Agent': 'Chrome' },
     'https://accounts.google.com/signin',
-    {
-      chromeUA: 'CHROME',
-      firefoxAccountsUA: 'FIREFOX',
-      secChUa: '"Google Chrome";v="138"',
-      enabled: true,
-    },
+    opts,
   );
   assert.equal(out['User-Agent'], 'FIREFOX');
   assert.equal(out['sec-ch-ua'], undefined);
 });
 
-test('other Google hosts get Chrome Client Hints', () => {
+test('third-party OAuth referer still uses Firefox on accounts', () => {
   const out = applyGoogleRequestHeaders(
-    {},
-    'https://mail.google.com/',
-    {
-      chromeUA: 'CHROME',
-      firefoxAccountsUA: 'FIREFOX',
-      secChUa: '"Google Chrome";v="138"',
-      enabled: true,
-    },
+    { Referer: 'https://www.canva.com/login' },
+    'https://accounts.google.com/o/oauth2/v2/auth?client_id=x&redirect_uri=https%3A%2F%2Fwww.canva.com%2Flogin',
+    opts,
   );
+  assert.equal(out['User-Agent'], 'FIREFOX');
+});
+
+test('other Google hosts get Chrome Client Hints', () => {
+  const out = applyGoogleRequestHeaders({}, 'https://mail.google.com/', opts);
   assert.equal(out['User-Agent'], 'CHROME');
   assert.equal(out['sec-ch-ua'], '"Google Chrome";v="138"');
+});
+
+test('detect Google insecure-browser error URLs', () => {
+  assert.equal(
+    isGoogleInsecureBrowserErrorUrl(
+      'https://accounts.google.com/signin/rejected?client_id=x',
+    ),
+    true,
+  );
+  assert.equal(
+    isGoogleInsecureBrowserErrorUrl('https://accounts.google.com/signin'),
+    false,
+  );
 });
 
 test('spoof can be disabled', () => {
   const input = { 'User-Agent': 'keep' };
   const out = applyGoogleRequestHeaders(input, 'https://accounts.google.com/', {
-    chromeUA: 'CHROME',
-    firefoxAccountsUA: 'FIREFOX',
-    secChUa: 'X',
+    ...opts,
     enabled: false,
   });
   assert.equal(out['User-Agent'], 'keep');
@@ -46,5 +62,7 @@ test('spoof can be disabled', () => {
 
 test('assertHttpsUrl rejects http', () => {
   assert.throws(() => assertHttpsUrl('http://evil/x', 'Update artifact URL'));
-  assert.doesNotThrow(() => assertHttpsUrl('https://good.example/x.deb', 'Update artifact URL'));
+  assert.doesNotThrow(() =>
+    assertHttpsUrl('https://good.example/x.deb', 'Update artifact URL'),
+  );
 });

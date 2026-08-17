@@ -20,23 +20,29 @@ clear_stale_singleton() {
   lock="$UD/SingletonLock"
   cookie="$UD/SingletonCookie"
   socket="$UD/SingletonSocket"
-  stale=0
 
-  if [ -L "$socket" ] && [ ! -e "$socket" ]; then
-    stale=1
-  fi
-
+  # Live lock owner → leave every singleton file alone (dangling socket must
+  # not wipe a live SingletonLock).
   if [ -L "$lock" ]; then
     target=$(readlink "$lock" 2>/dev/null || true)
     pid=${target##*-}
     case "$pid" in
       ''|*[!0-9]*) ;;
       *)
-        if ! kill -0 "$pid" 2>/dev/null; then
-          stale=1
+        if kill -0 "$pid" 2>/dev/null; then
+          return 0
         fi
         ;;
     esac
+  fi
+
+  stale=0
+  if [ -L "$lock" ]; then
+    # Lock present but owner is dead (or pid unreadable) — clean.
+    stale=1
+  fi
+  if [ -L "$socket" ] && [ ! -e "$socket" ]; then
+    stale=1
   fi
 
   if [ "$stale" -eq 1 ]; then

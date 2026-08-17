@@ -22,14 +22,14 @@ export function isCustomAppId(appId) {
 }
 
 /**
- * Zoho products: multiple Hub tabs may share one profile/login so Sales, Leads,
- * Calls, etc. can stay open side-by-side (unlike WhatsApp/Gmail multi-account).
+ * Zoho CRM / One / Books: multiple Hub tabs may share one profile/login so
+ * Sales, Leads, etc. stay open side-by-side.
+ * Zoho Mail is like Gmail — each mailbox needs its own session.
  */
 export function canShareProfileAcrossInstances(appId) {
   return (
     appId === 'zoho-crm' ||
     appId === 'zoho-one' ||
-    appId === 'zoho-mail' ||
     appId === 'zoho-books'
   );
 }
