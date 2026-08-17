@@ -8,6 +8,8 @@ Self-contained `index.html` (inline CSS/JS), self-hosted Inter + Space Grotesk l
 
 GitHub Pages deploys the `website/` folder from **master** (`.github/workflows/website.yml`). `scripts/deploy.mjs` ships the Electron `.deb` only — it does not publish this site.
 
+Responsive for phones, tablets, desktops, and landscape (safe-area insets, touch targets, scrollable compare table, mobile nav).
+
 ## Local preview
 
 ```bash
