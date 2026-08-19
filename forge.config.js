@@ -130,6 +130,11 @@ module.exports = {
             target: 'preload',
           },
           {
+            entry: 'src/downloadShelfPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
             entry: 'src/aiResultPreload.js',
             config: 'vite.preload.config.mjs',
             target: 'preload',

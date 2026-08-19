@@ -54,7 +54,7 @@ export const DEFAULTS = {
 
   // Downloads
   downloadPath: '',
-  openFolderOnDownload: true,
+  openFolderOnDownload: false,
   openFileOnDownload: false,
 
   // Startup & window
