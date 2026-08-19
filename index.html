@@ -49,7 +49,10 @@
             <button id="lock-btn" type="button" class="icon-btn lock-btn" title="Lock Aspera Hub (Ctrl+Shift+L)" aria-label="Lock Aspera Hub"></button>
             <button id="add-app-btn" type="button" class="icon-btn add-app-btn" title="Add app"></button>
             <span class="chrome-divider" aria-hidden="true"></span>
-            <button id="downloads-btn" type="button" class="icon-btn" title="Open Downloads folder" aria-label="Open Downloads folder"></button>
+            <button id="downloads-btn" type="button" class="icon-btn badge-host" title="Recent downloads" aria-label="Recent downloads">
+              <span class="icon-slot"></span>
+              <span id="download-badge" class="global-badge hidden">0</span>
+            </button>
             <button id="extensions-btn" type="button" class="icon-btn" title="Extensions" aria-label="Extensions"></button>
             <button id="check-updates-btn" type="button" class="icon-btn" title="Check for updates" aria-label="Check for updates"></button>
             <div class="menu-wrap">
@@ -282,8 +285,9 @@
             </div>
             <p class="hint-text">Leave blank to ask location every time you download a file.</p>
           </label>
-          <label class="check"><input id="set-open-folder" type="checkbox" /> Open folder on finish</label>
-          <label class="check"><input id="set-open-file" type="checkbox" /> Open file on finish</label>
+          <label class="check"><input id="set-open-folder" type="checkbox" /> Open folder when a download finishes</label>
+          <label class="check"><input id="set-open-file" type="checkbox" /> Open file when a download finishes</label>
+          <p class="hint-text">By default, finished downloads appear in the toolbar download menu — like Chrome.</p>
           </section>
 
           <section class="settings-panel" data-panel="startup" aria-label="Startup and window" hidden>
