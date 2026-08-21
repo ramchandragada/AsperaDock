@@ -22,17 +22,21 @@ test('Gmail treats Google hosts as same ecosystem (no surprise Hub tabs)', () =>
   assert.equal(isSameEcosystemUrl(gmail, 'https://www.canva.com/design/x'), false);
 });
 
-test('Zoho Books/CRM treat Zoho hosts as same ecosystem', () => {
+test('Zoho Books/CRM/WorkDrive treat Zoho hosts as same ecosystem', () => {
   const books = { appId: 'zoho-books', url: 'https://books.zoho.in/' };
+  const drive = { appId: 'zoho-workdrive', url: 'https://workdrive.zoho.in/' };
   assert.equal(isZohoOwnedUrl('https://books.zoho.in/app'), true);
+  assert.equal(isZohoOwnedUrl('https://workdrive.zoho.in/'), true);
   assert.equal(isZohoOwnedUrl('https://accounts.zoho.in/signin'), true);
   assert.equal(isSameEcosystemUrl(books, 'https://books.zoho.in/app'), true);
+  assert.equal(isSameEcosystemUrl(drive, 'https://workdrive.zoho.in/home'), true);
   assert.equal(isSameEcosystemUrl(books, 'https://www.canva.com'), false);
 });
 
-test('Zoho CRM/Books/One deep links may open as shared Hub tabs; assets and auth may not', () => {
+test('Zoho CRM/Books/WorkDrive/One deep links may open as shared Hub tabs; assets and auth may not', () => {
   const crm = { appId: 'zoho-crm', url: 'https://crm.zoho.in/' };
   const books = { appId: 'zoho-books', url: 'https://books.zoho.in/' };
+  const drive = { appId: 'zoho-workdrive', url: 'https://workdrive.zoho.in/' };
   const one = { appId: 'zoho-one', url: 'https://one.zoho.in/' };
   assert.equal(
     shouldOpenZohoSharedDeepLinkAsHubTab(
@@ -45,6 +49,13 @@ test('Zoho CRM/Books/One deep links may open as shared Hub tabs; assets and auth
     shouldOpenZohoSharedDeepLinkAsHubTab(
       books,
       'https://books.zoho.in/app/invoice/12345',
+    ),
+    true,
+  );
+  assert.equal(
+    shouldOpenZohoSharedDeepLinkAsHubTab(
+      drive,
+      'https://writer.zoho.in/writer/open/abc',
     ),
     true,
   );

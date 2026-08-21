@@ -58,7 +58,7 @@ module.exports = {
           productName: 'Aspera Hub',
           genericName: 'Aspera Hub',
           description:
-            'Aspera Hub — free Linux company workspace for WhatsApp, Arattai, Google Workspace, and Zoho',
+            'Aspera Hub — free Linux company workspace for WhatsApp, Arattai, Google Workspace, and Zoho (Mail, CRM, Books, WorkDrive, One)',
           categories: ['Office', 'Network'],
           section: 'utils',
           maintainer: 'Aspera <support@aspera.local>',
@@ -75,7 +75,7 @@ module.exports = {
             'libnotify4',
           ],
           productDescription:
-            'Aspera Hub — free Linux company workspace for WhatsApp, Arattai, Google Workspace, and Zoho. Tuned for Linux Mint (Cinnamon & XFCE).',
+            'Aspera Hub — free Linux company workspace for WhatsApp, Arattai, Google Workspace, and Zoho (Mail, CRM, Books, WorkDrive, One). Tuned for Linux Mint (Cinnamon & XFCE).',
         },
       },
     },
