@@ -21,9 +21,10 @@ test('shouldRunPortalBlankRecovery only for Zoho One portal', () => {
   assert.equal(shouldRunPortalBlankRecovery(null), false);
 });
 
-test('shouldSkipBlankHeuristicReload for CRM and Books forms', () => {
+test('shouldSkipBlankHeuristicReload for CRM, Books, and WorkDrive', () => {
   assert.equal(shouldSkipBlankHeuristicReload({ appId: 'zoho-crm' }), true);
   assert.equal(shouldSkipBlankHeuristicReload({ appId: 'zoho-books' }), true);
+  assert.equal(shouldSkipBlankHeuristicReload({ appId: 'zoho-workdrive' }), true);
   assert.equal(shouldSkipBlankHeuristicReload({ appId: 'zoho-one' }), false);
   assert.equal(shouldSkipBlankHeuristicReload({ appId: 'gmail' }), false);
 });
@@ -64,6 +65,7 @@ test('defaultKeepWarmForApp messaging and Zoho form apps', () => {
   assert.equal(defaultKeepWarmForApp('zoho-crm'), true);
   assert.equal(defaultKeepWarmForApp('zoho-one'), true);
   assert.equal(defaultKeepWarmForApp('zoho-books'), true);
+  assert.equal(defaultKeepWarmForApp('zoho-workdrive'), true);
   assert.equal(defaultKeepWarmForApp('gmail'), false);
 });
 

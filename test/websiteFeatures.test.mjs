@@ -31,6 +31,7 @@ const REQUIRED = [
   'Zoho Mail',
   'Zoho CRM',
   'Zoho Books',
+  'Zoho WorkDrive',
   'Zoho One',
   'WhatsApp Safe Mode',
   '5 by default, up to 7',

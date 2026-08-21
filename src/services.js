@@ -22,15 +22,16 @@ export function isCustomAppId(appId) {
 }
 
 /**
- * Zoho CRM / One / Books: multiple Hub tabs may share one profile/login so
- * Sales, Leads, etc. stay open side-by-side.
+ * Zoho CRM / One / Books / WorkDrive: multiple Hub tabs may share one
+ * profile/login so Sales, files, etc. stay open side-by-side.
  * Zoho Mail is like Gmail — each mailbox needs its own session.
  */
 export function canShareProfileAcrossInstances(appId) {
   return (
     appId === 'zoho-crm' ||
     appId === 'zoho-one' ||
-    appId === 'zoho-books'
+    appId === 'zoho-books' ||
+    appId === 'zoho-workdrive'
   );
 }
 
@@ -107,6 +108,15 @@ export const APP_CATALOG = [
     logo: 'zoho-books',
   },
   {
+    appId: 'zoho-workdrive',
+    name: 'WorkDrive',
+    title: 'Zoho WorkDrive',
+    // India DC file workspace — same SSO as CRM/Books/One.
+    url: 'https://workdrive.zoho.in/',
+    color: '#00A7B5',
+    logo: 'zoho-workdrive',
+  },
+  {
     appId: 'zoho-one',
     name: 'Zoho One',
     title: 'Zoho One',
@@ -159,6 +169,7 @@ export function defaultInstanceName(entry, index) {
     'zoho-mail': 'ZMail',
     'zoho-crm': 'CRM',
     'zoho-books': 'Books',
+    'zoho-workdrive': 'Drive',
     'zoho-one': 'ZohoOne',
     custom: 'Custom',
   }[entry.appId] || clampAppName(entry.name, 7);

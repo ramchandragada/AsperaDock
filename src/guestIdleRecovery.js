@@ -30,7 +30,13 @@ export function shouldRunPortalBlankRecovery(service) {
  */
 export function shouldSkipBlankHeuristicReload(service) {
   const id = service?.appId;
-  if (id === 'zoho-crm' || id === 'zoho-books') return true;
+  if (
+    id === 'zoho-crm' ||
+    id === 'zoho-books' ||
+    id === 'zoho-workdrive'
+  ) {
+    return true;
+  }
   // Web Search / ad-hoc link tabs (Canva, etc.): post-login SPAs are often
   // white-heavy; soft-reload mid-hydrate leaves a permanent blank pane.
   if (service?.isCustom || service?.linkTab || id === 'custom') return true;
