@@ -11,6 +11,7 @@ import {
 import { defaultShortcutsMap, migrateShortcutsMap } from './shortcutsConfig.js';
 import { sanitizePinnedPeople } from './guestInbox.js';
 import { isolateSharedZohoMailProfiles } from './zohoMailProfiles.js';
+import { isolateSharedZohoWorkspaceProfiles } from './zohoWorkspaceProfiles.js';
 import { sanitizeNotes } from './notesStore.js';
 import {
   getAiLanguage,
@@ -597,34 +598,37 @@ export function loadSettings() {
     const raw = fs.readFileSync(settingsPath(), 'utf8');
     const parsed = JSON.parse(raw);
     cache = isolateSharedZohoMailProfiles(
-      migrateWarmKeepAlive(
-        migrateUnifyLinkHandling(
-          migrateProfiles(
-            dropRetiredApps(
-              migrateRemoveCanvaApp({
-                ...DEFAULTS,
-                ...parsed,
-                shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
-                serviceLabels: parsed.serviceLabels || {},
-                serviceConfigs: parsed.serviceConfigs || {},
-                serviceInstances: parsed.serviceInstances || [],
-                profiles: parsed.profiles,
-                pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
-                notes: sanitizeNotes(parsed.notes || []),
-                aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
-                aiDisabledProviders: sanitizeAiDisabledProviders(
-                  parsed.aiDisabledProviders,
-                ),
-                aiLanguage: getAiLanguage(parsed.aiLanguage || 'en').id,
-                aiExtraLanguages: sanitizeAiExtraLanguages(
-                  Object.prototype.hasOwnProperty.call(parsed, 'aiExtraLanguages')
-                    ? parsed.aiExtraLanguages
-                    : undefined,
-                ),
-              }),
+      isolateSharedZohoWorkspaceProfiles(
+        migrateWarmKeepAlive(
+          migrateUnifyLinkHandling(
+            migrateProfiles(
+              dropRetiredApps(
+                migrateRemoveCanvaApp({
+                  ...DEFAULTS,
+                  ...parsed,
+                  shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
+                  serviceLabels: parsed.serviceLabels || {},
+                  serviceConfigs: parsed.serviceConfigs || {},
+                  serviceInstances: parsed.serviceInstances || [],
+                  profiles: parsed.profiles,
+                  pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
+                  notes: sanitizeNotes(parsed.notes || []),
+                  aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
+                  aiDisabledProviders: sanitizeAiDisabledProviders(
+                    parsed.aiDisabledProviders,
+                  ),
+                  aiLanguage: getAiLanguage(parsed.aiLanguage || 'en').id,
+                  aiExtraLanguages: sanitizeAiExtraLanguages(
+                    Object.prototype.hasOwnProperty.call(parsed, 'aiExtraLanguages')
+                      ? parsed.aiExtraLanguages
+                      : undefined,
+                  ),
+                }),
+              ),
             ),
           ),
         ),
+        { makeProfile },
       ),
       { makeProfile },
     );

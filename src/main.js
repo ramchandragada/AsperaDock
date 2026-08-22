@@ -245,6 +245,7 @@ import {
   CUSTOM_APP_ID,
   isCustomAppId,
   canShareProfileAcrossInstances,
+  allowsZohoWorkspaceHubTabs,
   getChromeMetrics,
   getAppCatalogEntry,
   defaultInstanceName,
@@ -1610,8 +1611,8 @@ async function deleteProfile(id) {
 /**
  * Auto-assign a dedicated profile named like "WhatsApp 1" / "Gmail 2".
  * First copy and extras each get their own partition (separate logins).
- * Zoho CRM / One / Books tabs share one profile so workspace login stays linked.
  * Zoho Mail is isolated like Gmail (one mailbox per profile).
+ * Every catalog app gets its own profile on add (WhatsApp / Gmail model).
  */
 function profileIdForNewApp(appId, entry) {
   const existing = (settings.serviceInstances || []).filter((i) => i.appId === appId);
@@ -1778,10 +1779,12 @@ function addService(appId, profileId = null, { startUrl = null } = {}) {
     resolvedProfileId = profileIdForNewApp(appId, entry);
   }
 
-  // Same app + same profile would share one WhatsApp/Gmail login — block it.
-  // Zoho CRM/One may share a profile so multiple Hub tabs keep one login.
-  // Custom URLs may share a profile (different sites, same cookies jar is fine).
-  if (!isCustomAppId(appId) && !canShareProfileAcrossInstances(appId)) {
+  // Same app + same profile would share one login — block catalog duplicates.
+  // Zoho deep-link Hub tabs may reuse the source profile (startUrl).
+  const isZohoDeepLinkTab =
+    Boolean(startUrl && String(startUrl).startsWith('http')) &&
+    allowsZohoWorkspaceHubTabs(appId);
+  if (!isCustomAppId(appId) && !canShareProfileAcrossInstances(appId) && !isZohoDeepLinkTab) {
     const clash = (settings.serviceInstances || []).some(
       (i) => i.appId === appId && i.profileId === resolvedProfileId,
     );
@@ -1816,7 +1819,7 @@ function addService(appId, profileId = null, { startUrl = null } = {}) {
     serviceInstances: instances,
     serviceOrder,
     ...(initialUrl ? { lastServiceUrls } : {}),
-    ...(canShareProfileAcrossInstances(appId)
+    ...(allowsZohoWorkspaceHubTabs(appId)
       ? {
           serviceConfigs: {
             ...(settings.serviceConfigs || {}),
@@ -1842,7 +1845,7 @@ function addService(appId, profileId = null, { startUrl = null } = {}) {
  */
 function openInternalLinkAsHubTab(sourceService, url) {
   if (!sourceService?.appId || !url) return false;
-  if (!canShareProfileAcrossInstances(sourceService.appId)) return false;
+  if (!allowsZohoWorkspaceHubTabs(sourceService.appId)) return false;
   if (!String(url).startsWith('http')) return false;
   if (!isInternalUrl(url, sourceService)) return false;
   if (isAuthOrLoginUrl(url)) return false;
@@ -10682,7 +10685,7 @@ function attachLinkTabAuthRecovery(webContents, service) {
  * window into a Hub app-bar tab that shares the CRM/One login.
  */
 function attachZohoPopupAdoptToHubTab(parentWc, childWindow, service) {
-  if (!canShareProfileAcrossInstances(service?.appId)) return;
+  if (!allowsZohoWorkspaceHubTabs(service?.appId)) return;
   // Only fold popups into Hub tabs when linkHandling is hub-tab.
   if (!shouldOpenAsHubTab(effectiveLinkHandling(service))) return;
 
@@ -11358,7 +11361,7 @@ function startUrlForService(service) {
     }
     // Zoho workspace tabs may open sibling product deep links (same login).
     if (
-      canShareProfileAcrossInstances(service.appId) &&
+      allowsZohoWorkspaceHubTabs(service.appId) &&
       isInternalUrl(last, service)
     ) {
       return last;
@@ -11375,7 +11378,7 @@ function rememberGoodUrl(serviceId, url) {
   const allowedForService =
     service.isCustom ||
     isUrlForService(service, url) ||
-    (canShareProfileAcrossInstances(service.appId) && isInternalUrl(url, service));
+    (allowsZohoWorkspaceHubTabs(service.appId) && isInternalUrl(url, service));
   if (!allowedForService) return;
   // Never remember third-party pages that hijacked a Gmail tab.
   if (isGoogleService(service) && !isAllowedGmailTabUrl(url)) return;
@@ -11418,7 +11421,7 @@ function hydrateLastUrls() {
     const allowed =
       service.isCustom ||
       isUrlForService(service, url) ||
-      (canShareProfileAcrossInstances(service.appId) && isInternalUrl(url, service));
+      (allowsZohoWorkspaceHubTabs(service.appId) && isInternalUrl(url, service));
     if (!allowed) {
       dirty = true;
       continue;
