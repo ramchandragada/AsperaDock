@@ -15,6 +15,5 @@ contextBridge.exposeInMainWorld('extensionsApi', {
     ipcRenderer.invoke('extensions:set-enabled', id, enabled),
   remove: (id) => ipcRenderer.invoke('extensions:remove', id),
   reloadGuests: () => ipcRenderer.invoke('extensions:reload-guests'),
-  open: (id) => ipcRenderer.invoke('extensions:open', id),
   close: () => ipcRenderer.invoke('extensions:close'),
 });

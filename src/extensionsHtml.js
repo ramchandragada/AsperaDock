@@ -89,7 +89,7 @@ export function buildExtensionsHtml(dark = false) {
       </div>
     </section>
     <p class="hint">
-      Tip: some store extensions need Chrome APIs Aspera Hub doesn’t support — if one fails, try another or an unpacked build from the developer. Use <b>Open</b> to sign in (opens in the same login profile as your current app tab). If the window stays on a spinner, wait ~15s for help text or use the Bitwarden desktop app.
+      Tip: some store extensions need Chrome APIs Aspera Hub doesn’t support — if one fails, try another or an unpacked build from the developer.
     </p>
     <div class="status" id="status" hidden></div>
     <div class="err" id="error" hidden></div>
@@ -162,31 +162,6 @@ export function buildExtensionsHtml(dark = false) {
         }
         const actions = document.createElement('div');
         actions.className = 'row-actions';
-        if (ext.canOpen) {
-          const openBtn = document.createElement('button');
-          openBtn.type = 'button';
-          openBtn.className = 'btn primary';
-          openBtn.textContent = 'Open';
-          openBtn.disabled = !ext.enabled || ext.exists === false;
-          openBtn.title = ext.enabled
-            ? 'Open extension sign-in / popup window'
-            : 'Enable the extension first';
-          openBtn.onclick = async () => {
-            showError('');
-            showStatus('Opening ' + (ext.name || 'extension') + '…');
-            try {
-              const result = await api.open(ext.id);
-              if (result?.ok) {
-                showStatus('Opened ' + (ext.name || 'extension') + '. Sign in there, then use it in your apps.');
-              } else {
-                showError(result?.error || 'Could not open extension.');
-              }
-            } catch (error) {
-              showError(String(error?.message || error));
-            }
-          };
-          actions.appendChild(openBtn);
-        }
         const toggle = document.createElement('button');
         toggle.type = 'button';
         toggle.className = 'btn';
