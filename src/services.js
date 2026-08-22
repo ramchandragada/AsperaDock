@@ -22,16 +22,24 @@ export function isCustomAppId(appId) {
 }
 
 /**
- * Zoho CRM / One / Books: multiple Hub tabs may share one profile/login so
- * Sales, Leads, etc. stay open side-by-side.
- * Zoho Mail is like Gmail — each mailbox needs its own session.
+ * Zoho workspace apps may open sibling-product / in-app deep links as Hub tabs
+ * that reuse the source tab's login (same profile).
  */
-export function canShareProfileAcrossInstances(appId) {
+export function allowsZohoWorkspaceHubTabs(appId) {
   return (
     appId === 'zoho-crm' ||
     appId === 'zoho-one' ||
     appId === 'zoho-books'
   );
+}
+
+/**
+ * New catalog instances reuse an existing profile (one org login).
+ * Zoho CRM is excluded — team leads often need two CRM orgs side by side.
+ * Zoho Mail is like Gmail — each mailbox needs its own session.
+ */
+export function canShareProfileAcrossInstances(appId) {
+  return appId === 'zoho-one' || appId === 'zoho-books';
 }
 
 /**
