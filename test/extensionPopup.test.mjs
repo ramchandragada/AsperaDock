@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  BITWARDEN_CHROME_STORE_ID,
+  buildExtensionPopupFallbackDataUrl,
   buildExtensionPopupUrl,
   extensionHasOpenablePopup,
   findLoadedExtensionRuntimeId,
@@ -29,6 +31,22 @@ test('buildExtensionPopupUrl adds popout query for persistent window', () => {
   assert.equal(
     buildExtensionPopupUrl('abcd1234', 'popup/index.html'),
     'chrome-extension://abcd1234/popup/index.html?uilocation=popout',
+  );
+});
+
+test('buildExtensionPopupUrl adds Bitwarden home route', () => {
+  assert.equal(
+    buildExtensionPopupUrl('abcd1234', 'popup/index.html', {
+      chromeStoreId: BITWARDEN_CHROME_STORE_ID,
+    }),
+    'chrome-extension://abcd1234/popup/index.html?uilocation=popout#/home',
+  );
+});
+
+test('buildExtensionPopupFallbackDataUrl encodes html', () => {
+  assert.match(
+    buildExtensionPopupFallbackDataUrl('<p>Hi</p>'),
+    /^data:text\/html;charset=utf-8,/,
   );
 });
 

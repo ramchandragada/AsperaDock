@@ -89,7 +89,7 @@ export function buildExtensionsHtml(dark = false) {
       </div>
     </section>
     <p class="hint">
-      Tip: some store extensions need Chrome APIs Aspera Hub doesn’t support — if one fails, try another or an unpacked build from the developer. Use <b>Open</b> to sign in to password managers (Bitwarden, etc.) — Hub has no extension toolbar or shortcut keys.
+      Tip: some store extensions need Chrome APIs Aspera Hub doesn’t support — if one fails, try another or an unpacked build from the developer. Use <b>Open</b> to sign in (opens in the same login profile as your current app tab). If the window stays on a spinner, wait ~15s for help text or use the Bitwarden desktop app.
     </p>
     <div class="status" id="status" hidden></div>
     <div class="err" id="error" hidden></div>

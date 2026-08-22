@@ -169,6 +169,7 @@ import {
 } from './extensionsStore.js';
 import {
   buildExtensionPopupUrl,
+  buildExtensionPopupFallbackDataUrl,
   extensionHasOpenablePopup,
   findLoadedExtensionRuntimeId,
   resolveExtensionPopupPath,
@@ -7639,6 +7640,138 @@ function closeExtensionPopupWindow() {
   }
 }
 
+function resolveExtensionPopupPartition() {
+  const active = activeServiceId ? getService(activeServiceId) : null;
+  if (active?.partition) return active.partition;
+  const profile = getProfile(PRIMARY_PROFILE_ID);
+  return profile?.partition || `persist:profile-${PRIMARY_PROFILE_ID}`;
+}
+
+function extensionPopupWebPreferences(partitionSession) {
+  return {
+    session: partitionSession,
+    contextIsolation: true,
+    nodeIntegration: false,
+    // MV3 extension popups (Bitwarden, 1Password) need unsandboxed chrome.* APIs.
+    sandbox: false,
+  };
+}
+
+function waitForExtensionReadyEvent(partitionSession, extPath, timeoutMs = 20_000) {
+  const api = getSessionExtensionsApi(partitionSession);
+  if (!api?.on) {
+    return Promise.resolve('');
+  }
+  const targetPath = path.resolve(String(extPath || ''));
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (runtimeId = '') => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        api.removeListener?.('extension-ready', onReady);
+      } catch {
+        // ignore
+      }
+      resolve(String(runtimeId || ''));
+    };
+    const onReady = (_event, extension) => {
+      const loadedPath = path.resolve(String(extension?.path || ''));
+      if (loadedPath === targetPath) {
+        finish(String(extension?.id || ''));
+      }
+    };
+    const timer = setTimeout(() => finish(''), timeoutMs);
+    api.on('extension-ready', onReady);
+  });
+}
+
+async function ensureExtensionRuntimeForPopup(partitionSession, ext) {
+  const api = getSessionExtensionsApi(partitionSession);
+  if (!api?.loadExtension) {
+    throw new Error('Extensions are not supported in this build.');
+  }
+  const abs = path.resolve(ext.path);
+
+  await syncExtensionsIntoSession(partitionSession);
+
+  let loaded = listLoadedSessionExtensions(partitionSession);
+  let runtimeId = findLoadedExtensionRuntimeId(loaded, ext.path);
+
+  if (!runtimeId) {
+    const readyWait = waitForExtensionReadyEvent(partitionSession, abs, 15_000);
+    await api.loadExtension(abs, { allowFileAccess: true });
+    runtimeId = await readyWait;
+    await new Promise((r) => setTimeout(r, runtimeId ? 300 : 2000));
+  } else {
+    // MV3 popup talks to an already-loaded service worker — brief wake-up delay.
+    await new Promise((r) => setTimeout(r, 900));
+  }
+
+  if (!runtimeId) {
+    loaded = listLoadedSessionExtensions(partitionSession);
+    runtimeId = findLoadedExtensionRuntimeId(loaded, ext.path);
+  }
+  return runtimeId || '';
+}
+
+function scheduleExtensionPopupLoadWatchdog(win, ext) {
+  const wc = win?.webContents;
+  if (!wc || wc.isDestroyed()) return;
+
+  const timer = setTimeout(async () => {
+    if (win.isDestroyed() || wc.isDestroyed()) return;
+    let stuck = false;
+    try {
+      stuck = await wc.executeJavaScript(
+        `(function () {
+          const spin = document.querySelector('#loading .bwi-spinner, .bwi-spinner, app-root #loading');
+          const bodyText = (document.body && document.body.innerText) || '';
+          return !!spin && bodyText.trim().length < 40;
+        })()`,
+        true,
+      );
+    } catch {
+      stuck = false;
+    }
+    if (!stuck) return;
+
+    const name = ext?.name || 'Extension';
+    const fallback = buildExtensionPopupFallbackDataUrl(`<!doctype html>
+<html><head><meta charset="utf-8"><title>${name}</title>
+<style>
+  body{font:500 14px/1.5 "Segoe UI",Ubuntu,sans-serif;margin:0;padding:24px;color:#0f172a;background:#f8fafc}
+  h1{font-size:18px;margin:0 0 12px} p{margin:0 0 12px;color:#475569}
+  ul{margin:0 0 16px 18px;padding:0;color:#475569} li{margin:4px 0}
+  .card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px}
+  button,a.btn{display:inline-block;margin:6px 8px 0 0;padding:8px 12px;border-radius:8px;font:inherit;font-weight:700;
+    text-decoration:none;cursor:pointer;border:0;background:#2563eb;color:#fff}
+  .ghost{background:#e2e8f0;color:#0f172a}
+</style></head><body>
+<div class="card">
+  <h1>${name} did not finish loading</h1>
+  <p>Hub opened the extension window, but the sign-in screen stayed on the loading spinner. This often happens with Manifest V3 password managers inside Electron.</p>
+  <p><strong>Try instead:</strong></p>
+  <ul>
+    <li>Click <strong>Reload apps</strong>, then <strong>Open</strong> again.</li>
+    <li>Remove and reinstall the extension if it stays stuck.</li>
+    <li>Install the desktop app for your password manager (recommended on Linux).</li>
+  </ul>
+  <button type="button" class="ghost" onclick="location.reload()">Retry</button>
+  <a class="btn" href="https://vault.bitwarden.com/#/login" target="_blank" rel="noopener">Open Bitwarden web vault</a>
+</div>
+</body></html>`);
+    try {
+      await wc.loadURL(fallback);
+    } catch {
+      // ignore
+    }
+  }, 14_000);
+
+  win.once('closed', () => clearTimeout(timer));
+}
+
 async function openInstalledExtensionPopup(catalogExtId) {
   const list = listInstalledExtensions(settings.extensions);
   const ext = list.find((item) => item.id === String(catalogExtId || ''));
@@ -7655,24 +7788,24 @@ async function openInstalledExtensionPopup(catalogExtId) {
     };
   }
 
-  const profile = getProfile(PRIMARY_PROFILE_ID);
-  const partition =
-    profile?.partition || `persist:profile-${PRIMARY_PROFILE_ID}`;
+  const partition = resolveExtensionPopupPartition();
   const partitionSession = session.fromPartition(partition);
   configureSession(partitionSession, partition);
+  let runtimeId = '';
   try {
-    await syncExtensionsIntoSession(partitionSession);
+    runtimeId = await ensureExtensionRuntimeForPopup(partitionSession, ext);
   } catch (error) {
     return {
       ok: false,
       error: String(error?.message || error || 'Could not load extension'),
     };
   }
-
-  const loaded = listLoadedSessionExtensions(partitionSession);
-  const runtimeId =
-    findLoadedExtensionRuntimeId(loaded, ext.path) ||
-    String(ext.chromeId || '').trim();
+  if (!runtimeId) {
+    const loaded = listLoadedSessionExtensions(partitionSession);
+    runtimeId =
+      findLoadedExtensionRuntimeId(loaded, ext.path) ||
+      String(ext.chromeId || '').trim();
+  }
   if (!runtimeId) {
     return {
       ok: false,
@@ -7680,7 +7813,9 @@ async function openInstalledExtensionPopup(catalogExtId) {
     };
   }
 
-  const popupUrl = buildExtensionPopupUrl(runtimeId, popupPath);
+  const popupUrl = buildExtensionPopupUrl(runtimeId, popupPath, {
+    chromeStoreId: ext.chromeId,
+  });
   if (!popupUrl) return { ok: false, error: 'Could not build extension URL' };
 
   closeExtensionPopupWindow();
@@ -7688,7 +7823,7 @@ async function openInstalledExtensionPopup(catalogExtId) {
   const popupService = {
     id: '__extension-popup__',
     appId: 'extension-popup',
-    profileId: profile?.id || PRIMARY_PROFILE_ID,
+    profileId: getService(activeServiceId)?.profileId || PRIMARY_PROFILE_ID,
     partition,
     url: popupUrl,
   };
@@ -7716,7 +7851,7 @@ async function openInstalledExtensionPopup(catalogExtId) {
     skipTaskbar: true,
     autoHideMenuBar: true,
     title: ext.name || 'Extension',
-    webPreferences: guestWebPreferences(popupService),
+    webPreferences: extensionPopupWebPreferences(partitionSession),
   });
   win.setMenuBarVisibility(false);
 
@@ -7724,6 +7859,7 @@ async function openInstalledExtensionPopup(catalogExtId) {
   configureGuestWindowOpen(wc, popupService);
   attachGuestContextMenu(wc);
   watchWebContents(wc, `extension-popup:${ext.id}`);
+  scheduleExtensionPopupLoadWatchdog(win, ext);
 
   extensionPopupWindow = win;
   win.on('closed', () => {
