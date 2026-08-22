@@ -164,8 +164,15 @@ import {
   installUnpackedExtension,
   listInstalledExtensions,
   normalizeExtensionList,
+  readExtensionManifestSafe,
   uninstallExtensionFiles,
 } from './extensionsStore.js';
+import {
+  buildExtensionPopupUrl,
+  extensionHasOpenablePopup,
+  findLoadedExtensionRuntimeId,
+  resolveExtensionPopupPath,
+} from './extensionPopup.js';
 import {
   chromeWebStoreUrl,
   downloadAndUnpackChromeExtension,
@@ -817,6 +824,8 @@ function promptGuestDownloadSave(item, defaultPath, downloadName, destHolder) {
 }
 /** Floating Chrome-like Extensions manager. */
 let extensionsWindow = null;
+/** Floating sign-in / popup for an installed Chrome extension (Bitwarden, Grammarly, …). */
+let extensionPopupWindow = null;
 let settings = loadSettings();
 settings = {
   ...settings,
@@ -7547,7 +7556,13 @@ function reloadAllGuestViews() {
 
 function buildExtensionsManagerData(error = '') {
   return {
-    extensions: listInstalledExtensions(settings.extensions),
+    extensions: listInstalledExtensions(settings.extensions).map((ext) => {
+      const manifest = ext.exists ? readExtensionManifestSafe(ext.path) : null;
+      return {
+        ...ext,
+        canOpen: extensionHasOpenablePopup(manifest),
+      };
+    }),
     error: String(error || ''),
   };
 }
@@ -7608,6 +7623,131 @@ function openExtensionsWindow({ dark = false } = {}) {
     if (extensionsWindow === win) extensionsWindow = null;
   });
   return { ok: true };
+}
+
+function closeExtensionPopupWindow() {
+  if (!extensionPopupWindow || extensionPopupWindow.isDestroyed()) {
+    extensionPopupWindow = null;
+    return;
+  }
+  const win = extensionPopupWindow;
+  extensionPopupWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
+async function openInstalledExtensionPopup(catalogExtId) {
+  const list = listInstalledExtensions(settings.extensions);
+  const ext = list.find((item) => item.id === String(catalogExtId || ''));
+  if (!ext) return { ok: false, error: 'Extension not found' };
+  if (!ext.enabled) return { ok: false, error: 'Enable the extension first' };
+  if (!ext.exists) return { ok: false, error: 'Extension files are missing — reinstall it' };
+
+  const manifest = readExtensionManifestSafe(ext.path);
+  const popupPath = resolveExtensionPopupPath(manifest);
+  if (!popupPath) {
+    return {
+      ok: false,
+      error: 'This extension has no popup to open (background-only or options-only).',
+    };
+  }
+
+  const profile = getProfile(PRIMARY_PROFILE_ID);
+  const partition =
+    profile?.partition || `persist:profile-${PRIMARY_PROFILE_ID}`;
+  const partitionSession = session.fromPartition(partition);
+  configureSession(partitionSession, partition);
+  try {
+    await syncExtensionsIntoSession(partitionSession);
+  } catch (error) {
+    return {
+      ok: false,
+      error: String(error?.message || error || 'Could not load extension'),
+    };
+  }
+
+  const loaded = listLoadedSessionExtensions(partitionSession);
+  const runtimeId =
+    findLoadedExtensionRuntimeId(loaded, ext.path) ||
+    String(ext.chromeId || '').trim();
+  if (!runtimeId) {
+    return {
+      ok: false,
+      error: 'Extension is not loaded yet — click Reload apps, then try Open again.',
+    };
+  }
+
+  const popupUrl = buildExtensionPopupUrl(runtimeId, popupPath);
+  if (!popupUrl) return { ok: false, error: 'Could not build extension URL' };
+
+  closeExtensionPopupWindow();
+
+  const popupService = {
+    id: '__extension-popup__',
+    appId: 'extension-popup',
+    profileId: profile?.id || PRIMARY_PROFILE_ID,
+    partition,
+    url: popupUrl,
+  };
+
+  const content = mainWindow?.getContentBounds?.() || { x: 0, y: 0, width: 1200, height: 800 };
+  const winW = 440;
+  const winH = 680;
+  const pos = clampFloatPosition(
+    content.x + Math.max(16, (content.width - winW) / 2),
+    content.y + Math.max(56, (content.height - winH) / 2),
+    winW,
+    winH,
+  );
+
+  const win = new BrowserWindow({
+    parent: mainWindow || undefined,
+    modal: false,
+    width: winW,
+    height: winH,
+    minWidth: 360,
+    minHeight: 480,
+    x: pos.x,
+    y: pos.y,
+    show: false,
+    skipTaskbar: true,
+    autoHideMenuBar: true,
+    title: ext.name || 'Extension',
+    webPreferences: guestWebPreferences(popupService),
+  });
+  win.setMenuBarVisibility(false);
+
+  const { webContents: wc } = win;
+  configureGuestWindowOpen(wc, popupService);
+  attachGuestContextMenu(wc);
+  watchWebContents(wc, `extension-popup:${ext.id}`);
+
+  extensionPopupWindow = win;
+  win.on('closed', () => {
+    if (extensionPopupWindow === win) extensionPopupWindow = null;
+  });
+
+  try {
+    await wc.loadURL(popupUrl);
+  } catch (error) {
+    closeExtensionPopupWindow();
+    return {
+      ok: false,
+      error: String(error?.message || error || 'Could not open extension popup'),
+    };
+  }
+
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+
+  return { ok: true, url: popupUrl, name: ext.name || 'Extension' };
 }
 
 function guestWebPreferences(service) {
@@ -13675,6 +13815,15 @@ extensionsHandle('extensions:reload-guests', async () => {
   reloadAllGuestViews();
   pushExtensionsManagerData();
   return { ok: true };
+});
+extensionsHandle('extensions:open', async (_e, id) => {
+  try {
+    return await openInstalledExtensionPopup(id);
+  } catch (error) {
+    const message = String(error?.message || error);
+    pushExtensionsManagerData(message);
+    return { ok: false, error: message };
+  }
 });
 dockHandle('dock:ai-status', () => ({
   enabled: settings.aiEnabled !== false,
