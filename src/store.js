@@ -11,7 +11,7 @@ import {
 import { defaultShortcutsMap, migrateShortcutsMap } from './shortcutsConfig.js';
 import { sanitizePinnedPeople } from './guestInbox.js';
 import { isolateSharedZohoMailProfiles } from './zohoMailProfiles.js';
-import { isolateSharedZohoCrmProfiles } from './zohoCrmProfiles.js';
+import { isolateSharedZohoWorkspaceProfiles } from './zohoWorkspaceProfiles.js';
 import { sanitizeNotes } from './notesStore.js';
 import {
   getAiLanguage,
@@ -598,7 +598,7 @@ export function loadSettings() {
     const raw = fs.readFileSync(settingsPath(), 'utf8');
     const parsed = JSON.parse(raw);
     cache = isolateSharedZohoMailProfiles(
-      isolateSharedZohoCrmProfiles(
+      isolateSharedZohoWorkspaceProfiles(
         migrateWarmKeepAlive(
           migrateUnifyLinkHandling(
             migrateProfiles(

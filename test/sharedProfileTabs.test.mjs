@@ -5,25 +5,28 @@ import {
   canShareProfileAcrossInstances,
 } from '../src/services.js';
 
-test('Zoho CRM gets its own profile per catalog add (multi-org TLs)', () => {
-  assert.equal(canShareProfileAcrossInstances('zoho-crm'), false);
+test('every catalog app gets its own profile on add', () => {
+  for (const appId of [
+    'whatsapp',
+    'arattai',
+    'gmail',
+    'zoho-mail',
+    'zoho-crm',
+    'zoho-books',
+    'zoho-one',
+  ]) {
+    assert.equal(
+      canShareProfileAcrossInstances(appId),
+      false,
+      `${appId} should not reuse profiles`,
+    );
+  }
+});
+
+test('Zoho workspace apps still allow in-tab deep links as Hub tabs', () => {
   assert.equal(allowsZohoWorkspaceHubTabs('zoho-crm'), true);
-});
-
-test('Zoho One and Books still share workspace login across tabs', () => {
-  assert.equal(canShareProfileAcrossInstances('zoho-one'), true);
-  assert.equal(canShareProfileAcrossInstances('zoho-books'), true);
-  assert.equal(allowsZohoWorkspaceHubTabs('zoho-one'), true);
   assert.equal(allowsZohoWorkspaceHubTabs('zoho-books'), true);
-});
-
-test('Zoho Mail is isolated like Gmail (separate mailbox sessions)', () => {
-  assert.equal(canShareProfileAcrossInstances('zoho-mail'), false);
+  assert.equal(allowsZohoWorkspaceHubTabs('zoho-one'), true);
   assert.equal(allowsZohoWorkspaceHubTabs('zoho-mail'), false);
-});
-
-test('WhatsApp and Gmail still require separate profiles per instance', () => {
-  assert.equal(canShareProfileAcrossInstances('whatsapp'), false);
-  assert.equal(canShareProfileAcrossInstances('gmail'), false);
-  assert.equal(canShareProfileAcrossInstances('arattai'), false);
+  assert.equal(allowsZohoWorkspaceHubTabs('gmail'), false);
 });

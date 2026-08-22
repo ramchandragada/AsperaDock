@@ -1611,9 +1611,8 @@ async function deleteProfile(id) {
 /**
  * Auto-assign a dedicated profile named like "WhatsApp 1" / "Gmail 2".
  * First copy and extras each get their own partition (separate logins).
- * Zoho One / Books tabs share one profile so workspace login stays linked.
- * Zoho CRM gets a dedicated profile per catalog add (multi-org TLs).
  * Zoho Mail is isolated like Gmail (one mailbox per profile).
+ * Every catalog app gets its own profile on add (WhatsApp / Gmail model).
  */
 function profileIdForNewApp(appId, entry) {
   const existing = (settings.serviceInstances || []).filter((i) => i.appId === appId);
@@ -1780,9 +1779,8 @@ function addService(appId, profileId = null, { startUrl = null } = {}) {
     resolvedProfileId = profileIdForNewApp(appId, entry);
   }
 
-  // Same app + same profile would share one WhatsApp/Gmail login — block it.
-  // Zoho One/Books may share a profile so multiple Hub tabs keep one login.
-  // Zoho CRM deep-link Hub tabs may reuse the source profile (startUrl).
+  // Same app + same profile would share one login — block catalog duplicates.
+  // Zoho deep-link Hub tabs may reuse the source profile (startUrl).
   const isZohoDeepLinkTab =
     Boolean(startUrl && String(startUrl).startsWith('http')) &&
     allowsZohoWorkspaceHubTabs(appId);

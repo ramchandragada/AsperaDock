@@ -34,12 +34,11 @@ export function allowsZohoWorkspaceHubTabs(appId) {
 }
 
 /**
- * New catalog instances reuse an existing profile (one org login).
- * Zoho CRM is excluded — team leads often need two CRM orgs side by side.
- * Zoho Mail is like Gmail — each mailbox needs its own session.
+ * Catalog adds always get a dedicated profile (WhatsApp / Gmail model).
+ * Deep links within one Zoho tab still reuse that tab's profile via startUrl.
  */
-export function canShareProfileAcrossInstances(appId) {
-  return appId === 'zoho-one' || appId === 'zoho-books';
+export function canShareProfileAcrossInstances(_appId) {
+  return false;
 }
 
 /**
