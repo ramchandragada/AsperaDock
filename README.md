@@ -49,7 +49,7 @@ Right-click a non-active app icon to hibernate it.
 ## Requirements
 
 - Node.js 18+ (22 recommended)
-- Linux Mint / Ubuntu-family for `.deb` packaging
+- Linux Mint / Q4OS Andromeda / Ubuntu-family for `.deb` packaging
 
 ## Develop
 
