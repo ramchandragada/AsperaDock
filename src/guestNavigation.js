@@ -282,6 +282,7 @@ export function attachGuestNavigationGate(webContents, service, api) {
       if (
         live?.appId === 'zoho-books' ||
         live?.appId === 'zoho-crm' ||
+        live?.appId === 'zoho-workdrive' ||
         live?.appId === 'zoho-one' ||
         live?.appId === 'zoho-mail'
       ) {
