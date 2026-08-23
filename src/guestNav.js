@@ -358,7 +358,12 @@ export function isZohoAssetHost(url) {
  */
 export function shouldOpenZohoSharedDeepLinkAsHubTab(service, url) {
   const appId = String(service?.appId || '');
-  if (appId !== 'zoho-crm' && appId !== 'zoho-books' && appId !== 'zoho-one') {
+  if (
+    appId !== 'zoho-crm' &&
+    appId !== 'zoho-books' &&
+    appId !== 'zoho-workdrive' &&
+    appId !== 'zoho-one'
+  ) {
     return false;
   }
   const href = String(url || '');
