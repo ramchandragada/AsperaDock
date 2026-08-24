@@ -1,9 +1,11 @@
 /**
  * Linux desktop-environment helpers for Mint XFCE / Cinnamon / Ubuntu /
- * Q4OS Andromeda (Plasma / Trinity) and other light desktops.
+ * Zorin OS (GNOME / Lite XFCE) / Q4OS Andromeda (Plasma / Trinity) and
+ * other light desktops.
  * Transparent frameless windows paint black/blank without a compositor —
- * common on XFCE / LX* / MATE / Trinity. Cinnamon, GNOME, and full Plasma
- * usually have compositors (unless KWin composition is turned off for RAM).
+ * common on XFCE / LX* / MATE / Trinity. Cinnamon, GNOME, Zorin Desktop,
+ * and full Plasma usually have compositors (unless KWin composition is
+ * turned off for RAM).
  */
 
 import fs from 'node:fs';
@@ -69,6 +71,19 @@ export function linuxIsQ4OS(env = {}) {
   return de.includes('q4os');
 }
 
+/**
+ * Zorin OS Core / Pro / Education (GNOME shell) and Zorin OS Lite (XFCE).
+ * os-release ID=zorin; session often XDG_CURRENT_DESKTOP=zorin:GNOME.
+ */
+export function linuxIsZorinOS(env = {}) {
+  const release = readLinuxOsRelease(env);
+  if (release.includes('zorin') || /\bid\s*=\s*"?zorin"?/.test(release)) {
+    return true;
+  }
+  const de = linuxDesktopFingerprint(env);
+  return de.includes('zorin');
+}
+
 /** KDE Plasma (Q4OS Plasma edition, Neon, Kubuntu, …). */
 export function linuxIsPlasmaDesktop(env = {}) {
   const de = linuxDesktopFingerprint(env);
@@ -100,7 +115,9 @@ export function linuxPlasmaCompositorDisabled(env = {}) {
 
 /**
  * Company low-spec fleet: Q4OS Andromeda / Plasma / Trinity.
- * Used for opaque overlays + optional one-shot lean defaults — never Mint.
+ * Used for opaque overlays + optional one-shot lean defaults — never Mint
+ * or Zorin Core (GNOME). Zorin Lite XFCE still uses the XFCE opaque path
+ * via linuxUsesOpaqueOverlays, but lean defaults stay opt-in.
  */
 export function linuxIsLeanFleetDesktop(env = {}) {
   const platform = env.platform ?? process.platform;
@@ -117,6 +134,29 @@ export function linuxIsLeanFleetDesktop(env = {}) {
     return true;
   }
   return String(env.asperaLean ?? process.env.ASPERA_LEAN ?? '') === '1';
+}
+
+/**
+ * GNOME / Zorin Desktop / Cinnamon-class sessions where maximize() before
+ * the first map often fails — window stays at default 1280×800 ("restore").
+ * Prefer show → maximize → delayed re-assert.
+ * @param {Parameters<typeof linuxDesktopFingerprint>[0] & {
+ *   platform?: string,
+ *   osRelease?: string,
+ * }} [env]
+ */
+export function linuxNeedsDelayedMaximize(env = {}) {
+  const platform = env.platform ?? process.platform;
+  if (platform !== 'linux') return false;
+  if (linuxIsZorinOS(env)) return true;
+  const de = linuxDesktopFingerprint(env);
+  return (
+    de.includes('gnome') ||
+    de.includes('ubuntu') ||
+    de.includes('budgie') ||
+    de.includes('pantheon') ||
+    de.includes('cinnamon')
+  );
 }
 
 /**
@@ -163,6 +203,7 @@ export function linuxHasReliableCompositor(env = {}) {
   return (
     de.includes('cinnamon') ||
     de.includes('gnome') ||
+    de.includes('zorin') ||
     de.includes('ubuntu') ||
     de.includes('budgie') ||
     de.includes('pantheon') ||

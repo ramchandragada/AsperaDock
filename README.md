@@ -49,7 +49,7 @@ Right-click a non-active app icon to hibernate it.
 ## Requirements
 
 - Node.js 18+ (22 recommended)
-- Linux Mint / Q4OS Andromeda / Ubuntu-family for `.deb` packaging
+- Linux Mint / Zorin OS / Q4OS Andromeda / Ubuntu-family for `.deb` packaging
 
 ## Develop
 
@@ -78,23 +78,25 @@ Artifacts land in `out/make/` (`.deb`, `.zip`, optionally `.rpm`). Install the `
 sudo apt install ./out/make/deb/x64/asperadock_*.deb
 ```
 
-## Linux Mint (XFCE & Cinnamon) and Q4OS Andromeda
+## Linux Mint, Zorin OS, and Q4OS Andromeda
 
-Aspera Hub is packaged and tuned for company fleets on **Linux Mint** and **Q4OS Andromeda** (Plasma / Trinity) on low-config PCs:
+Aspera Hub is packaged and tuned for company fleets on **Linux Mint**, **Zorin OS**, and **Q4OS Andromeda** (Plasma / Trinity) on low-config PCs:
 
 | Desktop | Notes |
 |---------|--------|
 | **Cinnamon** | Best match — taskbar icon, tray, notifications, and menus work out of the box. |
 | **XFCE** (majority Mint fleets) | Use the default **taskbar** display mode. For a tray icon, add **Status Notifier Plugin** (or Notification Area) to the XFCE panel. If floating menus look black/blank, turn on the **compositor** in Window Manager Tweaks. |
+| **Zorin OS Core / Pro** | GNOME-based (`zorin:GNOME`). Hub **always opens maximized** (show → maximize + retries so Mutter cannot leave a restored 1280×800 window). Prefer X11 if Wayland misbehaves. Lean mode stays opt-in. |
+| **Zorin OS Lite** | XFCE session — opaque floating menus like Mint XFCE; still opens maximized. |
 | **Q4OS Andromeda Plasma** | Lean defaults on first run after upgrade (low memory mode, fewer warm apps). Opaque floating menus; tray icon sized for Plasma StatusNotifier. Prefer an X11 session on very low RAM. |
 | **Q4OS Trinity** | Same lean path as Plasma edition — opaque menus (no reliable compositor). |
 
 Also:
 
 - Window class / `.desktop` uses `StartupWMClass=asperadock` so the panel pins the Aspera icon (not a generic one).
-- Tray uses PNG panel icons (more reliable than SVG on Mint / Plasma).
+- Tray uses PNG panel icons (more reliable than SVG on Mint / Plasma / Zorin).
 - Deb recommends `libayatana-appindicator3-1` for StatusNotifier trays.
-- Low-RAM / refurbished PCs: Settings → Performance → Low memory mode, or turn off hardware acceleration under Compatibility. On Q4OS lean fleets this is applied once automatically; Mint stays opt-in.
+- Low-RAM / refurbished PCs: Settings → Performance → Low memory mode, or turn off hardware acceleration under Compatibility. On Q4OS lean fleets this is applied once automatically; Mint and Zorin stay opt-in.
 - Force lean behaviour on any Linux desktop: `ASPERA_LEAN=1` before launch. Plasma with KWin composition off (`KWIN_COMPOSE=N`) is treated as lean automatically.
 
 ## Add / duplicate accounts

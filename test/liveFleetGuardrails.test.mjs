@@ -52,3 +52,13 @@ test('live fleet: Chrome-like download shelf is wired', () => {
   assert.match(main, /openDownloadShelfWindow/);
   assert.match(main, /initDownloadHistory/);
 });
+
+test('live fleet: main window always maximizes (Zorin/GNOME-safe)', () => {
+  const main = fs.readFileSync(path.join(root, 'src/main.js'), 'utf8');
+  assert.match(main, /function ensureMainWindowMaximized/);
+  assert.match(main, /ensureMainWindowMaximized\(\{ withRetries: true \}\)/);
+  assert.match(main, /linuxNeedsDelayedMaximize/);
+  const desktop = fs.readFileSync(path.join(root, 'src/linuxDesktop.js'), 'utf8');
+  assert.match(desktop, /export function linuxIsZorinOS/);
+  assert.match(desktop, /export function linuxNeedsDelayedMaximize/);
+});

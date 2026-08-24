@@ -131,6 +131,7 @@ import { buildDownloadShelfHtml } from './downloadShelfHtml.js';
 import {
   linuxIsLeanFleetDesktop,
   linuxIsPlasmaDesktop,
+  linuxNeedsDelayedMaximize,
   linuxUsesOpaqueOverlays,
 } from './linuxDesktop.js';
 import {
@@ -408,15 +409,15 @@ if (process.platform === 'win32') {
   }
 }
 
-// Linux Mint (XFCE/Cinnamon) + Q4OS Andromeda (Plasma/Trinity): Chromium GPU
-// + chrome-sandbox often FATAL-exit before any window. Apply safest flags FIRST.
+// Linux Mint / Zorin / Q4OS: Chromium GPU + chrome-sandbox often FATAL-exit
+// before any window. Apply safest flags FIRST.
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('no-sandbox');
   app.commandLine.appendSwitch('disable-gpu-sandbox');
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('disable-software-rasterizer');
   app.commandLine.appendSwitch('class', 'asperadock');
-  // Wayland (Mint / Plasma Wayland / newer Electron) can FATAL on reset;
+  // Wayland (Mint / Zorin GNOME / Plasma) can FATAL on reset;
   // prefer X11/XWayland unless the user already chose a platform.
   if (
     !app.commandLine.hasSwitch('ozone-platform') &&
@@ -426,7 +427,7 @@ if (process.platform === 'linux') {
     app.commandLine.appendSwitch('ozone-platform', 'x11');
   }
   // Low-spec Q4OS / lean Plasma: skip smooth scrolling (cheap CPU win).
-  // Mint / Cinnamon / GNOME are unchanged.
+  // Mint / Cinnamon / Zorin Core GNOME are unchanged.
   try {
     if (linuxIsLeanFleetDesktop()) {
       app.commandLine.appendSwitch('disable-smooth-scrolling');
@@ -2427,11 +2428,56 @@ function restoreGuestFocusAfterFloat() {
   setTimeout(kick, 120);
 }
 
+/**
+ * Company fleets always run the Hub maximized (full workspace).
+ * On Zorin / GNOME, maximize() before the first map often no-ops and the
+ * window opens at the default 1280×800 ("restore" size). Show first, then
+ * maximize, then re-assert after short delays so Mutter cannot win the race.
+ */
+function ensureMainWindowMaximized({ withRetries = false } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+  } catch {
+    // ignore
+  }
+  try {
+    if (!mainWindow.isMaximized()) mainWindow.maximize();
+  } catch {
+    // ignore — some Wayland compositors briefly reject maximize
+  }
+  if (!withRetries) return;
+  const delays =
+    (() => {
+      try {
+        return linuxNeedsDelayedMaximize() ? [50, 200, 600, 1200] : [80, 320];
+      } catch {
+        return [80, 320];
+      }
+    })();
+  for (const ms of delays) {
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      try {
+        if (!mainWindow.isMaximized()) mainWindow.maximize();
+      } catch {
+        // ignore
+      }
+      try {
+        layoutActiveView();
+      } catch {
+        // ignore
+      }
+    }, ms);
+  }
+}
+
 /** Bring the dock to the front — only from explicit user actions. */
 function raiseDockWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
+  ensureMainWindowMaximized({ withRetries: true });
   mainWindow.focus();
   // Focus event usually fires; still kick a repaint for WMs that skip it.
   setTimeout(() => repaintActiveGuestView({ reason: 'raise' }), 30);
@@ -13056,9 +13102,10 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     applyWindowIcon(mainWindow);
-    // Company desktops: always open full-screen workspace.
-    mainWindow.maximize();
+    // Company desktops: always open maximized. On Zorin/GNOME, show first —
+    // maximize-before-map is ignored and the Hub stays at default bounds.
     mainWindow.show();
+    ensureMainWindowMaximized({ withRetries: true });
     try {
       const crashFlag = path.join(app.getPath('userData'), 'gpu-crash-v1');
       if (fs.existsSync(crashFlag)) fs.unlinkSync(crashFlag);
@@ -13101,6 +13148,8 @@ function createWindow() {
   });
   mainWindow.on('unmaximize', () => setTimeout(() => layoutActiveView(), 50));
   mainWindow.on('show', () => {
+    // Zorin/GNOME may map the window restored; re-assert maximize after show.
+    ensureMainWindowMaximized({ withRetries: false });
     setTimeout(() => layoutActiveView(), 50);
     const awayMs = awayStartedAt ? Date.now() - awayStartedAt : 0;
     if (awayMs >= 3 * 60_000 || peakIdleSec >= 3 * 60) {
@@ -13111,6 +13160,8 @@ function createWindow() {
     }
   });
   mainWindow.on('restore', () => {
+    // After un-minimize, company fleets stay maximized (not previous normal size).
+    ensureMainWindowMaximized({ withRetries: true });
     setTimeout(() => repaintActiveGuestView({ reason: 'window-restore' }), 40);
   });
   mainWindow.on('hide', () => {

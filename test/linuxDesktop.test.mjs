@@ -4,10 +4,12 @@ import {
   linuxUsesOpaqueOverlays,
   linuxHasReliableCompositor,
   linuxIsQ4OS,
+  linuxIsZorinOS,
   linuxIsPlasmaDesktop,
   linuxIsTrinityDesktop,
   linuxPlasmaCompositorDisabled,
   linuxIsLeanFleetDesktop,
+  linuxNeedsDelayedMaximize,
   resetLinuxOsReleaseCache,
 } from '../src/linuxDesktop.js';
 
@@ -182,4 +184,43 @@ test('Mint XFCE stays opaque but is not lean fleet', () => {
   };
   assert.equal(linuxUsesOpaqueOverlays(env), true);
   assert.equal(linuxIsLeanFleetDesktop(env), false);
+});
+
+test('Zorin Core GNOME is detected; transparent overlays; not lean', () => {
+  resetLinuxOsReleaseCache();
+  const env = {
+    platform: 'linux',
+    xdgCurrentDesktop: 'zorin:GNOME',
+    desktopSession: 'zorin',
+    osRelease: 'NAME="Zorin OS"\nID=zorin\nID_LIKE=ubuntu\n',
+  };
+  assert.equal(linuxIsZorinOS(env), true);
+  assert.equal(linuxUsesOpaqueOverlays(env), false);
+  assert.equal(linuxHasReliableCompositor(env), true);
+  assert.equal(linuxIsLeanFleetDesktop(env), false);
+  assert.equal(linuxNeedsDelayedMaximize(env), true);
+});
+
+test('Zorin Lite XFCE stays opaque like Mint XFCE; still not lean', () => {
+  const env = {
+    platform: 'linux',
+    xdgCurrentDesktop: 'XFCE',
+    desktopSession: 'xfce',
+    osRelease: 'ID=zorin\n',
+  };
+  assert.equal(linuxIsZorinOS(env), true);
+  assert.equal(linuxUsesOpaqueOverlays(env), true);
+  assert.equal(linuxIsLeanFleetDesktop(env), false);
+  assert.equal(linuxNeedsDelayedMaximize(env), true);
+});
+
+test('Mint Cinnamon needs delayed maximize (same GNOME-class race)', () => {
+  assert.equal(
+    linuxNeedsDelayedMaximize({
+      platform: 'linux',
+      xdgCurrentDesktop: 'X-Cinnamon',
+      osRelease: 'ID=linuxmint\n',
+    }),
+    true,
+  );
 });

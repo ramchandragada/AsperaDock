@@ -1,9 +1,9 @@
 #!/bin/sh
-# Safe Aspera Hub launcher for Linux Mint (XFCE / Cinnamon) and Q4OS
-# Andromeda (Plasma / Trinity). Always uses --no-sandbox --disable-gpu*
-# because Electron's GPU/sandbox often FATAL-exits on company low-spec PCs.
-# Desktop-specific lean defaults (opaque menus, low-memory mode) live in
-# the app — see docs/MINT-ELECTRON-MATRIX.md.
+# Safe Aspera Hub launcher for Linux Mint (XFCE / Cinnamon), Zorin OS
+# (GNOME / Lite XFCE), and Q4OS Andromeda (Plasma / Trinity). Always uses
+# --no-sandbox --disable-gpu* because Electron's GPU/sandbox often FATAL-exits
+# on company PCs. Desktop-specific lean defaults and maximize-on-launch live
+# in the app — see docs/MINT-ELECTRON-MATRIX.md.
 set -eu
 
 BIN="/usr/lib/asperadock/asperadock"
