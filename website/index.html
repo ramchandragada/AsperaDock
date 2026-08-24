@@ -304,7 +304,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
 <noscript><style>.fade{opacity:1!important;transform:none!important}</style></noscript>
 <script type="application/ld+json">
 {"@context":"https://schema.org","@graph":[
-  {"@type":"SoftwareApplication","name":"Aspera Hub","url":"https://asperahub.com/","applicationCategory":"DesktopApplication","operatingSystem":"Linux","license":"https://github.com/ramchandragada/AsperaDock/blob/master/LICENSE","softwareVersion":"0.5.68","downloadUrl":"https://github.com/ramchandragada/AsperaDock/releases/latest","offers":{"@type":"Offer","price":"0","priceCurrency":"INR"},"author":{"@type":"Organization","name":"Aspera Technologies"}},
+  {"@type":"SoftwareApplication","name":"Aspera Hub","url":"https://asperahub.com/","applicationCategory":"DesktopApplication","operatingSystem":"Linux","license":"https://github.com/ramchandragada/AsperaDock/blob/master/LICENSE","softwareVersion":"0.5.69","downloadUrl":"https://github.com/ramchandragada/AsperaDock/releases/latest","offers":{"@type":"Offer","price":"0","priceCurrency":"INR"},"author":{"@type":"Organization","name":"Aspera Technologies"}},
   {"@type":"FAQPage","mainEntity":[
     {"@type":"Question","name":"Is it really free?","acceptedAnswer":{"@type":"Answer","text":"Yes — free, forever. No subscription, no trial wall, no ads. Open source under the MIT license."}},
     {"@type":"Question","name":"Which Linux distros are supported?","acceptedAnswer":{"@type":"Answer","text":"Debian, Ubuntu and Linux Mint (amd64). Other Debian-based distributions usually work with the same .deb."}},
@@ -367,7 +367,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <a href="#faq">FAQ</a>
     </div>
     <div class="nav-btns">
-      <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.68/asperadock_0.5.68_amd64.deb"><svg aria-hidden="true" focusable="false"><use href="#g-dl"/></svg> Download</a>
+      <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.69/asperadock_0.5.69_amd64.deb"><svg aria-hidden="true" focusable="false"><use href="#g-dl"/></svg> Download</a>
     </div>
     <button class="hb" id="hb" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="mob" onclick="toggleM()"><span></span><span></span><span></span></button>
   </div>
@@ -383,7 +383,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
     <a href="#compare" onclick="closeM()">Compare</a>
     <a href="#install" onclick="closeM()">Install</a>
     <a href="#faq" onclick="closeM()">FAQ</a>
-    <a data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.68/asperadock_0.5.68_amd64.deb" onclick="closeM()" style="color:var(--green-2);font-weight:700">Download Aspera Hub</a>
+    <a data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.69/asperadock_0.5.69_amd64.deb" onclick="closeM()" style="color:var(--green-2);font-weight:700">Download Aspera Hub</a>
   </div>
 </nav>
 </header>
@@ -398,11 +398,11 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
         <h1 class="hero-h1">Aspera Hub<br><span class="grad">one warm workspace.</span></h1>
         <p class="hero-sub">Run your <b>WhatsApp, Arattai, Gmail and Zoho</b> apps together in a single Linux window. Daily apps stay <b>warm</b> for instant switching — the rest go <b>cold</b> so they don't quietly hold memory. <b>Aspera Notes</b>, <b>AI Polish</b>, and Chrome extensions are built in. Hub does <b>not</b> forward messages between apps, and Hub pins are for <b>Arattai</b> only.</p>
         <div class="hero-ctas">
-          <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.68/asperadock_0.5.68_amd64.deb"><svg aria-hidden="true" focusable="false"><use href="#g-dl"/></svg> Download .deb for Linux</a>
+          <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.69/asperadock_0.5.69_amd64.deb"><svg aria-hidden="true" focusable="false"><use href="#g-dl"/></svg> Download .deb for Linux</a>
           <a class="btn btn-s" href="https://github.com/ramchandragada/AsperaDock" target="_blank" rel="noopener"><svg><use href="#g-link"/></svg> View on GitHub</a>
         </div>
         <div class="stats">
-          <div><span class="grad" data-version>v0.5.68</span><span>Latest</span></div>
+          <div><span class="grad" data-version>v0.5.69</span><span>Latest</span></div>
           <div><span class="grad">Free</span><span>Forever · MIT</span></div>
           <div><span class="grad">MIT</span><span>Open source</span></div>
           <div><span class="grad">.deb</span><span>Debian · Ubuntu · Mint</span></div>
@@ -749,14 +749,14 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <div class="term fade">
         <div class="term-hd"><span class="dot" style="background:#ff5f57"></span><span class="dot" style="background:#febc2e"></span><span class="dot" style="background:#28c840"></span><span class="t">bash</span><button class="copy" id="copyBtn" type="button">📋 Copy</button></div>
 <pre id="cmd"><span class="c"># Recommended — or just double-click the downloaded .deb</span>
-<span class="g">sudo apt install</span> ./asperadock_<span class="v" id="deb-ver">0.5.68</span>_amd64.deb
+<span class="g">sudo apt install</span> ./asperadock_<span class="v" id="deb-ver">0.5.69</span>_amd64.deb
 
 <span class="c"># Alternative if apt install of a local file is unavailable</span>
 <span class="g">sudo dpkg -i</span> asperadock_*_amd64.deb
 <span class="g">sudo apt-get install -f</span></pre>
       </div>
       <p class="note fade">The package is named <b>asperadock</b> (kept stable so your logins survive updates) — the launcher and About screen show <b>Aspera Hub</b>. After that, updates arrive in-app from GitHub Releases.</p>
-      <div class="fade" style="text-align:center;margin-top:24px"><a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.68/asperadock_0.5.68_amd64.deb"><svg aria-hidden="true" focusable="false"><use href="#g-dl"/></svg> Download the latest .deb</a></div>
+      <div class="fade" style="text-align:center;margin-top:24px"><a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.69/asperadock_0.5.69_amd64.deb"><svg aria-hidden="true" focusable="false"><use href="#g-dl"/></svg> Download the latest .deb</a></div>
     </div>
   </div>
 </section>
@@ -802,10 +802,10 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       <h2>Get <span class="grad">Aspera Hub</span></h2>
       <p>One warm workspace for WhatsApp, Arattai, Gmail and Zoho — free, for Linux.</p>
       <div class="hero-ctas">
-        <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.68/asperadock_0.5.68_amd64.deb"><svg aria-hidden="true" focusable="false"><use href="#g-dl"/></svg> Download .deb for Linux</a>
+        <a class="btn btn-p" data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.69/asperadock_0.5.69_amd64.deb"><svg aria-hidden="true" focusable="false"><use href="#g-dl"/></svg> Download .deb for Linux</a>
         <a class="btn btn-s" href="https://github.com/ramchandragada/AsperaDock" target="_blank" rel="noopener"><svg><use href="#g-link"/></svg> View on GitHub</a>
       </div>
-      <p class="fine"><span data-version>v0.5.68</span> · Debian / Ubuntu / Mint · amd64 · MIT licensed</p>
+      <p class="fine"><span data-version>v0.5.69</span> · Debian / Ubuntu / Mint · amd64 · MIT licensed</p>
     </div>
   </div>
 </section>
@@ -833,7 +833,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
       </div>
       <div class="foot-col">
         <h5>Download</h5>
-        <a data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.68/asperadock_0.5.68_amd64.deb">Latest .deb</a>
+        <a data-download href="https://github.com/ramchandragada/AsperaDock/releases/download/v0.5.69/asperadock_0.5.69_amd64.deb">Latest .deb</a>
         <a href="https://github.com/ramchandragada/AsperaDock/releases" target="_blank" rel="noopener">All releases</a>
         <a href="#install">Install guide</a>
       </div>
@@ -853,7 +853,7 @@ footer{background:var(--surface);border-top:1px solid var(--border)}
 </footer>
 
 <script>
-var HUB_VERSION='0.5.68';
+var HUB_VERSION='0.5.69';
 function copyText(text, btn, label){
   function ok(){btn.textContent='✓ Copied';setTimeout(function(){btn.textContent=label;},1600);}
   function fail(){btn.textContent='Copy failed';setTimeout(function(){btn.textContent=label;},1600);}
