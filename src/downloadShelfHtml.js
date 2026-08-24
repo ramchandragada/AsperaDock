@@ -73,6 +73,8 @@ export function buildDownloadShelfHtml(dark = false) {
   }
   .item:hover:not(:disabled) { background: ${hover}; }
   .item:disabled { opacity: 0.55; cursor: default; }
+  .item[draggable="true"] { cursor: grab; }
+  .item[draggable="true"]:active { cursor: grabbing; }
   .ico { font-size: 18px; line-height: 1; text-align: center; }
   .copy { min-width: 0; display: grid; gap: 2px; }
   .name {
@@ -172,9 +174,11 @@ export function buildDownloadShelfHtml(dark = false) {
         const folderBtn = !progressing && item.path
           ? '<button type="button" class="action show-folder" data-id="' + esc(item.id) + '" title="Show in folder">📂</button>'
           : '';
+        const canDrag = !progressing && !missing && item.path;
         return '<div class="row">' +
           '<button type="button" class="item open-item" data-id="' + esc(item.id) + '"' +
-          (progressing || missing ? ' disabled' : '') + '>' +
+          (progressing || missing ? ' disabled' : '') +
+          (canDrag ? ' draggable="true" title="Open · or drag to Desktop / folder"' : '') + '>' +
           '<span class="ico">' + iconFor(item.name) + '</span>' +
           '<span class="copy"><span class="name">' + esc(item.name) + '</span>' +
           '<span class="meta">' + esc(meta) + (missing ? ' • File moved' : '') + '</span>' +
@@ -192,6 +196,16 @@ export function buildDownloadShelfHtml(dark = false) {
       }
       const folderBtn = event.target.closest('.show-folder');
       if (folderBtn) api.action('show-in-folder', folderBtn.dataset.id);
+    });
+    document.getElementById('list').addEventListener('dragstart', (event) => {
+      const openBtn = event.target.closest('.open-item');
+      if (!openBtn || openBtn.disabled || !openBtn.dataset.id) {
+        event.preventDefault();
+        return;
+      }
+      // Electron takes over the OS drag via main-process startDrag.
+      event.preventDefault();
+      api.startFileDrag?.(openBtn.dataset.id);
     });
     api.onInit((data) => paint(data));
   </script>
