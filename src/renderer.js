@@ -377,19 +377,21 @@ function makeAppTab(service, index) {
     btn.appendChild(label);
   }
 
-  // Close control — always for temporary Hub link tabs; hover for other apps.
-  const closeBtn = document.createElement('button');
-  closeBtn.type = 'button';
-  closeBtn.className = 'app-tab-close';
-  closeBtn.title = service.linkTab || service.isCustom ? 'Close tab' : 'Remove app';
-  closeBtn.setAttribute('aria-label', closeBtn.title);
-  closeBtn.textContent = '×';
-  closeBtn.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    closeAppTab(service);
-  });
-  btn.appendChild(closeBtn);
+  // Close control — temporary Hub link / custom tabs only (catalog apps: right-click → Remove).
+  if (service.linkTab || service.isCustom) {
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'app-tab-close';
+    closeBtn.title = 'Close tab';
+    closeBtn.setAttribute('aria-label', closeBtn.title);
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeAppTab(service);
+    });
+    btn.appendChild(closeBtn);
+  }
 
   btn.addEventListener('click', () => {
     if (dragDidMove) {
@@ -408,8 +410,9 @@ function makeAppTab(service, index) {
     btn.click();
   });
   btn.addEventListener('auxclick', (event) => {
-    // Middle-click closes the tab (browser convention).
+    // Middle-click closes temporary link tabs only (browser convention).
     if (event.button !== 1) return;
+    if (!service.linkTab && !service.isCustom) return;
     event.preventDefault();
     event.stopPropagation();
     closeAppTab(service);

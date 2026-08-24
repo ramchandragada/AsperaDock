@@ -33,6 +33,7 @@ export function defaultKeepWarmForApp(appId) {
     appId === 'arattai' ||
     appId === 'zoho-crm' ||
     appId === 'zoho-one' ||
-    appId === 'zoho-books'
+    appId === 'zoho-books' ||
+    appId === 'zoho-workdrive'
   );
 }

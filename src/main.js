@@ -119,7 +119,11 @@ import {
   sanitizeDownloadFilename,
   uniqueDownloadPath,
 } from './downloadPath.js';
-import { linuxUsesOpaqueOverlays } from './linuxDesktop.js';
+import {
+  linuxIsLeanFleetDesktop,
+  linuxIsPlasmaDesktop,
+  linuxUsesOpaqueOverlays,
+} from './linuxDesktop.js';
 import {
   clearMessagingLeftSearchJs,
   composeReplyJs,
@@ -394,22 +398,31 @@ if (process.platform === 'win32') {
   }
 }
 
-// Linux Mint (XFCE/Cinnamon): Chromium GPU + chrome-sandbox often FATAL-exit
-// before any window ("refuses to start"). Apply the safest flags FIRST.
+// Linux Mint (XFCE/Cinnamon) + Q4OS Andromeda (Plasma/Trinity): Chromium GPU
+// + chrome-sandbox often FATAL-exit before any window. Apply safest flags FIRST.
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('no-sandbox');
   app.commandLine.appendSwitch('disable-gpu-sandbox');
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('disable-software-rasterizer');
   app.commandLine.appendSwitch('class', 'asperadock');
-  // Wayland compositors (Mint + newer Electron) can FATAL on reset;
-  // prefer XWayland unless the user already chose a platform.
+  // Wayland (Mint / Plasma Wayland / newer Electron) can FATAL on reset;
+  // prefer X11/XWayland unless the user already chose a platform.
   if (
     !app.commandLine.hasSwitch('ozone-platform') &&
     !process.env.ELECTRON_OZONE_PLATFORM_HINT &&
     (process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland')
   ) {
     app.commandLine.appendSwitch('ozone-platform', 'x11');
+  }
+  // Low-spec Q4OS / lean Plasma: skip smooth scrolling (cheap CPU win).
+  // Mint / Cinnamon / GNOME are unchanged.
+  try {
+    if (linuxIsLeanFleetDesktop()) {
+      app.commandLine.appendSwitch('disable-smooth-scrolling');
+    }
+  } catch {
+    // ignore DE probe failures
   }
   try {
     app.disableHardwareAcceleration();
@@ -897,8 +910,8 @@ function applyMemorySwitches() {
   if (settings.mediaKeys === false) {
     disabled.add('HardwareMediaKeyHandling');
   }
-  // Linux WMs (Mint XFCE/Cinnamon) often mis-report occlusion → blank WebContentsView
-  // until the next resize/click. Keep guest surfaces painting while alt-tabbed away.
+  // Linux WMs (Mint XFCE/Cinnamon, Q4OS Plasma/Trinity) often mis-report
+  // occlusion → blank WebContentsView until the next resize/click.
   if (process.platform === 'linux') {
     disabled.add('CalculateNativeWinOcclusion');
   }
@@ -3848,7 +3861,8 @@ function createFloatBrowserWindow({
   preload,
   dark = false,
 }) {
-  // Mint XFCE / MATE (weak compositor): opaque. Cinnamon / Ubuntu GNOME: transparent OK.
+  // Mint XFCE / MATE / Q4OS Trinity / Q4OS Plasma (weak KWin): opaque.
+  // Cinnamon / Ubuntu GNOME / full Plasma with compositor: transparent OK.
   const opaque = linuxUsesOpaqueOverlays();
   const win = new BrowserWindow({
     parent: mainWindow,
@@ -12283,8 +12297,15 @@ function createTrayIcon(_badge) {
     image = getAppIcon();
   }
   if (!image.isEmpty()) {
-    // XFCE panel icons are typically ~22–24px; Cinnamon is similar.
-    const size = process.platform === 'linux' ? 24 : 32;
+    // XFCE / Cinnamon panels ~22–24px; Plasma StatusNotifier is often ~22px.
+    let size = 32;
+    if (process.platform === 'linux') {
+      try {
+        size = linuxIsPlasmaDesktop() ? 22 : 24;
+      } catch {
+        size = 24;
+      }
+    }
     image = image.resize({ width: size, height: size, quality: 'best' });
   }
   return image;

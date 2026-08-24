@@ -18,6 +18,7 @@ import {
   sanitizeAiExtraLanguages,
   sanitizeAiProviderOrder,
 } from './ai/catalog.js';
+import { linuxIsLeanFleetDesktop } from './linuxDesktop.js';
 
 export const PRIMARY_PROFILE_ID = 'primary';
 
@@ -584,6 +585,28 @@ function migrateWarmKeepAlive(settings) {
       linuxGpuSafeV1: true,
       ...(process.platform === 'linux' ? { hardwareAcceleration: false } : {}),
     };
+  }
+  // Q4OS Andromeda / lean Plasma / Trinity company PCs — one-shot lean defaults.
+  // Mint / Ubuntu / Cinnamon are unchanged (linuxIsLeanFleetDesktop is false).
+  if (!next.q4osLeanDefaultsV1) {
+    next = { ...next, q4osLeanDefaultsV1: true };
+    try {
+      if (linuxIsLeanFleetDesktop({ platform: process.platform })) {
+        next.lowMemoryMode = true;
+        next.maxWarmViews = Math.min(
+          3,
+          Math.max(2, Number(next.maxWarmViews) || 3),
+        );
+        next.maxResidentViews = next.maxWarmViews;
+        next.hibernateMinutes = Math.min(
+          10,
+          Math.max(5, Number(next.hibernateMinutes) || 10),
+        );
+        next.hardwareAcceleration = false;
+      }
+    } catch {
+      // ignore — never block settings load on DE detection
+    }
   }
   // Keep legacy keys so older migrations stay idempotent.
   if (!next.residentCapV1) next = { ...next, residentCapV1: true };

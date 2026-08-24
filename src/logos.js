@@ -56,6 +56,12 @@ export const LOGOS = {
     <rect x="7.2" y="15" width="5.5" height="1.7" rx=".7" fill="${ZOHO_GREEN}"/>`,
   ),
 
+  'zoho-workdrive': solidTile(
+    '#00A7B5',
+    `<path fill="#fff" d="M4.5 8.2c0-1.1.9-2 2-2H10l1.6 1.6H17.5c1.1 0 2 .9 2 2v7.2c0 1.1-.9 2-2 2h-11c-1.1 0-2-.9-2-2V8.2z"/>
+    <path fill="#00A7B5" d="M7.2 12.2h9.6v1.6H7.2zm0 3h6.2v1.5H7.2z" opacity=".85"/>`,
+  ),
+
   custom: solidTile(
     '#3D5A80',
     `<circle cx="12" cy="12" r="7.5" fill="none" stroke="#fff" stroke-width="1.6"/>
