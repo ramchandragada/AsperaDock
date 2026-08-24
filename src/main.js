@@ -120,6 +120,15 @@ import {
   uniqueDownloadPath,
 } from './downloadPath.js';
 import {
+  beginDownload,
+  finishDownload,
+  initDownloadHistory,
+  listDownloadsForUi,
+  lookupDownload,
+  updateDownload,
+} from './downloadHistory.js';
+import { buildDownloadShelfHtml } from './downloadShelfHtml.js';
+import {
   linuxIsLeanFleetDesktop,
   linuxIsPlasmaDesktop,
   linuxUsesOpaqueOverlays,
@@ -628,6 +637,10 @@ let webSearchLastQuery = '';
 let notesWindow = null;
 /** Floating notification center. */
 let notifCenterWindow = null;
+/** Chrome-like recent download shelf. */
+let downloadShelfWindow = null;
+/** Unseen completed downloads since the shelf was last opened. */
+let downloadUnseenCount = 0;
 /** Floating Aspera AI result panel. */
 let aiResultWindow = null;
 /** Context for follow-up actions on the open AI result (e.g. suggest replies). */
@@ -2520,6 +2533,19 @@ function notifCenterHandle(channel, handler) {
   });
 }
 
+function downloadShelfHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !downloadShelfWindow ||
+      downloadShelfWindow.isDestroyed() ||
+      event.sender !== downloadShelfWindow.webContents
+    ) {
+      throw new Error('Unauthorized download-shelf IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
 function aiResultHandle(channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
     if (
@@ -3705,6 +3731,128 @@ function closeNotifCenterWindow() {
   }
 }
 
+function closeDownloadShelfWindow() {
+  if (!downloadShelfWindow || downloadShelfWindow.isDestroyed()) {
+    downloadShelfWindow = null;
+    return;
+  }
+  const win = downloadShelfWindow;
+  downloadShelfWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
+function buildDownloadShelfData() {
+  return { downloads: listDownloadsForUi() };
+}
+
+function pushDownloadShelfData() {
+  if (!downloadShelfWindow || downloadShelfWindow.isDestroyed()) return;
+  try {
+    downloadShelfWindow.webContents.send('download-shelf:init', buildDownloadShelfData());
+  } catch {
+    // ignore
+  }
+}
+
+function notifyDownloadFinished() {
+  downloadUnseenCount += 1;
+  pushDownloadShelfData();
+  try {
+    mainWindow?.webContents.send('dock:download-shelf-auto');
+  } catch {
+    // ignore
+  }
+  broadcastState();
+}
+
+function openDownloadShelfWindow({ x = 0, y = 0, dark = false, align = 'right' } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeDownloadShelfWindow();
+
+  const menuW = 392;
+  const menuH = Math.min(520, Math.max(280, 120 + listDownloadsForUi().length * 58));
+  const content = mainWindow.getContentBounds();
+  const anchorX = content.x + (Number(x) || 0);
+  const anchorY = content.y + (Number(y) || 0);
+  const rawX = align === 'right' ? anchorX - menuW : anchorX;
+  const pos = clampFloatPosition(rawX, anchorY, menuW, menuH);
+
+  downloadUnseenCount = 0;
+  broadcastState();
+
+  downloadShelfWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'downloadShelfPreload.js',
+    dark: !!dark,
+  });
+
+  const win = downloadShelfWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildDownloadShelfHtml(!!dark))}`,
+  );
+
+  win.webContents.once('did-finish-load', () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('download-shelf:init', buildDownloadShelfData());
+    }
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  win.on('blur', () => {
+    setTimeout(() => {
+      if (downloadShelfWindow === win) closeDownloadShelfWindow();
+    }, 120);
+  });
+  win.on('closed', () => {
+    if (downloadShelfWindow === win) downloadShelfWindow = null;
+  });
+
+  return { ok: true };
+}
+
+function handleDownloadShelfAction(type, value) {
+  const action = String(type || '');
+  if (action === 'open-folder') {
+    const downloadDir =
+      String(settings.downloadPath || '').trim() || app.getPath('downloads');
+    try {
+      fs.mkdirSync(downloadDir, { recursive: true });
+    } catch {
+      // ignore
+    }
+    shell.openPath(downloadDir);
+    return { ok: true };
+  }
+  const entry = lookupDownload(String(value || ''));
+  if (!entry?.path || !fs.existsSync(entry.path)) {
+    return { ok: false, error: 'File not found' };
+  }
+  if (action === 'show-in-folder') {
+    shell.showItemInFolder(entry.path);
+    return { ok: true };
+  }
+  if (action === 'open') {
+    shell.openPath(entry.path);
+    return { ok: true };
+  }
+  return { ok: false, error: 'Unknown action' };
+}
+
 function closeAiResultWindow() {
   aiResultContext = null;
   clearAiInboxAttachment();
@@ -4187,6 +4335,7 @@ function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } =
   closeAppContextMenu();
   closeChromeMenuWindow();
   closeNotifCenterWindow();
+  closeDownloadShelfWindow();
 
   const menuW = 420;
   const menuH = 580;
@@ -7335,6 +7484,17 @@ function configureSession(partitionSession, partitionKey) {
     lastGuestDownloadDedupeKey = dedupeKey;
     lastGuestDownloadDedupeAt = now;
 
+    const downloadId = `dl-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    beginDownload(downloadId, downloadName, item.getTotalBytes?.() || 0);
+    item.on('updated', () => {
+      updateDownload(
+        downloadId,
+        item.getReceivedBytes?.() || 0,
+        item.getTotalBytes?.() || 0,
+      );
+      pushDownloadShelfData();
+    });
+
     const downloadDir = String(settings.downloadPath || '').trim();
     let savePathClaimed = '';
     /** @type {{ path: string, claimPath: string, canceled: boolean, ready: Promise<void>, resolveReady: () => void } | null} */
@@ -7379,6 +7539,8 @@ function configureSession(partitionSession, partitionKey) {
               // ignore
             }
           }
+          finishDownload(downloadId, { state: state || 'cancelled' });
+          pushDownloadShelfData();
           return;
         }
         const savePath = moveDownloadClaim(
@@ -7386,13 +7548,21 @@ function configureSession(partitionSession, partitionKey) {
           destHolder.path,
         );
         releaseDownloadPath(savePath);
-        if (!savePath || !fs.existsSync(savePath)) return;
+        if (!savePath || !fs.existsSync(savePath)) {
+          finishDownload(downloadId, { state: 'interrupted' });
+          pushDownloadShelfData();
+          return;
+        }
         rememberGuestDownload(
           savePath,
           item.getFilename?.() || path.basename(savePath),
         );
-        // Ask-every-time: user already picked the folder — skip auto-open
-        // folder (Thunar can cover the next dialog on XFCE).
+        finishDownload(downloadId, {
+          filePath: savePath,
+          name: item.getFilename?.() || path.basename(savePath),
+          state: 'completed',
+        });
+        notifyDownloadFinished();
         if (settings.openFileOnDownload) shell.openPath(savePath);
         return;
       }
@@ -7400,13 +7570,21 @@ function configureSession(partitionSession, partitionKey) {
       const savePath = item.getSavePath?.() || savePathClaimed;
       releaseDownloadPath(savePath);
       releaseDownloadPath(savePathClaimed);
-      if (state !== 'completed') return;
+      if (state !== 'completed') {
+        finishDownload(downloadId, { state: state || 'cancelled' });
+        pushDownloadShelfData();
+        return;
+      }
       rememberGuestDownload(
         savePath,
         item.getFilename?.() || path.basename(savePath),
       );
-      // After Save As, opening the folder is redundant and Thunar can cover
-      // the next Save dialog on XFCE — only auto-open for fixed download dirs.
+      finishDownload(downloadId, {
+        filePath: savePath,
+        name: item.getFilename?.() || path.basename(savePath),
+        state: 'completed',
+      });
+      notifyDownloadFinished();
       if (settings.openFolderOnDownload && downloadDir) {
         shell.showItemInFolder(savePath);
       }
@@ -11971,6 +12149,7 @@ function currentState() {
     unread: unreadForUi,
     totalUnread: totalUnread(),
     notifications: notificationLog,
+    downloadUnseen: downloadUnseenCount,
     pinnedPeople: sanitizePinnedPeople(settings.pinnedPeople || []),
     appMemory,
     ai: {
@@ -12051,6 +12230,7 @@ function scheduleActiveNavStatePush() {
 function broadcastState() {
   mainWindow?.webContents.send('dock:state', currentState());
   pushNotifCenterData();
+  pushDownloadShelfData();
 }
 
 function shortcutEntry(id) {
@@ -13348,6 +13528,21 @@ dockHandle('dock:toggle-notif-center', (_e, payload) => {
   openNotifCenterWindow(payload || {});
   return { ok: true, open: true };
 });
+dockHandle('dock:open-download-shelf', (_e, payload) =>
+  openDownloadShelfWindow(payload || {}),
+);
+dockHandle('dock:close-download-shelf', () => {
+  closeDownloadShelfWindow();
+  return { ok: true };
+});
+dockHandle('dock:toggle-download-shelf', (_e, payload) => {
+  if (downloadShelfWindow && !downloadShelfWindow.isDestroyed()) {
+    closeDownloadShelfWindow();
+    return { ok: true, open: false };
+  }
+  openDownloadShelfWindow(payload || {});
+  return { ok: true, open: true };
+});
 appMenuHandle('app-menu:action', (_e, type, value) => handleAppMenuAction(type, value));
 appMenuHandle('app-menu:close', () => {
   closeAppContextMenu();
@@ -13363,6 +13558,13 @@ notifCenterHandle('notif-center:action', (_e, type, value) =>
 );
 notifCenterHandle('notif-center:close', () => {
   closeNotifCenterWindow();
+  return { ok: true };
+});
+downloadShelfHandle('download-shelf:action', (_e, type, value) =>
+  handleDownloadShelfAction(type, value),
+);
+downloadShelfHandle('download-shelf:close', () => {
+  closeDownloadShelfWindow();
   return { ok: true };
 });
 aiResultHandle('ai-result:copy', (_e, text) => {
@@ -14384,6 +14586,7 @@ app.whenReady().then(async () => {
     app.setName('Aspera Hub');
   }
   settings = loadSettings();
+  initDownloadHistory(app.getPath('userData'));
   try {
     const userData = app.getPath('userData');
     fs.chmodSync(userData, 0o700);
