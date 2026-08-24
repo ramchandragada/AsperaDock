@@ -39,6 +39,11 @@ contextBridge.exposeInMainWorld('asperadock', {
   reorder: (order) => ipcRenderer.invoke('dock:reorder', order),
   pickDownloadDir: () => ipcRenderer.invoke('dock:pick-download-dir'),
   openDownloads: () => ipcRenderer.invoke('dock:open-downloads'),
+  openDownloadShelf: (payload) =>
+    ipcRenderer.invoke('dock:open-download-shelf', payload || {}),
+  closeDownloadShelf: () => ipcRenderer.invoke('dock:close-download-shelf'),
+  toggleDownloadShelf: (payload) =>
+    ipcRenderer.invoke('dock:toggle-download-shelf', payload || {}),
   openExtensions: (payload) => ipcRenderer.invoke('dock:open-extensions', payload),
   openAppMenu: (payload) => ipcRenderer.invoke('dock:open-app-menu', payload),
   closeAppMenu: () => ipcRenderer.invoke('dock:close-app-menu'),
@@ -122,6 +127,11 @@ contextBridge.exposeInMainWorld('asperadock', {
     const listener = () => callback();
     ipcRenderer.on('dock:open-profiles', listener);
     return () => ipcRenderer.removeListener('dock:open-profiles', listener);
+  },
+  onDownloadShelfAuto: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('dock:download-shelf-auto', listener);
+    return () => ipcRenderer.removeListener('dock:download-shelf-auto', listener);
   },
   onOpenSearch: (callback) => {
     const listener = () => callback();

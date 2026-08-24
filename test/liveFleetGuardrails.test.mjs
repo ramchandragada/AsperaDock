@@ -39,3 +39,16 @@ test('live fleet: store migrates shared Zoho workspace profiles', () => {
   assert.match(store, /isolateSharedZohoWorkspaceProfiles/);
   assert.ok(fs.existsSync(path.join(root, 'src/zohoWorkspaceProfiles.js')));
 });
+
+test('live fleet: Chrome-like download shelf is wired', () => {
+  assert.ok(fs.existsSync(path.join(root, 'src/downloadHistory.js')));
+  assert.ok(fs.existsSync(path.join(root, 'src/downloadShelfHtml.js')));
+  assert.ok(fs.existsSync(path.join(root, 'src/downloadShelfPreload.js')));
+  const renderer = fs.readFileSync(path.join(root, 'src/renderer.js'), 'utf8');
+  assert.match(renderer, /toggleDownloadShelf/);
+  const preload = fs.readFileSync(path.join(root, 'src/preload.js'), 'utf8');
+  assert.match(preload, /openDownloadShelf/);
+  const main = fs.readFileSync(path.join(root, 'src/main.js'), 'utf8');
+  assert.match(main, /openDownloadShelfWindow/);
+  assert.match(main, /initDownloadHistory/);
+});

@@ -42,6 +42,7 @@ const els = {
   notesBtn: document.getElementById('notes-btn'),
   chromeMenu: document.getElementById('app-chrome-menu'),
   downloadsBtn: document.getElementById('downloads-btn'),
+  downloadBadge: document.getElementById('download-badge'),
   webSearchBtn: document.getElementById('web-search-btn'),
   extensionsBtn: document.getElementById('extensions-btn'),
   checkUpdatesBtn: document.getElementById('check-updates-btn'),
@@ -496,8 +497,14 @@ function renderChromeActions() {
   const folder = String(s.downloadPath || '').trim();
   if (els.downloadsBtn) {
     els.downloadsBtn.title = folder
-      ? `Open Downloads folder\n${folder}`
-      : 'Open Downloads folder';
+      ? `Recent downloads\n${folder}`
+      : 'Recent downloads';
+  }
+
+  const unseen = Number(state.downloadUnseen) || 0;
+  if (els.downloadBadge) {
+    els.downloadBadge.textContent = unseen > 99 ? '99+' : String(unseen);
+    els.downloadBadge.classList.toggle('hidden', unseen <= 0);
   }
 
   const nav = state.nav || {};
@@ -1849,6 +1856,32 @@ function toggleNotificationCenter() {
   });
 }
 
+function openDownloadShelf() {
+  closeAppMenu();
+  closeChromeMenu();
+  closeNotificationCenter();
+  const btn = els.downloadsBtn?.getBoundingClientRect?.();
+  window.asperadock.openDownloadShelf?.({
+    x: btn ? btn.right : window.innerWidth - 16,
+    y: btn ? btn.bottom + 6 : 64,
+    align: 'right',
+    dark: document.body.classList.contains('theme-dark'),
+  });
+}
+
+function toggleDownloadShelf() {
+  closeAppMenu();
+  closeChromeMenu();
+  closeNotificationCenter();
+  const btn = els.downloadsBtn?.getBoundingClientRect?.();
+  window.asperadock.toggleDownloadShelf?.({
+    x: btn ? btn.right : window.innerWidth - 16,
+    y: btn ? btn.bottom + 6 : 64,
+    align: 'right',
+    dark: document.body.classList.contains('theme-dark'),
+  });
+}
+
 function closeChromeMenu() {
   els.chromeMenu?.classList.add('hidden');
   window.asperadock.closeChromeMenu?.();
@@ -2129,11 +2162,8 @@ function runUpdateCheck() {
     .finally(() => refreshUpdateStatus());
 }
 
-els.downloadsBtn?.addEventListener('click', async () => {
-  const result = await window.asperadock.openDownloads?.();
-  if (result && !result.ok) {
-    alert(`Could not open Downloads folder.\n${result.error || result.path || ''}`);
-  }
+els.downloadsBtn?.addEventListener('click', () => {
+  toggleDownloadShelf();
 });
 els.extensionsBtn?.addEventListener('click', () => {
   window.asperadock.openExtensions?.({
@@ -2871,6 +2901,9 @@ async function boot() {
   window.asperadock.onNavState?.((nav) => {
     state = { ...state, nav: nav || { canGoBack: false, canGoForward: false } };
     renderChromeActions();
+  });
+  window.asperadock.onDownloadShelfAuto?.(() => {
+    openDownloadShelf();
   });
 }
 
