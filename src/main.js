@@ -3899,6 +3899,40 @@ function handleDownloadShelfAction(type, value) {
   return { ok: false, error: 'Unknown action' };
 }
 
+/** OS drag from Recent download history → Desktop / file manager. */
+function startDownloadShelfFileDrag(event, downloadId) {
+  if (
+    !downloadShelfWindow ||
+    downloadShelfWindow.isDestroyed() ||
+    event.sender !== downloadShelfWindow.webContents
+  ) {
+    return;
+  }
+  const entry = lookupDownload(String(downloadId || ''));
+  if (!entry?.path || entry.state === 'progressing' || !fs.existsSync(entry.path)) {
+    return;
+  }
+  let icon = getAppIcon();
+  try {
+    if (icon && !icon.isEmpty()) {
+      icon = icon.resize({ width: 32, height: 32, quality: 'best' });
+    }
+  } catch {
+    // ignore
+  }
+  if (!icon || icon.isEmpty()) {
+    icon = nativeImage.createEmpty();
+  }
+  try {
+    event.sender.startDrag({
+      file: entry.path,
+      icon,
+    });
+  } catch {
+    // ignore — compositor may reject occasional drags
+  }
+}
+
 function closeAiResultWindow() {
   aiResultContext = null;
   clearAiInboxAttachment();
@@ -13617,6 +13651,9 @@ downloadShelfHandle('download-shelf:action', (_e, type, value) =>
 downloadShelfHandle('download-shelf:close', () => {
   closeDownloadShelfWindow();
   return { ok: true };
+});
+ipcMain.on('download-shelf:drag-start', (event, downloadId) => {
+  startDownloadShelfFileDrag(event, downloadId);
 });
 aiResultHandle('ai-result:copy', (_e, text) => {
   clipboard.writeText(String(text || ''));

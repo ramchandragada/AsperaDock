@@ -51,6 +51,19 @@ test('live fleet: Chrome-like download shelf is wired', () => {
   const main = fs.readFileSync(path.join(root, 'src/main.js'), 'utf8');
   assert.match(main, /openDownloadShelfWindow/);
   assert.match(main, /initDownloadHistory/);
+  assert.match(main, /startDownloadShelfFileDrag/);
+  assert.match(main, /download-shelf:drag-start/);
+  const shelfPreload = fs.readFileSync(
+    path.join(root, 'src/downloadShelfPreload.js'),
+    'utf8',
+  );
+  assert.match(shelfPreload, /startFileDrag/);
+  const shelfHtml = fs.readFileSync(
+    path.join(root, 'src/downloadShelfHtml.js'),
+    'utf8',
+  );
+  assert.match(shelfHtml, /startFileDrag/);
+  assert.match(shelfHtml, /draggable="true"/);
 });
 
 test('live fleet: main window always maximizes (Zorin/GNOME-safe)', () => {
