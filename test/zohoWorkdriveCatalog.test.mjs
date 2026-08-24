@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   APP_CATALOG,
+  allowsZohoWorkspaceHubTabs,
   canShareProfileAcrossInstances,
   defaultInstanceName,
   getAppCatalogEntry,
@@ -17,8 +18,9 @@ test('Zoho WorkDrive is in the Aspera catalog', () => {
   assert.ok(APP_CATALOG.some((a) => a.appId === 'zoho-workdrive'));
 });
 
-test('WorkDrive tab label stays short and shares Zoho workspace login', () => {
+test('WorkDrive catalog add is isolated; deep links may share Zoho login', () => {
   const entry = getAppCatalogEntry('zoho-workdrive');
   assert.equal(defaultInstanceName(entry, 1), 'Drive');
-  assert.equal(canShareProfileAcrossInstances('zoho-workdrive'), true);
+  assert.equal(canShareProfileAcrossInstances('zoho-workdrive'), false);
+  assert.equal(allowsZohoWorkspaceHubTabs('zoho-workdrive'), true);
 });

@@ -1,21 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { canShareProfileAcrossInstances } from '../src/services.js';
+import {
+  allowsZohoWorkspaceHubTabs,
+  canShareProfileAcrossInstances,
+} from '../src/services.js';
 
-test('Zoho workspace apps can share one profile across Hub tabs', () => {
-  assert.equal(canShareProfileAcrossInstances('zoho-crm'), true);
-  assert.equal(canShareProfileAcrossInstances('zoho-one'), true);
-  assert.equal(canShareProfileAcrossInstances('zoho-books'), true);
-  assert.equal(canShareProfileAcrossInstances('zoho-workdrive'), true);
-});
-
-test('Zoho Mail is isolated like Gmail (separate mailbox sessions)', () => {
-  assert.equal(canShareProfileAcrossInstances('zoho-mail'), false);
-});
-
-test('WhatsApp and Gmail still require separate profiles per instance', () => {
+test('catalog adds never reuse another instance profile (multi CRM orgs)', () => {
+  assert.equal(canShareProfileAcrossInstances('zoho-crm'), false);
+  assert.equal(canShareProfileAcrossInstances('zoho-books'), false);
+  assert.equal(canShareProfileAcrossInstances('zoho-one'), false);
+  assert.equal(canShareProfileAcrossInstances('zoho-workdrive'), false);
   assert.equal(canShareProfileAcrossInstances('whatsapp'), false);
   assert.equal(canShareProfileAcrossInstances('gmail'), false);
-  assert.equal(canShareProfileAcrossInstances('arattai'), false);
-  assert.equal(canShareProfileAcrossInstances('chatgpt'), false);
+});
+
+test('Zoho workspace apps still allow same-login Hub deep-link tabs', () => {
+  assert.equal(allowsZohoWorkspaceHubTabs('zoho-crm'), true);
+  assert.equal(allowsZohoWorkspaceHubTabs('zoho-one'), true);
+  assert.equal(allowsZohoWorkspaceHubTabs('zoho-books'), true);
+  assert.equal(allowsZohoWorkspaceHubTabs('zoho-workdrive'), true);
+  assert.equal(allowsZohoWorkspaceHubTabs('zoho-mail'), false);
+});
+
+test('Zoho Mail stays isolated like Gmail', () => {
+  assert.equal(canShareProfileAcrossInstances('zoho-mail'), false);
+  assert.equal(allowsZohoWorkspaceHubTabs('zoho-mail'), false);
 });
