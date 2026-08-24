@@ -1,11 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Aspera Hub">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Aspera Hub">
   <defs>
-    <linearGradient id="g" x1="14" y1="48" x2="50" y2="16" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#5A6EE6"/>
-      <stop offset="1" stop-color="#A0AFFF"/>
+    <linearGradient id="aspera-panel" x1="24" y1="18" x2="104" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0B1A3A"/>
+      <stop offset="100%" stop-color="#050B1C"/>
+    </linearGradient>
+    <linearGradient id="aspera-left" x1="40" y1="28" x2="64" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#9AABFF"/>
+      <stop offset="100%" stop-color="#6B7FE8"/>
+    </linearGradient>
+    <linearGradient id="aspera-right" x1="64" y1="28" x2="90" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#B8C4FF"/>
+      <stop offset="100%" stop-color="#8095FF"/>
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="14" fill="#081230"/>
-  <path fill="url(#g)" d="M15.2 47.5 L29.4 18.2 H33.2 L21.5 47.5 Z"/>
-  <path fill="url(#g)" d="M48.8 47.5 L34.6 18.2 H30.8 L42.5 47.5 Z"/>
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#aspera-panel)"/>
+  <!-- Open-A: two thick legs, no crossbar (refines the source chevron mark) -->
+  <path fill="url(#aspera-left)" d="M36 96 L58.2 34 H66.2 L49.2 96 Z"/>
+  <path fill="url(#aspera-right)" d="M92 96 L69.8 34 H61.8 L78.8 96 Z"/>
 </svg>
