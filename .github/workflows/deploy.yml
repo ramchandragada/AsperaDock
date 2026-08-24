@@ -66,6 +66,9 @@ jobs:
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Release from package.json: v${VERSION}"
 
+      - name: Assert release is from merged master + fleet guardrails
+        run: npm run release:check
+
       - name: Build .deb
         run: npm run make -- --targets @electron-forge/maker-deb
 

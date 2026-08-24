@@ -2,19 +2,22 @@
 /**
  * Publish Aspera Hub updates to GitHub Releases (no server required).
  *
- * From your laptop:
+ * From your laptop (must be on merged master):
  *   1. Bump version in package.json
  *   2. npm run make
  *   3. npm run publish:update
  *      (or: npm run deploy  — make + publish in one step)
  *
  * In CI: set GH_TOKEN / GITHUB_TOKEN (Actions provides this automatically).
+ * Deploy workflow only runs on push to master.
  *
  * Clients fetch (repo must stay public — private releases 404 without a token):
  *   https://github.com/ramchandragada/AsperaDock/releases/latest/download/latest.json
  *
  * Publish flow (avoids update 404 races):
- *   draft release → upload .deb → upload latest.json → verify downloads → publish
+ *   assert on master → draft release → upload .deb → upload latest.json → verify → publish
+ *
+ * See docs/RELEASE-LINE.md — never publish from an unmerged feature branch.
  */
 
 import fs from 'node:fs';
@@ -24,6 +27,17 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// Hard gate before any GitHub release mutation.
+{
+  const gate = spawnSync(
+    process.execPath,
+    [path.join(root, 'scripts/assert-release-from-master.mjs')],
+    { stdio: 'inherit', cwd: root },
+  );
+  if (gate.status !== 0) process.exit(gate.status || 1);
+}
+
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 const GITHUB_SLUG = process.env.GITHUB_REPOSITORY || 'ramchandragada/AsperaDock';

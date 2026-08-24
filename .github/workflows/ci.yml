@@ -15,4 +15,7 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm test
+      - name: Live-fleet guardrails (WorkDrive, catalog ×, multi-CRM)
+        run: npm run test:fleet
+      - name: Full unit tests
+        run: npm test
