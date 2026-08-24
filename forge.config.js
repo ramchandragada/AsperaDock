@@ -18,6 +18,13 @@ function syncPdfjsRuntime() {
   }
 }
 
+// Prefer a local Electron zip when present (Mint office nets). In CI the
+// directory is gitignored / empty — omit electronZipDir so packager downloads.
+const electronZipDir = path.join(__dirname, '.electron-zips');
+const useLocalElectronZip =
+  fs.existsSync(electronZipDir) &&
+  fs.readdirSync(electronZipDir).some((name) => name.endsWith('.zip'));
+
 module.exports = {
   packagerConfig: {
     asar: true,
@@ -26,8 +33,7 @@ module.exports = {
     appBundleId: 'app.asperadock.desktop',
     // Stylized Aspera "A" only — not the full wordmark.
     icon: './assets/icon',
-    // Prefer local Electron zip when registry downloads fail (Mint office nets).
-    electronZipDir: './.electron-zips',
+    ...(useLocalElectronZip ? { electronZipDir: './.electron-zips' } : {}),
     extraResource: [
       './assets/icon.png',
       './assets/icon-16.png',
