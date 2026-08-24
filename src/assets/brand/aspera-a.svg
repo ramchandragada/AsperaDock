@@ -1,10 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Aspera">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Aspera">
   <defs>
-    <linearGradient id="g" x1="10" y1="56" x2="54" y2="10" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#5A6EE6"/>
-      <stop offset="1" stop-color="#A0AFFF"/>
+    <linearGradient id="aspera-left" x1="36" y1="20" x2="64" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#9AABFF"/>
+      <stop offset="100%" stop-color="#6B7FE8"/>
+    </linearGradient>
+    <linearGradient id="aspera-right" x1="64" y1="20" x2="96" y2="110" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#B8C4FF"/>
+      <stop offset="100%" stop-color="#8095FF"/>
     </linearGradient>
   </defs>
-  <path fill="url(#g)" d="M9.5 56.5 L29.6 10.5 H34.2 L18.8 56.5 Z"/>
-  <path fill="url(#g)" d="M54.5 56.5 L34.4 10.5 H29.8 L45.2 56.5 Z"/>
+  <path fill="url(#aspera-left)" d="M28 108 L56 20 H66 L45 108 Z"/>
+  <path fill="url(#aspera-right)" d="M100 108 L72 20 H62 L83 108 Z"/>
 </svg>
