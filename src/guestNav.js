@@ -28,6 +28,16 @@ export function isInternalUrl(url, service, hosts = INTERNAL_HOSTS) {
   return allowed.some((d) => host === d || host.endsWith(`.${d}`));
 }
 
+/** Phone dial links — open via OS (Aspera Connect), never inside the guest. */
+export function isPhoneDialUrl(url) {
+  try {
+    const protocol = new URL(String(url || '')).protocol.toLowerCase();
+    return protocol === 'tel:' || protocol === 'callto:';
+  } catch {
+    return false;
+  }
+}
+
 /** Dangerous or non-web schemes must never navigate inside a guest. */
 export function isForbiddenGuestNavigation(url) {
   try {

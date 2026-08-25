@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   isInternalUrl,
   isForbiddenGuestNavigation,
+  isPhoneDialUrl,
   isAuthOrLoginUrl,
   isUrlForService,
   isFragileZohoOneDeepUrl,
@@ -25,6 +26,17 @@ test('isForbiddenGuestNavigation blocks file and javascript', () => {
   assert.equal(isForbiddenGuestNavigation('javascript:alert(1)'), true);
   assert.equal(isForbiddenGuestNavigation('https://mail.zoho.in/'), false);
   assert.equal(isForbiddenGuestNavigation('not a url'), true);
+});
+
+test('isPhoneDialUrl detects tel and callto', () => {
+  assert.equal(isPhoneDialUrl('tel:+919876543210'), true);
+  assert.equal(isPhoneDialUrl('callto:02212345678'), true);
+  assert.equal(isPhoneDialUrl('https://crm.zoho.in/'), false);
+  assert.equal(isPhoneDialUrl('mailto:a@b.c'), false);
+  assert.equal(isPhoneDialUrl('not a url'), false);
+  // Still forbidden for in-guest nav — Hub must openExternal instead.
+  assert.equal(isForbiddenGuestNavigation('tel:+919876543210'), true);
+  assert.equal(isForbiddenGuestNavigation('callto:02212345678'), true);
 });
 
 test('isInternalUrl fails closed on malformed URLs', () => {

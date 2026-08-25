@@ -3,7 +3,8 @@
  */
 import { mustKeepGoogleUrlInApp } from './guestNav.js';
 
-const ALLOWED = new Set(['http:', 'https:', 'mailto:']);
+// tel:/callto: → OS (Aspera Connect Call / aspera-tel) for Zoho click-to-call in Hub.
+const ALLOWED = new Set(['http:', 'https:', 'mailto:', 'tel:', 'callto:']);
 
 export function isAllowedExternalUrl(url) {
   try {
