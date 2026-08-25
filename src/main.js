@@ -355,6 +355,7 @@ import {
 import {
   isInternalUrl,
   isForbiddenGuestNavigation,
+  isPhoneDialUrl,
   isAuthOrLoginUrl,
   isUrlForService,
   isFragileZohoOneDeepUrl,
@@ -10279,6 +10280,11 @@ function attachGuestContextMenu(webContents) {
       template.push({
         label: 'Open link',
         click: () => {
+          // Click-to-call from Zoho CRM / One inside Hub.
+          if (isPhoneDialUrl(safeLink)) {
+            openExternalSafe(safeLink);
+            return;
+          }
           // WhatsApp / Arattai: never load Drive/Google into the chat tab.
           if (
             isMessagingAppId(live?.appId) &&
@@ -10667,6 +10673,7 @@ function guestNavigationApi() {
     startUrlForService,
     handleOutboundOrNewWindowLink,
     guestWebPreferences,
+    openExternalSafe,
     getMainWindow: () => mainWindow,
     tryOpenZohoSharedHubTab: (svc, url) => {
       if (!shouldOpenAsHubTab(effectiveLinkHandling(svc))) return false;

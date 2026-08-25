@@ -5,6 +5,7 @@
 import {
   isInternalUrl,
   isForbiddenGuestNavigation,
+  isPhoneDialUrl,
   isAuthOrLoginUrl,
   extractGoogleOutboundUrl,
   linkTabWindowOpenAction,
@@ -29,6 +30,7 @@ import {
  * @property {(service: object) => object} guestWebPreferences
  * @property {(service: object, url: string) => boolean} [tryOpenZohoSharedHubTab]
  * @property {() => (Electron.BrowserWindow|null|undefined)} [getMainWindow]
+ * @property {(url: string) => boolean} [openExternalSafe]
  */
 
 /**
@@ -45,6 +47,7 @@ export function configureGuestWindowOpen(wc, service, api) {
     guestWebPreferences,
     tryOpenZohoSharedHubTab,
     getMainWindow,
+    openExternalSafe,
   } = api;
 
   const allowPopup = () => {
@@ -166,6 +169,12 @@ export function configureGuestWindowOpen(wc, service, api) {
       return allowPopup();
     }
 
+    // Zoho / CRM click-to-call → OS tel: handler (Aspera Connect).
+    if (isPhoneDialUrl(raw)) {
+      if (typeof openExternalSafe === 'function') openExternalSafe(raw);
+      return { action: 'deny' };
+    }
+
     return { action: 'deny' };
   });
 }
@@ -181,9 +190,16 @@ export function attachGuestNavigationGate(webContents, service, api) {
     isGoogleService,
     startUrlForService,
     handleOutboundOrNewWindowLink,
+    openExternalSafe,
   } = api;
 
   const gate = (event, url) => {
+    // Phone dial: never navigate guest; hand off to OS (Aspera Connect Call).
+    if (isPhoneDialUrl(url)) {
+      event.preventDefault();
+      if (typeof openExternalSafe === 'function') openExternalSafe(url);
+      return;
+    }
     if (isForbiddenGuestNavigation(url)) {
       event.preventDefault();
       return;
