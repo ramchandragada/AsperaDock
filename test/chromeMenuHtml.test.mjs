@@ -30,6 +30,7 @@ test('chrome menu is hub controls only — no toolbar duplicates', () => {
     'lock',
     'settings',
     'shortcuts',
+    'aspera-connect',
     'check-updates',
     'website',
     'about',
@@ -59,9 +60,11 @@ test('chrome menu is hub controls only — no toolbar duplicates', () => {
   assert.match(html, /Copy link/);
   assert.match(html, /Workspace/);
   assert.match(html, /Keyboard shortcuts/);
+  assert.match(html, /Open Aspera Connect/);
   assert.match(html, /Check for updates/);
   assert.match(html, /asperahub\.com/);
   assert.ok(html.includes('data-action="settings"'));
+  assert.ok(html.includes('data-action="aspera-connect"'));
   assert.ok(html.includes('data-action="check-updates"'));
   assert.ok(html.includes('data-action="website"'));
   assert.ok(html.includes('data-action="ai-settings"'));

@@ -2250,6 +2250,7 @@ els.chromeMenu?.addEventListener('click', (event) => {
   if (action === 'free-ram') window.asperadock.hibernateBackground();
   if (action === 'copy-link') window.asperadock.copyActiveLink?.();
   if (action === 'about') window.asperadock.showAbout?.();
+  if (action === 'aspera-connect') window.asperadock.openAsperaConnect?.();
   if (action === 'website') openAsperaWebsite();
 });
 
