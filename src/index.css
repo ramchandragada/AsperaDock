@@ -540,6 +540,15 @@ body.layout-top .app-bar-top {
   background: rgba(248, 113, 113, 0.22);
 }
 
+.app-bar-top .connect-btn {
+  color: #c8d0ff;
+}
+
+.app-bar-top .connect-btn:hover {
+  color: #fff;
+  background: rgba(128, 149, 255, 0.28);
+}
+
 .app-bar-top .add-app-btn {
   margin: 0;
   color: #c8d0ff !important;
