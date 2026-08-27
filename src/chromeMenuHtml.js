@@ -45,6 +45,9 @@ const ICO = {
     '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>',
   ),
   info: svg('<circle cx="12" cy="12" r="9"/><path d="M12 16v-5"/><path d="M12 8h.01"/>'),
+  phone: svg(
+    '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3.1-8.7A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.5-1.1a2 2 0 0 1 2.1-.4c.9.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2Z"/>',
+  ),
   spark: svg(
     '<path d="M12 3v3"/><path d="M12 18v3"/><path d="M3 12h3"/><path d="M18 12h3"/><path d="m5.6 5.6 2.1 2.1"/><path d="m16.3 16.3 2.1 2.1"/><path d="m16.3 7.7 2.1-2.1"/><path d="m5.6 18.4 2.1-2.1"/><circle cx="12" cy="12" r="3"/>',
   ),
@@ -135,6 +138,7 @@ export const CHROME_MENU_SECTIONS = [
     items: [
       { action: 'settings', label: 'Settings' },
       { action: 'shortcuts', label: 'Keyboard shortcuts' },
+      { action: 'aspera-connect', label: 'Open Aspera Connect…' },
       { action: 'check-updates', label: 'Check for updates' },
       { action: 'website', label: 'asperahub.com' },
       { action: 'about', label: 'About Aspera Hub' },
@@ -164,6 +168,7 @@ const ACTION_ICON = {
   lock: ICO.lock,
   settings: ICO.settings,
   shortcuts: ICO.keyboard,
+  'aspera-connect': ICO.phone,
   'check-updates': ICO.updates,
   website: ICO.link,
   about: ICO.info,

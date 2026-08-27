@@ -6066,6 +6066,10 @@ function handleChromeMenuAction(type) {
     showAboutDialog();
     return { ok: true };
   }
+  if (type === 'aspera-connect') {
+    openAsperaConnectApp();
+    return { ok: true };
+  }
   if (type === 'website') {
     openExternalSafe(ASPERA_HUB_WEBSITE);
     return { ok: true };
@@ -13456,6 +13460,10 @@ dockHandle('dock:open-external', (_e, url) => {
 dockHandle('dock:show-about', () => {
   showAboutDialog();
   return { version: app.getVersion() };
+});
+dockHandle('dock:open-aspera-connect', () => {
+  const ok = openAsperaConnectApp();
+  return { ok: !!ok };
 });
 dockHandle('dock:update-check', () => checkForUpdates({ silent: false }));
 dockHandle('dock:update-download', () => downloadUpdate());
