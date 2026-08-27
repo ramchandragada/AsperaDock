@@ -31,6 +31,7 @@ const els = {
   navForwardBtn: document.getElementById('nav-forward-btn'),
   navReloadBtn: document.getElementById('nav-reload-btn'),
   navCopyLinkBtn: document.getElementById('nav-copy-link-btn'),
+  asperaConnectBtn: document.getElementById('aspera-connect-btn'),
   emptyState: document.getElementById('empty-state'),
   emptyAddBtn: document.getElementById('empty-add-btn'),
   focusBtn: document.getElementById('focus-btn'),
@@ -216,6 +217,7 @@ function paintToolbarIcons() {
   if (els.navForwardBtn) els.navForwardBtn.innerHTML = icon('forward');
   if (els.navReloadBtn) els.navReloadBtn.innerHTML = icon('reload');
   if (els.navCopyLinkBtn) els.navCopyLinkBtn.innerHTML = icon('link');
+  if (els.asperaConnectBtn) els.asperaConnectBtn.innerHTML = icon('phone');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
   if (els.appMenuEdit) els.appMenuEdit.innerHTML = icon('settings');
   if (els.appMenuHome) els.appMenuHome.innerHTML = icon('home');
@@ -2206,6 +2208,9 @@ els.settingsModal?.querySelector('.settings-nav')?.addEventListener('click', (ev
 });
 els.lockBtn?.addEventListener('click', () => {
   lockHubFromUi();
+});
+els.asperaConnectBtn?.addEventListener('click', () => {
+  window.asperadock.openAsperaConnect?.();
 });
 els.navBackBtn?.addEventListener('click', () => navigateActive('back'));
 els.navForwardBtn?.addEventListener('click', () => navigateActive('forward'));
