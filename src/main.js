@@ -335,6 +335,7 @@ import {
   normalizeStylishHttpsUrl,
 } from './pageInjection.js';
 import { openExternalSafe } from './safeShell.js';
+import { openAsperaConnectApp } from './asperaConnectCall.js';
 import {
   registerChromeScheme,
   attachChromeProtocolHandler,
@@ -13008,6 +13009,10 @@ function installApplicationMenu() {
         {
           label: 'Visit asperahub.com',
           click: () => openExternalSafe(ASPERA_HUB_WEBSITE),
+        },
+        {
+          label: 'Open Aspera Connect…',
+          click: () => openAsperaConnectApp(),
         },
         {
           label: 'Support',

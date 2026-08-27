@@ -169,7 +169,7 @@ export function configureGuestWindowOpen(wc, service, api) {
       return allowPopup();
     }
 
-    // Zoho / CRM click-to-call → OS tel: handler (Aspera Connect).
+    // Zoho / CRM click-to-call → Aspera Connect binary (via openExternalSafe).
     if (isPhoneDialUrl(raw)) {
       if (typeof openExternalSafe === 'function') openExternalSafe(raw);
       return { action: 'deny' };
@@ -194,7 +194,7 @@ export function attachGuestNavigationGate(webContents, service, api) {
   } = api;
 
   const gate = (event, url) => {
-    // Phone dial: never navigate guest; hand off to OS (Aspera Connect Call).
+    // Phone dial: never navigate guest; hand off to Aspera Connect (direct CLI).
     if (isPhoneDialUrl(url)) {
       event.preventDefault();
       if (typeof openExternalSafe === 'function') openExternalSafe(url);
