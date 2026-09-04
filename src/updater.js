@@ -41,6 +41,10 @@ import {
   isRetryableDownloadError,
 } from './updateDownloadErrors.js';
 import {
+  stagePackageForElevatedInstall as stagePackageForElevatedInstallPure,
+  shouldSilentInstallOnQuit,
+} from './updateInstallPolicy.js';
+import {
   compareVersions,
   resolveUpdateFeedUrl,
   synthesizeManifestFromGithubRelease,
@@ -70,6 +74,8 @@ let checkTimer = null;
 let pendingUpdate = null;
 let downloadedPath = null;
 let busy = false;
+/** True while Install & restart is waiting on dpkg / package UI. */
+let installBusy = false;
 
 export function configureUpdater({
   getSettings,
@@ -85,6 +91,10 @@ export function configureUpdater({
   if (onBeforeDialog) beforeDialog = onBeforeDialog;
   if (onAfterDialog) afterDialog = onAfterDialog;
   if (onBeforeRelaunch) beforeRelaunch = onBeforeRelaunch;
+}
+
+export function isUpdateInstallBusy() {
+  return installBusy;
 }
 
 function dialogParent() {
@@ -352,6 +362,15 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
   // An explicit "Check for updates" always runs, even with auto-update off.
   if (silent && settings().autoUpdateEnabled === false) {
     return { available: false, disabled: true };
+  }
+
+  if (installBusy) {
+    return {
+      available: true,
+      version: pendingUpdate?.version,
+      downloaded: true,
+      installing: true,
+    };
   }
 
   // Already downloaded and waiting? Re-offer it instead of doing nothing.
@@ -925,44 +944,79 @@ function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
 
+/**
+ * Copy the .deb to a world-readable /tmp path without spaces.
+ * Elevating from ~/.config/Aspera Dock/updates/ is fragile (spaces + session).
+ * @param {string} srcPath
+ * @param {{ tmpDir?: string, copyFileSync?: Function, chmodSync?: Function }} [opts]
+ */
+export function stagePackageForElevatedInstall(srcPath, opts = {}) {
+  return stagePackageForElevatedInstallPure(srcPath, {
+    tmpDir: opts.tmpDir || '/tmp',
+    copyFileSync: opts.copyFileSync || fs.copyFileSync.bind(fs),
+    chmodSync: opts.chmodSync || fs.chmodSync.bind(fs),
+  });
+}
+
+function clearConsumedUpdateArtifact(filePath) {
+  if (!filePath) return;
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  } catch {
+    // ignore
+  }
+  if (downloadedPath === filePath) downloadedPath = null;
+}
+
 /** Install the downloaded artifact and relaunch into the new version. */
 export async function installUpdate({ silentOnFail = false } = {}) {
+  if (installBusy) {
+    return { ok: false, error: 'Install already in progress' };
+  }
   if (!downloadedPath || !fs.existsSync(downloadedPath)) {
     const result = await downloadUpdate();
     if (!result.ok) return result;
   }
+  installBusy = true;
+  let stagedPath = null;
   try {
-    await assertDownloadedIntegrity(downloadedPath);
-  } catch (error) {
-    const message = String(error?.message || error);
-    broadcast('error', { message });
-    reportError('update-install', { message });
-    if (!silentOnFail) {
-      await showUpdateBox({
-        type: 'error',
-        title: 'Update rejected',
-        message: 'Could not verify the update package.',
-        detail: message,
-        buttons: ['OK'],
-      });
+    try {
+      await assertDownloadedIntegrity(downloadedPath);
+    } catch (error) {
+      const message = String(error?.message || error);
+      broadcast('error', { message });
+      reportError('update-install', { message });
+      if (!silentOnFail) {
+        await showUpdateBox({
+          type: 'error',
+          title: 'Update rejected',
+          message: 'Could not verify the update package.',
+          detail: message,
+          buttons: ['OK'],
+        });
+      }
+      return { ok: false, error: message };
     }
-    return { ok: false, error: message };
-  }
-  const kind = pendingUpdate?.file?.kind || detectPackaging();
-  broadcast('installing', { version: pendingUpdate?.version });
+    const kind = pendingUpdate?.file?.kind || detectPackaging();
+    broadcast('installing', { version: pendingUpdate?.version });
 
-  try {
     if (kind === 'appimage') {
       const target = process.env.APPIMAGE;
       if (!target) throw new Error('APPIMAGE path not found');
       fs.copyFileSync(downloadedPath, target);
       fs.chmodSync(target, 0o755);
+      clearConsumedUpdateArtifact(downloadedPath);
+      pendingUpdate = null;
       relaunchAndExit(target);
       return { ok: true };
     }
 
     if (kind === 'deb' || kind === 'rpm') {
-      const installed = await elevatedInstall(kind, downloadedPath);
+      const elevatePath =
+        kind === 'deb'
+          ? (stagedPath = stagePackageForElevatedInstall(downloadedPath))
+          : downloadedPath;
+      const installed = await elevatedInstall(kind, elevatePath);
       if (!installed.ok) throw new Error(installed.error || 'Install failed');
 
       if (installed.manual) {
@@ -971,33 +1025,39 @@ export async function installUpdate({ silentOnFail = false } = {}) {
         const applied = await waitForDebVersion(pendingUpdate?.version, 90_000);
         if (!applied) {
           const choice = await showUpdateBox({
-            type: 'info',
+            type: 'warning',
             title: 'Finish installing the update',
-            message: `Approve the install of Aspera Hub ${pendingUpdate?.version} in your package manager.`,
+            message: `Aspera Hub ${pendingUpdate?.version} is not installed yet.`,
             detail:
-              `The update file is:\n${downloadedPath}\n\n` +
-              'When the package manager says the install is done, click Restart.\n' +
-              'If nothing opened, click Open folder and double-click the .deb.',
-            buttons: ['Restart now', 'Open folder', 'Later'],
+              'A password / package window may be behind Hub, or was cancelled.\n\n' +
+              '1. Look for a password prompt or package installer.\n' +
+              '2. Or click Open .deb and install it yourself.\n' +
+              '3. Then reopen Aspera Hub.\n\n' +
+              `File:\n${elevatePath}`,
+            buttons: ['Open .deb', 'Open folder', 'Later'],
             defaultId: 0,
             cancelId: 2,
           });
-          if (choice.response === 1) {
-            shell.showItemInFolder(downloadedPath);
+          if (choice.response === 0) {
+            await shell.openPath(elevatePath);
             return { ok: false, manual: true, error: 'Waiting for manual install' };
           }
-          if (choice.response === 2) {
-            snoozeUpdate(pendingUpdate?.version);
-            return { ok: false, manual: true, snoozed: true };
+          if (choice.response === 1) {
+            shell.showItemInFolder(elevatePath);
+            return { ok: false, manual: true, error: 'Waiting for manual install' };
           }
-          const okNow = await waitForDebVersion(pendingUpdate?.version, 15_000);
-          if (!okNow) {
-            throw new Error(
-              `Version ${pendingUpdate?.version} is not installed yet (still ${readDebPackageVersion() || currentVersion()}). Finish the package install, then try again.`,
-            );
-          }
+          snoozeUpdate(pendingUpdate?.version);
+          return { ok: false, manual: true, snoozed: true };
         }
       }
+
+      // Package is on disk — drop the cached artifact so the next launch
+      // does not keep offering Install & restart for the same version.
+      clearConsumedUpdateArtifact(downloadedPath);
+      if (stagedPath && stagedPath !== downloadedPath) {
+        clearConsumedUpdateArtifact(stagedPath);
+      }
+      pendingUpdate = null;
 
       // Give dpkg a moment to finish writing files, then restart via /usr/bin/asperadock.
       await new Promise((r) => setTimeout(r, 800));
@@ -1018,13 +1078,19 @@ export async function installUpdate({ silentOnFail = false } = {}) {
         type: 'error',
         title: 'Update failed to install',
         message: 'Aspera Hub could not install the update automatically.',
-        detail: `${message}\n\nThe downloaded file is here:\n${downloadedPath}\n\nDouble-click the .deb to install it with your package manager, then reopen Aspera Hub.`,
+        detail:
+          `${message}\n\n` +
+          'Fix (terminal):\n' +
+          `sudo dpkg -i "${stagedPath || downloadedPath}"\n\n` +
+          'Then reopen Aspera Hub.',
         buttons: ['Open folder', 'OK'],
         defaultId: 0,
       });
-      if (r.response === 0) shell.showItemInFolder(downloadedPath);
+      if (r.response === 0) shell.showItemInFolder(stagedPath || downloadedPath);
     }
     return { ok: false, error: message };
+  } finally {
+    installBusy = false;
   }
 }
 
@@ -1226,6 +1292,7 @@ async function promptAvailable() {
 
 async function promptReady({ force = false } = {}) {
   if (!pendingUpdate) return;
+  if (installBusy) return;
   if (!force && !pendingUpdate.mandatory && isUpdateSnoozed(pendingUpdate.version)) return;
   if (force) clearSnooze();
   try {
@@ -1245,7 +1312,8 @@ async function promptReady({ force = false } = {}) {
       cancelId: pendingUpdate.mandatory ? 0 : 1,
     });
     if (r.response === 0) {
-      installUpdate().catch((err) =>
+      // Await so a second prompt cannot stack while dpkg/pkexec is running.
+      await installUpdate().catch((err) =>
         reportError('update-install', { message: String(err) }),
       );
     } else {
@@ -1254,21 +1322,25 @@ async function promptReady({ force = false } = {}) {
   } catch (error) {
     reportError('update-prompt', { message: String(error?.message || error) });
     if (settings().autoUpdateInstall === true || pendingUpdate?.mandatory) {
-      installUpdate({ silentOnFail: true }).catch((err) =>
+      await installUpdate({ silentOnFail: true }).catch((err) =>
         reportError('update-install', { message: String(err) }),
       );
     }
   }
 }
 
-/** Called from before-quit: silently apply a downloaded update if configured. */
+/** Called from before-quit: silently apply a downloaded AppImage update if configured. */
 export function updateReadyForQuit() {
-  return (
-    settings().autoUpdateInstall === true &&
-    downloadedPath &&
-    fs.existsSync(downloadedPath) &&
-    !!pendingUpdate
-  );
+  // deb/rpm need an interactive polkit prompt — never elevate silently on quit
+  // (that left fleets stuck re-offering Install & restart forever).
+  return shouldSilentInstallOnQuit({
+    autoUpdateInstall: settings().autoUpdateInstall === true,
+    packaging: detectPackaging(),
+    downloadedPath,
+    pendingUpdate,
+    installBusy,
+    existsSync: fs.existsSync.bind(fs),
+  });
 }
 
 export function getUpdateStatus() {
