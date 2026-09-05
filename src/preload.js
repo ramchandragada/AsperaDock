@@ -8,6 +8,13 @@ contextBridge.exposeInMainWorld('asperadock', {
   findInPage: (text, options) =>
     ipcRenderer.invoke('dock:find-in-page', text, options),
   stopFind: () => ipcRenderer.invoke('dock:stop-find'),
+  openFindBar: (payload) => ipcRenderer.invoke('dock:open-find-bar', payload || {}),
+  closeFindBar: () => ipcRenderer.invoke('dock:close-find-bar'),
+  openWebSearch: (payload) =>
+    ipcRenderer.invoke('dock:open-web-search', payload || {}),
+  closeWebSearch: () => ipcRenderer.invoke('dock:close-web-search'),
+  openNotes: (payload) => ipcRenderer.invoke('dock:open-notes', payload || {}),
+  closeNotes: () => ipcRenderer.invoke('dock:close-notes'),
   printActive: () => ipcRenderer.invoke('dock:print-active'),
   removeService: (id) => ipcRenderer.invoke('dock:remove-service', id),
   createProfile: (name) => ipcRenderer.invoke('dock:create-profile', name),
@@ -22,6 +29,7 @@ contextBridge.exposeInMainWorld('asperadock', {
   hibernate: (id) => ipcRenderer.invoke('dock:hibernate', id),
   hibernateBackground: () => ipcRenderer.invoke('dock:hibernate-background'),
   reloadActive: () => ipcRenderer.invoke('dock:reload-active'),
+  copyActiveLink: () => ipcRenderer.invoke('dock:copy-active-link'),
   toggleFocus: () => ipcRenderer.invoke('dock:toggle-focus'),
   toggleMute: () => ipcRenderer.invoke('dock:toggle-mute'),
   saveSettings: (patch) => ipcRenderer.invoke('dock:save-settings', patch),
@@ -31,6 +39,11 @@ contextBridge.exposeInMainWorld('asperadock', {
   reorder: (order) => ipcRenderer.invoke('dock:reorder', order),
   pickDownloadDir: () => ipcRenderer.invoke('dock:pick-download-dir'),
   openDownloads: () => ipcRenderer.invoke('dock:open-downloads'),
+  openDownloadShelf: (payload) =>
+    ipcRenderer.invoke('dock:open-download-shelf', payload || {}),
+  closeDownloadShelf: () => ipcRenderer.invoke('dock:close-download-shelf'),
+  toggleDownloadShelf: (payload) =>
+    ipcRenderer.invoke('dock:toggle-download-shelf', payload || {}),
   openExtensions: (payload) => ipcRenderer.invoke('dock:open-extensions', payload),
   openAppMenu: (payload) => ipcRenderer.invoke('dock:open-app-menu', payload),
   closeAppMenu: () => ipcRenderer.invoke('dock:close-app-menu'),
@@ -55,6 +68,17 @@ contextBridge.exposeInMainWorld('asperadock', {
   aiCatchUp: (opts) => ipcRenderer.invoke('dock:ai-catch-up', opts),
   aiSummarize: (opts) => ipcRenderer.invoke('dock:ai-summarize', opts),
   aiRefine: (opts) => ipcRenderer.invoke('dock:ai-refine', opts),
+  aiOpenInbox: (opts) => ipcRenderer.invoke('dock:ai-open-inbox', opts),
+  zohoCrmStatus: () => ipcRenderer.invoke('dock:zoho-crm-status'),
+  zohoCrmSave: (payload) => ipcRenderer.invoke('dock:zoho-crm-save', payload),
+  zohoCrmClear: () => ipcRenderer.invoke('dock:zoho-crm-clear'),
+  zohoCrmTest: () => ipcRenderer.invoke('dock:zoho-crm-test'),
+  zohoCrmConnect: (payload) =>
+    ipcRenderer.invoke('dock:zoho-crm-connect', payload),
+  zohoCrmFleetPull: (payload) =>
+    ipcRenderer.invoke('dock:zoho-crm-fleet-pull', payload),
+  zohoCrmLookup: (payload) =>
+    ipcRenderer.invoke('dock:zoho-crm-lookup', payload),
   setOverlay: (open) => ipcRenderer.invoke('dock:set-overlay', open),
   setChromeSize: (size) => ipcRenderer.invoke('dock:set-chrome-size', size),
   clearNotifications: () => ipcRenderer.invoke('dock:clear-notifications'),
@@ -73,6 +97,8 @@ contextBridge.exposeInMainWorld('asperadock', {
   updateDownload: () => ipcRenderer.invoke('dock:update-download'),
   updateInstall: () => ipcRenderer.invoke('dock:update-install'),
   showAbout: () => ipcRenderer.invoke('dock:show-about'),
+  openAsperaConnect: () => ipcRenderer.invoke('dock:open-aspera-connect'),
+  openExternal: (url) => ipcRenderer.invoke('dock:open-external', url),
   onUpdateEvent: (callback) => {
     const listener = (_event, data) => callback(data);
     ipcRenderer.on('dock:update-event', listener);
@@ -82,6 +108,11 @@ contextBridge.exposeInMainWorld('asperadock', {
     const listener = (_event, state) => callback(state);
     ipcRenderer.on('dock:state', listener);
     return () => ipcRenderer.removeListener('dock:state', listener);
+  },
+  onNavState: (callback) => {
+    const listener = (_event, nav) => callback(nav);
+    ipcRenderer.on('dock:nav-state', listener);
+    return () => ipcRenderer.removeListener('dock:nav-state', listener);
   },
   onOpenSettings: (callback) => {
     const listener = () => callback();
@@ -98,6 +129,11 @@ contextBridge.exposeInMainWorld('asperadock', {
     ipcRenderer.on('dock:open-profiles', listener);
     return () => ipcRenderer.removeListener('dock:open-profiles', listener);
   },
+  onDownloadShelfAuto: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on('dock:download-shelf-auto', listener);
+    return () => ipcRenderer.removeListener('dock:download-shelf-auto', listener);
+  },
   onOpenSearch: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('dock:open-search', listener);
@@ -107,6 +143,11 @@ contextBridge.exposeInMainWorld('asperadock', {
     const listener = (_event, id) => callback(id);
     ipcRenderer.on('dock:open-edit-app', listener);
     return () => ipcRenderer.removeListener('dock:open-edit-app', listener);
+  },
+  onConfirmRemoveApp: (callback) => {
+    const listener = (_event, id) => callback(id);
+    ipcRenderer.on('dock:confirm-remove-app', listener);
+    return () => ipcRenderer.removeListener('dock:confirm-remove-app', listener);
   },
   onChromeAction: (callback) => {
     const listener = (_event, action) => callback(action);

@@ -10,10 +10,16 @@ import {
 } from './services.js';
 import { defaultShortcutsMap, migrateShortcutsMap } from './shortcutsConfig.js';
 import { sanitizePinnedPeople } from './guestInbox.js';
+import { isolateSharedZohoMailProfiles } from './zohoMailProfiles.js';
+import { isolateSharedZohoWorkspaceProfiles } from './zohoWorkspaceProfiles.js';
+import { sanitizeNotes } from './notesStore.js';
 import {
+  getAiLanguage,
   sanitizeAiDisabledProviders,
+  sanitizeAiExtraLanguages,
   sanitizeAiProviderOrder,
 } from './ai/catalog.js';
+import { linuxIsLeanFleetDesktop } from './linuxDesktop.js';
 
 export const PRIMARY_PROFILE_ID = 'primary';
 
@@ -50,7 +56,7 @@ export const DEFAULTS = {
 
   // Downloads
   downloadPath: '',
-  openFolderOnDownload: true,
+  openFolderOnDownload: false,
   openFileOnDownload: false,
 
   // Startup & window
@@ -65,7 +71,13 @@ export const DEFAULTS = {
   // Security
   lockEnabled: false,
   lockPasswordHash: '',
-  /** When false (default), ignore injectJs / stylishUrl from the UI. */
+  /**
+   * When true (default), Hub disables high-risk WhatsApp Web automation:
+   * pin-open Store/CDP, quick-reply Send, inbox scrape/search, Notification
+   * patch, visibility spoof, and caps WhatsApp at 1 instance.
+   */
+  whatsappSafeMode: true,
+  /** When true *and* ASPERADOCK_ADMIN=1, allow injectJs / stylishUrl. */
   allowPageInjection: false,
   /** When false (default), guest DevTools are blocked in packaged builds. */
   allowGuestDevTools: false,
@@ -147,7 +159,13 @@ export const DEFAULTS = {
    * @type {Record<string, string>}
    */
   aiProviderModels: {},
-  aiLanguage: 'en', // en | hi | mr
+  aiLanguage: 'en', // Catch me up language (any AI_LANGUAGE_CATALOG id)
+  /**
+   * Extra languages for Summarize / Refine / Suggest reply (max 2).
+   * English is always included. Default Hindi + Marathi.
+   * @type {string[]}
+   */
+  aiExtraLanguages: ['hi', 'mr'],
   /**
    * Custom Aspera AI failover sequence (provider ids).
    * Empty / omitted → built-in default (Gemini → … → Anthropic).
@@ -159,6 +177,21 @@ export const DEFAULTS = {
    * @type {string[]}
    */
   aiDisabledProviders: [],
+
+  /**
+   * Zoho CRM Deals lookup (selection → right-click).
+   * OAuth secrets live in userData/zoho-crm-oauth.json (encrypted).
+   */
+  zohoCrmEnabled: true,
+  /** Data center: in | com | eu | com.au | jp | ca */
+  zohoCrmDc: 'in',
+  /**
+   * Vercel fleet API base URL (HTTPS). Zoho secrets are pulled with a Bearer
+   * token stored encrypted in zoho-crm-fleet.json — never in this file.
+   */
+  zohoCrmFleetUrl: '',
+  /** ISO timestamp of last successful fleet pull (informational). */
+  zohoCrmFleetSyncedAt: '',
 
   /**
    * Unpacked Chrome extensions for guest apps (WhatsApp, Arattai, …).
@@ -175,8 +208,10 @@ export const DEFAULTS = {
    */
   lowMemoryMode: false,
 
-  // Defaults for apps (overridden per-app via right-click Edit)
-  linkHandling: 'block', // block | external
+  // Defaults for apps (spell/hibernate can still be per-app via Edit)
+  // block | external | hub-tab | ask — see src/linkHandling.js
+  // ONE Hub-wide rule for every app (never a floating popup).
+  linkHandling: 'hub-tab',
   spellChecker: ['en-US'],
   /** Hibernate idle background apps (keepWarm apps like WhatsApp are skipped). */
   hibernateMinutes: 45,
@@ -225,6 +260,12 @@ export const DEFAULTS = {
    * @type {{ id: string, serviceId: string, chatKey: string, name: string, appId?: string }[]}
    */
   pinnedPeople: [],
+
+  /**
+   * Local copy-pad notes (links / repeated text). This PC only.
+   * @type {{ id: string, title: string, body: string, updatedAt: number }[]}
+   */
+  notes: [],
 };
 
 let cache = null;
@@ -248,6 +289,81 @@ function dropRetiredApps(settings) {
     lastActiveServiceId: kept.has(settings.lastActiveServiceId)
       ? settings.lastActiveServiceId
       : null,
+  };
+}
+
+/**
+ * One-shot: remove the retired Canva catalog app from persisted docks so
+ * existing installs lose the Canva icon (link tabs to canva.com still work).
+ */
+function migrateRemoveCanvaApp(settings) {
+  if (settings.removeCanvaAppV1) return settings;
+  const instances = settings.serviceInstances || [];
+  const canvaIds = new Set(
+    instances.filter((i) => i?.appId === 'canva').map((i) => i.id),
+  );
+  if (!canvaIds.size) {
+    return { ...settings, removeCanvaAppV1: true };
+  }
+
+  const serviceLabels = { ...(settings.serviceLabels || {}) };
+  const serviceConfigs = { ...(settings.serviceConfigs || {}) };
+  const lastServiceUrls = { ...(settings.lastServiceUrls || {}) };
+  for (const id of canvaIds) {
+    delete serviceLabels[id];
+    delete serviceConfigs[id];
+    delete lastServiceUrls[id];
+  }
+
+  return {
+    ...settings,
+    removeCanvaAppV1: true,
+    serviceInstances: instances.filter((i) => !canvaIds.has(i.id)),
+    serviceOrder: (settings.serviceOrder || []).filter((id) => !canvaIds.has(id)),
+    serviceLabels,
+    serviceConfigs,
+    lastServiceUrls,
+    lastActiveServiceId: canvaIds.has(settings.lastActiveServiceId)
+      ? null
+      : settings.lastActiveServiceId,
+  };
+}
+
+/**
+ * One Hub-wide link rule: promote old per-app hub-tab choices to global,
+ * clear per-app overrides so WhatsApp/Arattai/Gmail/Zoho cannot diverge.
+ * Also force update channel to stable (beta feed is unpublished).
+ */
+function migrateUnifyLinkHandling(settings) {
+  const configs = { ...(settings.serviceConfigs || {}) };
+  let anyHubTab = settings.linkHandling === 'hub-tab';
+  let cleared = false;
+  for (const [id, cfg] of Object.entries(configs)) {
+    if (!cfg || typeof cfg !== 'object') continue;
+    if (cfg.linkHandling === 'hub-tab') anyHubTab = true;
+    if (cfg.linkHandling != null && cfg.linkHandling !== '') {
+      configs[id] = { ...cfg, linkHandling: null };
+      cleared = true;
+    }
+  }
+  const nextGlobal =
+    anyHubTab || !settings.linkHandling || settings.linkHandling === 'block'
+      ? 'hub-tab'
+      : settings.linkHandling;
+  const channel = String(settings.updateChannel || 'stable');
+  const nextChannel = channel === 'stable' ? 'stable' : 'stable';
+  if (
+    nextGlobal === settings.linkHandling &&
+    !cleared &&
+    channel === nextChannel
+  ) {
+    return settings;
+  }
+  return {
+    ...settings,
+    linkHandling: nextGlobal,
+    updateChannel: nextChannel,
+    serviceConfigs: configs,
   };
 }
 
@@ -471,6 +587,28 @@ function migrateWarmKeepAlive(settings) {
       ...(process.platform === 'linux' ? { hardwareAcceleration: false } : {}),
     };
   }
+  // Q4OS Andromeda / lean Plasma / Trinity company PCs — one-shot lean defaults.
+  // Mint / Ubuntu / Cinnamon are unchanged (linuxIsLeanFleetDesktop is false).
+  if (!next.q4osLeanDefaultsV1) {
+    next = { ...next, q4osLeanDefaultsV1: true };
+    try {
+      if (linuxIsLeanFleetDesktop({ platform: process.platform })) {
+        next.lowMemoryMode = true;
+        next.maxWarmViews = Math.min(
+          3,
+          Math.max(2, Number(next.maxWarmViews) || 3),
+        );
+        next.maxResidentViews = next.maxWarmViews;
+        next.hibernateMinutes = Math.min(
+          10,
+          Math.max(5, Number(next.hibernateMinutes) || 10),
+        );
+        next.hardwareAcceleration = false;
+      }
+    } catch {
+      // ignore — never block settings load on DE detection
+    }
+  }
   // Keep legacy keys so older migrations stay idempotent.
   if (!next.residentCapV1) next = { ...next, residentCapV1: true };
   if (!next.residentCapV2) next = { ...next, residentCapV2: true };
@@ -482,23 +620,40 @@ export function loadSettings() {
   try {
     const raw = fs.readFileSync(settingsPath(), 'utf8');
     const parsed = JSON.parse(raw);
-    cache = migrateWarmKeepAlive(
-      migrateProfiles(
-        dropRetiredApps({
-          ...DEFAULTS,
-          ...parsed,
-          shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
-          serviceLabels: parsed.serviceLabels || {},
-          serviceConfigs: parsed.serviceConfigs || {},
-          serviceInstances: parsed.serviceInstances || [],
-          profiles: parsed.profiles,
-          pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
-          aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
-          aiDisabledProviders: sanitizeAiDisabledProviders(
-            parsed.aiDisabledProviders,
+    cache = isolateSharedZohoMailProfiles(
+      isolateSharedZohoWorkspaceProfiles(
+        migrateWarmKeepAlive(
+          migrateUnifyLinkHandling(
+            migrateProfiles(
+              dropRetiredApps(
+                migrateRemoveCanvaApp({
+                  ...DEFAULTS,
+                  ...parsed,
+                  shortcuts: migrateShortcutsMap(parsed.shortcuts || {}),
+                  serviceLabels: parsed.serviceLabels || {},
+                  serviceConfigs: parsed.serviceConfigs || {},
+                  serviceInstances: parsed.serviceInstances || [],
+                  profiles: parsed.profiles,
+                  pinnedPeople: sanitizePinnedPeople(parsed.pinnedPeople || []),
+                  notes: sanitizeNotes(parsed.notes || []),
+                  aiProviderOrder: sanitizeAiProviderOrder(parsed.aiProviderOrder),
+                  aiDisabledProviders: sanitizeAiDisabledProviders(
+                    parsed.aiDisabledProviders,
+                  ),
+                  aiLanguage: getAiLanguage(parsed.aiLanguage || 'en').id,
+                  aiExtraLanguages: sanitizeAiExtraLanguages(
+                    Object.prototype.hasOwnProperty.call(parsed, 'aiExtraLanguages')
+                      ? parsed.aiExtraLanguages
+                      : undefined,
+                  ),
+                }),
+              ),
+            ),
           ),
-        }),
+        ),
+        { makeProfile },
       ),
+      { makeProfile },
     );
     // Persist migration so partitions/profileIds are stable next launch.
     try {
@@ -528,6 +683,18 @@ export function saveSettings(patch) {
     cache.aiDisabledProviders = sanitizeAiDisabledProviders(
       patch.aiDisabledProviders,
     );
+  }
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'aiLanguage')) {
+    cache.aiLanguage = getAiLanguage(patch.aiLanguage || 'en').id;
+  }
+  if (
+    patch &&
+    Object.prototype.hasOwnProperty.call(patch, 'aiExtraLanguages')
+  ) {
+    cache.aiExtraLanguages = sanitizeAiExtraLanguages(patch.aiExtraLanguages);
+  }
+  if (patch && Object.prototype.hasOwnProperty.call(patch, 'notes')) {
+    cache.notes = sanitizeNotes(patch.notes);
   }
   try {
     fs.mkdirSync(path.dirname(settingsPath()), { recursive: true });

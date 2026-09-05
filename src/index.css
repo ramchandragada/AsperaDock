@@ -384,9 +384,10 @@ body.layout-top .app-bar-top {
   align-items: center;
   gap: var(--apps-gap);
   overflow-x: auto;
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: min(100%, calc(100vw - 360px));
+  /* Leave room for brand + lock + utility cluster on the right */
+  max-width: none;
   padding: 2px 4px;
   scrollbar-width: none;
 }
@@ -396,35 +397,67 @@ body.layout-top .app-bar-top {
 }
 
 .chrome-brand {
-  flex: 1 1 auto;
-  display: flex;
+  flex: 0 0 auto;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 110px;
-  padding: 0 10px;
-  pointer-events: none;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 2px 0 0;
+  padding: 4px 8px 4px 4px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  line-height: 0;
+  pointer-events: auto;
+  transition:
+    background 0.15s var(--ease),
+    border-color 0.15s var(--ease);
+}
+
+.chrome-brand:hover,
+.chrome-brand:focus-visible {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  outline: none;
+}
+
+.chrome-brand-ai-hint {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
 .chrome-wordmark {
   display: block;
-  height: clamp(26px, calc(var(--top-bar) * 0.4), 36px);
+  height: clamp(22px, calc(var(--top-bar) * 0.34), 30px);
   width: auto;
-  max-width: min(180px, 24vw);
+  max-width: 120px;
   object-fit: contain;
   border-radius: 6px;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.24);
+  pointer-events: none;
 }
 
 .chrome-actions {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 0 2px 0 10px;
-  margin-left: 0;
+  gap: 2px;
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  padding: 0 2px 0 4px;
+  margin-left: 4px;
   border-left: none;
   height: auto;
   align-self: center;
-  flex-shrink: 0;
 }
 
 .chrome-divider {
@@ -448,6 +481,44 @@ body.layout-top .app-bar-top {
   height: 18px;
 }
 
+/* Back / Forward — larger, grouped, easy to spot (always on dark company bar) */
+.app-bar-top .nav-history {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin: 0 2px 0 6px;
+  padding: 3px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.app-bar-top .nav-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  color: var(--bar-fg);
+}
+
+.app-bar-top .nav-btn svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2.4;
+}
+
+.app-bar-top .nav-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.app-bar-top .nav-btn:disabled {
+  opacity: 0.55;
+  color: var(--bar-fg-muted);
+}
+
 .app-bar-top .icon-btn:hover {
   background: var(--bar-hover);
   color: #fff;
@@ -467,6 +538,15 @@ body.layout-top .app-bar-top {
 .app-bar-top .lock-btn:hover {
   color: #fff;
   background: rgba(248, 113, 113, 0.22);
+}
+
+.app-bar-top .connect-btn {
+  color: #c8d0ff;
+}
+
+.app-bar-top .connect-btn:hover {
+  color: #fff;
+  background: rgba(128, 149, 255, 0.28);
 }
 
 .app-bar-top .add-app-btn {
@@ -693,12 +773,44 @@ body.layout-right .app-tab.drop-after {
 }
 
 .chrome-menu-version {
-  padding: 8px 10px 4px;
-  color: var(--muted);
+  padding: 8px 12px 6px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.02em;
-  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+}
+
+.chrome-menu-site {
+  display: block;
+  margin-top: 2px;
+  font-weight: 500;
+  opacity: 0.9;
+}
+
+.site-link {
+  color: var(--accent, #2563eb);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.site-link:hover {
+  text-decoration: underline;
+}
+
+.empty-site {
+  margin: -8px 0 18px !important;
+  font-size: 13px !important;
+}
+
+.chrome-menu-section-title {
+  padding: 7px 12px 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.92;
 }
 
 .empty-card p {
@@ -744,6 +856,80 @@ body.layout-right .app-tab.drop-after {
     border-color 0.16s var(--ease),
     box-shadow 0.16s var(--ease),
     transform 0.16s var(--ease);
+}
+
+.app-tab-close {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  color: var(--text);
+  font: 700 14px/1 "Segoe UI", Ubuntu, Cantarell, sans-serif;
+  cursor: pointer;
+  opacity: 0;
+  display: grid;
+  place-items: center;
+  z-index: 2;
+}
+.app-tab:hover .app-tab-close,
+.app-tab.active .app-tab-close,
+.app-tab.link-tab .app-tab-close {
+  opacity: 1;
+}
+.app-tab-close:hover {
+  background: #dc2626;
+  color: #fff;
+}
+body.theme-dark .app-tab-close {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* Link tabs: source-app icon + distinct frame so they aren’t confused with the live app. */
+.app-tab.link-tab {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--app-accent) 55%, transparent);
+}
+.app-tab.link-tab.active {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--app-accent) 80%, transparent);
+}
+.app-tab.link-tab .app-icon.has-logo {
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--app-accent) 35%, transparent);
+}
+.app-tab.link-tab .app-icon.has-logo svg,
+.app-tab.link-tab .app-icon.has-logo .app-logo-img {
+  opacity: 0.92;
+  transform: scale(0.9);
+  transform-origin: center;
+}
+.app-mark.link-mark {
+  right: -3px;
+  bottom: -3px;
+  left: auto;
+  top: auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--chrome-1, #fff);
+  color: var(--app-accent, #2563eb);
+  border: 1px solid color-mix(in srgb, var(--app-accent) 45%, transparent);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.18);
+}
+.app-mark.link-mark svg {
+  width: 10px;
+  height: 10px;
+}
+body.theme-dark .app-mark.link-mark {
+  background: #111827;
+  color: #93c5fd;
 }
 
 body.density-normal .app-tab {
@@ -1029,6 +1215,19 @@ body.theme-dark .chip:hover {
   display: grid;
   place-items: center;
   font-size: 13px;
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  transform: none;
+  background: transparent;
+}
+
+.icon-btn:disabled:hover {
+  background: transparent;
+  color: inherit;
+  transform: none;
 }
 
 .icon-btn svg {
@@ -1420,7 +1619,7 @@ body.theme-dark .settings-banner {
 .switch-row > span {
   min-width: 0;
   flex: 1;
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .menu-bar-setting span {
@@ -1441,7 +1640,8 @@ body.theme-dark .settings-banner {
   color: var(--muted);
   font-size: 11px;
   font-weight: 400;
-  margin-top: 2px;
+  margin-top: 4px;
+  line-height: 1.35;
 }
 
 .menu-bar-setting kbd {
@@ -1543,7 +1743,9 @@ body.theme-dark .defaults-block {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  width: 210px;
+  width: 248px;
+  max-height: min(92vh, 980px);
+  overflow-y: auto;
   background: #fff;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -1694,10 +1896,15 @@ body.theme-dark .chrome-menu {
 
 .notif-text span {
   font-size: 11.5px;
-  color: var(--muted);
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.4;
+  max-height: calc(1.4em * 3);
 }
 
 .notif-time {
@@ -1891,6 +2098,34 @@ body.theme-dark .shortcut-bind {
   gap: 6px;
   margin-bottom: 12px;
   font-size: 13px;
+}
+
+.ai-extra-langs-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ai-lang-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border, #d0d5dd);
+  background: var(--surface-2, #f2f4f7);
+  color: var(--text, #101828);
+}
+
+.ai-lang-chip.locked {
+  opacity: 0.92;
+}
+
+.ai-extra-langs-row select {
+  min-width: 160px;
+  flex: 1 1 160px;
 }
 
 .ai-route-toolbar {
@@ -2297,6 +2532,14 @@ kbd {
 .lock-card h1 {
   margin: 4px 0 0;
   font-size: 18px;
+}
+
+.lock-card .lock-site {
+  margin: 6px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 .error {
@@ -2837,23 +3080,12 @@ body.theme-dark .ghost-btn {
   margin: 0;
 }
 
+/* Legacy in-page find bar — kept in DOM but unused. Find is a floating popup. */
 .find-bar {
-  position: fixed;
-  top: calc(var(--top-bar) + 8px);
-  right: 16px;
-  z-index: 80;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--chrome-1, #fff);
-  color: var(--text);
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.14);
+  display: none !important;
 }
 .find-bar.hidden {
-  display: none;
+  display: none !important;
 }
 .find-bar input {
   width: 180px;
@@ -2883,4 +3115,21 @@ body.theme-dark .ghost-btn {
   .check-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.settings-inline-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+}
+
+.settings-details {
+  margin-top: 10px;
+}
+
+.settings-details summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12.5px;
 }

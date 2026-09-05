@@ -13,19 +13,79 @@ import {
   powerMonitor,
   clipboard,
   screen,
+  nativeTheme,
+  webContents as electronWebContents,
 } from 'electron';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { buildAppMenuHtml } from './appMenuHtml.js';
-import { buildChromeMenuHtml } from './chromeMenuHtml.js';
+import {
+  buildChromeMenuHtml,
+  chromeMenuPreferredHeight,
+} from './chromeMenuHtml.js';
+import { buildFindBarHtml } from './findBarHtml.js';
+import { buildWebSearchHtml } from './webSearchHtml.js';
+import { buildNotesHtml } from './notesHtml.js';
+import {
+  deleteNote,
+  sanitizeNotes,
+  upsertNote,
+} from './notesStore.js';
+import {
+  resolveWebSearchInput,
+  webSearchTabName,
+} from './webSearch.js';
 import { buildNotifCenterHtml } from './notifCenterHtml.js';
 import { buildAiResultHtml } from './aiResultHtml.js';
+import { buildCrmLookupHtml } from './crmLookupHtml.js';
 import { buildForwardPickerHtml } from './forwardPickerHtml.js';
 import { buildExtensionsHtml } from './extensionsHtml.js';
+import {
+  isWhatsAppSafeMode,
+  whatsappAutomationBlocked,
+  whatsappSafeModeBlockedMessage,
+} from './whatsappSafeMode.js';
+import {
+  clearZohoCrmAccessCache,
+  exchangeGrantCode,
+  searchDeals,
+  testZohoCrmConnection,
+} from './zohoCrm/client.js';
+import {
+  buildDealWhatsAppPrepPrompt,
+  buildDealsWhatsAppDigestPrepPrompt,
+  formatDealWhatsAppMessage,
+  formatDealsWhatsAppDigest,
+  sanitizePreparedWhatsAppMessage,
+} from './zohoCrm/waDealMessage.js';
+import {
+  ZOHO_CRM_DCS,
+  ZOHO_CRM_OAUTH_SCOPES,
+  resolveZohoCrmDc,
+  sanitizeZohoCrmDc,
+} from './zohoCrm/dc.js';
+import {
+  clearZohoCrmAuth,
+  getZohoCrmAuth,
+  hasZohoCrmAuth,
+  setZohoCrmAuth,
+  zohoCrmAuthStatus,
+} from './zohoCrm/keys.js';
+import {
+  getZohoCrmFleetToken,
+  setZohoCrmFleetToken,
+  zohoCrmFleetStatus,
+} from './zohoCrm/fleet.js';
+import {
+  buildFleetCredentialsUrl,
+  normalizeFleetApiUrl,
+  parseFleetCredentialsBody,
+} from './zohoCrm/fleetPull.js';
 import {
   arattaiFullFileUrlFromAny,
   buildForwardClipboardText,
   canOfferForward,
+  FORWARD_WITH_HUB_ENABLED,
   classifyForwardFileBytes,
   describeForwardPayload,
   extensionOf,
@@ -53,6 +113,28 @@ import {
   shouldForwardAsDocument,
 } from './forwardHub.js';
 import {
+  moveDownloadClaim,
+  releaseDownloadPath,
+  resolveSavePathAfterPrompt,
+  sanitizeDownloadFilename,
+  uniqueDownloadPath,
+} from './downloadPath.js';
+import {
+  beginDownload,
+  finishDownload,
+  initDownloadHistory,
+  listDownloadsForUi,
+  lookupDownload,
+  updateDownload,
+} from './downloadHistory.js';
+import { buildDownloadShelfHtml } from './downloadShelfHtml.js';
+import {
+  linuxIsLeanFleetDesktop,
+  linuxIsPlasmaDesktop,
+  linuxNeedsDelayedMaximize,
+  linuxUsesOpaqueOverlays,
+} from './linuxDesktop.js';
+import {
   clearMessagingLeftSearchJs,
   composeReplyJs,
   findMessagingChatTargetJs,
@@ -66,8 +148,13 @@ import {
   normalizeChatKey,
   openMessagingChatJs,
   sanitizePinnedPeople,
+  scrapeMessagingInboxJs,
   searchMessagingChatsJs,
 } from './guestInbox.js';
+import {
+  formatMessagePreview,
+  mergeNotificationFeed,
+} from './notifFeed.js';
 import {
   findExactWhatsAppContactTargetJs,
   findWhatsAppPaneResetJs,
@@ -83,8 +170,9 @@ import {
   sanitizePriorMessages,
   scrapeNearbyMessagesJs,
 } from './guestChatContext.js';
-import { guestContextMenuActionOrder } from './guestContextMenu.js';
-import { aboutDetailText } from './aboutCopy.js';
+import { guestContextMenuActionOrder, canOfferHubPin } from './guestContextMenu.js';
+import { isHubComposePollution } from './composeSafety.js';
+import { aboutDetailText, ASPERA_HUB_WEBSITE } from './aboutCopy.js';
 import { spawnSync } from 'node:child_process';
 import {
   installUnpackedExtension,
@@ -98,21 +186,29 @@ import {
   parseChromeExtensionId,
   unpackExtensionPackage,
 } from './chromeWebStore.js';
+import { stripLegacyExtensionAuthPatches } from './stripLegacyExtensionAuthPatches.js';
 import {
   AI_ALLOWED_APP_IDS,
   AI_LANGUAGES,
   AI_PROVIDER_TRY_ORDER,
   AI_PROVIDERS,
+  aiOutputLanguageMeta,
   aiProviderTryOrdinal,
   configuredProvidersInRouteOrder,
+  getAiLanguage,
   getAiProvider,
   isAiAllowedAppId,
   isDefaultAiProviderOrder,
+  languageSectionFor,
   normalizeAnthropicModel,
   normalizeGeminiModel,
   normalizeGrokModel,
   normalizeSarvamModel,
+  refineSectionsForLanguages,
+  replySectionsForLanguages,
+  resolveAiOutputLanguages,
   sanitizeAiDisabledProviders,
+  sanitizeAiExtraLanguages,
   sanitizeAiProviderOrder,
 } from './ai/catalog.js';
 import {
@@ -129,8 +225,22 @@ import {
   resetAiProviderSession,
   setAiSettingsReader,
 } from './ai/service.js';
+import {
+  clipboardScreenshotFileName,
+  extractPdfText,
+  newAttachmentId,
+  pdfTextIsUsable,
+  pickClipboardImageEncoding,
+  validateAiAttachmentMeta,
+} from './ai/attachments.js';
 import { parseSuggestedReplies } from './ai/replyEditor.js';
 import { parseRefinedDrafts, serializeRefinedDrafts } from './ai/refineDraft.js';
+import {
+  POLISH_INTENTS,
+  normalizePolishIntent,
+  polishIntentLabel,
+} from './ai/skills.js';
+import { buildApplyComposeTextJs } from './aiComposeInsert.js';
 import {
   catalogModelsForProvider,
   getCachedAiModels,
@@ -148,11 +258,14 @@ import {
   MAX_WARM_VIEWS_CAP,
   CUSTOM_APP_ID,
   isCustomAppId,
+  canShareProfileAcrossInstances,
+  allowsZohoWorkspaceHubTabs,
   getChromeMetrics,
   getAppCatalogEntry,
   defaultInstanceName,
   defaultInstanceTitle,
   clampAppName,
+  buildAppProfileName,
 } from './services.js';
 import {
   loadSettings,
@@ -198,15 +311,52 @@ import {
   updateReadyForQuit,
 } from './updater.js';
 import { initSentryMain } from './sentryMain.js';
+import {
+  configureGuestWindowOpen as configureGuestWindowOpenImpl,
+  attachGuestNavigationGate as attachGuestNavigationGateImpl,
+} from './guestNavigation.js';
+import {
+  PORTAL_STALE_MS,
+  PORTAL_RELOAD_COOLDOWN_MS,
+  PORTAL_RELOAD_COOLDOWN_SALES_MS,
+  PORTAL_HEALTH_CHECK_MS,
+  PORTAL_HEALTH_RETRY_MS,
+  ZOHO_SALES_RECOVERY_DELAYS_MS,
+  shouldRunPortalBlankRecovery,
+  shouldSkipBlankHeuristicReload,
+  portalHealthCheckDelays,
+} from './guestIdleRecovery.js';
+import {
+  hibernateMsFromSettings,
+  defaultKeepWarmForApp,
+} from './guestLifecycle.js';
+import {
+  isPageInjectionEnabled,
+  normalizeStylishHttpsUrl,
+} from './pageInjection.js';
 import { openExternalSafe } from './safeShell.js';
+import { openAsperaConnectApp } from './asperaConnectCall.js';
 import {
   registerChromeScheme,
   attachChromeProtocolHandler,
   chromeAppUrl,
 } from './chromeProtocol.js';
 import {
+  setAiResultServerHtml,
+  ensureAiResultServer,
+  aiResultLocalUrl,
+} from './aiResultServer.js';
+import {
+  linkTabSiteHome,
+  isBlankOrErrorGuestUrl,
+  isOauthHandoffUrl,
+  shouldAdoptLinkTabPopupUrlAfterIdp,
+  LINK_TAB_POST_AUTH_CHECK_MS,
+} from './linkTabAuthRecovery.js';
+import {
   isInternalUrl,
   isForbiddenGuestNavigation,
+  isPhoneDialUrl,
   isAuthOrLoginUrl,
   isUrlForService,
   isFragileZohoOneDeepUrl,
@@ -214,7 +364,26 @@ import {
   extractGoogleOutboundUrl,
   isAllowedGmailTabUrl,
   isGoogleOwnedUrl,
+  mustKeepGoogleUrlInApp,
+  isSameEcosystemUrl,
+  isGoogleOauthClientUrl,
+  shouldOpenInSystemBrowser,
+  isIdentityProviderUrl,
+  shouldOpenZohoSharedDeepLinkAsHubTab,
+  isZohoAssetHost,
+  isMessagingAppId,
+  isAllowedMessagingTabUrl,
+  gmailWindowOpenAction,
+  isExtensionAuthPopupUrl,
 } from './guestNav.js';
+import {
+  resolveLinkHandling,
+  shouldOpenUnknownExternally,
+  shouldOpenAsHubTab,
+  shouldAskLinkHandling,
+  normalizeLinkHandling,
+  rememberModeForChoice,
+} from './linkHandling.js';
 import {
   isGoogleService,
   isGoogleMailAppUrl,
@@ -223,6 +392,7 @@ import {
   noteGoogleMarketingLanding,
 } from './vendors/google.js';
 import { reclaimServiceHomeIfWrongProduct as reclaimZohoHome } from './vendors/zoho.js';
+import { clearStaleChromiumSingleton } from './chromiumSingleton.js';
 import fs from 'node:fs';
 
 // Custom scheme must be registered before ready (A+ fuse: no file:// privileges).
@@ -241,14 +411,32 @@ if (process.platform === 'win32') {
   }
 }
 
-// Linux Mint (XFCE/Cinnamon): Chromium GPU + chrome-sandbox often FATAL-exit
-// before any window ("refuses to start"). Apply the safest flags FIRST.
+// Linux Mint / Zorin / Q4OS: Chromium GPU + chrome-sandbox often FATAL-exit
+// before any window. Apply safest flags FIRST.
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('no-sandbox');
   app.commandLine.appendSwitch('disable-gpu-sandbox');
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('disable-software-rasterizer');
   app.commandLine.appendSwitch('class', 'asperadock');
+  // Wayland (Mint / Zorin GNOME / Plasma) can FATAL on reset;
+  // prefer X11/XWayland unless the user already chose a platform.
+  if (
+    !app.commandLine.hasSwitch('ozone-platform') &&
+    !process.env.ELECTRON_OZONE_PLATFORM_HINT &&
+    (process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland')
+  ) {
+    app.commandLine.appendSwitch('ozone-platform', 'x11');
+  }
+  // Low-spec Q4OS / lean Plasma: skip smooth scrolling (cheap CPU win).
+  // Mint / Cinnamon / Zorin Core GNOME are unchanged.
+  try {
+    if (linuxIsLeanFleetDesktop()) {
+      app.commandLine.appendSwitch('disable-smooth-scrolling');
+    }
+  } catch {
+    // ignore DE probe failures
+  }
   try {
     app.disableHardwareAcceleration();
   } catch {
@@ -271,58 +459,6 @@ if (
 // drop WhatsApp/Zoho sessions + settings.json. Must run before any userData use
 // (including the single-instance lock).
 app.setPath('userData', path.join(app.getPath('appData'), 'Aspera Dock'));
-
-// Only clear Chromium singleton files left by a *dead* session (crash).
-// Never delete a live lock — that would allow a second Hub window on the
-// same profile and can sign WhatsApp / Arattai out.
-function clearStaleChromiumSingleton(userDataPath) {
-  const lockPath = path.join(userDataPath, 'SingletonLock');
-  const cookiePath = path.join(userDataPath, 'SingletonCookie');
-  const socketPath = path.join(userDataPath, 'SingletonSocket');
-  let stale = false;
-
-  try {
-    if (fs.lstatSync(socketPath).isSymbolicLink()) {
-      try {
-        fs.statSync(socketPath);
-      } catch {
-        // Dangling SingletonSocket → previous crash.
-        stale = true;
-      }
-    }
-  } catch {
-    // no socket
-  }
-
-  try {
-    if (fs.lstatSync(lockPath).isSymbolicLink()) {
-      const target = fs.readlinkSync(lockPath);
-      const m = String(target).match(/-(\d+)$/);
-      if (m) {
-        const pid = parseInt(m[1], 10);
-        if (Number.isFinite(pid) && pid > 0) {
-          try {
-            process.kill(pid, 0);
-            // Owner process is alive — keep the lock.
-          } catch {
-            stale = true;
-          }
-        }
-      }
-    }
-  } catch {
-    // no lock
-  }
-
-  if (!stale) return;
-  for (const p of [lockPath, cookiePath, socketPath]) {
-    try {
-      fs.unlinkSync(p);
-    } catch {
-      // ignore
-    }
-  }
-}
 
 try {
   clearStaleChromiumSingleton(app.getPath('userData'));
@@ -488,12 +624,34 @@ let appMenuWindow = null;
 let appMenuServiceId = null;
 /** Floating chrome (Aspera) menu — same overlay approach. */
 let chromeMenuWindow = null;
+/** Floating Find-in-page popup (above WebContentsView — no guest resize). */
+let findBarWindow = null;
+/** Last find query so Ctrl+F reopens with the same text selected. */
+let findBarLastQuery = '';
+/** Bumped on every find/clear so late found-in-page cannot re-paint highlights. */
+let findBarSession = 0;
+/** Chromium findInPage request id — ignore stale replies from earlier keystrokes. */
+let findBarRequestId = 0;
+/** Floating Google Web-search popup. */
+let webSearchWindow = null;
+/** Last web-search query so Ctrl+K reopens with the same text selected. */
+let webSearchLastQuery = '';
+/** Floating Aspera Notes copy pad. */
+let notesWindow = null;
 /** Floating notification center. */
 let notifCenterWindow = null;
+/** Chrome-like recent download shelf. */
+let downloadShelfWindow = null;
+/** Unseen completed downloads since the shelf was last opened. */
+let downloadUnseenCount = 0;
 /** Floating Aspera AI result panel. */
 let aiResultWindow = null;
 /** Context for follow-up actions on the open AI result (e.g. suggest replies). */
 let aiResultContext = null;
+/** One staged file for Aspera AI inbox: { id, name, mime, kind, buffer }. */
+let aiInboxAttachment = null;
+/** Floating Zoho CRM Deals lookup panel. */
+let crmLookupWindow = null;
 /** Floating Forward-with-Hub account picker. */
 let forwardPickerWindow = null;
 /** @type {null | {
@@ -512,25 +670,179 @@ let forwardPayload = null;
 /** One-shot download hijack used while capturing a document to forward. */
 let pendingForwardDownload = null;
 /**
- * While > now, every guest download is saved silently (no Save dialog).
- * Needed because PDF preview Forward often fires 2–3 DownloadItems; only the
- * first fills pendingForwardDownload — extras used to pop "Save download".
+ * Brief tail after Forward hijack completes — swallow duplicate DownloadItems
+ * from the same preview click only. Must NOT block normal user downloads.
  */
-let forwardCaptureSilentUntil = 0;
+let forwardExtraSwallowUntil = 0;
+const FORWARD_EXTRA_SWALLOW_MS = 2_000;
+/** Bumped to cancel in-flight Forward Ctrl+V waits (prevents paste into later chats). */
+let forwardPasteGeneration = 0;
+/** Text Hub last wrote to the system clipboard for Forward (for restore + sanitize). */
+let hubStagedClipboardText = '';
+/** Clipboard text before Hub staged a Forward payload. */
+let hubClipboardBeforeStage = null;
 /** Recent guest downloads (user tapped Download) — reused by Forward. */
 const recentGuestDownloads = [];
 const RECENT_DOWNLOAD_MAX = 40;
+/** Dedupe double will-download from one preview click (same URL + name). */
+let lastGuestDownloadDedupeKey = '';
+let lastGuestDownloadDedupeAt = 0;
 
-function beginForwardCaptureWindow(ms = 20_000) {
-  forwardCaptureSilentUntil = Math.max(forwardCaptureSilentUntil, Date.now() + ms);
+function beginForwardExtraSwallow(ms = FORWARD_EXTRA_SWALLOW_MS) {
+  forwardExtraSwallowUntil = Math.max(forwardExtraSwallowUntil, Date.now() + ms);
 }
 
-function endForwardCaptureWindow() {
-  forwardCaptureSilentUntil = 0;
+function endForwardExtraSwallow() {
+  forwardExtraSwallowUntil = 0;
 }
 
-function isForwardCaptureSilentActive() {
-  return !!pendingForwardDownload || Date.now() < forwardCaptureSilentUntil;
+function shouldSwallowForwardExtraDownload() {
+  return Date.now() < forwardExtraSwallowUntil;
+}
+
+function swallowForwardExtraDownload(item) {
+  try {
+    item.cancel();
+  } catch {
+    try {
+      const dump = path.join(
+        forwardTempDir(),
+        `fwd-extra-${Date.now()}-${sanitizeForwardFilename(item.getFilename() || 'bin')}`,
+      );
+      item.setSavePath(dump);
+      item.once('done', () => {
+        try {
+          fs.unlinkSync(dump);
+        } catch {
+          // ignore
+        }
+      });
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Ask-every-time Save As for guest downloads.
+ *
+ * Electron only honors `setSavePath` inside `will-download`. We claim a temp
+ * path immediately (silences Chromium's dialog), show Hub's picker, then on
+ * `done` move the claim to the user's path via {@link moveDownloadClaim}.
+ * Changing `setSavePath` after the dialog and deleting the claim (v0.5.20)
+ * left users with no file on disk.
+ *
+ * @param {object} destHolder Shared with the will-download `done` handler.
+ */
+function promptGuestDownloadSave(item, defaultPath, downloadName, destHolder) {
+  const suggested = String(defaultPath || '').trim();
+  const intendedName =
+    String(downloadName || '').trim() ||
+    item.getFilename?.() ||
+    path.basename(suggested) ||
+    'download';
+
+  let claimPath = '';
+  try {
+    const claimDir = path.join(app.getPath('temp'), 'asperahub-downloads');
+    fs.mkdirSync(claimDir, { recursive: true });
+    claimPath = path.join(
+      claimDir,
+      `${Date.now()}-${sanitizeDownloadFilename(intendedName)}`,
+    );
+    item.setSavePath(claimPath);
+  } catch {
+    try {
+      if (suggested) {
+        claimPath = suggested;
+        item.setSavePath(claimPath);
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  destHolder.claimPath = claimPath;
+  destHolder.path = suggested;
+
+  try {
+    item.pause();
+  } catch {
+    // ignore — older builds may not support pause
+  }
+  const parent =
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  try {
+    if (parent) {
+      if (parent.isMinimized()) parent.restore();
+      parent.show();
+      parent.focus();
+      parent.moveTop?.();
+    }
+  } catch {
+    // ignore
+  }
+
+  const cleanupClaimFile = () => {
+    if (!claimPath) return;
+    try {
+      if (fs.existsSync(claimPath)) fs.unlinkSync(claimPath);
+    } catch {
+      // ignore
+    }
+  };
+
+  const finishWithPath = (pickedPath) => {
+    releaseDownloadPath(suggested);
+    const finalPath = resolveSavePathAfterPrompt(pickedPath, intendedName);
+    destHolder.path = finalPath;
+    destHolder.canceled = false;
+    destHolder.resolveReady();
+    // Do not setSavePath here — it only applies inside will-download.
+    // Do not delete claimPath — the file is still downloading (or already
+    // finished) there and will be moved on `done`.
+    try {
+      item.resume();
+    } catch {
+      // ignore — download may already be complete
+    }
+  };
+
+  const cancelItem = () => {
+    destHolder.canceled = true;
+    destHolder.resolveReady();
+    releaseDownloadPath(suggested);
+    try {
+      item.cancel();
+    } catch {
+      // ignore
+    }
+    cleanupClaimFile();
+  };
+
+  dialog
+    .showSaveDialog(parent, {
+      title: 'Save download',
+      defaultPath: suggested,
+      buttonLabel: 'Save',
+      nameFieldLabel: 'File name:',
+      properties: ['createDirectory'],
+    })
+    .then(({ canceled, filePath }) => {
+      if (canceled || !filePath) {
+        cancelItem();
+        return;
+      }
+      finishWithPath(filePath);
+    })
+    .catch(() => {
+      // showSaveDialog failed — save to the suggested Downloads location.
+      try {
+        finishWithPath(suggested);
+      } catch {
+        cancelItem();
+      }
+    });
 }
 /** Floating Chrome-like Extensions manager. */
 let extensionsWindow = null;
@@ -615,8 +927,8 @@ function applyMemorySwitches() {
   if (settings.mediaKeys === false) {
     disabled.add('HardwareMediaKeyHandling');
   }
-  // Linux WMs (Mint XFCE/Cinnamon) often mis-report occlusion → blank WebContentsView
-  // until the next resize/click. Keep guest surfaces painting while alt-tabbed away.
+  // Linux WMs (Mint XFCE/Cinnamon, Q4OS Plasma/Trinity) often mis-report
+  // occlusion → blank WebContentsView until the next resize/click.
   if (process.platform === 'linux') {
     disabled.add('CalculateNativeWinOcclusion');
   }
@@ -681,33 +993,13 @@ function syncAllGuestPerfModes() {
   }
 }
 
-/** SPAs that need an unthrottled first boot (then stay full-speed if warm). */
+/**
+ * SPAs that need an unthrottled first boot (then stay full-speed if warm).
+ */
 function isHeavyPortalApp(service) {
   const id = service?.appId;
   return id === 'zoho-one' || id === 'arattai' || id === 'zoho-crm';
 }
-
-/**
- * Auto blank-pane recovery is only needed for Zoho portal spaces.
- * Arattai can look "blank enough" during fast tab restores and was getting
- * unnecessary reloads on every switch.
- */
-function shouldRunPortalBlankRecovery(service) {
-  const id = service?.appId;
-  return id === 'zoho-one' || id === 'zoho-crm';
-}
-
-/**
- * Zoho portals: only recover when the content pane is actually blank.
- * Never blind-reload warm apps after tab switches or short idle — that is what
- * made "warm" feel cold (full reload every time you came back).
- */
-const PORTAL_STALE_MS = 10 * 60_000;
-const PORTAL_RELOAD_COOLDOWN_MS = 20_000;
-const PORTAL_RELOAD_COOLDOWN_SALES_MS = 8000;
-const PORTAL_HEALTH_CHECK_MS = 3500;
-const PORTAL_HEALTH_RETRY_MS = 6500;
-const ZOHO_SALES_RECOVERY_DELAYS_MS = [1500, 3500, 5500, 8000];
 
 function touchPortalPresence(entry) {
   if (entry) entry.lastPresenceAt = Date.now();
@@ -812,6 +1104,73 @@ function isMessagingApp(service) {
   return id === 'whatsapp' || id === 'arattai';
 }
 
+/** Defer inbox scrape while PDF/media preview is open (common in group chats). */
+const scrapeDeferTimers = new Map();
+const SCRAPE_DEFER_MS = 5_000;
+
+function guestMediaViewerOpenJs() {
+  return `(() => {
+    if (document.querySelector('embed[type="application/pdf"], object[type="application/pdf"], .pdfViewer, #viewer')) {
+      return true;
+    }
+    const roots = [];
+    const dialog = document.querySelector('[role="dialog"]');
+    if (dialog) roots.push(dialog);
+    const viewer = document.querySelector(
+      '[data-testid="media-viewer"], [data-testid="media-viewer-modal"], #media-viewer, .media-viewer',
+    );
+    if (viewer) roots.push(viewer);
+    for (const root of roots) {
+      if (root.querySelector('embed, object, iframe, canvas, video, img[src^="blob:"]')) return true;
+      const label = (root.getAttribute('aria-label') || root.textContent || '').slice(0, 240);
+      if (/\\bPDF\\b|application\\/pdf|document preview/i.test(label)) return true;
+    }
+    return false;
+  })()`;
+}
+
+function serviceHasBlobPreviewPopup(serviceId) {
+  const set = servicePopups.get(serviceId);
+  if (!set?.size) return false;
+  for (const win of set) {
+    try {
+      if (win.isDestroyed?.()) continue;
+      const url = String(win.webContents?.getURL?.() || '');
+      if (/^blob:|^data:/i.test(url)) return true;
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+}
+
+async function serviceIsBusyWithMediaViewer(serviceId) {
+  if (serviceHasBlobPreviewPopup(serviceId)) return true;
+  const wc = views.get(serviceId)?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return false;
+  try {
+    return await wc.executeJavaScript(guestMediaViewerOpenJs(), true);
+  } catch {
+    return false;
+  }
+}
+
+function scheduleDeferredInboxScrape(service, run) {
+  const key = String(service?.id || '');
+  if (!key || scrapeDeferTimers.has(key)) return;
+  scrapeDeferTimers.set(
+    key,
+    setTimeout(async () => {
+      scrapeDeferTimers.delete(key);
+      if (await serviceIsBusyWithMediaViewer(key)) {
+        scheduleDeferredInboxScrape(service, run);
+        return;
+      }
+      run();
+    }, SCRAPE_DEFER_MS),
+  );
+}
+
 /** WhatsApp/Arattai QR or phone-link screens — never reload these. */
 async function guestLooksLikeLoginOrPairing(webContents, service) {
   if (!webContents || webContents.isDestroyed()) return false;
@@ -846,6 +1205,10 @@ function softReloadActiveGuest(reason = 'idle-blank') {
   const service = getService(activeServiceId) || entry.service;
   // Never interrupt WhatsApp/Arattai login — reload mid-QR logs the user out.
   if (isMessagingApp(service) && /surface|active-surface/i.test(String(reason || ''))) {
+    return false;
+  }
+  // Zoho CRM/Books white forms look "blank" to capturePage — never soft-reload.
+  if (shouldSkipBlankHeuristicReload(service)) {
     return false;
   }
   const now = Date.now();
@@ -917,6 +1280,11 @@ async function runActiveGuestSurfaceHealthCheck(id, { fromPoll = false } = {}) {
     return;
   }
 
+  if (isMessagingApp(service) && (await serviceIsBusyWithMediaViewer(id))) {
+    entry.__surfaceBlankStrikes = 0;
+    return;
+  }
+
   const blank = await isGuestVisuallyBlank(wc);
   if (!blank) {
     entry.__surfaceBlankStrikes = 0;
@@ -956,10 +1324,10 @@ async function runActiveGuestSurfaceHealthCheck(id, { fromPoll = false } = {}) {
     return;
   }
 
-  // Second strike: reload only for non-messaging apps.
+  // Second strike: reload only for non-messaging / non-CRM-form apps.
   entry.__surfaceBlankStrikes = 0;
-  if (isMessagingApp(service)) {
-    // Keep trying gentle repaints; never reload WhatsApp while focused.
+  if (isMessagingApp(service) || shouldSkipBlankHeuristicReload(service)) {
+    // Keep trying gentle repaints; never reload WhatsApp or CRM/Books forms.
     return;
   }
   softReloadActiveGuest('active-surface-blank');
@@ -1042,11 +1410,8 @@ function recoverActiveGuestAfterAway(reason = 'idle', idleMs = 0) {
     }, delay);
   };
 
-  checkAt(450, false);
-  checkAt(1200, true);
-  // Very long idle (screensaver / lunch): if still blank, reload once more.
-  if (awayMs >= 15 * 60_000 || reason === 'power-resume') {
-    checkAt(2800, true);
+  for (const delay of portalHealthCheckDelays(awayMs, reason)) {
+    checkAt(delay, delay >= 1200);
   }
 
   markUserActive();
@@ -1167,14 +1532,13 @@ function getAppConfig(id) {
   const raw = getRawInstance(id);
   const appId = raw?.appId || id;
   const stored = (settings.serviceConfigs || {})[id] || {};
-  // Messaging sessions die if hibernated mid-pairing — keep them warm by default
-  // unless the user explicitly turned keepWarm off.
-  const messagingDefault =
-    (appId === 'whatsapp' || appId === 'arattai') &&
-    stored.keepWarm === undefined
+  // Messaging + Zoho form apps stay warm by default unless the user turned
+  // keepWarm off — otherwise switching tabs wiped unsaved CRM/Books drafts.
+  const warmDefault =
+    defaultKeepWarmForApp(appId) && stored.keepWarm === undefined
       ? { keepWarm: true }
       : {};
-  return mergeAppConfig({ ...messagingDefault, ...stored });
+  return mergeAppConfig({ ...warmDefault, ...stored });
 }
 
 function saveAppConfig(id, patch) {
@@ -1182,6 +1546,12 @@ function saveAppConfig(id, patch) {
   const next = mergeAppConfig({ ...prev, ...patch });
   const serviceConfigs = { ...(settings.serviceConfigs || {}), [id]: next };
   settings = saveSettings({ serviceConfigs });
+  // Keep live view's service snapshot in sync (linkHandling, etc.).
+  const entry = views.get(id);
+  if (entry) {
+    const fresh = getService(id);
+    if (fresh) entry.service = fresh;
+  }
   return next;
 }
 
@@ -1268,17 +1638,26 @@ async function deleteProfile(id) {
 }
 
 /**
- * Pick a profile for a newly added app.
- * First copy of an app → Primary.
- * Extra copies → brand-new profile so logins stay separate (Rambox behaviour).
+ * Auto-assign a dedicated profile named like "WhatsApp 1" / "Gmail 2".
+ * First copy and extras each get their own partition (separate logins).
+ * Zoho CRM / One / Books tabs share one profile so workspace login stays linked.
+ * Zoho Mail is isolated like Gmail (one mailbox per profile).
  */
 function profileIdForNewApp(appId, entry) {
   const existing = (settings.serviceInstances || []).filter((i) => i.appId === appId);
-  if (!existing.length) {
-    return getProfile(PRIMARY_PROFILE_ID)?.id || PRIMARY_PROFILE_ID;
+  if (canShareProfileAcrossInstances(appId)) {
+    if (!existing.length) {
+      const created = createProfile(buildAppProfileName(entry.name, 1));
+      return created.profile.id;
+    }
+    return (
+      existing[0].profileId ||
+      getProfile(PRIMARY_PROFILE_ID)?.id ||
+      PRIMARY_PROFILE_ID
+    );
   }
   const slot = existing.length + 1;
-  const created = createProfile(`${entry.name} ${slot}`);
+  const created = createProfile(buildAppProfileName(entry.name, slot));
   return created.profile.id;
 }
 
@@ -1294,6 +1673,12 @@ function resolveInstance(inst) {
     const url = String(inst.url || '').trim();
     if (!url.startsWith('http')) return null;
     const name = clampAppName(inst.name || entry.name);
+    const sourceAppId = String(inst.sourceAppId || '').trim() || null;
+    const sourceEntry = sourceAppId ? getAppCatalogEntry(sourceAppId) : null;
+    // Prefer source app branding (WhatsApp, Gmail, …) so link tabs match origin.
+    const logo = sourceEntry?.logo || inst.logo || 'custom';
+    const color = sourceEntry?.color || inst.color || entry.color;
+    const sourceName = sourceEntry?.name || sourceEntry?.title || '';
     return {
       id: inst.id,
       appId: CUSTOM_APP_ID,
@@ -1303,12 +1688,15 @@ function resolveInstance(inst) {
       partition: partitionForInstance(inst),
       profileId: profile?.id || PRIMARY_PROFILE_ID,
       profileName: profile?.name || 'Primary',
-      color: inst.color || entry.color,
-      logo: 'custom',
+      color,
+      logo,
       keepWarm: false,
       slot,
       config,
       isCustom: true,
+      linkTab: !!inst.linkTab,
+      sourceAppId,
+      sourceName,
     };
   }
 
@@ -1398,7 +1786,7 @@ function nextSlot(appId) {
   return null;
 }
 
-function addService(appId, profileId = null) {
+function addService(appId, profileId = null, { startUrl = null } = {}) {
   const entry = getAppCatalogEntry(appId);
   if (!entry) return { ok: false, error: 'Unknown app' };
   if (totalAppCount() >= MAX_APPS_TOTAL) {
@@ -1421,8 +1809,11 @@ function addService(appId, profileId = null) {
   }
 
   // Same app + same profile would share one WhatsApp/Gmail login — block it.
+  // Zoho workspace deep-link Hub tabs may reuse the source profile/login.
   // Custom URLs may share a profile (different sites, same cookies jar is fine).
-  if (!isCustomAppId(appId)) {
+  const isZohoDeepLinkTab =
+    Boolean(startUrl) && allowsZohoWorkspaceHubTabs(appId);
+  if (!isCustomAppId(appId) && !canShareProfileAcrossInstances(appId) && !isZohoDeepLinkTab) {
     const clash = (settings.serviceInstances || []).some(
       (i) => i.appId === appId && i.profileId === resolvedProfileId,
     );
@@ -1440,10 +1831,450 @@ function addService(appId, profileId = null) {
     { id, appId, profileId: resolvedProfileId, slot },
   ];
   const serviceOrder = [...(settings.serviceOrder || []), id];
-  settings = saveSettings({ serviceInstances: instances, serviceOrder });
+
+  let lastServiceUrls = settings.lastServiceUrls || {};
+  const initialUrl =
+    startUrl &&
+    String(startUrl).startsWith('http') &&
+    isInternalUrl(startUrl, { ...entry, id: 'pending', url: entry.url, appId })
+      ? String(startUrl)
+      : null;
+  if (initialUrl) {
+    lastServiceUrls = { ...lastServiceUrls, [id]: initialUrl };
+    lastGoodUrls.set(id, initialUrl);
+  }
+
+  settings = saveSettings({
+    serviceInstances: instances,
+    serviceOrder,
+    ...(initialUrl ? { lastServiceUrls } : {}),
+    ...(allowsZohoWorkspaceHubTabs(appId)
+      ? {
+          serviceConfigs: {
+            ...(settings.serviceConfigs || {}),
+            [id]: {
+              ...mergeAppConfig((settings.serviceConfigs || {})[id]),
+              // New Zoho workspace tabs default to Hub-tab link handling.
+              linkHandling:
+                (settings.serviceConfigs || {})[id]?.linkHandling ?? 'hub-tab',
+            },
+          },
+        }
+      : {}),
+  });
   broadcastState();
   activateService(id);
   return { ok: true, id, profileId: resolvedProfileId };
+}
+
+/**
+ * Open a Zoho (or shared-profile) deep link as a new Hub app-bar tab that
+ * reuses the source app's login/session. Returns false if the dock is full
+ * or the URL is not suitable — callers may fall back to a popup.
+ */
+function openInternalLinkAsHubTab(sourceService, url) {
+  if (!sourceService?.appId || !url) return false;
+  if (!allowsZohoWorkspaceHubTabs(sourceService.appId)) return false;
+  if (!String(url).startsWith('http')) return false;
+  if (!isInternalUrl(url, sourceService)) return false;
+  if (isAuthOrLoginUrl(url)) return false;
+  if (isZohoAssetHost(url)) return false;
+  if (totalAppCount() >= MAX_APPS_TOTAL) return false;
+  if (countInstances(sourceService.appId) >= MAX_INSTANCES_PER_APP) return false;
+
+  const result = addService(sourceService.appId, sourceService.profileId, {
+    startUrl: url,
+  });
+  return !!result?.ok;
+}
+
+/** Effective link-handling mode — same Hub-wide rule for every app. */
+function effectiveLinkHandling(_service) {
+  return resolveLinkHandling(null, settings.linkHandling || 'hub-tab');
+}
+
+/** Live service record (config/logo may change after the view was created). */
+function liveService(service) {
+  if (!service?.id) return service;
+  return getService(service.id) || service;
+}
+
+/** Open a third-party URL in the OS browser only when the mode allows it. */
+function openUnknownExternalIfAllowed(service, url) {
+  if (!shouldOpenUnknownExternally(effectiveLinkHandling(service))) return false;
+  if (!shouldOpenInSystemBrowser(url)) return false;
+  return openExternalSafe(url);
+}
+
+/** Extra temporary link tabs allowed beyond the normal 10-app bar. */
+const LINK_TAB_OVERFLOW = 4;
+
+function tabNameFromUrl(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./i, '');
+    const parts = host.split('.').filter(Boolean);
+    // Prefer meaningful label: w.meta.me → meta, flexiloans.com → flexiloans
+    let raw = parts[0] || 'Link';
+    if (parts.length >= 2 && raw.length <= 2) raw = parts[1];
+    const label = String(raw).replace(/[^a-zA-Z0-9_-]/g, '');
+    return clampAppName(label || 'Link');
+  } catch {
+    return 'Link';
+  }
+}
+
+function listLinkTabInstances() {
+  return (settings.serviceInstances || []).filter(
+    (i) => i?.linkTab && isCustomAppId(i.appId),
+  );
+}
+
+/**
+ * Open any http(s) URL as a real Hub app-bar tab (right of existing apps).
+ * Zoho shared-login deep links reuse the source profile; other links become
+ * temporary custom tabs (recyclable when the bar is full).
+ */
+function openUrlAsHubAppTab(url, sourceService = null, opts = {}) {
+  const href = String(url || '').trim();
+  if (!href.startsWith('http')) {
+    return { ok: false, error: 'Invalid link' };
+  }
+  if (isForbiddenGuestNavigation(href)) {
+    return { ok: false, error: 'This link cannot be opened in Hub' };
+  }
+
+  // Zoho CRM/One/… shared workspace tabs.
+  if (openInternalLinkAsHubTab(sourceService, href)) {
+    return { ok: true, kind: 'shared' };
+  }
+
+  // Reuse an existing link tab for the same URL.
+  const existing = orderedServices().find(
+    (s) =>
+      s.isCustom &&
+      s.url &&
+      String(s.url).split('#')[0] === href.split('#')[0],
+  );
+  if (existing) {
+    const lastServiceUrls = {
+      ...(settings.lastServiceUrls || {}),
+      [existing.id]: href,
+    };
+    settings = saveSettings({ lastServiceUrls });
+    lastGoodUrls.set(existing.id, href);
+    activateService(existing.id);
+    const wc = views.get(existing.id)?.view?.webContents;
+    if (wc && !wc.isDestroyed()) wc.loadURL(href).catch(() => {});
+    return { ok: true, id: existing.id, kind: 'reuse' };
+  }
+
+  const maxLinkDock = MAX_APPS_TOTAL + LINK_TAB_OVERFLOW;
+  // Only recycle after all overflow slots are full — keep up to LINK_TAB_OVERFLOW
+  // Hub link tabs open at once (same or different apps).
+  if (totalAppCount() >= maxLinkDock) {
+    const victims = listLinkTabInstances();
+    if (!victims.length) {
+      return {
+        ok: false,
+        error: `App bar is full (${MAX_APPS_TOTAL} apps + ${LINK_TAB_OVERFLOW} link tabs). Close a link tab or remove an app.`,
+      };
+    }
+    removeService(victims[0].id);
+  }
+
+  if (totalAppCount() >= maxLinkDock) {
+    return {
+      ok: false,
+      error: `App bar is full. Close a link tab or remove an app.`,
+    };
+  }
+
+  const slot = nextSlot(CUSTOM_APP_ID);
+  if (!slot) {
+    return { ok: false, error: 'Too many link tabs open' };
+  }
+
+  const id = `${CUSTOM_APP_ID}-${slot}-${Date.now().toString(36)}`;
+  const preferredName = String(opts?.tabName || '').trim();
+  const name = preferredName
+    ? clampAppName(preferredName)
+    : tabNameFromUrl(href);
+  const profileId =
+    getProfile(PRIMARY_PROFILE_ID)?.id || PRIMARY_PROFILE_ID;
+  const sourceAppId = sourceService?.appId || null;
+  const sourceEntry = sourceAppId ? getAppCatalogEntry(sourceAppId) : null;
+  const instances = [
+    ...(settings.serviceInstances || []),
+    {
+      id,
+      appId: CUSTOM_APP_ID,
+      profileId,
+      slot,
+      url: href,
+      name,
+      title: name,
+      linkTab: true,
+      sourceAppId,
+      logo: sourceEntry?.logo || 'custom',
+      color: sourceEntry?.color || '#3D5A80',
+    },
+  ];
+  const serviceOrder = [...(settings.serviceOrder || []), id];
+  const lastServiceUrls = {
+    ...(settings.lastServiceUrls || {}),
+    [id]: href,
+  };
+  settings = saveSettings({
+    serviceInstances: instances,
+    serviceOrder,
+    lastServiceUrls,
+    serviceConfigs: {
+      ...(settings.serviceConfigs || {}),
+      [id]: {
+        ...mergeAppConfig((settings.serviceConfigs || {})[id]),
+        // Inside a link tab, browse freely — don’t re-ask on every redirect.
+        linkHandling: 'block',
+        keepWarm: false,
+      },
+    },
+  });
+  lastGoodUrls.set(id, href);
+  broadcastState();
+  activateService(id);
+  // Ensure the target loads even if activate raced before lastServiceUrls hydrated.
+  const entry = views.get(id);
+  const wc = entry?.view?.webContents;
+  if (wc && !wc.isDestroyed()) {
+    const current = (() => {
+      try {
+        return wc.getURL();
+      } catch {
+        return '';
+      }
+    })();
+    if (!current || current === 'about:blank' || !current.startsWith('http')) {
+      wc.loadURL(href).catch(() => {});
+    }
+  }
+  return { ok: true, id, kind: 'link-tab' };
+}
+
+/** Serialize ask-mode chooser dialogs (never drop rapid clicks). */
+const linkAskQueue = [];
+let linkAskBusy = false;
+
+/**
+ * Rambox-style chooser: browser vs Hub tab, optional remember for this app.
+ * Always deny/prevent the original navigation first, then call this async.
+ */
+function promptAndApplyLinkChoice(service, url, webContents) {
+  const href = String(url || '');
+  if (!href.startsWith('http')) return;
+  linkAskQueue.push({ service, url: href, webContents });
+  void drainLinkAskQueue();
+}
+
+async function drainLinkAskQueue() {
+  if (linkAskBusy) return;
+  linkAskBusy = true;
+  try {
+    while (linkAskQueue.length) {
+      const job = linkAskQueue.shift();
+      await runLinkAskDialog(job.service, job.url, job.webContents);
+    }
+  } finally {
+    linkAskBusy = false;
+    if (linkAskQueue.length) void drainLinkAskQueue();
+  }
+}
+
+async function runLinkAskDialog(service, href, webContents) {
+  try {
+    const detail =
+      href.length > 480 ? `${href.slice(0, 477)}…` : href;
+    const box = {
+      type: 'question',
+      buttons: ['Open in default browser', 'Open in Hub tab', 'Cancel'],
+      defaultId: 1,
+      cancelId: 2,
+      title: 'Open link',
+      message: 'How should Aspera Hub open this link?',
+      detail,
+      checkboxLabel: 'Do this for all apps always',
+      checkboxChecked: false,
+      noLink: true,
+    };
+    const result = mainWindow
+      ? await dialog.showMessageBox(mainWindow, box)
+      : await dialog.showMessageBox(box);
+    if (result.response === 2) return;
+
+    const choice = result.response === 0 ? 'browser' : 'hub-tab';
+    if (result.checkboxChecked) {
+      settings = saveSettings({
+        linkHandling: rememberModeForChoice(choice),
+      });
+      broadcastState();
+    }
+
+    if (choice === 'browser') {
+      if (shouldOpenInSystemBrowser(href)) openExternalSafe(href);
+      return;
+    }
+
+    // Real app-bar tab (never a floating popup window).
+    const opened = openUrlAsHubAppTab(href, service);
+    if (!opened.ok) {
+      const errBox = {
+        type: 'warning',
+        buttons: ['OK'],
+        title: 'Could not open Hub tab',
+        message: opened.error || 'App bar is full.',
+      };
+      if (mainWindow) await dialog.showMessageBox(mainWindow, errBox);
+      else await dialog.showMessageBox(errBox);
+    }
+  } catch (err) {
+    reportError('link-ask-failed', {
+      message: String(err?.message || err),
+      url: href.slice(0, 200),
+    }).catch(() => {});
+  }
+}
+
+/**
+ * Handle an outbound / new-window http link according to linkHandling.
+ * Returns true when the caller should deny/preventDefault (already handled).
+ *
+ * Rule (all apps the same): “Hub tab” always means a real top app-bar tab —
+ * never a floating BrowserWindow.
+ */
+function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
+  const href = String(url || '');
+  if (!href.startsWith('http')) return false;
+  const allowHubTab = opts.allowHubTab === true;
+  // Temporary Hub link tabs (opened from WhatsApp/Arattai/etc.): keep login and
+  // redirects in the same tab. Spawning another top-bar tab mid-login leaves
+  // the original Canva/site tab blank after auth.
+  if (service?.isCustom || service?.linkTab) {
+    if (
+      (isAuthOrLoginUrl(href) && isGoogleOwnedUrl(href)) ||
+      mustKeepGoogleUrlInApp(href)
+    ) {
+      return false;
+    }
+    if (webContents && !webContents.isDestroyed()) {
+      webContents.loadURL(href).catch(() => {});
+      return true;
+    }
+    return false;
+  }
+  // WhatsApp / Arattai: Hub-tab BEFORE same-ecosystem. google.com is in
+  // INTERNAL_HOSTS for Gmail, so Drive used to hit loadURL-in-messenger and
+  // fight will-navigate preventDefault — link opened nowhere.
+  if (
+    isMessagingAppId(service?.appId) &&
+    !isAllowedMessagingTabUrl(service, href)
+  ) {
+    const opened = openUrlAsHubAppTab(href, service);
+    if (!opened.ok && opened.error) {
+      const errBox = {
+        type: 'warning',
+        buttons: ['OK'],
+        defaultId: 0,
+        title: 'Could not open Hub tab',
+        message: opened.error,
+      };
+      if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+      else dialog.showMessageBox(errBox).catch(() => {});
+    }
+    return true;
+  }
+  // Catalog apps (Gmail/Zoho/…): same-ecosystem URLs stay in-tab — except Zoho
+  // CRM/Books/One deep links, which open as shared-login Hub tabs (multi-screen).
+  // Gmail email links pass allowHubTab: true → Hub tab (keep inbox; no popup).
+  if (!(service?.isCustom || service?.linkTab) && isSameEcosystemUrl(service, href)) {
+    if (
+      isGoogleOauthClientUrl(href) ||
+      (isAuthOrLoginUrl(href) && isGoogleOwnedUrl(href)) ||
+      (mustKeepGoogleUrlInApp(href) && !allowHubTab)
+    ) {
+      return false; // real popup
+    }
+    if (
+      allowHubTab &&
+      isGoogleService(service) &&
+      shouldOpenAsHubTab(effectiveLinkHandling(service))
+    ) {
+      const opened = openUrlAsHubAppTab(href, service);
+      if (!opened.ok && opened.error) {
+        const errBox = {
+          type: 'warning',
+          buttons: ['OK'],
+          defaultId: 0,
+          title: 'Could not open Hub tab',
+          message: opened.error,
+        };
+        if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+        else dialog.showMessageBox(errBox).catch(() => {});
+      }
+      return true;
+    }
+    if (isGoogleService(service) && !isAllowedGmailTabUrl(href)) {
+      return false; // allow popup / stay; do not Hub-tab Google side UIs
+    }
+    if (webContents && !webContents.isDestroyed()) {
+      try {
+        const cur = String(webContents.getURL() || '');
+        if (cur.split('#')[0] === href.split('#')[0]) return true;
+      } catch {
+        // ignore
+      }
+    }
+    if (
+      shouldOpenZohoSharedDeepLinkAsHubTab(service, href) &&
+      shouldOpenAsHubTab(effectiveLinkHandling(service)) &&
+      openInternalLinkAsHubTab(service, href)
+    ) {
+      return true;
+    }
+    if (webContents && !webContents.isDestroyed()) {
+      webContents.loadURL(href).catch(() => {});
+      return true;
+    }
+    return false;
+  }
+  // Gmail sign-in / SSO must never spawn Hub link tabs (e.g. 2507573.apps…).
+  // Email-link unwraps and window.open targets pass allowHubTab: true.
+  if (isGoogleService(service) && !(service?.isCustom || service?.linkTab) && !allowHubTab) {
+    if (shouldOpenInSystemBrowser(href)) openExternalSafe(href);
+    return true;
+  }
+  const mode = effectiveLinkHandling(service);
+  if (shouldAskLinkHandling(mode)) {
+    void promptAndApplyLinkChoice(service, href, webContents);
+    return true;
+  }
+  if (shouldOpenAsHubTab(mode)) {
+    const opened = openUrlAsHubAppTab(href, service);
+    if (!opened.ok && opened.error) {
+      const errBox = {
+        type: 'warning',
+        buttons: ['OK'],
+        defaultId: 0,
+        title: 'Could not open Hub tab',
+        message: opened.error,
+      };
+      if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+      else dialog.showMessageBox(errBox).catch(() => {});
+    }
+    return true;
+  }
+  if (isInternalUrl(href, service)) {
+    return false;
+  }
+  openUnknownExternalIfAllowed(service, href);
+  return true;
 }
 
 /** Custom URLs are disabled — Aspera Hub only exposes the company catalog. */
@@ -1469,7 +2300,8 @@ function setInstanceProfile(serviceId, profileId) {
       i.id !== serviceId &&
       i.appId === inst.appId &&
       i.profileId === profileId &&
-      !isCustomAppId(inst.appId),
+      !isCustomAppId(inst.appId) &&
+      !canShareProfileAcrossInstances(inst.appId),
   );
   if (clash) {
     const entry = getAppCatalogEntry(inst.appId);
@@ -1530,10 +2362,9 @@ function removeService(id) {
 }
 
 function hibernateMs() {
-  const mins = isLowMemoryMode()
-    ? Math.min(3, Math.max(1, Number(settings.hibernateMinutes) || 2))
-    : Math.max(1, Number(settings.hibernateMinutes) || 2);
-  return mins * 60_000;
+  return hibernateMsFromSettings(settings.hibernateMinutes, {
+    lowMemoryMode: isLowMemoryMode(),
+  });
 }
 
 function maxWarm() {
@@ -1568,11 +2399,87 @@ function focusActiveContents() {
   }
 }
 
+/**
+ * After closing a floating child (Find / Web search), mainWindow often is not
+ * focused yet — dockIsUserFocused() is false and focusActiveContents() no-ops,
+ * so WhatsApp compose receives no keys until the user opens Find again.
+ */
+function restoreGuestFocusAfterFloat() {
+  if (locked || overlayOpen || !activeServiceId) return;
+  const entry = views.get(activeServiceId);
+  const wc = entry?.view?.webContents;
+  const kick = () => {
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    } catch {
+      // ignore
+    }
+    try {
+      if (wc && !wc.isDestroyed()) wc.focus();
+    } catch {
+      // ignore
+    }
+  };
+  kick();
+  setTimeout(kick, 0);
+  setTimeout(kick, 40);
+  setTimeout(kick, 120);
+}
+
+/**
+ * Company fleets always run the Hub maximized (full workspace).
+ * On Zorin / GNOME, maximize() before the first map often no-ops and the
+ * window opens at the default 1280×800 ("restore" size). Show first, then
+ * maximize, then re-assert after short delays so Mutter cannot win the race.
+ */
+function ensureMainWindowMaximized({ withRetries = false } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+  } catch {
+    // ignore
+  }
+  try {
+    if (!mainWindow.isMaximized()) mainWindow.maximize();
+  } catch {
+    // ignore — some Wayland compositors briefly reject maximize
+  }
+  if (!withRetries) return;
+  const delays =
+    (() => {
+      try {
+        return linuxNeedsDelayedMaximize() ? [50, 200, 600, 1200] : [80, 320];
+      } catch {
+        return [80, 320];
+      }
+    })();
+  for (const ms of delays) {
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      try {
+        if (!mainWindow.isMaximized()) mainWindow.maximize();
+      } catch {
+        // ignore
+      }
+      try {
+        layoutActiveView();
+      } catch {
+        // ignore
+      }
+    }, ms);
+  }
+}
+
 /** Bring the dock to the front — only from explicit user actions. */
 function raiseDockWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   if (mainWindow.isMinimized()) mainWindow.restore();
   mainWindow.show();
+  ensureMainWindowMaximized({ withRetries: true });
   mainWindow.focus();
   // Focus event usually fires; still kick a repaint for WMs that skip it.
   setTimeout(() => repaintActiveGuestView({ reason: 'raise' }), 30);
@@ -1622,6 +2529,45 @@ function chromeMenuHandle(channel, handler) {
   });
 }
 
+function findBarHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !findBarWindow ||
+      findBarWindow.isDestroyed() ||
+      event.sender !== findBarWindow.webContents
+    ) {
+      throw new Error('Unauthorized find-bar IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
+function webSearchHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !webSearchWindow ||
+      webSearchWindow.isDestroyed() ||
+      event.sender !== webSearchWindow.webContents
+    ) {
+      throw new Error('Unauthorized web-search IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
+function notesHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !notesWindow ||
+      notesWindow.isDestroyed() ||
+      event.sender !== notesWindow.webContents
+    ) {
+      throw new Error('Unauthorized notes IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
 function notifCenterHandle(channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
     if (
@@ -1635,6 +2581,19 @@ function notifCenterHandle(channel, handler) {
   });
 }
 
+function downloadShelfHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !downloadShelfWindow ||
+      downloadShelfWindow.isDestroyed() ||
+      event.sender !== downloadShelfWindow.webContents
+    ) {
+      throw new Error('Unauthorized download-shelf IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
 function aiResultHandle(channel, handler) {
   ipcMain.handle(channel, async (event, ...args) => {
     if (
@@ -1643,6 +2602,19 @@ function aiResultHandle(channel, handler) {
       event.sender !== aiResultWindow.webContents
     ) {
       throw new Error('Unauthorized ai-result IPC sender');
+    }
+    return handler(event, ...args);
+  });
+}
+
+function crmLookupHandle(channel, handler) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    if (
+      !crmLookupWindow ||
+      crmLookupWindow.isDestroyed() ||
+      event.sender !== crmLookupWindow.webContents
+    ) {
+      throw new Error('Unauthorized crm-lookup IPC sender');
     }
     return handler(event, ...args);
   });
@@ -1756,13 +2728,19 @@ function parkGuestView(entry, viewId = null) {
   }
 }
 
-/** Detach non-warm guests; park warm ones off-screen (still visible to Chromium). */
+/**
+ * Park warm + recently-used tabs off-screen (keeps Zoho/CRM SPAs alive on
+ * Mint XFCE). Only detach truly stale non-warm guests.
+ */
 function parkBackgroundViews(exceptId = null) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   for (const [viewId, entry] of views.entries()) {
     if (viewId === exceptId) continue;
-    if (isKeepWarmService(viewId)) parkGuestView(entry, viewId);
-    else detachGuestView(entry.view);
+    if (isKeepWarmService(viewId) || !isEvictableBackground(viewId, entry)) {
+      parkGuestView(entry, viewId);
+    } else {
+      detachGuestView(entry.view);
+    }
   }
 }
 
@@ -2466,6 +3444,327 @@ function closeChromeMenuWindow() {
   }
 }
 
+function closeFindBarWindow({ clear = true } = {}) {
+  if (clear) {
+    try {
+      stopFindInActivePage();
+    } catch {
+      // ignore
+    }
+  }
+  if (!findBarWindow || findBarWindow.isDestroyed()) {
+    findBarWindow = null;
+    restoreGuestFocusAfterFloat();
+    return;
+  }
+  const win = findBarWindow;
+  findBarWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+  // Force focus back to WhatsApp/Arattai compose (not focusActiveContents —
+  // mainWindow is often unfocused while the Find child still had keyboard).
+  restoreGuestFocusAfterFloat();
+}
+
+function isFindBarOpen() {
+  return !!(findBarWindow && !findBarWindow.isDestroyed());
+}
+
+function closeWebSearchWindow() {
+  if (!webSearchWindow || webSearchWindow.isDestroyed()) {
+    webSearchWindow = null;
+    restoreGuestFocusAfterFloat();
+    return;
+  }
+  const win = webSearchWindow;
+  webSearchWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+  restoreGuestFocusAfterFloat();
+}
+
+function isWebSearchOpen() {
+  return !!(webSearchWindow && !webSearchWindow.isDestroyed());
+}
+
+/**
+ * Floating Google Web-search popup (Aspera AI / Find pattern).
+ * Enter opens results in a Hub link tab — WhatsApp stays put.
+ */
+function openWebSearchWindow({ dark = null } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  if (isWebSearchOpen()) {
+    try {
+      webSearchWindow.show();
+      webSearchWindow.focus();
+      webSearchWindow.webContents.focus();
+      webSearchWindow.webContents.send('web-search:init', {
+        query: webSearchLastQuery,
+      });
+    } catch {
+      // ignore
+    }
+    return { ok: true, focused: true };
+  }
+
+  closeFindBarWindow({ clear: false });
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAppContextMenu();
+
+  const barW = 480;
+  const barH = 132;
+  const content = mainWindow.getContentBounds();
+  const chromeTop = Math.max(48, Number(effectiveMetrics().top) || 78);
+  const rawX = content.x + Math.max(12, Math.floor((content.width - barW) / 2));
+  const rawY = content.y + chromeTop + 10;
+  const pos = clampFloatPosition(rawX, rawY, barW, barH);
+  const darkNow =
+    typeof dark === 'boolean' ? dark : !!nativeTheme.shouldUseDarkColors;
+
+  webSearchWindow = createFloatBrowserWindow({
+    width: barW,
+    height: barH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'webSearchPreload.js',
+    dark: darkNow,
+  });
+
+  const win = webSearchWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildWebSearchHtml(darkNow))}`,
+  );
+
+  win.webContents.once('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    win.webContents.send('web-search:init', { query: webSearchLastQuery });
+  });
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return;
+    win.show();
+    try {
+      if (typeof win.moveTop === 'function') win.moveTop();
+    } catch {
+      // ignore
+    }
+    win.focus();
+    try {
+      win.webContents.focus();
+    } catch {
+      // ignore
+    }
+    setTimeout(() => {
+      if (win.isDestroyed()) return;
+      try {
+        win.focus();
+        win.webContents.focus();
+      } catch {
+        // ignore
+      }
+    }, 40);
+  });
+  win.on('closed', () => {
+    if (webSearchWindow === win) webSearchWindow = null;
+  });
+
+  return { ok: true };
+}
+
+function isNotesOpen() {
+  return !!(notesWindow && !notesWindow.isDestroyed());
+}
+
+function pushNotes(payload) {
+  if (!notesWindow || notesWindow.isDestroyed()) return;
+  try {
+    notesWindow.webContents.send('notes:init', payload);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Floating Notes pad (Aspera AI pattern): copy links / repeated text,
+ * paste yourself. Hub never sends.
+ */
+function openNotesWindow({ dark = null } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  const notes = sanitizeNotes(settings.notes || []);
+  const darkNow =
+    typeof dark === 'boolean' ? dark : !!nativeTheme.shouldUseDarkColors;
+
+  if (isNotesOpen()) {
+    try {
+      notesWindow.show();
+      notesWindow.focus();
+      notesWindow.webContents.focus();
+      pushNotes({ notes });
+    } catch {
+      // ignore
+    }
+    return { ok: true, focused: true };
+  }
+
+  closeFindBarWindow({ clear: false });
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAppContextMenu();
+  closeAiResultWindow();
+
+  const content = mainWindow.getContentBounds();
+  const pos = asperaPanelBounds(content);
+
+  notesWindow = createFloatBrowserWindow({
+    width: pos.width,
+    height: pos.height,
+    x: pos.x,
+    y: pos.y,
+    preload: 'notesPreload.js',
+    dark: darkNow,
+  });
+
+  const win = notesWindow;
+  try {
+    win.setAlwaysOnTop(false);
+  } catch {
+    // ignore
+  }
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildNotesHtml(darkNow))}`,
+  );
+  win.webContents.once('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    pushNotes({ notes });
+  });
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return;
+    win.show();
+    try {
+      if (typeof win.moveTop === 'function') win.moveTop();
+    } catch {
+      // ignore
+    }
+    win.focus();
+    try {
+      win.webContents.focus();
+    } catch {
+      // ignore
+    }
+  });
+  win.on('closed', () => {
+    if (notesWindow === win) notesWindow = null;
+  });
+  return { ok: true };
+}
+
+function runWebSearch(text) {
+  const query = String(text || '');
+  webSearchLastQuery = query.trim();
+  const href = resolveWebSearchInput(query);
+  if (!href) return { ok: false, error: 'Empty search' };
+  const result = openUrlAsHubAppTab(href, null, {
+    tabName: webSearchTabName(query),
+  });
+  closeWebSearchWindow();
+  return result;
+}
+
+/**
+ * Floating Find popup above the guest. In-page HTML cannot paint over
+ * WebContentsView, so we must not push the page down to reveal a chrome bar.
+ */
+function openFindBarWindow({ dark = null } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  if (isFindBarOpen()) {
+    try {
+      findBarWindow.show();
+      findBarWindow.focus();
+      findBarWindow.webContents.focus();
+      findBarWindow.webContents.send('find-bar:init', {
+        query: findBarLastQuery,
+      });
+    } catch {
+      // ignore
+    }
+    return { ok: true, focused: true };
+  }
+
+  closeWebSearchWindow();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeAppContextMenu();
+
+  const barW = 360;
+  const barH = 56;
+  const content = mainWindow.getContentBounds();
+  const chromeTop = Math.max(48, Number(effectiveMetrics().top) || 78);
+  const rawX = content.x + content.width - barW - 12;
+  const rawY = content.y + chromeTop + 8;
+  const pos = clampFloatPosition(rawX, rawY, barW, barH);
+  const darkNow =
+    typeof dark === 'boolean' ? dark : !!nativeTheme.shouldUseDarkColors;
+
+  findBarWindow = createFloatBrowserWindow({
+    width: barW,
+    height: barH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'findBarPreload.js',
+    dark: darkNow,
+  });
+
+  const win = findBarWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildFindBarHtml(darkNow))}`,
+  );
+
+  win.webContents.once('did-finish-load', () => {
+    if (win.isDestroyed()) return;
+    win.webContents.send('find-bar:init', { query: findBarLastQuery });
+  });
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return;
+    win.show();
+    // XFCE / Cinnamon focus-stealing: raise + focus so typing works immediately.
+    try {
+      if (typeof win.moveTop === 'function') win.moveTop();
+    } catch {
+      // ignore
+    }
+    win.focus();
+    try {
+      win.webContents.focus();
+    } catch {
+      // ignore
+    }
+    setTimeout(() => {
+      if (win.isDestroyed()) return;
+      try {
+        win.focus();
+        win.webContents.focus();
+      } catch {
+        // ignore
+      }
+    }, 40);
+  });
+  // Do NOT close on blur — user clicks the page to read match highlights.
+  win.on('closed', () => {
+    if (findBarWindow === win) findBarWindow = null;
+  });
+
+  return { ok: true };
+}
+
 function closeNotifCenterWindow() {
   if (!notifCenterWindow || notifCenterWindow.isDestroyed()) {
     notifCenterWindow = null;
@@ -2480,14 +3779,199 @@ function closeNotifCenterWindow() {
   }
 }
 
+function closeDownloadShelfWindow() {
+  if (!downloadShelfWindow || downloadShelfWindow.isDestroyed()) {
+    downloadShelfWindow = null;
+    return;
+  }
+  const win = downloadShelfWindow;
+  downloadShelfWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
+function buildDownloadShelfData() {
+  return { downloads: listDownloadsForUi() };
+}
+
+function pushDownloadShelfData() {
+  if (!downloadShelfWindow || downloadShelfWindow.isDestroyed()) return;
+  try {
+    downloadShelfWindow.webContents.send('download-shelf:init', buildDownloadShelfData());
+  } catch {
+    // ignore
+  }
+}
+
+function notifyDownloadFinished() {
+  downloadUnseenCount += 1;
+  pushDownloadShelfData();
+  try {
+    mainWindow?.webContents.send('dock:download-shelf-auto');
+  } catch {
+    // ignore
+  }
+  broadcastState();
+}
+
+function openDownloadShelfWindow({ x = 0, y = 0, dark = false, align = 'right' } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeDownloadShelfWindow();
+
+  const menuW = 392;
+  const menuH = Math.min(520, Math.max(280, 120 + listDownloadsForUi().length * 58));
+  const content = mainWindow.getContentBounds();
+  const anchorX = content.x + (Number(x) || 0);
+  const anchorY = content.y + (Number(y) || 0);
+  const rawX = align === 'right' ? anchorX - menuW : anchorX;
+  const pos = clampFloatPosition(rawX, anchorY, menuW, menuH);
+
+  downloadUnseenCount = 0;
+  broadcastState();
+
+  downloadShelfWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'downloadShelfPreload.js',
+    dark: !!dark,
+  });
+
+  const win = downloadShelfWindow;
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildDownloadShelfHtml(!!dark))}`,
+  );
+
+  win.webContents.once('did-finish-load', () => {
+    if (!win.isDestroyed()) {
+      win.webContents.send('download-shelf:init', buildDownloadShelfData());
+    }
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+    }
+  });
+  win.on('blur', () => {
+    setTimeout(() => {
+      if (downloadShelfWindow === win) closeDownloadShelfWindow();
+    }, 120);
+  });
+  win.on('closed', () => {
+    if (downloadShelfWindow === win) downloadShelfWindow = null;
+  });
+
+  return { ok: true };
+}
+
+function handleDownloadShelfAction(type, value) {
+  const action = String(type || '');
+  if (action === 'open-folder') {
+    const downloadDir =
+      String(settings.downloadPath || '').trim() || app.getPath('downloads');
+    try {
+      fs.mkdirSync(downloadDir, { recursive: true });
+    } catch {
+      // ignore
+    }
+    shell.openPath(downloadDir);
+    return { ok: true };
+  }
+  const entry = lookupDownload(String(value || ''));
+  if (!entry?.path || !fs.existsSync(entry.path)) {
+    return { ok: false, error: 'File not found' };
+  }
+  if (action === 'show-in-folder') {
+    shell.showItemInFolder(entry.path);
+    return { ok: true };
+  }
+  if (action === 'open') {
+    shell.openPath(entry.path);
+    return { ok: true };
+  }
+  return { ok: false, error: 'Unknown action' };
+}
+
+/** OS drag from Recent download history → Desktop / file manager. */
+function startDownloadShelfFileDrag(event, downloadId) {
+  if (
+    !downloadShelfWindow ||
+    downloadShelfWindow.isDestroyed() ||
+    event.sender !== downloadShelfWindow.webContents
+  ) {
+    return;
+  }
+  const entry = lookupDownload(String(downloadId || ''));
+  if (!entry?.path || entry.state === 'progressing' || !fs.existsSync(entry.path)) {
+    return;
+  }
+  let icon = getAppIcon();
+  try {
+    if (icon && !icon.isEmpty()) {
+      icon = icon.resize({ width: 32, height: 32, quality: 'best' });
+    }
+  } catch {
+    // ignore
+  }
+  if (!icon || icon.isEmpty()) {
+    icon = nativeImage.createEmpty();
+  }
+  try {
+    event.sender.startDrag({
+      file: entry.path,
+      icon,
+    });
+  } catch {
+    // ignore — compositor may reject occasional drags
+  }
+}
+
 function closeAiResultWindow() {
   aiResultContext = null;
+  clearAiInboxAttachment();
   if (!aiResultWindow || aiResultWindow.isDestroyed()) {
     aiResultWindow = null;
     return;
   }
   const win = aiResultWindow;
   aiResultWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
+function closeNotesWindow() {
+  if (!notesWindow || notesWindow.isDestroyed()) {
+    notesWindow = null;
+    return;
+  }
+  const win = notesWindow;
+  notesWindow = null;
+  try {
+    win.close();
+  } catch {
+    // ignore
+  }
+}
+
+function closeCrmLookupWindow() {
+  if (!crmLookupWindow || crmLookupWindow.isDestroyed()) {
+    crmLookupWindow = null;
+    return;
+  }
+  const win = crmLookupWindow;
+  crmLookupWindow = null;
   try {
     win.close();
   } catch {
@@ -2509,9 +3993,14 @@ function closeExtensionsWindow() {
   }
 }
 
-function closeForwardPickerWindow() {
+function closeForwardPickerWindow({ clearPayload = false } = {}) {
   if (!forwardPickerWindow || forwardPickerWindow.isDestroyed()) {
     forwardPickerWindow = null;
+    if (clearPayload) {
+      cancelPendingForwardPaste();
+      forwardPayload = null;
+      restoreHubClipboardAfterForward();
+    }
     return;
   }
   const win = forwardPickerWindow;
@@ -2521,13 +4010,49 @@ function closeForwardPickerWindow() {
   } catch {
     // ignore
   }
+  if (clearPayload) {
+    cancelPendingForwardPaste();
+    forwardPayload = null;
+    restoreHubClipboardAfterForward();
+  }
+}
+
+function cancelPendingForwardPaste() {
+  forwardPasteGeneration += 1;
+}
+
+function restoreHubClipboardAfterForward() {
+  try {
+    if (hubClipboardBeforeStage) {
+      clipboard.writeText(String(hubClipboardBeforeStage.text || ''));
+    } else if (hubStagedClipboardText) {
+      const cur = clipboard.readText() || '';
+      if (cur === hubStagedClipboardText) clipboard.clear();
+    }
+  } catch {
+    // ignore
+  }
+  hubClipboardBeforeStage = null;
+  hubStagedClipboardText = '';
+}
+
+function stageHubForwardClipboard(write) {
+  try {
+    hubClipboardBeforeStage = { text: clipboard.readText() || '' };
+  } catch {
+    hubClipboardBeforeStage = { text: '' };
+  }
+  hubStagedClipboardText = String(write?.text || '');
+  clipboard.write(write);
 }
 
 function closeAllFloatMenus() {
   closeAppContextMenu();
   closeChromeMenuWindow();
+  closeFindBarWindow({ clear: true });
   closeNotifCenterWindow();
   closeAiResultWindow();
+  closeNotesWindow();
   closeForwardPickerWindow();
   closeExtensionsWindow();
 }
@@ -2544,17 +4069,21 @@ function clampFloatPosition(screenX, screenY, menuW, menuH) {
   return { x: Math.round(x), y: Math.round(y) };
 }
 
-/** Linux Mint XFCE (and similar) without a compositor paint transparent windows badly. */
-function linuxUsesOpaqueOverlays() {
-  if (process.platform !== 'linux') return false;
-  const de = `${process.env.XDG_CURRENT_DESKTOP || ''} ${process.env.DESKTOP_SESSION || ''} ${process.env.GDMSESSION || ''}`.toLowerCase();
-  return (
-    de.includes('xfce') ||
-    de.includes('xubuntu') ||
-    de.includes('lxde') ||
-    de.includes('lxqt') ||
-    de.includes('openbox')
+/** Shared size/position for Aspera AI and Notes — same floating card. */
+function asperaPanelBounds(content) {
+  const margin = 10;
+  const width = Math.min(
+    580,
+    Math.max(440, Math.floor((content?.width || 0) * 0.45)),
   );
+  const height = Math.max(360, (content?.height || 0) - margin * 2);
+  const pos = clampFloatPosition(
+    (content?.x || 0) + (content?.width || 0) - width - margin,
+    (content?.y || 0) + margin,
+    width,
+    height,
+  );
+  return { width, height, x: pos.x, y: pos.y };
 }
 
 function createFloatBrowserWindow({
@@ -2565,6 +4094,8 @@ function createFloatBrowserWindow({
   preload,
   dark = false,
 }) {
+  // Mint XFCE / MATE / Q4OS Trinity / Q4OS Plasma (weak KWin): opaque.
+  // Cinnamon / Ubuntu GNOME / full Plasma with compositor: transparent OK.
   const opaque = linuxUsesOpaqueOverlays();
   const win = new BrowserWindow({
     parent: mainWindow,
@@ -2609,7 +4140,7 @@ function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
   closeAppContextMenu();
 
   const menuW = 236;
-  const menuH = 292;
+  const menuH = 340;
   const content = mainWindow.getContentBounds();
   const pos = clampFloatPosition(
     content.x + (Number(x) || 0),
@@ -2636,6 +4167,7 @@ function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
   const pushState = () => {
     if (!win || win.isDestroyed() || appMenuServiceId !== serviceId) return;
     const latest = getAppConfig(serviceId);
+    const svc = getService(serviceId);
     win.webContents.send('app-menu:init', {
       serviceId,
       name: service.name || service.defaultName || 'App',
@@ -2643,6 +4175,8 @@ function openAppContextMenu({ serviceId, x = 0, y = 0, dark = false } = {}) {
       sound: latest.allowSounds !== false,
       notifications: latest.allowNotifications !== false,
       warm: latest.keepWarm === true,
+      linkTab: !!svc?.linkTab,
+      isCustom: !!svc?.isCustom,
     });
   };
 
@@ -2675,13 +4209,14 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
   closeNotifCenterWindow();
   closeChromeMenuWindow();
 
-  const menuW = 242;
-  // Tall enough for About + version; clampFloatPosition shrinks into the work area.
+  const menuW = 256;
+  // Tall enough for every section + website/About/version — no inner scrollbar.
   const display = screen.getDisplayNearestPoint({
     x: mainWindow.getBounds().x,
     y: mainWindow.getBounds().y,
   });
-  const menuH = Math.min(760, Math.max(520, (display?.workArea?.height || 800) - 48));
+  const workH = display?.workArea?.height || 900;
+  const menuH = chromeMenuPreferredHeight({ workAreaHeight: workH });
   const content = mainWindow.getContentBounds();
   const anchorX = content.x + (Number(x) || 0);
   const anchorY = content.y + (Number(y) || 0);
@@ -2704,13 +4239,42 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
 
   const versionLabel = `Aspera Hub ${app.getVersion()}${app.isPackaged ? '' : ' (dev)'}`;
   win.webContents.once('did-finish-load', () => {
-    if (!win.isDestroyed()) {
-      win.webContents.send('chrome-menu:init', {
-        versionLabel,
-        focusMode: !!settings.focusMode,
-        muted: !!settings.muted,
-      });
-    }
+    if (win.isDestroyed()) return;
+    win.webContents.send('chrome-menu:init', {
+      versionLabel,
+      focusMode: !!settings.focusMode,
+      muted: !!settings.muted,
+    });
+    // Size the window to the measured card so nothing scrolls.
+    win.webContents
+      .executeJavaScript(
+        `(() => {
+          const card = document.querySelector('.card');
+          if (!card) return 0;
+          card.style.maxHeight = 'none';
+          card.style.overflow = 'visible';
+          return Math.ceil(card.getBoundingClientRect().height) + 10;
+        })()`,
+      )
+      .then((measured) => {
+        if (win.isDestroyed() || !measured || measured < 200) return;
+        const bounds = win.getBounds();
+        const d = screen.getDisplayNearestPoint({
+          x: bounds.x,
+          y: bounds.y,
+        });
+        const maxH = Math.max(400, (d?.workArea?.height || workH) - 16);
+        const nextH = Math.min(maxH, Math.max(measured, menuH));
+        if (Math.abs(nextH - bounds.height) < 4) return;
+        const next = clampFloatPosition(bounds.x, bounds.y, bounds.width, nextH);
+        win.setBounds({
+          x: next.x,
+          y: next.y,
+          width: bounds.width,
+          height: nextH,
+        });
+      })
+      .catch(() => {});
   });
   win.once('ready-to-show', () => {
     if (!win.isDestroyed()) {
@@ -2730,23 +4294,32 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
   return { ok: true };
 }
 
-function buildNotifCenterData() {
-  const notifications = (notificationLog || []).slice(0, 40).map((item) => {
+function buildNotifCenterDataSync(scrapedChats = []) {
+  const hideContent = !!settings.hideNotificationContent;
+  const logItems = (notificationLog || []).slice(0, 40).map((item) => {
     const service = getService(item.serviceId);
-    const canReply = isInboxAppId(service?.appId || item.appId);
+    const appId = service?.appId || item.appId || '';
     return {
       id: item.id,
       serviceId: item.serviceId,
+      appId,
       title: item.title,
       body: item.body,
       at: item.at,
       chatName: item.chatName || '',
       chatKey: item.chatKey || '',
-      canReply,
+      unread: Number(item.unread) || 0,
+      canReply:
+        isInboxAppId(appId) && !whatsappAutomationBlocked(settings, appId),
       accountLabel: item.accountLabel || service?.title || service?.name || '',
       logo: service?.logo || null,
       color: service?.color || '#e2e8f0',
     };
+  });
+  const notifications = mergeNotificationFeed({
+    logItems,
+    scrapedChats,
+    hideContent,
   });
   const monitorOn = !!settings.consumptionMonitor;
   const memoryRows = monitorOn
@@ -2761,13 +4334,81 @@ function buildNotifCenterData() {
   return { notifications, monitorOn, memoryRows };
 }
 
+function buildNotifCenterData() {
+  return buildNotifCenterDataSync([]);
+}
+
+async function scrapeUnreadChatsForService(service, { allowDefer = true } = {}) {
+  if (!service || !isInboxAppId(service.appId)) return [];
+  if (whatsappAutomationBlocked(settings, service.appId)) return [];
+  const wc = views.get(service.id)?.view?.webContents;
+  if (!wc || wc.isDestroyed()) return [];
+  if (allowDefer && (await serviceIsBusyWithMediaViewer(service.id))) return [];
+  try {
+    const result = await wc.executeJavaScript(scrapeMessagingInboxJs(), true);
+    const at = Date.now();
+    return (result?.chats || [])
+      .map((chat) => {
+        const name = String(chat?.name || '').replace(/\s+/g, ' ').trim();
+        if (!name || isJunkChatName(name)) return null;
+        const preview = String(chat?.preview || '').replace(/\s+/g, ' ').trim();
+        return {
+          id: `${service.id}-${normalizeChatKey(name)}-${at}`,
+          serviceId: service.id,
+          appId: service.appId,
+          name,
+          chatKey: normalizeChatKey(chat?.chatKey || name),
+          preview,
+          unread: Number(chat?.unread) || 1,
+          accountLabel: service.title || service.name || 'App',
+          logo: service.logo || null,
+          color: service.color || '#e2e8f0',
+          at,
+          canReply: true,
+        };
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function scrapeAllUnreadChats() {
+  const services = orderedServices().filter(
+    (s) => isInboxAppId(s.appId) && views.has(s.id),
+  );
+  const batches = await Promise.all(
+    services.map((service) => scrapeUnreadChatsForService(service)),
+  );
+  return batches.flat();
+}
+
+async function buildNotifCenterDataAsync() {
+  const scraped = await scrapeAllUnreadChats();
+  return buildNotifCenterDataSync(scraped);
+}
+
 function pushNotifCenterData() {
   if (!notifCenterWindow || notifCenterWindow.isDestroyed()) return;
-  try {
-    notifCenterWindow.webContents.send('notif-center:init', buildNotifCenterData());
-  } catch {
-    // ignore
-  }
+  buildNotifCenterDataAsync()
+    .then((data) => {
+      if (!notifCenterWindow || notifCenterWindow.isDestroyed()) return;
+      try {
+        notifCenterWindow.webContents.send('notif-center:init', data);
+      } catch {
+        // ignore
+      }
+    })
+    .catch(() => {
+      try {
+        notifCenterWindow?.webContents.send(
+          'notif-center:init',
+          buildNotifCenterData(),
+        );
+      } catch {
+        // ignore
+      }
+    });
 }
 
 function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } = {}) {
@@ -2776,6 +4417,7 @@ function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } =
   closeAppContextMenu();
   closeChromeMenuWindow();
   closeNotifCenterWindow();
+  closeDownloadShelfWindow();
 
   const menuW = 420;
   const menuH = 580;
@@ -2800,9 +4442,16 @@ function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } =
   );
 
   win.webContents.once('did-finish-load', () => {
-    if (!win.isDestroyed()) {
-      win.webContents.send('notif-center:init', buildNotifCenterData());
-    }
+    if (win.isDestroyed()) return;
+    buildNotifCenterDataAsync()
+      .then((data) => {
+        if (!win.isDestroyed()) win.webContents.send('notif-center:init', data);
+      })
+      .catch(() => {
+        if (!win.isDestroyed()) {
+          win.webContents.send('notif-center:init', buildNotifCenterData());
+        }
+      });
   });
   win.once('ready-to-show', () => {
     if (!win.isDestroyed()) {
@@ -2822,6 +4471,144 @@ function openNotifCenterWindow({ x = 0, y = 0, dark = false, align = 'right' } =
   return { ok: true };
 }
 
+function pushCrmLookup(payload) {
+  if (!crmLookupWindow || crmLookupWindow.isDestroyed()) return;
+  try {
+    crmLookupWindow.webContents.send('crm-lookup:init', payload);
+  } catch {
+    // ignore
+  }
+}
+
+function openCrmLookupWindow({ query = '', dark = false } = {}) {
+  if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
+
+  closeAppContextMenu();
+  closeChromeMenuWindow();
+  closeNotifCenterWindow();
+  closeCrmLookupWindow();
+
+  const content = mainWindow.getContentBounds();
+  const margin = 10;
+  // Mint/Cinnamon: size to work area (excludes panel/taskbar), not a tiny fixed max.
+  const display = screen.getDisplayNearestPoint({
+    x: mainWindow.getBounds().x,
+    y: mainWindow.getBounds().y,
+  });
+  const waH = display?.workArea?.height || 800;
+  const menuW = Math.min(480, Math.max(380, Math.floor(content.width * 0.4)));
+  const menuH = Math.max(
+    420,
+    Math.min(Math.floor(waH * 0.88), content.height - margin * 2),
+  );
+  const pos = clampFloatPosition(
+    content.x + content.width - menuW - margin,
+    content.y + margin,
+    menuW,
+    menuH,
+  );
+
+  crmLookupWindow = createFloatBrowserWindow({
+    width: menuW,
+    height: menuH,
+    x: pos.x,
+    y: pos.y,
+    preload: 'crmLookupPreload.js',
+    dark: !!dark,
+  });
+
+  const win = crmLookupWindow;
+  // Child of Hub only — never system-wide always-on-top (Mint/Cinnamon).
+  try {
+    win.setAlwaysOnTop(false);
+  } catch {
+    // ignore
+  }
+  win.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(buildCrmLookupHtml(!!dark))}`,
+  );
+  win.webContents.once('did-finish-load', () => {
+    pushCrmLookup({
+      loading: true,
+      query: String(query || ''),
+      deals: [],
+    });
+  });
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) {
+      win.show();
+      win.focus();
+      try {
+        win.moveTop();
+      } catch {
+        // ignore
+      }
+    }
+  });
+  win.on('closed', () => {
+    if (crmLookupWindow === win) crmLookupWindow = null;
+  });
+  return { ok: true };
+}
+
+async function lookupZohoCrmDeals(selectionText, { dark = false } = {}) {
+  const query = String(selectionText || '').replace(/\s+/g, ' ').trim();
+  if (!query) {
+    return { ok: false, error: 'Select a keyword to look up.' };
+  }
+
+  const enabled = settings.zohoCrmEnabled !== false;
+  if (!enabled) {
+    return {
+      ok: false,
+      error: 'Zoho CRM lookup is disabled in Settings → Integrations.',
+    };
+  }
+  if (!hasZohoCrmAuth()) {
+    openCrmLookupWindow({ query, dark });
+    pushCrmLookup({
+      loading: false,
+      query,
+      error:
+        'Zoho CRM is not connected. Open Settings → Integrations and add Client ID, Secret, and Refresh Token.',
+      deals: [],
+    });
+    return { ok: false, error: 'not_configured' };
+  }
+
+  openCrmLookupWindow({ query, dark });
+  try {
+    const result = await searchDeals(query, {
+      dcId: sanitizeZohoCrmDc(settings.zohoCrmDc),
+      limit: 15,
+    });
+    if (!result.ok) {
+      pushCrmLookup({
+        loading: false,
+        query: result.query || query,
+        error: result.error || 'Lookup failed.',
+        deals: [],
+      });
+      return result;
+    }
+    pushCrmLookup({
+      loading: false,
+      query: result.query || query,
+      deals: result.deals || [],
+    });
+    return result;
+  } catch (error) {
+    const message = String(error?.message || error || 'Lookup failed.');
+    pushCrmLookup({
+      loading: false,
+      query,
+      error: message,
+      deals: [],
+    });
+    return { ok: false, error: message };
+  }
+}
+
 function pushAiResult(payload) {
   if (!aiResultWindow || aiResultWindow.isDestroyed()) return;
   try {
@@ -2831,32 +4618,21 @@ function pushAiResult(payload) {
   }
 }
 
-function openAiResultWindow({ title, meta, dark = false } = {}) {
+function openAiResultWindow({ title, meta, dark = false, initialPayload = null } = {}) {
   if (!mainWindow || mainWindow.isDestroyed()) return { ok: false };
 
   closeAppContextMenu();
   closeChromeMenuWindow();
   closeNotifCenterWindow();
   closeAiResultWindow();
+  closeNotesWindow();
 
   const content = mainWindow.getContentBounds();
-  const margin = 10;
-  // Use nearly the full guest/workspace height so long EN/HI/MR text is readable.
-  const menuW = Math.min(
-    580,
-    Math.max(440, Math.floor(content.width * 0.45)),
-  );
-  const menuH = Math.max(360, content.height - margin * 2);
-  const pos = clampFloatPosition(
-    content.x + content.width - menuW - margin,
-    content.y + margin,
-    menuW,
-    menuH,
-  );
+  const pos = asperaPanelBounds(content);
 
   aiResultWindow = createFloatBrowserWindow({
-    width: menuW,
-    height: menuH,
+    width: pos.width,
+    height: pos.height,
     x: pos.x,
     y: pos.y,
     preload: 'aiResultPreload.js',
@@ -2865,16 +4641,61 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
 
   const win = aiResultWindow;
   attachAiResultContextMenu(win.webContents);
-  // Always paint above the guest WhatsApp/Arattai WebContentsView.
+  // Stay above Hub guests via parent: mainWindow — do NOT use system
+  // alwaysOnTop (pop-up-menu). On Mint/Cinnamon that floats above Cursor
+  // and every other app until closed.
   try {
-    win.setAlwaysOnTop(true, 'pop-up-menu');
+    win.setAlwaysOnTop(false);
   } catch {
     // ignore
   }
-  win.loadURL(
-    `data:text/html;charset=utf-8,${encodeURIComponent(buildAiResultHtml(!!dark))}`,
-  );
+  // Mic needs a secure context. data: hides mediaDevices; custom schemes are
+  // unreliable on some Electron/Linux builds. http://127.0.0.1 always works.
+  const html = buildAiResultHtml(!!dark);
+  setAiResultServerHtml(html);
+  ensureAiResultServer()
+    .then(() => {
+      if (win.isDestroyed()) return;
+      const url = aiResultLocalUrl(!!dark);
+      return win.loadURL(url);
+    })
+    .catch((err) => {
+      console.error('Aspera AI panel failed to load on localhost:', err);
+    });
+  try {
+    const sess = win.webContents.session;
+    sess.setPermissionRequestHandler((_wc, permission, callback) => {
+      callback(
+        permission === 'media' ||
+          permission === 'mediaKeySystem' ||
+          permission === 'clipboard-read',
+      );
+    });
+    sess.setPermissionCheckHandler((_wc, permission) => {
+      return (
+        permission === 'media' ||
+        permission === 'mediaKeySystem' ||
+        permission === 'clipboard-read'
+      );
+    });
+    // Linux: allow mic/camera device choice without an extra prompt UI.
+    if (typeof sess.setDevicePermissionHandler === 'function') {
+      sess.setDevicePermissionHandler((details) => {
+        return (
+          details?.deviceType === 'microphone' ||
+          details?.deviceType === 'speaker' ||
+          details?.deviceType === 'camera'
+        );
+      });
+    }
+  } catch {
+    // ignore
+  }
   win.webContents.once('did-finish-load', () => {
+    if (initialPayload && typeof initialPayload === 'object') {
+      pushAiResult(initialPayload);
+      return;
+    }
     pushAiResult({
       title: title || 'Aspera AI',
       meta: meta || '',
@@ -2901,6 +4722,102 @@ function openAiResultWindow({ title, meta, dark = false } = {}) {
     }
   });
   return { ok: true };
+}
+
+/** Reuse the open AI panel when Run is clicked — never spawn a second popup. */
+function ensureAiResultWindow({ title, meta, dark = false, loadingText = 'Working…' } = {}) {
+  const payload = {
+    title: title || 'Aspera AI',
+    meta: meta || '',
+    loading: true,
+    text: loadingText,
+    mode: 'working',
+  };
+  if (aiResultWindow && !aiResultWindow.isDestroyed()) {
+    pushAiResult(payload);
+    try {
+      if (!aiResultWindow.isVisible()) aiResultWindow.show();
+      aiResultWindow.focus();
+      aiResultWindow.moveTop();
+    } catch {
+      // ignore
+    }
+    return { ok: true, reused: true };
+  }
+  return openAiResultWindow({
+    title,
+    meta,
+    dark,
+    initialPayload: payload,
+  });
+}
+
+/**
+ * Same on every app: clipboard inbox → Run → Copy result → user pastes back.
+ * Does not read guest DOM — only system clipboard + pasted text.
+ */
+function openAsperaAiInbox({ dark = false, skill = 'summarize', pasteText = null } = {}) {
+  if (settings.aiEnabled === false) {
+    return { ok: false, error: 'Aspera AI is turned off in Settings.' };
+  }
+  const { routeOrder } = aiSettingsSnapshot();
+  if (!routeOrder.length) {
+    mainWindow?.webContents.send('dock:chrome-action', 'settings');
+    mainWindow?.webContents.send('dock:open-ai-settings');
+    return {
+      ok: false,
+      error: 'Add at least one AI API key in Settings → Aspera AI.',
+    };
+  }
+
+  const seed =
+    pasteText != null
+      ? String(pasteText)
+      : (() => {
+          try {
+            return clipboard.readText() || '';
+          } catch {
+            return '';
+          }
+        })();
+  const hasClipImage = pasteText == null && clipboardHasAiImage();
+
+  // Fresh inbox — drop any previous staged file.
+  // Do not auto-attach clipboard screenshots — user confirms via Paste.
+  clearAiInboxAttachment();
+
+  const inboxPayload = {
+    title: 'Aspera AI',
+    meta: 'Paste or attach → Run → copy result back',
+    mode: 'inbox',
+    skill: skill === 'refine' || skill === 'suggest-reply' ? skill : 'summarize',
+    pasteText: seed,
+    attachment: null,
+    hint: hasClipImage
+      ? 'Screenshot on clipboard — click Paste from clipboard to attach it for Summarize.'
+      : seed
+        ? 'Clipboard text loaded. Choose a skill and Run — or attach a file.'
+        : 'Paste text or attach a PDF/image. Hub never sends for you.',
+  };
+
+  if (aiResultWindow && !aiResultWindow.isDestroyed()) {
+    pushAiResult(inboxPayload);
+    try {
+      if (!aiResultWindow.isVisible()) aiResultWindow.show();
+      aiResultWindow.focus();
+      aiResultWindow.moveTop();
+    } catch {
+      // ignore
+    }
+    return { ok: true, reused: true };
+  }
+
+  return openAiResultWindow({
+    title: 'Aspera AI',
+    meta: inboxPayload.meta,
+    dark,
+    initialPayload: inboxPayload,
+  });
 }
 
 /** Right-click Copy / Select all inside the floating AI result panel. */
@@ -3049,10 +4966,34 @@ function setAiProviderModelPreference(providerId, modelId) {
   return { ok: true, providerId: id, model: choice };
 }
 
+function aiOutputLanguages() {
+  return resolveAiOutputLanguages(settings.aiExtraLanguages);
+}
+
+function aiLanguageMetaLabel(languages = aiOutputLanguages()) {
+  return aiOutputLanguageMeta(languages);
+}
+
+function aiLanguagePromptPayload(languages = aiOutputLanguages()) {
+  return {
+    languages,
+    extraLanguages: sanitizeAiExtraLanguages(settings.aiExtraLanguages),
+  };
+}
+
+function aiOutputLanguageSections(languages = aiOutputLanguages()) {
+  return {
+    refine: refineSectionsForLanguages(languages),
+    replies: replySectionsForLanguages(languages),
+    payload: languages.map((l) => languageSectionFor(l)),
+  };
+}
+
 function aiSettingsSnapshot() {
-  const language = ['en', 'hi', 'mr'].includes(settings.aiLanguage)
-    ? settings.aiLanguage
-    : 'en';
+  const language = getAiLanguage(settings.aiLanguage || 'en').id;
+  const extraLanguages = sanitizeAiExtraLanguages(settings.aiExtraLanguages);
+  const outputLanguages = resolveAiOutputLanguages(extraLanguages);
+  const languageMeta = aiOutputLanguageMeta(outputLanguages);
   const configured = listConfiguredAiProviders()
     .filter((p) => p.configured)
     .map((p) => p.id);
@@ -3083,7 +5024,16 @@ function aiSettingsSnapshot() {
     model = normalizeSarvamModel(model || provider.defaultModel);
   }
   if (!model) model = provider.defaultModel;
-  return { provider, model, language, routeOrder: order, stickyId: sticky };
+  return {
+    provider,
+    model,
+    language,
+    extraLanguages,
+    outputLanguages,
+    languageMeta,
+    routeOrder: order,
+    stickyId: sticky,
+  };
 }
 
 /**
@@ -3108,7 +5058,11 @@ function syncPreferredAiProvider() {
 }
 
 function collectCatchUpItems() {
-  const services = orderedServices().filter((s) => isAiAllowedAppId(s.appId));
+  const services = orderedServices().filter(
+    (s) =>
+      isAiAllowedAppId(s.appId) &&
+      !whatsappAutomationBlocked(settings, s.appId),
+  );
   const byId = new Map(services.map((s) => [s.id, s]));
   const items = [];
 
@@ -3153,6 +5107,8 @@ async function getNearbyPriorMessages({
   maxPrior = PRIOR_MESSAGE_COUNT,
 } = {}) {
   if (!activeServiceId) return [];
+  const service = getService(activeServiceId);
+  if (whatsappAutomationBlocked(settings, service?.appId)) return [];
   const entry = views.get(activeServiceId);
   const wc = entry?.view?.webContents;
   if (!wc || wc.isDestroyed()) return [];
@@ -3201,15 +5157,35 @@ async function markActiveComposeTarget(serviceId = activeServiceId) {
     return !!(await wc.executeJavaScript(
       `(() => {
         try {
+          const composeSel = ${JSON.stringify(guestComposeSelector())};
           const mark = (target) => {
+            if (!target) return false;
             document.querySelectorAll('[data-aspera-ai-compose]').forEach((n) => {
               if (n !== target) n.removeAttribute('data-aspera-ai-compose');
             });
             target.setAttribute('data-aspera-ai-compose', '1');
             return true;
           };
+          const isSearchy = (node) => {
+            const ph = String(
+              node.getAttribute?.('placeholder')
+                || node.getAttribute?.('data-placeholder')
+                || node.getAttribute?.('aria-placeholder')
+                || node.getAttribute?.('aria-label')
+                || node.getAttribute?.('title')
+                || '',
+            ).toLowerCase();
+            if (/search/.test(ph)) return true;
+            if (node.closest?.('[data-testid="chat-list"], [data-testid="chat-list-search"], [class*="chat-list" i]')) {
+              return true;
+            }
+            // WhatsApp left-pane search uses data-tab="3".
+            if (String(node.getAttribute?.('data-tab') || '') === '3') return true;
+            return false;
+          };
           const isCompose = (node) => {
             if (!node) return false;
+            if (isSearchy(node)) return false;
             const tag = String(node.tagName || '');
             const inputOk =
               tag === 'TEXTAREA' ||
@@ -3226,8 +5202,14 @@ async function markActiveComposeTarget(serviceId = activeServiceId) {
           }
           const active = document.activeElement;
           if (isCompose(active)) return mark(active);
-          // Keep a previous mark when the AI panel stole focus (Refine again).
+          // Keep a previous mark when the AI panel stole focus (Polish again).
           if (document.querySelector('[data-aspera-ai-compose="1"]')) return true;
+          // Fall back: open chat send box (WA / Arattai).
+          const wa = document.querySelector('[data-testid="conversation-compose-box-input"]');
+          if (wa && !isSearchy(wa)) return mark(wa);
+          for (const candidate of document.querySelectorAll(composeSel)) {
+            if (isCompose(candidate)) return mark(candidate);
+          }
         } catch (e) {}
         return false;
       })()`,
@@ -3238,6 +5220,10 @@ async function markActiveComposeTarget(serviceId = activeServiceId) {
   }
 }
 
+/**
+ * Put polished text back into the open send box.
+ * Prefer the marked node; if WhatsApp/Arattai remounted it, find the live composer.
+ */
 async function applyTextToMarkedCompose(serviceId, text, originalText) {
   if (!serviceId) return { ok: false, error: 'No chat app selected.' };
   const entry = views.get(serviceId);
@@ -3250,53 +5236,39 @@ async function applyTextToMarkedCompose(serviceId, text, originalText) {
   if (!refined.trim()) {
     return { ok: false, error: 'Nothing to insert.' };
   }
+  const expression = buildApplyComposeTextJs({
+    text: refined,
+    original,
+    composeSelector: guestComposeSelector(),
+  });
+
   try {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.focus();
-    wc.focus();
-    const result = await wc.executeJavaScript(
-      `(() => {
-        const text = ${JSON.stringify(refined)};
-        const original = ${JSON.stringify(original)};
-        const el = document.querySelector('[data-aspera-ai-compose="1"]');
-        if (!el) return { ok: false, reason: 'no-target' };
-        el.focus();
-        const tag = String(el.tagName || '');
-        if (tag === 'TEXTAREA' || tag === 'INPUT') {
-          const value = String(el.value || '');
-          if (original && value.includes(original)) {
-            const i = value.indexOf(original);
-            el.value = value.slice(0, i) + text + value.slice(i + original.length);
-          } else {
-            el.value = text;
-          }
-          el.dispatchEvent(new Event('input', { bubbles: true }));
-          el.dispatchEvent(new Event('change', { bubbles: true }));
-          return { ok: true };
-        }
-        if (el.isContentEditable) {
-          const current = String(el.innerText || el.textContent || '');
-          const sel = window.getSelection?.();
-          const range = document.createRange();
-          range.selectNodeContents(el);
-          sel?.removeAllRanges?.();
-          sel?.addRange?.(range);
-          if (original && current.includes(original) && current.trim() !== original.trim()) {
-            // Replace only the original draft substring when the box has more text.
-            const next = current.replace(original, text);
-            el.focus();
-            document.execCommand('selectAll', false, null);
-            document.execCommand('insertText', false, next);
-            return { ok: true };
-          }
-          document.execCommand('selectAll', false, null);
-          document.execCommand('insertText', false, text);
-          return { ok: true };
-        }
-        return { ok: false, reason: 'not-editable' };
-      })()`,
-      true,
-    );
-    if (result?.ok) return { ok: true };
+    try {
+      wc.focus();
+    } catch {
+      /* ignore */
+    }
+    // Bring the guest compose into focus before insert (AI panel stole focus).
+    try {
+      await focusGuestCompose(wc);
+    } catch {
+      /* ignore */
+    }
+    let result = null;
+    try {
+      result = await cdpEvaluate(wc, expression, { awaitPromise: false });
+    } catch {
+      result = null;
+    }
+    if (!result?.ok) {
+      try {
+        result = await wc.executeJavaScript(expression, true);
+      } catch {
+        result = null;
+      }
+    }
+    if (result?.ok) return { ok: true, via: result.via };
     return {
       ok: false,
       error:
@@ -3311,13 +5283,20 @@ function activeAiService() {
   if (!activeServiceId) return null;
   const service = getService(activeServiceId);
   if (!service || !isAiAllowedAppId(service.appId)) return null;
+  // Safe Mode: do not scrape / AI-instrument WhatsApp Web.
+  if (whatsappAutomationBlocked(settings, service.appId)) return null;
   return service;
 }
 
-function asperaAiSkillTitle(skill) {
+function asperaAiSkillTitle(skill, intent = '') {
   if (skill === 'catch-up') return 'Catch me up';
-  if (skill === 'refine') return 'Refine draft';
-  return 'Summarize selection';
+  if (skill === 'refine') {
+    const id = normalizePolishIntent(intent);
+    if (id === 'polish') return 'Polish draft';
+    return `Polish · ${polishIntentLabel(id)}`;
+  }
+  if (skill === 'suggest-reply') return 'Suggest reply';
+  return 'Summarize';
 }
 
 function cleanAiPlainText(text) {
@@ -3327,15 +5306,151 @@ function cleanAiPlainText(text) {
     .trim();
 }
 
+function clearAiInboxAttachment() {
+  aiInboxAttachment = null;
+}
+
+/** Packaged: resources/pdfjs-runtime; dev: resolve via node_modules. */
+function aiPdfjsRuntimeDir() {
+  try {
+    if (app.isPackaged) {
+      return path.join(process.resourcesPath, 'pdfjs-runtime');
+    }
+  } catch {
+    // ignore
+  }
+  return '';
+}
+
+function aiAttachmentPublicMeta(att = aiInboxAttachment) {
+  if (!att) return null;
+  return {
+    id: att.id,
+    name: att.name,
+    mime: att.mime,
+    kind: att.kind,
+    size: att.buffer?.length || 0,
+  };
+}
+
+function stageAiInboxAttachment({ name, mime, base64 }) {
+  const raw = String(base64 || '');
+  const buffer = Buffer.from(raw.replace(/^data:[^;]+;base64,/, ''), 'base64');
+  const checked = validateAiAttachmentMeta({
+    name,
+    mime,
+    byteLength: buffer.length,
+  });
+  if (!checked.ok) return { ok: false, error: checked.error };
+  aiInboxAttachment = {
+    id: newAttachmentId(),
+    name: checked.name || String(name || 'file').trim() || 'file',
+    mime: checked.mime,
+    kind: checked.kind,
+    buffer,
+  };
+  return { ok: true, attachment: aiAttachmentPublicMeta() };
+}
+
+function clipboardHasAiImage() {
+  try {
+    const img = clipboard.readImage();
+    return !!(img && !img.isEmpty());
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stage a screenshot/image from the system clipboard for Summarize.
+ * Prefer PNG; use JPEG when PNG exceeds the image size cap.
+ */
+function stageAiInboxAttachmentFromClipboardImage() {
+  let img;
+  try {
+    img = clipboard.readImage();
+  } catch {
+    img = null;
+  }
+  if (!img || img.isEmpty()) {
+    return { ok: false, error: 'No image on the clipboard.' };
+  }
+  let png;
+  let jpeg;
+  try {
+    png = img.toPNG();
+  } catch {
+    png = null;
+  }
+  try {
+    jpeg = img.toJPEG(85);
+  } catch {
+    jpeg = null;
+  }
+  const encoding = pickClipboardImageEncoding(
+    png?.length || 0,
+    jpeg?.length || 0,
+  );
+  if (!encoding) {
+    return {
+      ok: false,
+      error:
+        'Clipboard image is too large (max 5 MB). Save a smaller screenshot, or upload a file.',
+    };
+  }
+  const buffer = encoding === 'jpeg' ? jpeg : png;
+  const mime = encoding === 'jpeg' ? 'image/jpeg' : 'image/png';
+  const name = clipboardScreenshotFileName(encoding);
+  return stageAiInboxAttachment({
+    name,
+    mime,
+    base64: Buffer.from(buffer).toString('base64'),
+  });
+}
+
+/** Paste button: image first (screenshots), else text. */
+function pasteAiInboxFromClipboard() {
+  if (clipboardHasAiImage()) {
+    const staged = stageAiInboxAttachmentFromClipboardImage();
+    if (!staged.ok) return { ok: false, kind: 'image', error: staged.error };
+    return { ok: true, kind: 'image', attachment: staged.attachment };
+  }
+  let text = '';
+  try {
+    text = clipboard.readText() || '';
+  } catch {
+    text = '';
+  }
+  if (!String(text).trim()) {
+    return {
+      ok: false,
+      kind: 'empty',
+      error:
+        'Clipboard is empty — copy text, or take a screenshot and Paste from clipboard.',
+    };
+  }
+  return { ok: true, kind: 'text', text: String(text) };
+}
+
 async function runAsperaAiSkill(
   skill,
-  { selectionText = '', dark = false, clickX = 0, clickY = 0 } = {},
+  {
+    selectionText = '',
+    dark = false,
+    clickX = 0,
+    clickY = 0,
+    attachmentId = '',
+    intent = '',
+    composeMarked = false,
+    serviceId = '',
+  } = {},
 ) {
   if (settings.aiEnabled === false) {
     return { ok: false, error: 'Aspera AI is turned off in Settings.' };
   }
 
-  const { language, routeOrder } = aiSettingsSnapshot();
+  const { language, routeOrder, outputLanguages, languageMeta } =
+    aiSettingsSnapshot();
   if (!routeOrder.length) {
     mainWindow?.webContents.send('dock:chrome-action', 'settings');
     return {
@@ -3345,21 +5460,29 @@ async function runAsperaAiSkill(
     };
   }
 
-  const langLabel =
-    AI_LANGUAGES.find((l) => l.id === language)?.label || 'English';
-  const skillTitle = asperaAiSkillTitle(skill);
+  const langLabel = getAiLanguage(language).id === 'en'
+    ? 'English'
+    : `${getAiLanguage(language).name} (${getAiLanguage(language).native})`;
+  const polishIntent = skill === 'refine' ? normalizePolishIntent(intent) : '';
+  const skillTitle = asperaAiSkillTitle(skill, polishIntent);
   const routeHint = routeOrder.map((p) => p.name).join(' → ');
   const metaLang =
-    skill === 'summarize' || skill === 'refine' ? 'EN · HI · MR' : langLabel;
+    skill === 'summarize' || skill === 'refine' || skill === 'suggest-reply'
+      ? languageMeta
+      : langLabel;
+  const langPayload = aiLanguagePromptPayload(outputLanguages);
+  const langSections = aiOutputLanguageSections(outputLanguages);
 
-  openAiResultWindow({
+  ensureAiResultWindow({
     title: `Aspera AI · ${skillTitle}`,
     meta: `Auto · ${routeHint} · ${metaLang}`,
     dark,
+    loadingText: 'Working…',
   });
 
   try {
     let prompt;
+    let media = null;
     let summarizeSelection = '';
     let summarizeAppName = '';
     let summarizePriorMessages = [];
@@ -3367,67 +5490,133 @@ async function runAsperaAiSkill(
     let refineAppName = '';
     let refineServiceId = '';
     let refineHasComposeTarget = false;
+    let refineIntent = polishIntent || 'polish';
+    const wantAttach =
+      attachmentId &&
+      aiInboxAttachment &&
+      aiInboxAttachment.id === String(attachmentId);
+
+    if (wantAttach && skill !== 'summarize') {
+      throw new Error(
+        'PDF/image attachments only work with Summarize. Clear the file for Polish or Suggest reply.',
+      );
+    }
+
     if (skill === 'catch-up') {
       const items = collectCatchUpItems();
       prompt = promptForSkill('catch-up', { items, language });
-    } else if (skill === 'summarize') {
-      const service = activeAiService();
-      if (!service) {
+    } else if (wantAttach && skill === 'summarize') {
+      const att = aiInboxAttachment;
+      summarizeAppName = att.name || (att.kind === 'pdf' ? 'PDF' : 'Image');
+      summarizePriorMessages = [];
+      if (att.kind === 'pdf') {
+        let extracted = { text: '', pagesRead: 0, numPages: 0 };
+        try {
+          extracted = await extractPdfText(att.buffer, {
+            pdfjsDir: aiPdfjsRuntimeDir() || undefined,
+          });
+        } catch (err) {
+          extracted = { text: '', pagesRead: 0, numPages: 0, error: err };
+        }
+        if (pdfTextIsUsable(extracted.text)) {
+          summarizeSelection = extracted.text;
+          prompt = promptForSkill('summarize-file-text', {
+            text: extracted.text,
+            fileName: att.name,
+            pagesRead: extracted.pagesRead,
+            numPages: extracted.numPages,
+            ...langPayload,
+          });
+        } else {
+          // Scanned / image PDF — send bytes to Gemini.
+          summarizeSelection = `[PDF attachment: ${att.name}]`;
+          prompt = promptForSkill('summarize-attachment', {
+            kind: 'pdf',
+            fileName: att.name,
+            ...langPayload,
+          });
+          media = {
+            kind: 'pdf',
+            mime: att.mime,
+            base64: att.buffer.toString('base64'),
+          };
+        }
+      } else {
+        summarizeSelection = `[Image attachment: ${att.name}]`;
+        prompt = promptForSkill('summarize-attachment', {
+          kind: 'image',
+          fileName: att.name,
+          ...langPayload,
+        });
+        media = {
+          kind: 'image',
+          mime: att.mime,
+          base64: att.buffer.toString('base64'),
+        };
+      }
+    } else if (skill === 'summarize' || skill === 'suggest-reply') {
+      // Clipboard-first on every app — never scrape guest DOM for the source text.
+      const text = String(selectionText || '').trim();
+      if (!text) {
         throw new Error(
-          'Summarize works only in WhatsApp, Arattai, Gmail, or Zoho Mail. Open one of those apps first.',
+          wantAttach
+            ? 'Attachment missing — re-attach the file, or paste text.'
+            : 'Paste text into Aspera AI first (copy from any app, then paste here), or attach a PDF/image.',
         );
       }
-      const text = String(selectionText || (await getActiveSelectionText()) || '').trim();
-      if (!text) {
-        throw new Error('Select text in the app first, then run Summarize.');
-      }
+      const service = activeAiService();
       summarizeSelection = text;
-      summarizeAppName = service.name || service.defaultName || service.appId;
-      // Human-like context: a few messages above the selection in the open thread.
-      summarizePriorMessages = await getNearbyPriorMessages({
-        selectionText: text,
-        clickX,
-        clickY,
-      });
-      prompt = promptForSkill('summarize', {
-        text,
-        appName: summarizeAppName,
-        priorMessages: summarizePriorMessages,
-      });
+      summarizeAppName =
+        service?.name || service?.defaultName || service?.appId || 'Clipboard';
+      summarizePriorMessages = [];
+      prompt = promptForSkill(
+        skill === 'suggest-reply' ? 'suggest-reply' : 'summarize',
+        {
+          text,
+          appName: summarizeAppName,
+          priorMessages: [],
+          ...langPayload,
+        },
+      );
     } else if (skill === 'refine') {
-      const service = activeAiService();
-      if (!service) {
-        throw new Error(
-          'Refine works only in WhatsApp, Arattai, Gmail, or Zoho Mail. Open one of those apps first.',
-        );
-      }
-      refineServiceId = service.id;
-      refineHasComposeTarget = await markActiveComposeTarget(service.id);
-      const text = String(selectionText || (await getActiveSelectionText()) || '').trim();
+      const text = String(selectionText || '').trim();
       if (!text) {
         throw new Error(
-          'Select the text in the send box first, then choose Refine with Aspera AI.',
+          'Paste a draft into Aspera AI first (copy from the send box, then paste here).',
         );
       }
+      const preferredId = String(serviceId || '').trim();
+      const service =
+        (preferredId && getService(preferredId)) || activeAiService();
+      refineServiceId =
+        preferredId || service?.id || activeServiceId || '';
+      refineHasComposeTarget = !!composeMarked;
       refineSelection = text;
-      refineAppName = service.name || service.defaultName || service.appId;
+      refineAppName =
+        service?.name ||
+        service?.defaultName ||
+        service?.appId ||
+        'Clipboard';
+      refineIntent = normalizePolishIntent(intent);
       prompt = promptForSkill('refine', {
         text,
         appName: refineAppName,
+        intent: refineIntent,
+        ...langPayload,
       });
     } else {
       throw new Error('Unknown skill');
     }
 
-    const result = await runAiCompletionWithFailover(prompt);
+    const result = await runAiCompletionWithFailover(prompt, { media });
     syncPreferredAiProvider();
     let resultText = result.text;
     let refineSections = null;
     if (skill === 'refine') {
-      refineSections = parseRefinedDrafts(result.text);
-      resultText = serializeRefinedDrafts(refineSections);
+      refineSections = parseRefinedDrafts(result.text, langSections.refine);
+      resultText = serializeRefinedDrafts(refineSections, langSections.refine);
     }
-    if (skill === 'summarize') {
+    if (skill === 'summarize' || skill === 'suggest-reply') {
       aiResultContext = {
         skill: 'summarize',
         selectionText: summarizeSelection,
@@ -3437,6 +5626,8 @@ async function runAsperaAiSkill(
         summaryText: resultText,
         providerName: result.providerName,
         model: result.model,
+        outputLanguages: langSections.payload,
+        languageMeta,
       };
     } else if (skill === 'refine') {
       aiResultContext = {
@@ -3446,8 +5637,11 @@ async function runAsperaAiSkill(
         appName: refineAppName,
         serviceId: refineServiceId,
         hasComposeTarget: refineHasComposeTarget,
+        intent: refineIntent,
         dark: !!dark,
         refinedText: resultText,
+        outputLanguages: langSections.payload,
+        languageMeta,
         refineSections,
         providerName: result.providerName,
         model: result.model,
@@ -3464,15 +5658,20 @@ async function runAsperaAiSkill(
       meta: `${result.providerName} · ${result.model} · ${metaLang}${priorMeta}`,
       text: resultText,
       loading: false,
-      mode: skill === 'refine' ? 'refine' : skill === 'summarize' ? 'summarize' : 'catch-up',
-      showTrilingual: skill === 'summarize',
-      canSuggestReply: skill === 'summarize',
-      canUseInCompose: skill === 'refine',
+      mode: skill === 'refine' ? 'refine' : skill === 'catch-up' ? 'catch-up' : 'summarize',
+      showTrilingual: skill === 'summarize' || skill === 'suggest-reply',
+      canSuggestReply: skill === 'summarize' || skill === 'suggest-reply',
+      canUseInCompose: skill === 'refine' && refineHasComposeTarget,
       canRefineAgain: skill === 'refine',
       refineSections: refineSections || undefined,
       repliesText: '',
-      repliesLoading: false,
+      repliesLoading: skill === 'suggest-reply',
+      outputLanguages: langSections.payload,
+      languageMeta: metaLang,
     });
+    if (skill === 'suggest-reply') {
+      runSuggestRepliesFromAiResult().catch(() => {});
+    }
     return {
       ok: true,
       text: resultText,
@@ -3492,6 +5691,8 @@ async function runAsperaAiSkill(
       canSuggestReply: false,
       canUseInCompose: false,
       canRefineAgain: false,
+      outputLanguages: langSections.payload,
+      languageMeta: metaLang,
     });
     return { ok: false, error: message };
   }
@@ -3514,14 +5715,19 @@ async function runRefineAgainFromAiResult(payload = {}) {
   const result = await runAsperaAiSkill('refine', {
     selectionText: draft,
     dark: !!ctx.dark,
+    intent: ctx.intent || 'polish',
+    composeMarked: !!ctx.hasComposeTarget,
+    serviceId: serviceId || '',
   });
-  // Keep the send-box original so "Use in send box" still matches the typed draft.
+  // Keep the send-box original so "Use in chat" still matches the typed draft.
   if (result?.ok && aiResultContext?.skill === 'refine') {
     aiResultContext = {
       ...aiResultContext,
       originalComposeText,
       selectionText: originalComposeText || aiResultContext.selectionText,
       serviceId: serviceId || aiResultContext.serviceId,
+      hasComposeTarget: !!ctx.hasComposeTarget,
+      intent: ctx.intent || aiResultContext.intent || 'polish',
     };
   }
   return result;
@@ -3537,14 +5743,24 @@ async function runUseRefinedInCompose(payload = {}) {
     return { ok: false, error: 'Nothing to insert.' };
   }
   ctx.refinedText = text;
-  const applied = await applyTextToMarkedCompose(
-    ctx.serviceId || activeServiceId,
-    text,
-    ctx.originalComposeText || ctx.selectionText || '',
-  );
-  if (applied.ok) {
-    closeAiResultWindow();
-    return { ok: true };
+  const original = ctx.originalComposeText || ctx.selectionText || '';
+  const tryIds = [
+    ctx.serviceId,
+    activeServiceId,
+  ].filter((id, i, arr) => id && arr.indexOf(id) === i);
+
+  let applied = { ok: false };
+  for (const sid of tryIds) {
+    try {
+      if (sid && sid !== activeServiceId) activateService(sid);
+    } catch {
+      /* ignore */
+    }
+    applied = await applyTextToMarkedCompose(sid, text, original);
+    if (applied.ok) {
+      closeAiResultWindow();
+      return { ok: true, via: applied.via };
+    }
   }
   clipboard.writeText(text);
   return {
@@ -3564,23 +5780,28 @@ async function runSuggestRepliesFromAiResult() {
   if (!ctx?.selectionText) {
     return { ok: false, error: 'No message context for reply suggestions.' };
   }
-  const { routeOrder } = aiSettingsSnapshot();
+  const { routeOrder, outputLanguages, languageMeta } = aiSettingsSnapshot();
   if (!routeOrder.length) {
     return {
       ok: false,
       error: 'Add at least one AI API key in Settings → Aspera AI.',
     };
   }
+  const langPayload = aiLanguagePromptPayload(outputLanguages);
+  const langSections = aiOutputLanguageSections(outputLanguages);
+  const metaLang = ctx.languageMeta || languageMeta;
 
   pushAiResult({
     title: 'Aspera AI · Summarize selection',
-    meta: [ctx.providerName, ctx.model, 'EN · HI · MR'].filter(Boolean).join(' · '),
+    meta: [ctx.providerName, ctx.model, metaLang].filter(Boolean).join(' · '),
     text: ctx.summaryText || '',
     loading: false,
     showTrilingual: true,
     canSuggestReply: true,
     repliesLoading: true,
     repliesText: '',
+    outputLanguages: langSections.payload,
+    languageMeta: metaLang,
   });
 
   try {
@@ -3588,19 +5809,25 @@ async function runSuggestRepliesFromAiResult() {
       text: ctx.selectionText,
       appName: ctx.appName,
       priorMessages: ctx.priorMessages,
+      ...langPayload,
     });
     const result = await runAiCompletionWithFailover(prompt);
     syncPreferredAiProvider();
-    const repliesSections = parseSuggestedReplies(result.text);
+    const repliesSections = parseSuggestedReplies(
+      result.text,
+      langSections.replies,
+    );
     aiResultContext = {
       ...ctx,
       repliesText: result.text,
       providerName: result.providerName,
       model: result.model,
+      outputLanguages: langSections.payload,
+      languageMeta: metaLang,
     };
     pushAiResult({
       title: 'Aspera AI · Summarize selection',
-      meta: `${result.providerName} · ${result.model} · EN · HI · MR`,
+      meta: `${result.providerName} · ${result.model} · ${metaLang}`,
       text: ctx.summaryText || '',
       loading: false,
       showTrilingual: true,
@@ -3608,19 +5835,23 @@ async function runSuggestRepliesFromAiResult() {
       repliesLoading: false,
       repliesText: result.text,
       repliesSections,
+      outputLanguages: langSections.payload,
+      languageMeta: metaLang,
     });
     return { ok: true, text: result.text };
   } catch (error) {
     const message = String(error?.message || error);
     pushAiResult({
       title: 'Aspera AI · Summarize selection',
-      meta: 'EN · HI · MR',
+      meta: metaLang,
       text: ctx.summaryText || '',
       loading: false,
       showTrilingual: true,
       canSuggestReply: true,
       repliesLoading: false,
       repliesError: message,
+      outputLanguages: langSections.payload,
+      languageMeta: metaLang,
     });
     return { ok: false, error: message };
   }
@@ -3691,6 +5922,17 @@ async function handleAppMenuAction(type, value) {
     mainWindow?.webContents.send('dock:open-edit-app', id);
     return { ok: true };
   }
+  if (type === 'close') {
+    closeAppContextMenu();
+    const svc = getService(id);
+    // Link tabs close immediately; permanent apps confirm in the shell.
+    if (svc?.linkTab || svc?.isCustom) {
+      removeService(id);
+      return { ok: true };
+    }
+    mainWindow?.webContents.send('dock:confirm-remove-app', id);
+    return { ok: true };
+  }
   if (type === 'enabled') {
     saveAppConfig(id, { enabled: !!value });
     broadcastState();
@@ -3740,8 +5982,8 @@ function handleChromeMenuAction(type) {
     runAsperaAiSkill('catch-up', { dark }).catch(() => {});
     return { ok: true };
   }
-  if (type === 'summarize') {
-    runAsperaAiSkill('summarize', { dark: false }).catch(() => {});
+  if (type === 'aspera-ai' || type === 'summarize') {
+    openAsperaAiInbox({ dark: false, skill: 'summarize' });
     return { ok: true };
   }
   if (type === 'ai-settings') {
@@ -3754,6 +5996,14 @@ function handleChromeMenuAction(type) {
     openExtensionsWindow({ dark: false });
     return { ok: true };
   }
+  if (type === 'web-search') {
+    openWebSearchWindow();
+    return { ok: true };
+  }
+  if (type === 'notes') {
+    openNotesWindow();
+    return { ok: true };
+  }
   if (type === 'search') {
     mainWindow?.webContents.send('dock:chrome-action', 'search');
     return { ok: true };
@@ -3764,6 +6014,26 @@ function handleChromeMenuAction(type) {
   }
   if (type === 'mute') {
     toggleMute();
+    return { ok: true };
+  }
+  if (type === 'back') {
+    if (activeServiceId) {
+      const wc = views.get(activeServiceId)?.view?.webContents;
+      if (wc && !wc.isDestroyed() && wc.canGoBack()) {
+        wc.goBack();
+        scheduleActiveNavStatePush();
+      }
+    }
+    return { ok: true };
+  }
+  if (type === 'forward') {
+    if (activeServiceId) {
+      const wc = views.get(activeServiceId)?.view?.webContents;
+      if (wc && !wc.isDestroyed() && wc.canGoForward()) {
+        wc.goForward();
+        scheduleActiveNavStatePush();
+      }
+    }
     return { ok: true };
   }
   if (type === 'reload') {
@@ -3789,8 +6059,19 @@ function handleChromeMenuAction(type) {
     broadcastState();
     return { ok: true };
   }
+  if (type === 'copy-link') {
+    return copyActivePageLink();
+  }
   if (type === 'about') {
     showAboutDialog();
+    return { ok: true };
+  }
+  if (type === 'aspera-connect') {
+    openAsperaConnectApp();
+    return { ok: true };
+  }
+  if (type === 'website') {
+    openExternalSafe(ASPERA_HUB_WEBSITE);
     return { ok: true };
   }
   if (type === 'check-updates') {
@@ -3840,6 +6121,9 @@ async function handleNotifCenterAction(type, value) {
 }
 
 function applyFocusMode(webContents, serviceId) {
+  const service = getService(serviceId);
+  // Safe Mode: do not replace Notification / focus on WhatsApp Web.
+  if (whatsappAutomationBlocked(settings, service?.appId)) return;
   const cfg = serviceId ? getAppConfig(serviceId) : mergeAppConfig();
   // Suppress native guest Notification (avoids Linux focus steal) but forward
   // title/body to main via a console bridge for rich OS + in-app toasts.
@@ -3891,18 +6175,7 @@ function applyFocusMode(webContents, serviceId) {
 }
 
 function firstTwoMessageLines(text) {
-  const raw = String(text || '').replace(/\r\n/g, '\n').trim();
-  if (!raw) return '';
-  const lines = raw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (lines.length >= 2) {
-    return `${lines[0].slice(0, 160)}\n${lines[1].slice(0, 160)}`;
-  }
-  const single = lines[0] || raw;
-  if (single.length <= 160) return single;
-  return `${single.slice(0, 160)}\n${single.slice(160, 320)}`;
+  return formatMessagePreview(text, { maxLines: 3, maxChars: 280, lineChars: 96 });
 }
 
 function notificationFingerprint(serviceId, title, body) {
@@ -4297,6 +6570,12 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
   if (!service || !isInboxAppId(service.appId)) {
     return { ok: false, error: 'Open a WhatsApp or Arattai chat.' };
   }
+  if (whatsappAutomationBlocked(settings, service.appId)) {
+    return {
+      ok: false,
+      error: whatsappSafeModeBlockedMessage('auto-opening WhatsApp chats'),
+    };
+  }
   const chatName = String(name || '').trim();
   const key = chatKey || normalizeChatKey(chatName);
   const waId = String(nativeId || '').trim();
@@ -4304,6 +6583,8 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     return { ok: false, error: 'Missing contact name.' };
   }
   const isWhatsApp = service.appId === 'whatsapp';
+  // Never let a leftover Forward Ctrl+V land in the chat we are about to open.
+  cancelPendingForwardPaste();
   // Cancel any previous pin-open automation (video: late AYUSH click stole later UI).
   const myGen = (pinOpenGeneration += 1);
   const alive = () => myGen === pinOpenGeneration;
@@ -4401,6 +6682,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     }
     await markActiveComposeTarget(serviceId);
     await clearGuestPageSelection(wc);
+    await sanitizeComposeAfterHubChatOpen(wc);
     await persistResolvedNativeId();
     return { ...opened, chat: still.chat || opened.chat };
   };
@@ -4416,6 +6698,7 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
     await clearGuestPageSelection(wc);
     await markActiveComposeTarget(serviceId);
     await clearGuestPageSelection(wc);
+    await sanitizeComposeAfterHubChatOpen(wc);
     return opened;
   };
 
@@ -4635,6 +6918,13 @@ async function openMessagingChat(serviceId, { name = '', chatKey = '', nativeId 
 async function sendQuickReply(serviceId, { name = '', chatKey = '', text = '' } = {}) {
   const message = String(text || '').trim();
   if (!message) return { ok: false, error: 'Type a short reply first.' };
+  const service = getService(serviceId);
+  if (whatsappAutomationBlocked(settings, service?.appId)) {
+    return {
+      ok: false,
+      error: whatsappSafeModeBlockedMessage('Quick reply Send on WhatsApp'),
+    };
+  }
   const opened = await openMessagingChat(serviceId, { name, chatKey });
   if (!opened.ok) return opened;
   const entry = views.get(serviceId);
@@ -4664,7 +6954,10 @@ async function searchChatsAcrossAccounts(query) {
   const q = String(query || '').trim();
   if (!q) return { ok: true, chats: [] };
   const services = orderedServices().filter(
-    (s) => isInboxAppId(s.appId) && views.has(s.id),
+    (s) =>
+      isInboxAppId(s.appId) &&
+      views.has(s.id) &&
+      !whatsappAutomationBlocked(settings, s.appId),
   );
   const chats = [];
   await Promise.all(
@@ -4698,6 +6991,12 @@ function pinPerson(payload = {}) {
   const service = getService(payload.serviceId);
   if (!service || !isInboxAppId(service.appId)) {
     return { ok: false, error: 'Pin WhatsApp or Arattai chats only.' };
+  }
+  if (whatsappAutomationBlocked(settings, service.appId)) {
+    return {
+      ok: false,
+      error: whatsappSafeModeBlockedMessage('Hub Pins on WhatsApp'),
+    };
   }
   const name = String(payload.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
   const chatKey = normalizeChatKey(payload.chatKey || name);
@@ -4842,7 +7141,10 @@ function unpinPerson(pinId) {
  * Show a rich desktop + in-app notification for a guest app.
  * Prefer intercepted page Notification payloads (sender + message).
  */
-function emitServiceNotification(service, { title, body, fromTitleCount = false } = {}) {
+function emitServiceNotification(
+  service,
+  { title, body, fromTitleCount = false, showOs = true } = {},
+) {
   if (!service || settings.focusMode) return false;
   const liveCfg = getAppConfig(service.id);
   if (!liveCfg.allowNotifications) return false;
@@ -4870,7 +7172,7 @@ function emitServiceNotification(service, { title, body, fromTitleCount = false 
 
   logNotification(service, displayBody, displayTitle);
 
-  if (!Notification.isSupported()) return true;
+  if (!showOs || !Notification.isSupported()) return true;
   const n = new Notification({
     title: displayTitle,
     body: displayBody,
@@ -4955,8 +7257,10 @@ function markAllReadWithoutNotifySpam() {
 
 function applyMuteState() {
   for (const [id, entry] of views.entries()) {
+    const wc = entry?.view?.webContents;
+    if (!wc || wc.isDestroyed()) continue;
     const cfg = getAppConfig(id);
-    entry.view.webContents.setAudioMuted(settings.muted || !cfg.allowSounds);
+    wc.setAudioMuted(settings.muted || !cfg.allowSounds);
   }
 }
 
@@ -5085,6 +7389,46 @@ function applyProxyToAllSessions() {
 /** Partitions that already had permission/download handlers attached. */
 const configuredPartitions = new Set();
 
+/** Resolve Hub service for a guest/popup webContents (for UA / spoof policy). */
+function serviceForWebContentsId(wcId) {
+  const id = Number(wcId);
+  if (!Number.isFinite(id)) return null;
+  for (const [serviceId, entry] of views.entries()) {
+    try {
+      if (entry?.view?.webContents?.id === id) {
+        return getService(serviceId) || entry.service || null;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  // OAuth popups are not docked views — map them via tracked service windows.
+  for (const [serviceId, set] of servicePopups.entries()) {
+    if (!set) continue;
+    for (const win of set) {
+      try {
+        if (!win || win.isDestroyed()) continue;
+        if (win.webContents?.id === id) {
+          return getService(serviceId) || null;
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return null;
+}
+
+/** Keep link-tab guests on Chrome UA (some CDNs reject a Firefox pin). */
+function pinChromeUserAgent(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  try {
+    webContents.setUserAgent(CHROME_USER_AGENT);
+  } catch {
+    // ignore
+  }
+}
+
 function configureSession(partitionSession, partitionKey) {
   applyProxy(partitionSession);
   if (configuredPartitions.has(partitionKey)) {
@@ -5108,7 +7452,8 @@ function configureSession(partitionSession, partitionKey) {
     );
   });
 
-  // Google sign-in: Client Hints + Firefox UA on accounts (vendor quarantine).
+  // Google: Chrome UA/Client Hints on product hosts; Firefox on accounts.google.com
+  // for ALL Google sign-in (Gmail and third-party OAuth). Never flip mid-OAuth.
   partitionSession.webRequest.onBeforeSendHeaders(
     {
       urls: [
@@ -5120,98 +7465,215 @@ function configureSession(partitionSession, partitionKey) {
       ],
     },
     (details, callback) => {
-      const headers = applyGoogleRequestHeaders(
-        { ...details.requestHeaders },
-        details.url,
-        {
+      const headers = { ...details.requestHeaders };
+      let host = '';
+      try {
+        host = new URL(details.url).hostname.toLowerCase();
+      } catch {
+        callback({ cancel: false, requestHeaders: headers });
+        return;
+      }
+
+      const svc = serviceForWebContentsId(details.webContentsId);
+      const isAccounts =
+        host === 'accounts.google.com' || host.endsWith('.accounts.google.com');
+
+      // accounts.google.com FIRST — never send Chrome UA here (Google blocks Electron).
+      if (isAccounts) {
+        const next = applyGoogleRequestHeaders(headers, details.url, {
           chromeUA: CHROME_USER_AGENT,
           firefoxAccountsUA: FIREFOX_ACCOUNTS_UA,
           secChUa: SEC_CH_UA,
           enabled: settings.googleSpoofEnabled !== false,
-        },
-      );
-      callback({ cancel: false, requestHeaders: headers });
+        });
+        callback({ cancel: false, requestHeaders: next });
+        return;
+      }
+
+      if (svc?.linkTab || svc?.isCustom) {
+        // Match real Chrome — some CDNs reject mismatched CH after Firefox pin.
+        headers['User-Agent'] = CHROME_USER_AGENT;
+        headers['sec-ch-ua'] = SEC_CH_UA;
+        headers['sec-ch-ua-mobile'] = '?0';
+        headers['sec-ch-ua-platform'] = '"Linux"';
+      }
+
+      const next = applyGoogleRequestHeaders(headers, details.url, {
+        chromeUA: CHROME_USER_AGENT,
+        firefoxAccountsUA: FIREFOX_ACCOUNTS_UA,
+        secChUa: SEC_CH_UA,
+        enabled: settings.googleSpoofEnabled !== false,
+      });
+      callback({ cancel: false, requestHeaders: next });
     },
   );
 
   partitionSession.on('will-download', (_event, item) => {
     // Silent capture for Forward-with-Hub (must not show Save dialog).
-    // Keep hijacking for the whole capture window — preview Download often
-    // fires multiple items; only the first should fulfill the promise.
-    if (isForwardCaptureSilentActive()) {
-      const pending = pendingForwardDownload;
-      if (pending) {
-        pendingForwardDownload = null;
-        try {
-          const hinted = String(pending.fileName || '').trim();
-          const rawName = hinted || item.getFilename() || 'document.bin';
-          const name = sanitizeForwardFilename(
-            rawName,
-            extensionOf(rawName) || 'bin',
-          );
-          const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
-          item.setSavePath(savePath);
-          item.once('done', (_e, state) => {
-            if (state === 'completed') {
-              rememberGuestDownload(savePath, name);
-              pending.resolve(item.getSavePath());
-            } else {
-              pending.reject(new Error(`Download ${state}`));
-            }
-          });
-        } catch (error) {
-          try {
-            item.cancel();
-          } catch {
-            // ignore
-          }
-          pending.reject(error);
-        }
-        return;
-      }
-      // Extra download during Forward capture — swallow silently (no Save dialog).
+    const pending = pendingForwardDownload;
+    if (pending) {
+      pendingForwardDownload = null;
       try {
-        item.cancel();
-      } catch {
+        const hinted = String(pending.fileName || '').trim();
+        const rawName = hinted || item.getFilename() || 'document.bin';
+        const name = sanitizeForwardFilename(
+          rawName,
+          extensionOf(rawName) || 'bin',
+        );
+        const savePath = path.join(forwardTempDir(), `${Date.now()}-${name}`);
+        item.setSavePath(savePath);
+        item.once('done', (_e, state) => {
+          if (state === 'completed') {
+            rememberGuestDownload(savePath, name);
+            pending.resolve(item.getSavePath());
+          } else {
+            pending.reject(new Error(`Download ${state}`));
+          }
+        });
+      } catch (error) {
         try {
-          const dump = path.join(
-            forwardTempDir(),
-            `fwd-extra-${Date.now()}-${sanitizeForwardFilename(item.getFilename() || 'bin')}`,
-          );
-          item.setSavePath(dump);
-          item.once('done', () => {
-            try {
-              fs.unlinkSync(dump);
-            } catch {
-              // ignore
-            }
-          });
+          item.cancel();
         } catch {
           // ignore
         }
+        pending.reject(error);
       }
+      // Swallow duplicate DownloadItems from the same preview click briefly.
+      beginForwardExtraSwallow();
       return;
     }
 
-    if (settings.downloadPath) {
-      item.setSavePath(path.join(settings.downloadPath, item.getFilename()));
-    } else {
-      // "Ask every time" — blank download path in Settings.
-      const picked = dialog.showSaveDialogSync(mainWindow || undefined, {
-        title: 'Save download',
-        defaultPath: path.join(app.getPath('downloads'), item.getFilename()),
-      });
-      if (!picked) {
+    if (shouldSwallowForwardExtraDownload()) {
+      swallowForwardExtraDownload(item);
+      return;
+    }
+
+    // One click can emit two DownloadItems (preview + real). A second Save
+    // dialog reuses GTK's sticky last filename — Maharashtra then "replaces"
+    // into Karnataka.pdf. Cancel near-duplicate prompts.
+    const downloadName = item.getFilename() || 'download';
+    const downloadUrl = typeof item.getURL === 'function' ? item.getURL() : '';
+    const dedupeKey = `${downloadUrl}|${downloadName}|${item.getTotalBytes?.() || 0}`;
+    const now = Date.now();
+    if (
+      dedupeKey &&
+      dedupeKey === lastGuestDownloadDedupeKey &&
+      now - lastGuestDownloadDedupeAt < 2_000
+    ) {
+      try {
         item.cancel();
+      } catch {
+        // ignore
+      }
+      return;
+    }
+    lastGuestDownloadDedupeKey = dedupeKey;
+    lastGuestDownloadDedupeAt = now;
+
+    const downloadId = `dl-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    beginDownload(downloadId, downloadName, item.getTotalBytes?.() || 0);
+    item.on('updated', () => {
+      updateDownload(
+        downloadId,
+        item.getReceivedBytes?.() || 0,
+        item.getTotalBytes?.() || 0,
+      );
+      pushDownloadShelfData();
+    });
+
+    const downloadDir = String(settings.downloadPath || '').trim();
+    let savePathClaimed = '';
+    /** @type {{ path: string, claimPath: string, canceled: boolean, ready: Promise<void>, resolveReady: () => void } | null} */
+    let destHolder = null;
+    if (downloadDir) {
+      savePathClaimed = uniqueDownloadPath(downloadDir, downloadName);
+      item.setSavePath(savePathClaimed);
+    } else {
+      const defaultPath = uniqueDownloadPath(
+        app.getPath('downloads'),
+        downloadName,
+      );
+      savePathClaimed = defaultPath;
+      let resolveReady = () => {};
+      const ready = new Promise((resolve) => {
+        resolveReady = resolve;
+      });
+      destHolder = {
+        path: defaultPath,
+        claimPath: '',
+        canceled: false,
+        ready,
+        resolveReady: () => resolveReady(),
+      };
+      promptGuestDownloadSave(item, defaultPath, downloadName, destHolder);
+    }
+    item.once('done', async (_e, state) => {
+      if (destHolder) {
+        try {
+          await destHolder.ready;
+        } catch {
+          // ignore
+        }
+        releaseDownloadPath(savePathClaimed);
+        releaseDownloadPath(destHolder.path);
+        if (destHolder.canceled || state !== 'completed') {
+          const claim = String(destHolder.claimPath || '').trim();
+          if (claim) {
+            try {
+              if (fs.existsSync(claim)) fs.unlinkSync(claim);
+            } catch {
+              // ignore
+            }
+          }
+          finishDownload(downloadId, { state: state || 'cancelled' });
+          pushDownloadShelfData();
+          return;
+        }
+        const savePath = moveDownloadClaim(
+          destHolder.claimPath,
+          destHolder.path,
+        );
+        releaseDownloadPath(savePath);
+        if (!savePath || !fs.existsSync(savePath)) {
+          finishDownload(downloadId, { state: 'interrupted' });
+          pushDownloadShelfData();
+          return;
+        }
+        rememberGuestDownload(
+          savePath,
+          item.getFilename?.() || path.basename(savePath),
+        );
+        finishDownload(downloadId, {
+          filePath: savePath,
+          name: item.getFilename?.() || path.basename(savePath),
+          state: 'completed',
+        });
+        notifyDownloadFinished();
+        if (settings.openFileOnDownload) shell.openPath(savePath);
         return;
       }
-      item.setSavePath(picked);
-    }
-    item.once('done', (_e, state) => {
-      if (state !== 'completed') return;
-      const savePath = item.getSavePath();
-      rememberGuestDownload(savePath, item.getFilename?.() || path.basename(savePath));
-      if (settings.openFolderOnDownload) shell.showItemInFolder(savePath);
+
+      const savePath = item.getSavePath?.() || savePathClaimed;
+      releaseDownloadPath(savePath);
+      releaseDownloadPath(savePathClaimed);
+      if (state !== 'completed') {
+        finishDownload(downloadId, { state: state || 'cancelled' });
+        pushDownloadShelfData();
+        return;
+      }
+      rememberGuestDownload(
+        savePath,
+        item.getFilename?.() || path.basename(savePath),
+      );
+      finishDownload(downloadId, {
+        filePath: savePath,
+        name: item.getFilename?.() || path.basename(savePath),
+        state: 'completed',
+      });
+      notifyDownloadFinished();
+      if (settings.openFolderOnDownload && downloadDir) {
+        shell.showItemInFolder(savePath);
+      }
       if (settings.openFileOnDownload) shell.openPath(savePath);
     });
   });
@@ -5265,6 +7727,26 @@ async function syncExtensionsIntoSession(partitionSession) {
     catalog.filter((e) => e.enabled && e.exists).map((e) => path.resolve(e.path)),
   );
   const root = path.join(app.getPath('userData'), 'extensions');
+
+  // Undo earlier Grammarly auth-bridge experiments that patched extensions in place.
+  let stripped = false;
+  for (const ext of catalog) {
+    if (!ext.exists) continue;
+    if (stripLegacyExtensionAuthPatches(ext.path)) stripped = true;
+  }
+  if (stripped) {
+    for (const loaded of listLoadedSessionExtensions(partitionSession)) {
+      const loadedPath = path.resolve(String(loaded.path || ''));
+      if (!loadedPath.startsWith(root + path.sep)) continue;
+      try {
+        if (typeof api.removeExtension === 'function') {
+          api.removeExtension(loaded.id);
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
 
   for (const loaded of listLoadedSessionExtensions(partitionSession)) {
     const loadedPath = path.resolve(String(loaded.path || ''));
@@ -5847,7 +8329,6 @@ function clickWebContentsAt(webContents, x, y) {
 }
 
 function armForwardDownload(fileName = '', timeoutMs = 12_000) {
-  beginForwardCaptureWindow(Math.max(timeoutMs + 2_000, 8_000));
   return new Promise((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(() => {
@@ -5862,9 +8343,7 @@ function armForwardDownload(fileName = '', timeoutMs = 12_000) {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        // Keep silent window briefly so duplicate DownloadItems from the same
-        // preview click cannot open the Save dialog.
-        beginForwardCaptureWindow(4_000);
+        beginForwardExtraSwallow();
         resolve(filePath);
       },
       reject: (error) => {
@@ -5881,6 +8360,7 @@ function disarmForwardDownload(downloadPromise) {
   if (pendingForwardDownload) {
     const pending = pendingForwardDownload;
     pendingForwardDownload = null;
+    endForwardExtraSwallow();
     try {
       pending.reject(new Error('cancelled'));
     } catch {
@@ -6058,8 +8538,6 @@ async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', 
     return { ok: false, error: 'Chat view is gone.' };
   }
 
-  beginForwardCaptureWindow(25_000);
-
   let clickPoints = Array.isArray(points) ? points.filter((p) => p && p.x >= 0 && p.y >= 0) : [];
   if (!clickPoints.length) {
     try {
@@ -6084,7 +8562,7 @@ async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', 
     try {
       const filePath = await downloadPromise;
       if (filePath) {
-        beginForwardCaptureWindow(4_000);
+        beginForwardExtraSwallow();
         return { ok: true, filePath };
       }
     } catch {
@@ -6135,7 +8613,7 @@ async function tryCaptureDocumentByUiDownload(webContents, x, y, fileName = '', 
       try {
         const filePath = await downloadPromise;
         if (filePath) {
-          beginForwardCaptureWindow(4_000);
+          beginForwardExtraSwallow();
           return { ok: true, filePath };
         }
       } catch {
@@ -6160,7 +8638,6 @@ function downloadForwardFile(webContents, url, fileName = '') {
       reject(new Error('No downloadable document URL.'));
       return;
     }
-    beginForwardCaptureWindow(50_000);
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
@@ -6174,7 +8651,7 @@ function downloadForwardFile(webContents, url, fileName = '') {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        beginForwardCaptureWindow(4_000);
+        beginForwardExtraSwallow();
         resolve(filePath);
       },
       reject: (error) => {
@@ -6250,6 +8727,10 @@ async function fetchArattaiDocumentViaSession(webContents, downloadUrl, fileName
 }
 
 async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
+  // Feature parked — flip FORWARD_WITH_HUB_ENABLED in forwardHub.js to restore.
+  if (!FORWARD_WITH_HUB_ENABLED) {
+    return { ok: false, error: 'Forward with Aspera Hub is temporarily disabled.' };
+  }
   const forceDocument = !!opts.forceDocument;
   const sourceId = serviceIdForWebContents(webContents);
   const source = getService(sourceId);
@@ -6345,7 +8826,6 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
 
   if (documentHint) {
     // Entire document capture must stay silent — no "Save download" dialogs.
-    beginForwardCaptureWindow(45_000);
     const hintedName = sanitizeForwardFilename(
       candidateName || 'document.pdf',
       extensionOf(candidateName) || extensionOf(candidateUrl) || 'pdf',
@@ -6357,91 +8837,86 @@ async function beginForwardFromGuest(webContents, params = {}, opts = {}) {
       arattaiFullFileUrlFromAny(String(params.linkURL || ''), ctx.chatId) ||
       arattaiFullFileUrlFromAny(srcURL, ctx.chatId);
 
-    try {
-      // 0) PDF already open in Adobe / WhatsApp preview — read bytes (no Download click).
-      if (!filePath) {
-        const viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
-        if (viewer.ok) filePath = viewer.filePath;
-      }
+    // 0) PDF already open in Adobe / WhatsApp preview — read bytes (no Download click).
+    if (!filePath) {
+      const viewer = await tryCaptureViewerDocumentBytes(webContents, hintedName);
+      if (viewer.ok) filePath = viewer.filePath;
+    }
 
-      // 1) User already downloaded this file in chat — reuse it.
-      if (!filePath) {
-        const recentPath = matchRecentDownload(
-          recentGuestDownloads,
-          hintedName,
-          ctx.nearbyText || candidateName,
-        );
-        if (recentPath && fs.existsSync(recentPath)) {
-          try {
-            const dest = path.join(
-              forwardTempDir(),
-              `${Date.now()}-${path.basename(recentPath)}`,
-            );
-            fs.copyFileSync(recentPath, dest);
-            filePath = dest;
-          } catch (error) {
-            console.warn('[forward] reuse recent download failed', error);
-          }
-        }
-      }
-
-      // 2) Arattai UDS via session cookies (more reliable than downloadURL).
-      if (!filePath && arattaiUrl) {
-        const fetched = await fetchArattaiDocumentViaSession(
-          webContents,
-          arattaiUrl,
-          hintedName,
-        );
-        if (fetched.ok) filePath = fetched.filePath;
-        else {
-          try {
-            filePath = await downloadForwardFile(webContents, arattaiUrl, hintedName);
-          } catch (error) {
-            console.warn('[forward] Arattai document URL download failed', error);
-          }
-        }
-      }
-
-      // 3) Direct URL download when we have a real document link (not image/blob thumbs).
-      if (
-        !filePath &&
-        candidateUrl &&
-        !/^data:image\//i.test(candidateUrl) &&
-        !/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(candidateUrl) &&
-        !/webdownload/i.test(candidateUrl)
-      ) {
+    // 1) User already downloaded this file in chat — reuse it.
+    if (!filePath) {
+      const recentPath = matchRecentDownload(
+        recentGuestDownloads,
+        hintedName,
+        ctx.nearbyText || candidateName,
+      );
+      if (recentPath && fs.existsSync(recentPath)) {
         try {
-          filePath = await downloadForwardFile(webContents, candidateUrl, hintedName);
+          const dest = path.join(
+            forwardTempDir(),
+            `${Date.now()}-${path.basename(recentPath)}`,
+          );
+          fs.copyFileSync(recentPath, dest);
+          filePath = dest;
         } catch (error) {
-          console.warn('[forward] document URL download failed', error);
+          console.warn('[forward] reuse recent download failed', error);
         }
       }
+    }
 
-      // 4) Click download control; extras during capture window are cancelled silently.
-      if (!filePath) {
-        const ui = await tryCaptureDocumentByUiDownload(
-          webContents,
-          params.x,
-          params.y,
-          hintedName,
-          ctx.downloadPoints,
-        );
-        if (ui.ok && ui.filePath) filePath = ui.filePath;
-        else console.warn('[forward] UI document download failed', ui.error);
+    // 2) Arattai UDS via session cookies (more reliable than downloadURL).
+    if (!filePath && arattaiUrl) {
+      const fetched = await fetchArattaiDocumentViaSession(
+        webContents,
+        arattaiUrl,
+        hintedName,
+      );
+      if (fetched.ok) filePath = fetched.filePath;
+      else {
+        try {
+          filePath = await downloadForwardFile(webContents, arattaiUrl, hintedName);
+        } catch (error) {
+          console.warn('[forward] Arattai document URL download failed', error);
+        }
       }
+    }
 
-      // 5) Retry session fetch after UI click (Arattai may warm the file).
-      if (!filePath && arattaiUrl) {
-        const fetched = await fetchArattaiDocumentViaSession(
-          webContents,
-          arattaiUrl,
-          hintedName,
-        );
-        if (fetched.ok) filePath = fetched.filePath;
+    // 3) Direct URL download when we have a real document link (not image/blob thumbs).
+    if (
+      !filePath &&
+      candidateUrl &&
+      !/^data:image\//i.test(candidateUrl) &&
+      !/\.(png|jpe?g|gif|webp|bmp|svg)(\?|#|$)/i.test(candidateUrl) &&
+      !/webdownload/i.test(candidateUrl)
+    ) {
+      try {
+        filePath = await downloadForwardFile(webContents, candidateUrl, hintedName);
+      } catch (error) {
+        console.warn('[forward] document URL download failed', error);
       }
-    } finally {
-      // Keep a short silence tail so late duplicate DownloadItems cannot open Save.
-      beginForwardCaptureWindow(3_500);
+    }
+
+    // 4) Click download control; duplicate DownloadItems are swallowed briefly.
+    if (!filePath) {
+      const ui = await tryCaptureDocumentByUiDownload(
+        webContents,
+        params.x,
+        params.y,
+        hintedName,
+        ctx.downloadPoints,
+      );
+      if (ui.ok && ui.filePath) filePath = ui.filePath;
+      else console.warn('[forward] UI document download failed', ui.error);
+    }
+
+    // 5) Retry session fetch after UI click (Arattai may warm the file).
+    if (!filePath && arattaiUrl) {
+      const fetched = await fetchArattaiDocumentViaSession(
+        webContents,
+        arattaiUrl,
+        hintedName,
+      );
+      if (fetched.ok) filePath = fetched.filePath;
     }
 
     if (filePath && fs.existsSync(filePath)) {
@@ -6654,6 +9129,118 @@ function openForwardPickerWindow({
   return { ok: true };
 }
 
+
+async function readGuestComposeText(webContents) {
+  if (!webContents || webContents.isDestroyed()) return '';
+  try {
+    return String(
+      (await webContents.executeJavaScript(
+        `(() => {
+          const nodes = [
+            document.querySelector('[data-testid="conversation-compose-box-input"]'),
+            document.querySelector('[data-aspera-ai-compose="1"]'),
+            ...document.querySelectorAll(${JSON.stringify(guestComposeSelector())}),
+          ].filter(Boolean);
+          for (const el of nodes) {
+            const tag = String(el.tagName || '');
+            if (tag === 'TEXTAREA' || tag === 'INPUT') {
+              const v = String(el.value || '').trim();
+              if (v) return v;
+            }
+            const t = String(el.innerText || el.textContent || '').trim();
+            if (t) return t;
+          }
+          return '';
+        })()`,
+        true,
+      )) || '',
+    );
+  } catch {
+    return '';
+  }
+}
+
+async function clearGuestComposeBox(webContents) {
+  if (!webContents || webContents.isDestroyed()) return false;
+  try {
+    return !!(await webContents.executeJavaScript(
+      `(() => {
+        const clearOne = (el) => {
+          if (!el) return false;
+          try { el.focus(); } catch (e) {}
+          const tag = String(el.tagName || '');
+          if (tag === 'TEXTAREA' || tag === 'INPUT') {
+            el.value = '';
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+          }
+          if (el.isContentEditable) {
+            try {
+              const sel = window.getSelection?.();
+              const range = document.createRange();
+              range.selectNodeContents(el);
+              sel?.removeAllRanges?.();
+              sel?.addRange?.(range);
+              document.execCommand('delete', false, null);
+              document.execCommand('selectAll', false, null);
+              document.execCommand('delete', false, null);
+            } catch (e) {}
+            try {
+              el.textContent = '';
+              while (el.firstChild) el.removeChild(el.firstChild);
+            } catch (e) {}
+            el.dispatchEvent(new InputEvent('input', {
+              bubbles: true, inputType: 'deleteContentBackward', data: null,
+            }));
+            return true;
+          }
+          return false;
+        };
+        const marked = document.querySelector('[data-aspera-ai-compose="1"]');
+        if (clearOne(marked)) return true;
+        const wa = document.querySelector('[data-testid="conversation-compose-box-input"]');
+        if (clearOne(wa)) return true;
+        for (const node of document.querySelectorAll(${JSON.stringify(guestComposeSelector())})) {
+          if (clearOne(node)) return true;
+        }
+        return false;
+      })()`,
+      true,
+    ));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * After Hub opens a chat (pin / Forward), wipe send-box text that was clearly
+ * an accidental clipboard paste or a leftover AI/Forward error — WhatsApp
+ * persists drafts, so this otherwise looks like Hub "typed" into the chat.
+ */
+async function sanitizeComposeAfterHubChatOpen(
+  webContents,
+  { allowClipboardMatch = true } = {},
+) {
+  if (!webContents || webContents.isDestroyed()) return { cleared: false };
+  const text = await readGuestComposeText(webContents);
+  if (!String(text || '').trim()) return { cleared: false };
+  let systemClipboard = '';
+  try {
+    systemClipboard = clipboard.readText() || '';
+  } catch {
+    systemClipboard = '';
+  }
+  const polluted = isHubComposePollution(text, {
+    stagedClipboard: hubStagedClipboardText,
+    systemClipboard,
+    allowClipboardMatch,
+  });
+  if (!polluted) return { cleared: false, text };
+  const ok = await clearGuestComposeBox(webContents);
+  return { cleared: !!ok, text };
+}
+
 async function focusGuestCompose(webContents) {
   if (!webContents || webContents.isDestroyed()) return false;
   try {
@@ -6745,14 +9332,16 @@ async function stageForwardPaste(serviceId) {
 /**
  * Wait for an open compose box, then paste the staged image/text (like doc attach).
  */
-async function waitForChatAndPasteForward(serviceId) {
+async function waitForChatAndPasteForward(serviceId, pasteGen = forwardPasteGeneration) {
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
+    if (pasteGen !== forwardPasteGeneration) return false;
     const entry = views.get(serviceId);
     const wc = entry?.view?.webContents;
     if (!wc || wc.isDestroyed()) return false;
     if (await guestHasOpenCompose(wc)) {
       await sleepMs(280);
+      if (pasteGen !== forwardPasteGeneration) return false;
       await markActiveComposeTarget(serviceId);
       return stageForwardPaste(serviceId);
     }
@@ -7456,6 +10045,9 @@ async function waitForChatAndAttachDocument(webContents, filePath, appId = '') {
 }
 
 async function deliverForwardToTarget(targetId) {
+  if (!FORWARD_WITH_HUB_ENABLED) {
+    return { ok: false, error: 'Forward with Aspera Hub is temporarily disabled.' };
+  }
   const payload = forwardPayload;
   if (!payload) return { ok: false, error: 'Nothing to forward.' };
   const target = getService(targetId);
@@ -7491,13 +10083,22 @@ async function deliverForwardToTarget(targetId) {
     }
     if (Object.keys(write).length) {
       try {
-        clipboard.write(write);
+        stageHubForwardClipboard(write);
       } catch {
-        if (clipText) clipboard.writeText(clipText);
+        if (clipText) {
+          try {
+            hubClipboardBeforeStage = { text: clipboard.readText() || '' };
+          } catch {
+            hubClipboardBeforeStage = { text: '' };
+          }
+          hubStagedClipboardText = clipText;
+          clipboard.writeText(clipText);
+        }
       }
     }
   }
 
+  const pasteGen = forwardPasteGeneration;
   closeForwardPickerWindow();
   activateService(targetId);
   await sleepMs(520);
@@ -7552,7 +10153,10 @@ async function deliverForwardToTarget(targetId) {
       } catch {
         // ignore
       }
+    } else {
+      restoreHubClipboardAfterForward();
     }
+    cancelPendingForwardPaste();
     return { ok: false, needRecipient: true, isDocument, kind, detail };
   }
 
@@ -7606,7 +10210,7 @@ async function deliverForwardToTarget(targetId) {
       pasted = await stageForwardPaste(targetId);
     }
     if (!pasted) {
-      pasted = await waitForChatAndPasteForward(targetId);
+      pasted = await waitForChatAndPasteForward(targetId, pasteGen);
     }
     detail = forwardReadyMessage(kind, targetName, { ok: pasted });
   }
@@ -7624,6 +10228,8 @@ async function deliverForwardToTarget(targetId) {
     // ignore
   }
 
+  // Do not leave Forward text sitting on the system clipboard for the next chat open.
+  restoreHubClipboardAfterForward();
   return {
     ok: true,
     pasted,
@@ -7673,10 +10279,134 @@ function attachGuestContextMenu(webContents) {
 
     const safeLink = sanitizeForwardLinkURL(params.linkURL);
     if (safeLink) {
+      const live = liveService(service);
+      const isLinkTabGuest = !!(live?.isCustom || live?.linkTab);
+      const linkIsInternal = live ? isInternalUrl(safeLink, live) : false;
       template.push({
         label: 'Open link',
-        click: () => openExternalSafe(safeLink),
+        click: () => {
+          // Click-to-call from Zoho CRM / One inside Hub.
+          if (isPhoneDialUrl(safeLink)) {
+            openExternalSafe(safeLink);
+            return;
+          }
+          // WhatsApp / Arattai: never load Drive/Google into the chat tab.
+          if (
+            isMessagingAppId(live?.appId) &&
+            !isAllowedMessagingTabUrl(live, safeLink)
+          ) {
+            const opened = openUrlAsHubAppTab(safeLink, live);
+            if (!opened.ok && opened.error) {
+              const errBox = {
+                type: 'warning',
+                buttons: ['OK'],
+                defaultId: 0,
+                title: 'Could not open Hub tab',
+                message: opened.error,
+              };
+              if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+              else dialog.showMessageBox(errBox).catch(() => {});
+            }
+            return;
+          }
+          // Google SSO/consent URLs 400 in Chrome — keep them in Hub (Gmail/Zoho).
+          if (mustKeepGoogleUrlInApp(safeLink) || isGoogleOwnedUrl(safeLink)) {
+            webContents.loadURL(safeLink).catch(() => {});
+            return;
+          }
+          if (handleOutboundOrNewWindowLink(live, safeLink, webContents)) {
+            return;
+          }
+          webContents.loadURL(safeLink).catch(() => {});
+        },
       });
+      // Never replace WhatsApp/Arattai/etc. with a third-party site via this
+      // menu — that looked like “Open in tab” but covered the messenger.
+      // Link tabs (and same-app URLs) may navigate in place.
+      // Zoho CRM/Books/One also offer Hub tab so lead/deal links can multi-screen.
+      if (isLinkTabGuest || linkIsInternal) {
+        template.push({
+          label: 'Open link in this tab',
+          click: () => {
+            if (isForbiddenGuestNavigation(safeLink)) return;
+            webContents.loadURL(safeLink).catch(() => {});
+          },
+        });
+      }
+      if (
+        !isLinkTabGuest &&
+        (!linkIsInternal || shouldOpenZohoSharedDeepLinkAsHubTab(live, safeLink))
+      ) {
+        template.push({
+          label: 'Open in Hub tab',
+          click: () => {
+            if (isForbiddenGuestNavigation(safeLink)) return;
+            if (isGoogleService(live)) {
+              const outbound = extractGoogleOutboundUrl(safeLink);
+              if (outbound) {
+                if (
+                  mustKeepGoogleUrlInApp(outbound) ||
+                  isGoogleOwnedUrl(outbound)
+                ) {
+                  webContents.loadURL(outbound).catch(() => {});
+                  return;
+                }
+                handleOutboundOrNewWindowLink(live, outbound, webContents);
+                return;
+              }
+              if (!isAllowedGmailTabUrl(safeLink)) {
+                handleOutboundOrNewWindowLink(live, safeLink, webContents);
+                return;
+              }
+              webContents.loadURL(safeLink).catch(() => {});
+              return;
+            }
+            // Messaging: always Hub-tab outbound (including Google Drive / Accounts).
+            if (
+              isMessagingAppId(live?.appId) &&
+              !isAllowedMessagingTabUrl(live, safeLink)
+            ) {
+              const opened = openUrlAsHubAppTab(safeLink, live);
+              if (!opened.ok && opened.error) {
+                const errBox = {
+                  type: 'warning',
+                  buttons: ['OK'],
+                  defaultId: 0,
+                  title: 'Could not open Hub tab',
+                  message: opened.error,
+                };
+                if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+                else dialog.showMessageBox(errBox).catch(() => {});
+              }
+              return;
+            }
+            if (
+              mustKeepGoogleUrlInApp(safeLink) ||
+              (isAuthOrLoginUrl(safeLink) && isGoogleOwnedUrl(safeLink))
+            ) {
+              webContents.loadURL(safeLink).catch(() => {});
+              return;
+            }
+            // Zoho shared deep links reuse the same profile/session.
+            if (shouldOpenZohoSharedDeepLinkAsHubTab(live, safeLink)) {
+              if (openInternalLinkAsHubTab(live, safeLink)) return;
+            }
+            // Force a real top-bar tab (ignore temporary external/block modes).
+            const opened = openUrlAsHubAppTab(safeLink, live);
+            if (!opened.ok && opened.error) {
+              const errBox = {
+                type: 'warning',
+                buttons: ['OK'],
+                defaultId: 0,
+                title: 'Could not open Hub tab',
+                message: opened.error,
+              };
+              if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+              else dialog.showMessageBox(errBox).catch(() => {});
+            }
+          },
+        });
+      }
       template.push({
         label: 'Copy link address',
         click: () => clipboard.writeText(safeLink),
@@ -7717,17 +10447,32 @@ function attachGuestContextMenu(webContents) {
         alwaysOnMessaging: true,
       })
     );
-    const canSummarize = !!(
+    const canSummarize = false; // Summarize opens from the bar wordmark — not right-click.
+    const canPolish = !!(
+      editable &&
       hasSelection &&
-      service &&
-      isAiAllowedAppId(service.appId) &&
-      settings.aiEnabled !== false
+      settings.aiEnabled !== false &&
+      String(params.selectionText || '').trim()
+    );
+    const canCrmLookup = !!(
+      hasSelection && settings.zohoCrmEnabled !== false
     );
 
-    // With selected message text: Summarize → Forward (Pin does not apply to a selection).
-    // On chat-list rows (no selection): Pin → Forward.
+    // With selected compose text: Polish → CRM lookup → Forward (Pin does not apply).
+    // On chat-list rows (no selection, not an image): Pin → Forward.
+    // Never show Pin on photos / PDF preview tiles in an open chat.
+    const canPin = canOfferHubPin({
+      inboxApp: !!(
+        service &&
+        isInboxAppId(service.appId) &&
+        !whatsappAutomationBlocked(settings, service.appId)
+      ),
+      hasSelection,
+      hasImage: !!params.hasImageContents,
+      mediaType: params.mediaType,
+    });
     const pushPinItem = () => {
-      if (!(service && isInboxAppId(service.appId) && !hasSelection)) return;
+      if (!canPin) return;
       const pinHitPromise = webContents
         .executeJavaScript(inspectChatListTargetJs(params.x, params.y), true)
         .catch(() => null);
@@ -7751,42 +10496,71 @@ function attachGuestContextMenu(webContents) {
         },
       });
     };
-    const pushSummarizeItems = () => {
-      if (!canSummarize) return;
+    const pushCrmLookupItem = () => {
+      if (!canCrmLookup) return;
       template.push({
-        label: 'Summarize with Aspera AI',
+        label: 'Lookup in Zoho CRM',
         click: () => {
-          runAsperaAiSkill('summarize', {
-            selectionText: String(params.selectionText || ''),
-            clickX: Number(params.x) || 0,
-            clickY: Number(params.y) || 0,
-          }).catch(() => {});
+          const theme = String(settings.theme || 'system');
+          const dark =
+            theme === 'dark' ||
+            theme === 'darkest' ||
+            (theme === 'system' && nativeTheme.shouldUseDarkColors);
+          lookupZohoCrmDeals(params.selectionText, { dark }).catch(() => {});
         },
       });
-      if (editable) {
-        template.push({
-          label: 'Refine with Aspera AI',
-          click: () => {
-            runAsperaAiSkill('refine', {
-              selectionText: String(params.selectionText || ''),
-            }).catch(() => {});
-          },
-        });
-      }
     };
-    const canPin = !!(service && isInboxAppId(service.appId) && !hasSelection);
+    const pushSummarizeItems = () => {
+      // Intentionally empty — Summarize opens from the top-bar wordmark.
+    };
+    const pushPolishItems = () => {
+      if (!canPolish) return;
+      const theme = String(settings.theme || 'system');
+      const dark =
+        theme === 'dark' ||
+        theme === 'darkest' ||
+        (theme === 'system' && nativeTheme.shouldUseDarkColors);
+      const text = String(params.selectionText || '').trim();
+      if (!text) return;
+      const sid = sourceServiceId || activeServiceId || '';
+      const runPolish = (intentId) => {
+        Promise.resolve()
+          .then(async () => {
+            const marked = await markActiveComposeTarget(sid);
+            return runAsperaAiSkill('refine', {
+              selectionText: text,
+              intent: intentId,
+              dark,
+              composeMarked: !!marked,
+              serviceId: sid,
+            });
+          })
+          .catch(() => {});
+      };
+      template.push({
+        label: 'Polish with Aspera AI',
+        submenu: POLISH_INTENTS.map((item) => ({
+          label: item.label,
+          click: () => runPolish(item.id),
+        })),
+      });
+    };
     for (const action of guestContextMenuActionOrder({
       hasSelection,
       canSummarize,
+      canPolish,
       canForward,
       canPin,
+      canCrmLookup,
     })) {
       if (action === 'summarize') pushSummarizeItems();
+      else if (action === 'polish') pushPolishItems();
+      else if (action === 'crm-lookup') pushCrmLookupItem();
       else if (action === 'forward') pushForwardItem();
       else if (action === 'pin') pushPinItem();
     }
 
-    if (canSummarize || canForward || canPin) {
+    if (canSummarize || canPolish || canCrmLookup || canForward || canPin) {
       template.push({ type: 'separator' });
     }
 
@@ -7886,144 +10660,44 @@ function attachGuestContextMenu(webContents) {
 
 /**
  * Window-open policy shared by a service view and any popup it spawns.
- * Genuine external links go to the OS browser; internal popups (Zoho CRM
- * child windows, SSO handshakes, about:blank targets) open as real windows
- * that share the service session — denying them makes embedded apps like
- * Zoho CRM hang forever waiting for the window handle.
+ * Genuine external links go to the OS browser when linkHandling allows it;
+ * internal popups (Zoho CRM child windows, SSO, about:blank) stay in Hub.
  *
- * IMPORTANT: linkHandling "external" must NOT deny about:blank / internal Zoho
- * popups. That setting only forces true third-party links into the OS browser.
+ * Per-app / global linkHandling (same for every app):
+ * - block:    known hosts in Hub; unknown blocked
+ * - external: known in Hub; unknown → system browser
+ * - hub-tab:  outbound/new-window → new top app-bar tab (never a floating popup)
+ * - ask:      chooser (browser vs Hub tab; optional remember for this app)
  *
  * Gmail: never load google.com/url?q=… or third-party sites into the Gmail tab.
  */
-function configureGuestWindowOpen(wc, service) {
-  const googleish = isGoogleService(service);
-
-  const allowPopup = () => ({
-    action: 'allow',
-    overrideBrowserWindowOptions: {
-      autoHideMenuBar: true,
-      width: 1024,
-      height: 720,
-      webPreferences: guestWebPreferences(service),
+function guestNavigationApi() {
+  return {
+    liveService,
+    isGoogleService,
+    startUrlForService,
+    handleOutboundOrNewWindowLink,
+    guestWebPreferences,
+    openExternalSafe,
+    getMainWindow: () => mainWindow,
+    tryOpenZohoSharedHubTab: (svc, url) => {
+      if (!shouldOpenAsHubTab(effectiveLinkHandling(svc))) return false;
+      return openInternalLinkAsHubTab(svc, url);
     },
-  });
+  };
+}
 
-  wc.setWindowOpenHandler(({ url }) => {
-    const raw = String(url || '');
-    // Zoho One CRM / SPA portals boot child frames via about:blank first.
-    if (!raw || raw === 'about:blank' || raw.startsWith('about:blank')) {
-      return allowPopup();
-    }
-
-    if (raw.startsWith('http')) {
-      if (googleish) {
-        const outbound = extractGoogleOutboundUrl(raw);
-        if (outbound) {
-          openExternalSafe(outbound);
-          return { action: 'deny' };
-        }
-        if (isGoogleOwnedUrl(raw) && !isAllowedGmailTabUrl(raw)) {
-          // Malformed internal Google handoff URLs (drive/accounts continue=...)
-          // should not spawn external error tabs. Reset to Gmail home.
-          wc.loadURL(startUrlForService(service) || service.url).catch(() => {});
-          return { action: 'deny' };
-        }
-        if (!isAllowedGmailTabUrl(raw)) {
-          openExternalSafe(raw);
-          return { action: 'deny' };
-        }
-        // Keep Gmail / accounts navigations inside the dock tab.
-        wc.loadURL(raw).catch(() => {});
-        return { action: 'deny' };
-      }
-
-      // Google OAuth / SSO popups must stay in-app for all services
-      // (ChatGPT, Claude, etc. use "Sign in with Google").
-      if (isAuthOrLoginUrl(raw) && isGoogleOwnedUrl(raw)) {
-        return allowPopup();
-      }
-
-      const internal = isInternalUrl(raw, service);
-      if (!internal) {
-        // Never open broken Google consent/handoff URLs externally —
-        // they produce 400 error tabs in the default browser.
-        if (isGoogleOwnedUrl(raw)) return { action: 'deny' };
-        openExternalSafe(raw);
-        return { action: 'deny' };
-      }
-
-      return allowPopup();
-    }
-
-    // blob:/data: targets used by some in-app viewers
-    if (raw.startsWith('blob:') || raw.startsWith('data:')) {
-      return allowPopup();
-    }
-
-    return { action: 'deny' };
-  });
+function configureGuestWindowOpen(wc, service) {
+  configureGuestWindowOpenImpl(wc, service, guestNavigationApi());
 }
 
 /**
- * Main-frame navigation gate for a guest. Gmail stays on mail/accounts only.
+ * Main-frame (+ iframe) navigation gate for a guest.
+ * Gmail stays on mail/accounts only. Messaging apps never navigate away into
+ * third-party sites in-place — those become Hub tabs / browser per settings.
  */
 function attachGuestNavigationGate(webContents, service) {
-  const gate = (event, url) => {
-    if (isForbiddenGuestNavigation(url)) {
-      event.preventDefault();
-      return;
-    }
-    if (!String(url || '').startsWith('http')) return;
-
-    if (isGoogleService(service)) {
-      const outbound = extractGoogleOutboundUrl(url);
-      if (outbound) {
-        event.preventDefault();
-        openExternalSafe(outbound);
-        return;
-      }
-      if (isGoogleOwnedUrl(url) && !isAllowedGmailTabUrl(url)) {
-        event.preventDefault();
-        webContents.loadURL(startUrlForService(service) || service.url).catch(() => {});
-        return;
-      }
-      if (!isAllowedGmailTabUrl(url)) {
-        event.preventDefault();
-        openExternalSafe(url);
-        return;
-      }
-      return;
-    }
-
-    // Allow Google OAuth/SSO flows for any app (ChatGPT, Claude, etc.).
-    if (isAuthOrLoginUrl(url) && isGoogleOwnedUrl(url)) return;
-
-    if (isInternalUrl(url, service)) return;
-    // Suppress broken Google consent URLs — they 400 in external browsers.
-    if (isGoogleOwnedUrl(url)) {
-      event.preventDefault();
-      return;
-    }
-    event.preventDefault();
-    openExternalSafe(url);
-  };
-
-  webContents.on('will-navigate', gate);
-  // Gmail /url → cybercrime.gov.in happens as a redirect after google.com loads.
-  webContents.on('will-redirect', gate);
-
-  // Safety net: if something still lands outside Gmail, open it externally + go home.
-  webContents.on('did-navigate', (_event, url) => {
-    if (!isGoogleService(service)) return;
-    if (!url || !String(url).startsWith('http')) return;
-    if (isAllowedGmailTabUrl(url)) return;
-    const outbound = extractGoogleOutboundUrl(url);
-    if (outbound) openExternalSafe(outbound);
-    else if (!isGoogleOwnedUrl(url)) openExternalSafe(url);
-    const home = startUrlForService(service);
-    webContents.loadURL(home).catch(() => {});
-  });
+  attachGuestNavigationGateImpl(webContents, service, guestNavigationApi());
 }
 
 /** If a Google auth popup becomes the full inbox, move it into the dock tab. */
@@ -8066,6 +10740,346 @@ function attachPopupSessionAdopt(parentWc, childWindow, service) {
   setTimeout(tryAdopt, 300);
 }
 
+/**
+ * WhatsApp/Arattai / Web Search Hub link tabs: OAuth often finishes in a
+ * floating popup while the dock tab stays blank. Fold the post-login app page
+ * back into the same Hub tab — but only after the popup has visited an IdP,
+ * and never fold fragile /login shells.
+ */
+function attachLinkTabPopupAdopt(parentWc, childWindow, service) {
+  if (!(service?.isCustom || service?.linkTab)) return;
+  if (!parentWc || parentWc.isDestroyed()) return;
+
+  const childWc = childWindow.webContents;
+  let adopting = false;
+  let sawIdp = false;
+  let lastAdoptableUrl = '';
+  let lastThirdPartyOrigin = '';
+
+  const rememberThirdParty = (popupUrl) => {
+    if (!popupUrl.startsWith('http')) return;
+    if (isIdentityProviderUrl(popupUrl) || isGoogleOwnedUrl(popupUrl)) return;
+    try {
+      lastThirdPartyOrigin = `${new URL(popupUrl).origin}/`;
+    } catch {
+      // ignore
+    }
+  };
+
+  const adoptIntoParent = (url, { closePopup = true } = {}) => {
+    if (adopting || !url || parentWc.isDestroyed()) return;
+    adopting = true;
+    parentWc.loadURL(url).catch(() => {});
+    rememberGoodUrl(service.id, url);
+    if (!closePopup) return;
+    setTimeout(() => {
+      try {
+        if (!childWindow.isDestroyed()) childWindow.close();
+      } catch {
+        // ignore
+      }
+    }, 150);
+  };
+
+  const tryAdopt = () => {
+    if (adopting || childWindow.isDestroyed() || parentWc.isDestroyed()) return;
+    let popupUrl = '';
+    try {
+      popupUrl = childWc.getURL();
+    } catch {
+      return;
+    }
+    if (isIdentityProviderUrl(popupUrl)) sawIdp = true;
+    rememberThirdParty(popupUrl);
+    if (shouldAdoptLinkTabPopupUrlAfterIdp(popupUrl, { sawIdp })) {
+      lastAdoptableUrl = popupUrl;
+      adoptIntoParent(popupUrl);
+    }
+  };
+
+  childWc.on('did-navigate', tryAdopt);
+  childWc.on('did-navigate-in-page', tryAdopt);
+  childWc.on('did-finish-load', tryAdopt);
+  childWc.on('page-title-updated', tryAdopt);
+  setTimeout(tryAdopt, 300);
+  setTimeout(tryAdopt, 1200);
+
+  childWindow.on('closed', () => {
+    if (adopting || parentWc.isDestroyed()) return;
+    const home =
+      linkTabSiteHome(lastAdoptableUrl || lastThirdPartyOrigin) ||
+      lastAdoptableUrl ||
+      lastThirdPartyOrigin;
+    if (!home || !sawIdp) return;
+    let parentUrl = '';
+    try {
+      parentUrl = parentWc.getURL();
+    } catch {
+      parentUrl = '';
+    }
+    // After Google popup closes: blank or login handoff → site home.
+    const parentNeedsHome =
+      isBlankOrErrorGuestUrl(parentUrl) ||
+      (isOauthHandoffUrl(parentUrl) && !isIdentityProviderUrl(parentUrl));
+    if (!parentNeedsHome) return;
+    setTimeout(() => {
+      if (adopting || parentWc.isDestroyed()) return;
+      pinChromeUserAgent(parentWc);
+      adoptIntoParent(home, { closePopup: false });
+      rememberGoodUrl(service.id, home);
+    }, 700);
+  });
+}
+
+/**
+ * Same-tab Google SSO on Hub link tabs: recover wiped about:blank / chrome-error
+ * after IdP. Never interrupt OAuth handoffs. Never force-home white SPA shells —
+ * only wiped blank documents.
+ */
+function attachLinkTabAuthRecovery(webContents, service) {
+  if (!(service?.isCustom || service?.linkTab)) return;
+  if (!webContents || webContents.isDestroyed()) return;
+
+  let sawIdp = false;
+  let returnOrigin = '';
+  let lastNonIdpUrl = '';
+  let recovering = false;
+  /** @type {ReturnType<typeof setTimeout>[]} */
+  const timers = [];
+
+  const clearTimers = () => {
+    for (const t of timers.splice(0, timers.length)) clearTimeout(t);
+  };
+
+  const captureReturnOrigin = (fromUrl) => {
+    const home = linkTabSiteHome(fromUrl);
+    if (home) {
+      try {
+        returnOrigin = new URL(home).origin;
+      } catch {
+        returnOrigin = '';
+      }
+    }
+  };
+
+  const resolveHome = (cur) =>
+    linkTabSiteHome(cur) ||
+    linkTabSiteHome(returnOrigin) ||
+    linkTabSiteHome(lastNonIdpUrl) ||
+    linkTabSiteHome(lastGoodUrls.get(service.id)) ||
+    linkTabSiteHome(service.url);
+
+  const navigateHome = (reason, cur) => {
+    if (recovering || webContents.isDestroyed()) return;
+    if (isOauthHandoffUrl(cur)) return;
+    const home = resolveHome(cur);
+    if (!home) return;
+    recovering = true;
+    clearTimers();
+    pinChromeUserAgent(webContents);
+    try {
+      logBreadcrumb('link-tab-post-auth-recover', {
+        reason,
+        serviceId: service.id,
+        from: cur,
+        home,
+      });
+    } catch {
+      // ignore
+    }
+    webContents.loadURL(home).catch(() => {});
+    rememberGoodUrl(service.id, home);
+    lastGoodUrls.set(service.id, home);
+    setTimeout(() => {
+      recovering = false;
+      sawIdp = false;
+    }, 2500);
+  };
+
+  const tryRecover = (reason) => {
+    if (recovering || webContents.isDestroyed()) return;
+    if (service.id !== activeServiceId) return;
+    let cur = '';
+    try {
+      cur = String(webContents.getURL() || '');
+    } catch {
+      return;
+    }
+    if (!sawIdp) return;
+    if (isOauthHandoffUrl(cur)) return;
+    if (!isBlankOrErrorGuestUrl(cur)) return;
+    navigateHome(reason, cur);
+  };
+
+  const scheduleRecover = (reason) => {
+    clearTimers();
+    for (const ms of LINK_TAB_POST_AUTH_CHECK_MS) {
+      timers.push(setTimeout(() => tryRecover(reason), ms));
+    }
+  };
+
+  const onNav = (_event, url) => {
+    const href = String(url || '');
+    if (isIdentityProviderUrl(href)) {
+      sawIdp = true;
+      recovering = false;
+      if (lastNonIdpUrl) captureReturnOrigin(lastNonIdpUrl);
+      if (!returnOrigin) captureReturnOrigin(service.url);
+      return;
+    }
+    if (href.startsWith('http') && !isGoogleOwnedUrl(href)) {
+      lastNonIdpUrl = href;
+      captureReturnOrigin(href);
+      pinChromeUserAgent(webContents);
+    }
+    if (!sawIdp) return;
+    if (isOauthHandoffUrl(href)) {
+      scheduleRecover('oauth-handoff');
+      return;
+    }
+    scheduleRecover('left-idp');
+    if (isBlankOrErrorGuestUrl(href)) {
+      timers.push(setTimeout(() => tryRecover('immediate-blank'), 1200));
+    }
+  };
+
+  webContents.on('did-navigate', onNav);
+  webContents.on('did-navigate-in-page', onNav);
+  webContents.on('did-finish-load', () => {
+    if (!sawIdp) return;
+    try {
+      const cur = String(webContents.getURL() || '');
+      if (isOauthHandoffUrl(cur)) return;
+      if (isBlankOrErrorGuestUrl(cur)) {
+        scheduleRecover('finish-load-stuck');
+      }
+    } catch {
+      // ignore
+    }
+  });
+  webContents.on('did-fail-load', (_e, _code, _desc, validatedURL, isMainFrame) => {
+    if (!isMainFrame || !sawIdp) return;
+    timers.push(setTimeout(() => tryRecover('fail-load'), 800));
+    void validatedURL;
+  });
+}
+
+/**
+ * Zoho often window.opens about:blank then navigates. Fold that floating
+ * window into a Hub app-bar tab that shares the CRM/One login.
+ */
+function attachZohoPopupAdoptToHubTab(parentWc, childWindow, service) {
+  if (!allowsZohoWorkspaceHubTabs(service?.appId)) return;
+  // Only fold popups into Hub tabs when linkHandling is hub-tab.
+  if (!shouldOpenAsHubTab(effectiveLinkHandling(service))) return;
+
+  const childWc = childWindow.webContents;
+  let adopting = false;
+
+  const tryAdopt = () => {
+    if (adopting || childWindow.isDestroyed()) return;
+    let popupUrl = '';
+    try {
+      popupUrl = childWc.getURL();
+    } catch {
+      return;
+    }
+    if (!popupUrl.startsWith('http') || isAuthOrLoginUrl(popupUrl)) return;
+    if (!isInternalUrl(popupUrl, service)) return;
+    if (isZohoAssetHost(popupUrl)) return;
+
+    // Zoho CRM/Books/One deep links → shared-login Hub tabs (same profile).
+    if (!openInternalLinkAsHubTab(service, popupUrl)) return;
+    adopting = true;
+    setTimeout(() => {
+      try {
+        if (!childWindow.isDestroyed()) childWindow.close();
+      } catch {
+        // ignore
+      }
+    }, 120);
+  };
+
+  childWc.on('did-navigate', tryAdopt);
+  childWc.on('did-navigate-in-page', tryAdopt);
+  childWc.on('did-finish-load', tryAdopt);
+  setTimeout(tryAdopt, 400);
+}
+
+/**
+ * Gmail often window.opens about:blank then navigates the popup to the email
+ * link. Under Hub-tab mode, fold that destination into an app-bar tab and
+ * close the floating window — otherwise users see a blank Aspera Hub window.
+ * OAuth/SSO client popups stay floating.
+ */
+function attachGmailPopupAdoptToHubTab(_parentWc, childWindow, service) {
+  if (!isGoogleService(service)) return;
+  if (!shouldOpenAsHubTab(effectiveLinkHandling(service))) return;
+
+  const childWc = childWindow.webContents;
+  let adopting = false;
+
+  const closeChild = () => {
+    setTimeout(() => {
+      try {
+        if (!childWindow.isDestroyed()) childWindow.close();
+      } catch {
+        // ignore
+      }
+    }, 120);
+  };
+
+  const tryAdopt = () => {
+    if (adopting || childWindow.isDestroyed()) return;
+    let popupUrl = '';
+    try {
+      popupUrl = childWc.getURL();
+    } catch {
+      return;
+    }
+    if (!popupUrl || popupUrl === 'about:blank' || popupUrl.startsWith('about:blank')) {
+      return;
+    }
+    if (!popupUrl.startsWith('http')) return;
+
+    const action = gmailWindowOpenAction(popupUrl);
+    if (action === 'oauth-popup') return;
+    if (action !== 'hub-tab') return;
+
+    const target = extractGoogleOutboundUrl(popupUrl) || popupUrl;
+    const opened = openUrlAsHubAppTab(target, service);
+    if (!opened.ok) return;
+    adopting = true;
+    closeChild();
+  };
+
+  childWc.on('did-navigate', tryAdopt);
+  childWc.on('did-navigate-in-page', tryAdopt);
+  childWc.on('did-finish-load', tryAdopt);
+  childWc.on('will-redirect', (_e, url) => {
+    // Redirect targets are visible via getURL after the event; retry shortly.
+    setTimeout(tryAdopt, 0);
+    void url;
+  });
+  setTimeout(tryAdopt, 400);
+  setTimeout(tryAdopt, 1500);
+
+  // Stuck blank popups (opener never assigned a URL) — close so they don't
+  // linger as empty Aspera Hub windows.
+  setTimeout(() => {
+    if (adopting || childWindow.isDestroyed()) return;
+    let u = '';
+    try {
+      u = childWc.getURL();
+    } catch {
+      return;
+    }
+    if (!u || u === 'about:blank' || u.startsWith('about:blank')) {
+      closeChild();
+    }
+  }, 8000);
+}
+
 function createViewForService(service) {
   const cfg = getAppConfig(service.id);
   const partitionSession = session.fromPartition(service.partition);
@@ -8095,10 +11109,20 @@ function createViewForService(service) {
   const { webContents } = view;
   webContents.setUserAgent(ua);
   webContents.setAudioMuted(settings.muted || !cfg.allowSounds);
-  if (isGoogleService(service)) {
+  if (
+    isGoogleService(service) ||
+    service.linkTab ||
+    service.isCustom
+  ) {
+    // Link tabs need a stable Chrome UA on the webContents itself
+    // (not only request headers) so navigator.userAgent matches sec-ch-ua.
+    if (service.linkTab || service.isCustom) {
+      pinChromeUserAgent(webContents);
+    }
     attachGoogleChromeSpoof(webContents, {
       chromeVersion: CHROME_VERSION,
       chromeMajor: CHROME_MAJOR,
+      chromeUA: CHROME_USER_AGENT,
       enabled: settings.googleSpoofEnabled !== false,
     }).catch(() => {});
   }
@@ -8110,8 +11134,12 @@ function createViewForService(service) {
   configureGuestWindowOpen(webContents, service);
   attachGuestContextMenu(webContents);
   attachGuestNavigationGate(webContents, service);
+  attachLinkTabAuthRecovery(webContents, service);
   if (isHeavyPortalApp(service) || isKeepWarmService(service.id)) {
-    attachPortalVisibilityKeepAlive(webContents);
+    // Safe Mode: do not spoof Page Visibility on WhatsApp.
+    if (!whatsappAutomationBlocked(settings, service.appId)) {
+      attachPortalVisibilityKeepAlive(webContents);
+    }
   }
   if (service.appId === 'zoho-one') {
     attachZohoOneBlankGuardian(webContents);
@@ -8122,19 +11150,73 @@ function createViewForService(service) {
   // rules too, and must never be trapped inside a broken denied handle.
   webContents.on('did-create-window', (childWindow) => {
     const childWc = childWindow.webContents;
+    try {
+      // Taskbar: never show guest popups as extra Aspera Hub apps.
+      childWindow.setSkipTaskbar(true);
+      if (mainWindow && !mainWindow.isDestroyed() && childWindow !== mainWindow) {
+        childWindow.setParentWindow(mainWindow);
+      }
+    } catch {
+      // ignore
+    }
     trackServicePopup(service.id, childWindow);
-    configureGuestWindowOpen(childWc, service);
     attachGuestContextMenu(childWc);
+    watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
+
+    // WhatsApp/Arattai: blob previews stay read-only; extension auth popups
+    // need window.open rules but must not get the messenger navigation gate
+    // (that would block Grammarly / password-manager login mid-flow).
+    if (isMessagingApp(service)) {
+      const attachMessagingPopupHandlers = () => {
+        if (childWindow.isDestroyed() || childWindow.__hubMessagingPopupReady) {
+          return;
+        }
+        let popupUrl = '';
+        try {
+          popupUrl = String(childWc.getURL() || '');
+        } catch {
+          return;
+        }
+        if (/^blob:|^data:/i.test(popupUrl)) {
+          childWindow.__hubMessagingPopupReady = true;
+          return;
+        }
+        if (!popupUrl || popupUrl === 'about:blank') return;
+        childWindow.__hubMessagingPopupReady = true;
+        if (
+          isExtensionAuthPopupUrl(popupUrl) ||
+          popupUrl.startsWith('chrome-extension://')
+        ) {
+          configureGuestWindowOpen(childWc, service);
+        }
+      };
+      childWc.on('did-navigate', attachMessagingPopupHandlers);
+      childWc.on('did-navigate-in-page', attachMessagingPopupHandlers);
+      setTimeout(attachMessagingPopupHandlers, 50);
+      return;
+    }
+
+    configureGuestWindowOpen(childWc, service);
     attachGuestNavigationGate(childWc, service);
     attachPopupSessionAdopt(webContents, childWindow, service);
-    if (isGoogleService(service)) {
+    attachLinkTabPopupAdopt(webContents, childWindow, service);
+    attachZohoPopupAdoptToHubTab(webContents, childWindow, service);
+    attachGmailPopupAdoptToHubTab(webContents, childWindow, service);
+    if (
+      isGoogleService(service) ||
+      service.linkTab ||
+      service.isCustom
+    ) {
+      if (service.linkTab || service.isCustom) {
+        pinChromeUserAgent(childWc);
+      }
       attachGoogleChromeSpoof(childWc, {
         chromeVersion: CHROME_VERSION,
         chromeMajor: CHROME_MAJOR,
+        chromeUA: CHROME_USER_AGENT,
         enabled: settings.googleSpoofEnabled !== false,
       }).catch(() => {});
     }
-    watchWebContents(childWc, `popup:${service.appId}:${service.id}`);
   });
 
   webContents.on('console-message', (event, level, message) => {
@@ -8171,11 +11253,45 @@ function createViewForService(service) {
     const baseline = Number(entry?.__titleCountBaseline) || 0;
     if (next > previous && next > baseline) {
       if (entry) entry.__titleCountBaseline = next;
-      emitServiceNotification(service, {
-        title: service.title || service.name,
-        body: `${next} unread`,
-        fromTitleCount: true,
+      // Prefer per-chat cards with last-message preview over a bare "N unread".
+      const runScrape = () => {
+        scrapeUnreadChatsForService(service, { allowDefer: false })
+          .then((chats) => {
+            if (chats.length) {
+              chats.slice(0, 8).forEach((chat, index) => {
+                emitServiceNotification(service, {
+                  title: chat.name,
+                  body:
+                    chat.preview ||
+                    (chat.unread > 1
+                      ? `${chat.unread} unread messages`
+                      : 'New message'),
+                  fromTitleCount: false,
+                  // One desktop toast; the rest fill the in-app center.
+                  showOs: index === 0,
+                });
+              });
+              return;
+            }
+            emitServiceNotification(service, {
+              title: service.title || service.name,
+              body: `${next} unread`,
+              fromTitleCount: true,
+            });
+          })
+          .catch(() => {
+            emitServiceNotification(service, {
+              title: service.title || service.name,
+              body: `${next} unread`,
+              fromTitleCount: true,
+            });
+          });
+      };
+      serviceIsBusyWithMediaViewer(service.id).then((busy) => {
+        if (busy) scheduleDeferredInboxScrape(service, runScrape);
+        else runScrape();
       });
+      return;
     }
   });
 
@@ -8186,22 +11302,25 @@ function createViewForService(service) {
     refreshBadge();
     broadcastState();
     const live = getAppConfig(service.id);
-    if (settings.allowPageInjection && live.injectCss && live.injectCss.trim()) {
+    if (isPageInjectionEnabled(settings) && live.injectCss && live.injectCss.trim()) {
       try {
         await webContents.insertCSS(live.injectCss);
       } catch {
         // ignore
       }
     }
-    if (settings.allowPageInjection && live.stylishUrl && /^https?:\/\//i.test(live.stylishUrl.trim())) {
+    const stylishHttps = isPageInjectionEnabled(settings)
+      ? normalizeStylishHttpsUrl(live.stylishUrl)
+      : null;
+    if (stylishHttps) {
       try {
-        const res = await fetch(live.stylishUrl.trim());
+        const res = await fetch(stylishHttps);
         if (res.ok) await webContents.insertCSS(await res.text());
       } catch {
         // ignore
       }
     }
-    if (settings.allowPageInjection && live.injectJs && live.injectJs.trim()) {
+    if (isPageInjectionEnabled(settings) && live.injectJs && live.injectJs.trim()) {
       try {
         await webContents.executeJavaScript(live.injectJs, true);
       } catch {
@@ -8313,9 +11432,11 @@ function createViewForService(service) {
     reclaimZohoHome(webContents, service, url, {
       enabled: settings.zohoReclaimEnabled !== false,
     });
+    if (service.id === activeServiceId) pushActiveNavState();
   });
   webContents.on('did-navigate-in-page', (_event, url) => {
     rememberGoodUrl(service.id, url);
+    if (service.id === activeServiceId) pushActiveNavState();
     // Zoho One Sales/Finance/HR are in-page space switches — CRM often blanks here.
     if (
       shouldRunPortalBlankRecovery(service) &&
@@ -8331,6 +11452,12 @@ function createViewForService(service) {
   });
   webContents.on('did-finish-load', () => {
     try {
+      // Guest reload must not resurrect sticky yellow find marks from a prior session.
+      if (!isFindBarOpen()) {
+        findBarLastQuery = '';
+        findBarRequestId = 0;
+        clearGuestFindHighlights(webContents);
+      }
       const url = webContents.getURL();
       rememberGoodUrl(service.id, url);
       if (isGoogleService(service)) noteGoogleMarketingLanding(service.id, url);
@@ -8363,10 +11490,48 @@ function createViewForService(service) {
 
   attachShortcuts(webContents);
   webContents.on('found-in-page', (_event, result) => {
-    mainWindow?.webContents.send('dock:find-result', {
-      activeMatchOrdinal: result.activeMatchOrdinal,
-      matches: result.matches,
-    });
+    // User cleared the query (or closed Find) while this request was in flight —
+    // do not keep yellow matches painted on the guest page.
+    if (!findBarLastQuery) {
+      clearGuestFindHighlights(webContents);
+      if (isFindBarOpen()) {
+        try {
+          findBarWindow.webContents.send('find-bar:result', {
+            activeMatchOrdinal: 0,
+            matches: 0,
+          });
+        } catch {
+          // ignore
+        }
+      }
+      return;
+    }
+    // Typing "aspera" fires find("a"), find("as"), … — a late reply for "a"
+    // must not win after the full-string search (that painted every letter a).
+    if (
+      findBarRequestId &&
+      result?.requestId &&
+      result.requestId !== findBarRequestId
+    ) {
+      return;
+    }
+    const matches = Number(result?.matches) || 0;
+    if (matches <= 0) {
+      // Zero-match queries must not leave the previous query's yellow marks.
+      clearGuestFindHighlights(webContents);
+    }
+    const payload = {
+      activeMatchOrdinal: matches ? result.activeMatchOrdinal || 0 : 0,
+      matches,
+    };
+    mainWindow?.webContents.send('dock:find-result', payload);
+    if (isFindBarOpen()) {
+      try {
+        findBarWindow.webContents.send('find-bar:result', payload);
+      } catch {
+        // ignore
+      }
+    }
   });
   webContents.loadURL(startUrlForService(service));
 
@@ -8467,12 +11632,24 @@ function startUrlForService(service) {
   const memory = lastGoodUrls.get(service.id);
   const disk = (settings.lastServiceUrls || {})[service.id];
   const last = memory || disk;
-  if (
-    last &&
-    !isAuthOrLoginUrl(last) &&
-    isUrlForService(service, last)
-  ) {
-    return safeStartUrlForService(service, last);
+  // Link / custom tabs may browse any https host (redirects from wa.me, bit.ly, …).
+  if (service?.isCustom) {
+    if (last && String(last).startsWith('http') && !isAuthOrLoginUrl(last)) {
+      return last;
+    }
+    return service.url;
+  }
+  if (last && !isAuthOrLoginUrl(last)) {
+    if (isUrlForService(service, last)) {
+      return safeStartUrlForService(service, last);
+    }
+    // Zoho workspace tabs may open sibling product deep links (same login).
+    if (
+      allowsZohoWorkspaceHubTabs(service.appId) &&
+      isInternalUrl(last, service)
+    ) {
+      return last;
+    }
   }
   return service.url;
 }
@@ -8481,7 +11658,12 @@ let lastUrlSaveTimer = null;
 function rememberGoodUrl(serviceId, url) {
   if (!url || !String(url).startsWith('http') || isAuthOrLoginUrl(url)) return;
   const service = getService(serviceId);
-  if (service && !isUrlForService(service, url)) return;
+  if (!service) return;
+  const allowedForService =
+    service.isCustom ||
+    isUrlForService(service, url) ||
+    (allowsZohoWorkspaceHubTabs(service.appId) && isInternalUrl(url, service));
+  if (!allowedForService) return;
   // Never remember third-party pages that hijacked a Gmail tab.
   if (isGoogleService(service) && !isAllowedGmailTabUrl(url)) return;
   // Never persist fragile Zoho One CRM deep links — they blank after restart.
@@ -8516,11 +11698,23 @@ function hydrateLastUrls() {
       continue;
     }
     const service = getService(id);
-    if (service && !isUrlForService(service, url)) {
+    if (!service) {
       dirty = true;
       continue;
     }
-    const safe = service ? safeStartUrlForService(service, url) : url;
+    const allowed =
+      service.isCustom ||
+      isUrlForService(service, url) ||
+      (allowsZohoWorkspaceHubTabs(service.appId) && isInternalUrl(url, service));
+    if (!allowed) {
+      dirty = true;
+      continue;
+    }
+    const safe = service.isCustom
+      ? url
+      : isUrlForService(service, url)
+      ? safeStartUrlForService(service, url)
+      : url;
     if (safe !== url) dirty = true;
     cleaned[id] = safe;
     lastGoodUrls.set(id, safe);
@@ -8536,9 +11730,15 @@ function flushAllSessionCookies() {
   }
 }
 
-/** Warm status is chosen per app by the user; catalog type has no priority. */
+/** Warm status — includes catalog defaults (WhatsApp / Zoho) when unset. */
 function isKeepWarmService(id) {
   return getAppConfig(id).keepWarm === true;
+}
+
+/** User flame-marked keepWarm only (for the warm-slot quota). */
+function isExplicitKeepWarm(id) {
+  const stored = (settings.serviceConfigs || {})[id] || {};
+  return stored.keepWarm === true;
 }
 
 function warmSelectionLimit() {
@@ -8552,13 +11752,49 @@ function selectedWarmIds() {
     .map((service) => service.id);
 }
 
+function explicitWarmIds() {
+  return orderedServices()
+    .filter((service) => service.config?.enabled !== false && isExplicitKeepWarm(service.id))
+    .map((service) => service.id);
+}
+
 function reconcileWarmSelections() {
-  const selected = selectedWarmIds();
+  // Only demote user flame marks — never persist keepWarm:false over catalog defaults
+  // (that used to wipe Zoho CRM draft retention after Settings save).
+  const selected = explicitWarmIds();
   const limit = warmSelectionLimit();
   for (const id of selected.slice(limit)) {
     saveAppConfig(id, { keepWarm: false });
-    if (id !== activeServiceId) hibernateService(id);
+    if (id !== activeServiceId && !defaultKeepWarmForApp(getService(id)?.appId)) {
+      hibernateService(id);
+    }
   }
+}
+
+/**
+ * Recently used non-warm tabs stay resident so form drafts survive tab
+ * switches (e.g. CRM ↔ WhatsApp). Idle hibernate still unloads later.
+ * Low-memory Mint PCs skip the grace so RAM stays tight.
+ */
+function residentGraceMs() {
+  if (isLowMemoryMode()) return 0;
+  return 20 * 60_000;
+}
+
+function isEvictableBackground(id, entry) {
+  if (!id || id === activeServiceId) return false;
+  if (isKeepWarmService(id)) return false;
+  const grace = residentGraceMs();
+  if (!grace) return true;
+  const last = Number(entry?.lastUsed) || 0;
+  if (last && Date.now() - last < grace) return false;
+  return true;
+}
+
+function listEvictableBackground() {
+  return [...views.entries()]
+    .filter(([viewId, entry]) => isEvictableBackground(viewId, entry))
+    .sort((a, b) => (a[1].lastUsed || 0) - (b[1].lastUsed || 0));
 }
 
 /** Background wake — loads without stealing the active tab. */
@@ -8567,10 +11803,8 @@ function softWakeService(id) {
   const service = getService(id);
   if (!service || service.config?.enabled === false) return false;
 
-  // Never park warm apps. Only drop non-warm background views for budget.
-  const evictable = [...views.entries()]
-    .filter(([viewId]) => viewId !== activeServiceId && !isKeepWarmService(viewId))
-    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+  // Never park warm apps. Only drop stale non-warm background views for budget.
+  const evictable = listEvictableBackground();
   while (views.size >= maxWarm() && evictable.length) {
     const [victimId] = evictable.shift();
     hibernateService(victimId);
@@ -8620,10 +11854,8 @@ function softWakeKeepWarmApps(exceptId = null) {
 
 function enforceResidentLimit() {
   // Usability first: never park flame/keepWarm apps for RAM.
-  // Only unload non-warm background guests beyond the warm budget.
-  const evictable = [...views.entries()]
-    .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
-    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+  // Only unload stale non-warm background guests beyond the warm budget.
+  const evictable = listEvictableBackground();
 
   while (views.size > maxWarm() && evictable.length) {
     const [id] = evictable.shift();
@@ -8632,9 +11864,7 @@ function enforceResidentLimit() {
 }
 
 function enforceWarmLimit() {
-  const evictable = [...views.entries()]
-    .filter(([id]) => id !== activeServiceId && !isKeepWarmService(id))
-    .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+  const evictable = listEvictableBackground();
 
   while (views.size > maxWarm() && evictable.length) {
     const [id] = evictable.shift();
@@ -8650,7 +11880,8 @@ function toggleKeepWarm(id) {
   const enabled = !isKeepWarmService(id);
   if (enabled) {
     const limit = warmSelectionLimit();
-    if (selectedWarmIds().length >= limit) {
+    // Quota applies to user flame marks; catalog defaults (WA/Zoho) stay free.
+    if (explicitWarmIds().length >= limit) {
       return {
         ok: false,
         error:
@@ -8714,6 +11945,13 @@ function activateService(id) {
 
   const previousId = activeServiceId;
   parkBackgroundViews(id);
+  // Reused warm CRM/Books tabs must NOT run blank-recovery reload — that wiped
+  // lead forms ~3–4s after switching back (false “blank” on white forms).
+  const reusedLiveView = (() => {
+    const existing = views.get(id);
+    const existingWc = existing?.view?.webContents;
+    return !!(existingWc && !existingWc.isDestroyed());
+  })();
   const entry = ensureLiveView(service);
   const keepWarm = isKeepWarmService(id);
   // Blind stale-reload destroyed warm Zoho/Arattai after ~90s away.
@@ -8739,6 +11977,32 @@ function activateService(id) {
   });
   setGuestHubActiveFlag(wc, true);
 
+  // Recover blank Hub link tabs after SSO, failed redirects, or reload.
+  if (service.isCustom && wc && !wc.isDestroyed()) {
+    try {
+      const cur = String(wc.getURL() || '');
+      const home =
+        linkTabSiteHome(cur) ||
+        linkTabSiteHome(lastGoodUrls.get(service.id) || '') ||
+        linkTabSiteHome(service.url);
+      const target =
+        (home && home.startsWith('http') ? home : '') ||
+        startUrlForService(service) ||
+        service.url;
+      if (
+        target &&
+        target.startsWith('http') &&
+        (isBlankOrErrorGuestUrl(cur) ||
+          cur.startsWith('chrome-error://') ||
+          cur === 'chrome://blank/')
+      ) {
+        wc.loadURL(target).catch(() => {});
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   if (wasStale && !wc.isLoading()) {
     try {
       entry.__lastStaleReloadAt = Date.now();
@@ -8746,8 +12010,8 @@ function activateService(id) {
     } catch {
       // ignore
     }
-  } else if (shouldRunPortalBlankRecovery(service)) {
-    // Delayed blank checks only — do not reload a healthy warm tab.
+  } else if (shouldRunPortalBlankRecovery(service) && !reusedLiveView) {
+    // Cold start only — never reload a parked CRM form that looked “blank”.
     schedulePortalHealthChecks(id);
     if (service.appId === 'zoho-one') {
       try {
@@ -8764,9 +12028,11 @@ function activateService(id) {
   scheduleActiveGuestSurfaceChecks(id);
   entry.__parked = false;
 
-  // Only user-selected apps remain loaded after switching away.
-  if (previousId && previousId !== id && !isKeepWarmService(previousId)) {
-    hibernateService(previousId);
+  // Keep the previous tab resident (parked/detached) so form drafts survive.
+  // Idle hibernate + warm-budget eviction (with grace) reclaim RAM later.
+  if (previousId && previousId !== id) {
+    const prev = views.get(previousId);
+    if (prev) prev.lastUsed = Date.now();
   }
 
   if (!overlayOpen) {
@@ -8777,6 +12043,20 @@ function activateService(id) {
     setTimeout(() => layoutActiveView(), 100);
     setTimeout(() => layoutActiveView(), 300);
     focusActiveContents();
+  }
+
+  // Clear Hub/AI error drafts that WhatsApp may have persisted in the send box.
+  // Clipboard-match clearing is only for pin-open (too aggressive on every tab switch).
+  if (isInboxAppId(service.appId)) {
+    const sanitizeId = id;
+    setTimeout(() => {
+      if (activeServiceId !== sanitizeId) return;
+      const live = views.get(sanitizeId)?.view?.webContents;
+      if (!live || live.isDestroyed()) return;
+      sanitizeComposeAfterHubChatOpen(live, { allowClipboardMatch: false }).catch(
+        () => {},
+      );
+    }, 450);
   }
 
   syncAllGuestPerfModes();
@@ -8800,7 +12080,9 @@ function activateByOffset(offset) {
 function toggleFocusMode() {
   settings = saveSettings({ focusMode: !settings.focusMode });
   for (const [id, entry] of views.entries()) {
-    applyFocusMode(entry.view.webContents, id);
+    const wc = entry?.view?.webContents;
+    if (!wc || wc.isDestroyed()) continue;
+    applyFocusMode(wc, id);
   }
   refreshBadge();
   broadcastState();
@@ -8825,6 +12107,46 @@ function hibernateBackground({ forceWarm = false } = {}) {
   broadcastState();
 }
 
+/**
+ * Copy the active guest page URL (http/https) for sharing in WhatsApp/Arattai.
+ * Like Chrome’s address-bar copy — Hub has no address bar, so this is the shortcut.
+ */
+function copyActivePageLink() {
+  if (!activeServiceId) {
+    return { ok: false, error: 'Open an app first' };
+  }
+  const wc = views.get(activeServiceId)?.view?.webContents;
+  if (!wc || wc.isDestroyed()) {
+    return { ok: false, error: 'No page open' };
+  }
+  let url = '';
+  try {
+    url = String(wc.getURL() || '').trim();
+  } catch {
+    return { ok: false, error: 'Could not read page link' };
+  }
+  if (!/^https?:\/\//i.test(url)) {
+    return { ok: false, error: 'This page has no shareable link yet' };
+  }
+  try {
+    clipboard.writeText(url);
+  } catch {
+    return { ok: false, error: 'Could not copy to clipboard' };
+  }
+  try {
+    if (Notification.isSupported()) {
+      new Notification({
+        title: 'Link copied',
+        body: url.length > 120 ? `${url.slice(0, 117)}…` : url,
+        silent: true,
+      }).show();
+    }
+  } catch {
+    // ignore — clipboard already has the URL
+  }
+  return { ok: true, url };
+}
+
 function reloadActive() {
   if (!activeServiceId) return;
   const entry = views.get(activeServiceId);
@@ -8833,7 +12155,35 @@ function reloadActive() {
     activateService(activeServiceId);
     return;
   }
-  entry.view.webContents.reload();
+  const wc = entry.view?.webContents;
+  if (!wc || wc.isDestroyed()) {
+    hibernateService(activeServiceId, { force: true });
+    activateService(activeServiceId);
+    return;
+  }
+  // Hard reload during WhatsApp/Arattai QR / login can sign the user out.
+  try {
+    const url = String(wc.getURL() || '');
+    const title = String(wc.getTitle() || '');
+    if (
+      isAuthOrLoginUrl(url) ||
+      /scan|log\s*in|qr code|link with phone|stay logged in/i.test(title)
+    ) {
+      repaintActiveGuestView({ reason: 'reload-guard-login' });
+      return;
+    }
+  } catch {
+    // ignore and fall through to reload
+  }
+  // Drop find markers before reload — some builds keep them across soft reloads.
+  if (isFindBarOpen()) {
+    closeFindBarWindow({ clear: true });
+  } else {
+    findBarLastQuery = '';
+    findBarRequestId = 0;
+    clearGuestFindHighlights(wc);
+  }
+  wc.reload();
 }
 
 function applyWindowPrefs() {
@@ -8866,27 +12216,32 @@ function currentState() {
       appCount: appsUsingProfile(p.id).length,
       locked: p.id === PRIMARY_PROFILE_ID,
     })),
-    catalog: APP_CATALOG.map((a) => ({
-      ...a,
-      count: countInstances(a.appId),
-      max: MAX_INSTANCES_PER_APP,
-      totalApps: totalAppCount(),
-      maxTotal: MAX_APPS_TOTAL,
-      canAdd:
-        totalAppCount() < MAX_APPS_TOTAL &&
-        countInstances(a.appId) < MAX_INSTANCES_PER_APP,
-    })),
+    catalog: APP_CATALOG.map((a) => {
+      const max = MAX_INSTANCES_PER_APP;
+      const count = countInstances(a.appId);
+      return {
+        ...a,
+        count,
+        max,
+        totalApps: totalAppCount(),
+        maxTotal: MAX_APPS_TOTAL,
+        canAdd: totalAppCount() < MAX_APPS_TOTAL && count < max,
+      };
+    }),
     limits: {
       maxAppsTotal: MAX_APPS_TOTAL,
       maxPerApp: MAX_INSTANCES_PER_APP,
       maxNameLength: MAX_APP_NAME_LENGTH,
       totalApps: totalAppCount(),
+      whatsappMax: MAX_INSTANCES_PER_APP,
+      whatsappSafeMode: isWhatsAppSafeMode(settings),
     },
     appVersion: app.getVersion(),
     isPackaged: app.isPackaged,
     unread: unreadForUi,
     totalUnread: totalUnread(),
     notifications: notificationLog,
+    downloadUnseen: downloadUnseenCount,
     pinnedPeople: sanitizePinnedPeople(settings.pinnedPeople || []),
     appMemory,
     ai: {
@@ -8898,6 +12253,9 @@ function currentState() {
           ? settings.aiProviderModels
           : {},
       language: settings.aiLanguage || 'en',
+      extraLanguages: sanitizeAiExtraLanguages(settings.aiExtraLanguages),
+      outputLanguages: aiOutputLanguages().map((l) => languageSectionFor(l)),
+      languageMeta: aiLanguageMetaLabel(),
       allowedAppIds: AI_ALLOWED_APP_IDS,
       languages: AI_LANGUAGES,
       providers: aiProvidersForUi(),
@@ -8920,14 +12278,51 @@ function currentState() {
       sentryDsn: settings.sentryDsn ? '[configured]' : '',
       hasErrorReportGithubToken: Boolean(settings.errorReportGithubToken),
       hasSentryDsnOverride: Boolean(settings.sentryDsn),
+      zohoCrmDc: sanitizeZohoCrmDc(settings.zohoCrmDc),
+      zohoCrmFleetUrl: String(settings.zohoCrmFleetUrl || ''),
+      zohoCrmFleetSyncedAt: String(settings.zohoCrmFleetSyncedAt || ''),
+      zohoCrm: {
+        enabled: settings.zohoCrmEnabled !== false,
+        dc: sanitizeZohoCrmDc(settings.zohoCrmDc),
+        fleetUrl: String(settings.zohoCrmFleetUrl || ''),
+        fleetSyncedAt: String(settings.zohoCrmFleetSyncedAt || ''),
+        scopes: ZOHO_CRM_OAUTH_SCOPES,
+        dataCenters: ZOHO_CRM_DCS.map((d) => ({ id: d.id, label: d.label })),
+        ...zohoCrmAuthStatus(),
+        ...zohoCrmFleetStatus(),
+      },
     },
     locked,
+    nav: activeNavState(),
   };
+}
+
+function activeNavState() {
+  const wc = activeServiceId
+    ? views.get(activeServiceId)?.view?.webContents
+    : null;
+  if (!wc || wc.isDestroyed()) {
+    return { canGoBack: false, canGoForward: false };
+  }
+  return {
+    canGoBack: wc.canGoBack(),
+    canGoForward: wc.canGoForward(),
+  };
+}
+
+function pushActiveNavState() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('dock:nav-state', activeNavState());
+}
+
+function scheduleActiveNavStatePush() {
+  setTimeout(() => pushActiveNavState(), 80);
 }
 
 function broadcastState() {
   mainWindow?.webContents.send('dock:state', currentState());
   pushNotifCenterData();
+  pushDownloadShelfData();
 }
 
 function shortcutEntry(id) {
@@ -8943,14 +12338,20 @@ function runMatchedShortcut(hit) {
   if (hit.action === 'back') {
     if (activeServiceId) {
       const wc = views.get(activeServiceId)?.view.webContents;
-      if (wc?.canGoBack()) wc.goBack();
+      if (wc?.canGoBack()) {
+        wc.goBack();
+        scheduleActiveNavStatePush();
+      }
     }
     return true;
   }
   if (hit.action === 'forward') {
     if (activeServiceId) {
       const wc = views.get(activeServiceId)?.view.webContents;
-      if (wc?.canGoForward()) wc.goForward();
+      if (wc?.canGoForward()) {
+        wc.goForward();
+        scheduleActiveNavStatePush();
+      }
     }
     return true;
   }
@@ -8982,6 +12383,23 @@ function attachShortcuts(webContents) {
 
     const key = String(input.key || '').toLowerCase();
 
+    // Escape closes the floating Find / Web-search popups from the guest page.
+    if (key === 'escape' && isWebSearchOpen()) {
+      event.preventDefault();
+      closeWebSearchWindow();
+      return;
+    }
+    if (key === 'escape' && isNotesOpen()) {
+      event.preventDefault();
+      closeNotesWindow();
+      return;
+    }
+    if (key === 'escape' && isFindBarOpen()) {
+      event.preventDefault();
+      closeFindBarWindow({ clear: true });
+      return;
+    }
+
     // Always-on reload (not user-remappable — reserved).
     if (input.control && !input.alt && !input.meta && key === 'r' && !input.shift) {
       event.preventDefault();
@@ -8996,6 +12414,8 @@ function attachShortcuts(webContents) {
       'nextTab',
       'settings',
       'search',
+      'webSearch',
+      'notes',
       'find',
       'print',
       'focusMode',
@@ -9008,6 +12428,17 @@ function attachShortcuts(webContents) {
       const entry = map[id];
       const hit = matchShortcut(entry, input);
       if (!hit) continue;
+      // Never steal Ctrl+K from WhatsApp / Arattai chat search — even if the
+      // user still has an old Web-search binding on Control+K.
+      if (id === 'webSearch') {
+        const accel = String(entry.accel || '').toLowerCase();
+        const svc = getService(activeServiceId);
+        const messaging =
+          svc?.appId === 'whatsapp' || svc?.appId === 'arattai';
+        if (messaging && /control\+k|commandorcontrol\+k/.test(accel)) {
+          return;
+        }
+      }
       event.preventDefault();
       if (id === 'settings') {
         mainWindow?.webContents.send('dock:open-settings');
@@ -9017,8 +12448,16 @@ function attachShortcuts(webContents) {
         mainWindow?.webContents.send('dock:open-search');
         return;
       }
+      if (id === 'webSearch') {
+        openWebSearchWindow();
+        return;
+      }
+      if (id === 'notes') {
+        openNotesWindow();
+        return;
+      }
       if (id === 'find') {
-        mainWindow?.webContents.send('dock:open-find');
+        openFindBarWindow();
         return;
       }
       if (id === 'print') {
@@ -9133,8 +12572,15 @@ function createTrayIcon(_badge) {
     image = getAppIcon();
   }
   if (!image.isEmpty()) {
-    // XFCE panel icons are typically ~22–24px; Cinnamon is similar.
-    const size = process.platform === 'linux' ? 24 : 32;
+    // XFCE / Cinnamon panels ~22–24px; Plasma StatusNotifier is often ~22px.
+    let size = 32;
+    if (process.platform === 'linux') {
+      try {
+        size = linuxIsPlasmaDesktop() ? 22 : 24;
+      } catch {
+        size = 24;
+      }
+    }
     image = image.resize({ width: size, height: size, quality: 'best' });
   }
   return image;
@@ -9191,6 +12637,11 @@ function ensureTray() {
     },
     { type: 'separator' },
     {
+      label: 'asperahub.com',
+      click: () => openExternalSafe(ASPERA_HUB_WEBSITE),
+    },
+    { type: 'separator' },
+    {
       label: 'Quit',
       click: () => {
         quitting = true;
@@ -9217,26 +12668,105 @@ function changeZoom(delta = 0, exact = null) {
   }
 }
 
+function clearGuestFindHighlights(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  findBarRequestId = 0;
+  // clearSelection removes Chromium find markers; call twice — some Linux
+  // builds keep the yellow paint after a single stop while a find is in flight.
+  // Do NOT start a new findInPage here and do NOT call this on every keystroke —
+  // that stole focus from WhatsApp compose after Find closed (v0.5.6 regression).
+  for (let i = 0; i < 2; i++) {
+    try {
+      webContents.stopFindInPage('clearSelection');
+    } catch {
+      // ignore
+    }
+  }
+}
+
 function findInActivePage(text, options = {}) {
   const webContents = views.get(activeServiceId)?.view.webContents;
   if (!webContents || webContents.isDestroyed()) return { ok: false };
-  const query = String(text || '');
+
+  // Never paint find marks while the Find popup is closed (chat-list search
+  // in Arattai/WhatsApp is a different feature — yellow marks confuse users).
+  if (!isFindBarOpen()) {
+    findBarLastQuery = '';
+    findBarRequestId = 0;
+    clearGuestFindHighlights(webContents);
+    return { ok: false, error: 'Find bar closed' };
+  }
+
+  const query = String(text || '').trim() ? String(text || '') : '';
+  findBarLastQuery = query;
+  const session = ++findBarSession;
+  const findNext = !!options.findNext;
+
   if (!query) {
-    webContents.stopFindInPage('clearSelection');
+    clearGuestFindHighlights(webContents);
+    // A prior findInPage can still emit found-in-page after clear and
+    // re-paint yellow matches — stop again on the next ticks.
+    setTimeout(() => {
+      if (session !== findBarSession) return;
+      clearGuestFindHighlights(webContents);
+    }, 0);
+    setTimeout(() => {
+      if (session !== findBarSession) return;
+      clearGuestFindHighlights(webContents);
+    }, 50);
+    setTimeout(() => {
+      if (session !== findBarSession) return;
+      clearGuestFindHighlights(webContents);
+    }, 150);
     return { ok: true, cleared: true };
   }
-  webContents.findInPage(query, {
+
+  // New query (not Next/Prev): cancel any in-flight find for "a" before
+  // starting "aspera", otherwise the late "a" paint sticks forever.
+  if (!findNext) {
+    try {
+      webContents.stopFindInPage('clearSelection');
+    } catch {
+      // ignore
+    }
+  }
+
+  const requestId = webContents.findInPage(query, {
     forward: options.forward !== false,
-    findNext: !!options.findNext,
+    findNext,
     matchCase: !!options.matchCase,
   });
-  return { ok: true };
+  findBarRequestId = Number(requestId) || 0;
+  return { ok: true, requestId: findBarRequestId };
 }
 
 function stopFindInActivePage() {
-  const webContents = views.get(activeServiceId)?.view.webContents;
-  if (!webContents || webContents.isDestroyed()) return { ok: false };
-  webContents.stopFindInPage('clearSelection');
+  findBarLastQuery = '';
+  findBarRequestId = 0;
+  findBarSession += 1;
+  const session = findBarSession;
+  // Clear on the active guest and every live guest — highlights can linger on
+  // a view that was active when Find started if the user switched tabs.
+  const targets = new Set();
+  const active = views.get(activeServiceId)?.view?.webContents;
+  if (active) targets.add(active);
+  for (const entry of views.values()) {
+    const wc = entry?.view?.webContents;
+    if (wc && !wc.isDestroyed()) targets.add(wc);
+  }
+  for (const wc of targets) clearGuestFindHighlights(wc);
+  setTimeout(() => {
+    if (session !== findBarSession) return;
+    for (const wc of targets) {
+      if (!wc.isDestroyed()) clearGuestFindHighlights(wc);
+    }
+  }, 80);
+  setTimeout(() => {
+    if (session !== findBarSession) return;
+    for (const wc of targets) {
+      if (!wc.isDestroyed()) clearGuestFindHighlights(wc);
+    }
+  }, 200);
   return { ok: true };
 }
 
@@ -9390,7 +12920,17 @@ function installApplicationMenu() {
         {
           label: 'Find…',
           accelerator: 'CommandOrControl+F',
-          click: () => mainWindow?.webContents.send('dock:open-find'),
+          click: () => openFindBarWindow(),
+        },
+        {
+          label: 'Web search…',
+          accelerator: 'CommandOrControl+E',
+          click: () => openWebSearchWindow(),
+        },
+        {
+          label: 'Notes…',
+          accelerator: 'CommandOrControl+Shift+N',
+          click: () => openNotesWindow(),
         },
       ],
     },
@@ -9471,6 +13011,14 @@ function installApplicationMenu() {
       label: 'Help',
       submenu: [
         {
+          label: 'Visit asperahub.com',
+          click: () => openExternalSafe(ASPERA_HUB_WEBSITE),
+        },
+        {
+          label: 'Open Aspera Connect…',
+          click: () => openAsperaConnectApp(),
+        },
+        {
           label: 'Support',
           accelerator: 'CommandOrControl+F1',
           click: () =>
@@ -9528,8 +13076,13 @@ function showAboutDialog() {
         electronVersion: process.versions.electron,
         chromeVersion: process.versions.chrome,
       }),
-      buttons: ['OK'],
+      buttons: ['Website', 'OK'],
+      defaultId: 1,
+      cancelId: 1,
       icon: getAppIcon(),
+    })
+    .then(({ response }) => {
+      if (response === 0) openExternalSafe(ASPERA_HUB_WEBSITE);
     })
     .finally(() => afterDialogSafe());
 }
@@ -9564,14 +13117,8 @@ function createWindow() {
     raiseDockWindow();
     return;
   }
-  const existing = BrowserWindow.getAllWindows().find(
-    (w) => w && !w.isDestroyed() && !w.getParentWindow()
-  );
-  if (existing) {
-    mainWindow = existing;
-    raiseDockWindow();
-    return;
-  }
+  // Do NOT adopt guest OAuth/SSO popups as the shell — they are parentless
+  // BrowserWindows and would leave users without a real Hub chrome window.
 
   const icon = electronNativeIcon();
   mainWindow = new BrowserWindow({
@@ -9591,6 +13138,11 @@ function createWindow() {
       sandbox: true,
     },
   });
+  try {
+    mainWindow.__asperaHubShell = true;
+  } catch {
+    // ignore
+  }
 
   installApplicationMenu();
   applyWindowPrefs();
@@ -9600,9 +13152,10 @@ function createWindow() {
 
   mainWindow.once('ready-to-show', () => {
     applyWindowIcon(mainWindow);
-    // Company desktops: always open full-screen workspace.
-    mainWindow.maximize();
+    // Company desktops: always open maximized. On Zorin/GNOME, show first —
+    // maximize-before-map is ignored and the Hub stays at default bounds.
     mainWindow.show();
+    ensureMainWindowMaximized({ withRetries: true });
     try {
       const crashFlag = path.join(app.getPath('userData'), 'gpu-crash-v1');
       if (fs.existsSync(crashFlag)) fs.unlinkSync(crashFlag);
@@ -9645,6 +13198,8 @@ function createWindow() {
   });
   mainWindow.on('unmaximize', () => setTimeout(() => layoutActiveView(), 50));
   mainWindow.on('show', () => {
+    // Zorin/GNOME may map the window restored; re-assert maximize after show.
+    ensureMainWindowMaximized({ withRetries: false });
     setTimeout(() => layoutActiveView(), 50);
     const awayMs = awayStartedAt ? Date.now() - awayStartedAt : 0;
     if (awayMs >= 3 * 60_000 || peakIdleSec >= 3 * 60) {
@@ -9655,6 +13210,8 @@ function createWindow() {
     }
   });
   mainWindow.on('restore', () => {
+    // After un-minimize, company fleets stay maximized (not previous normal size).
+    ensureMainWindowMaximized({ withRetries: true });
     setTimeout(() => repaintActiveGuestView({ reason: 'window-restore' }), 40);
   });
   mainWindow.on('hide', () => {
@@ -9895,9 +13452,18 @@ dockHandle('dock:open-error-reports', () => {
 });
 
 dockHandle('dock:update-status', () => getUpdateStatus());
+dockHandle('dock:open-external', (_e, url) => {
+  const ok = openExternalSafe(url);
+  return { ok: !!ok };
+});
+
 dockHandle('dock:show-about', () => {
   showAboutDialog();
   return { version: app.getVersion() };
+});
+dockHandle('dock:open-aspera-connect', () => {
+  const ok = openAsperaConnectApp();
+  return { ok: !!ok };
 });
 dockHandle('dock:update-check', () => checkForUpdates({ silent: false }));
 dockHandle('dock:update-download', () => downloadUpdate());
@@ -9927,6 +13493,69 @@ dockHandle('dock:find-in-page', (_e, text, options) =>
   findInActivePage(text, options || {}),
 );
 dockHandle('dock:stop-find', () => stopFindInActivePage());
+dockHandle('dock:open-find-bar', (_e, payload) =>
+  openFindBarWindow({
+    dark: typeof payload?.dark === 'boolean' ? payload.dark : null,
+  }),
+);
+dockHandle('dock:close-find-bar', () => {
+  closeFindBarWindow({ clear: true });
+  return { ok: true };
+});
+dockHandle('dock:open-web-search', (_e, payload) =>
+  openWebSearchWindow({
+    dark: typeof payload?.dark === 'boolean' ? payload.dark : null,
+  }),
+);
+dockHandle('dock:close-web-search', () => {
+  closeWebSearchWindow();
+  return { ok: true };
+});
+dockHandle('dock:open-notes', (_e, payload) =>
+  openNotesWindow({
+    dark: typeof payload?.dark === 'boolean' ? payload.dark : null,
+  }),
+);
+dockHandle('dock:close-notes', () => {
+  closeNotesWindow();
+  return { ok: true };
+});
+findBarHandle('find-bar:find', (_e, text, options) =>
+  findInActivePage(text, options || {}),
+);
+findBarHandle('find-bar:close', () => {
+  closeFindBarWindow({ clear: true });
+  return { ok: true };
+});
+webSearchHandle('web-search:go', (_e, text) => runWebSearch(text));
+webSearchHandle('web-search:close', () => {
+  closeWebSearchWindow();
+  return { ok: true };
+});
+notesHandle('notes:save', (_e, payload) => {
+  const result = upsertNote(settings.notes || [], payload || {});
+  if (result.ok) {
+    settings = saveSettings({ notes: result.notes });
+    pushNotes({ notes: result.notes });
+  }
+  return result;
+});
+notesHandle('notes:delete', (_e, id) => {
+  const result = deleteNote(settings.notes || [], id);
+  settings = saveSettings({ notes: result.notes });
+  pushNotes({ notes: result.notes });
+  return result;
+});
+notesHandle('notes:copy', (_e, text) => {
+  const value = String(text || '');
+  if (!value.trim()) return { ok: false, error: 'Nothing to copy.' };
+  clipboard.writeText(value);
+  return { ok: true };
+});
+notesHandle('notes:close', () => {
+  closeNotesWindow();
+  return { ok: true };
+});
 dockHandle('dock:print-active', () => printActivePage());
 dockHandle('dock:remove-service', (_e, id) => removeService(id));
 dockHandle('dock:create-profile', (_e, name) => createProfile(name));
@@ -10004,6 +13633,21 @@ dockHandle('dock:toggle-notif-center', (_e, payload) => {
   openNotifCenterWindow(payload || {});
   return { ok: true, open: true };
 });
+dockHandle('dock:open-download-shelf', (_e, payload) =>
+  openDownloadShelfWindow(payload || {}),
+);
+dockHandle('dock:close-download-shelf', () => {
+  closeDownloadShelfWindow();
+  return { ok: true };
+});
+dockHandle('dock:toggle-download-shelf', (_e, payload) => {
+  if (downloadShelfWindow && !downloadShelfWindow.isDestroyed()) {
+    closeDownloadShelfWindow();
+    return { ok: true, open: false };
+  }
+  openDownloadShelfWindow(payload || {});
+  return { ok: true, open: true };
+});
 appMenuHandle('app-menu:action', (_e, type, value) => handleAppMenuAction(type, value));
 appMenuHandle('app-menu:close', () => {
   closeAppContextMenu();
@@ -10021,12 +13665,150 @@ notifCenterHandle('notif-center:close', () => {
   closeNotifCenterWindow();
   return { ok: true };
 });
+downloadShelfHandle('download-shelf:action', (_e, type, value) =>
+  handleDownloadShelfAction(type, value),
+);
+downloadShelfHandle('download-shelf:close', () => {
+  closeDownloadShelfWindow();
+  return { ok: true };
+});
+ipcMain.on('download-shelf:drag-start', (event, downloadId) => {
+  startDownloadShelfFileDrag(event, downloadId);
+});
 aiResultHandle('ai-result:copy', (_e, text) => {
   clipboard.writeText(String(text || ''));
   return { ok: true };
 });
 aiResultHandle('ai-result:close', () => {
   closeAiResultWindow();
+  return { ok: true };
+});
+aiResultHandle('ai-result:read-clipboard', () => {
+  try {
+    return clipboard.readText() || '';
+  } catch {
+    return '';
+  }
+});
+aiResultHandle('ai-result:paste-clipboard', () => pasteAiInboxFromClipboard());
+aiResultHandle('ai-result:run-clipboard', async (_e, payload) => {
+  const body = payload && typeof payload === 'object' ? payload : {};
+  const skillRaw = String(body.skill || 'summarize');
+  const skill =
+    skillRaw === 'refine' || skillRaw === 'suggest-reply' ? skillRaw : 'summarize';
+  const text = String(body.text || '').trim();
+  const attachmentId = String(body.attachmentId || '').trim();
+  const hasAttach =
+    attachmentId &&
+    aiInboxAttachment &&
+    aiInboxAttachment.id === attachmentId;
+  if (!text && !hasAttach) {
+    return {
+      ok: false,
+      error: 'Paste text or a screenshot first, or attach a PDF/image for Summarize.',
+    };
+  }
+  if (hasAttach && skill !== 'summarize') {
+    return {
+      ok: false,
+      error:
+        'PDF/image attachments only work with Summarize. Clear the file for Polish or Suggest reply.',
+    };
+  }
+  return runAsperaAiSkill(skill, {
+    selectionText: text,
+    dark: !!body.dark,
+    attachmentId: hasAttach ? attachmentId : '',
+  });
+});
+aiResultHandle('ai-result:attach-file', (_e, payload) => {
+  const body = payload && typeof payload === 'object' ? payload : {};
+  return stageAiInboxAttachment({
+    name: body.name,
+    mime: body.mime,
+    base64: body.base64,
+  });
+});
+aiResultHandle('ai-result:clear-attachment', () => {
+  clearAiInboxAttachment();
+  return { ok: true };
+});
+aiResultHandle('ai-result:attachment-meta', () => ({
+  ok: true,
+  attachment: aiAttachmentPublicMeta(),
+}));
+aiResultHandle('ai-result:new-paste', () => {
+  clearAiInboxAttachment();
+  return openAsperaAiInbox({ dark: false });
+});
+crmLookupHandle('crm-lookup:copy', (_e, text) => {
+  clipboard.writeText(String(text || ''));
+  return { ok: true };
+});
+crmLookupHandle('crm-lookup:prepare-copy', async (_e, payload = {}) => {
+  const mode = String(payload?.mode || 'deal');
+  let fallback = '';
+  let prompt = '';
+  if (mode === 'digest') {
+    const deals = Array.isArray(payload?.deals) ? payload.deals : [];
+    const query = String(payload?.query || '');
+    fallback = formatDealsWhatsAppDigest(deals, query);
+    prompt = buildDealsWhatsAppDigestPrepPrompt(deals, query);
+  } else {
+    const deal = payload?.deal && typeof payload.deal === 'object' ? payload.deal : {};
+    fallback = formatDealWhatsAppMessage(deal);
+    prompt = buildDealWhatsAppPrepPrompt(deal);
+  }
+
+  if (!fallback.trim()) {
+    return { ok: false, error: 'Nothing to copy', text: '', usedAi: false };
+  }
+
+  if (settings.aiEnabled === false) {
+    return { ok: true, text: fallback, usedAi: false, reason: 'ai-disabled' };
+  }
+
+  const { routeOrder } = aiSettingsSnapshot();
+  if (!routeOrder.length) {
+    return { ok: true, text: fallback, usedAi: false, reason: 'no-key' };
+  }
+
+  try {
+    const result = await runAiCompletionWithFailover(prompt);
+    syncPreferredAiProvider();
+    const text = sanitizePreparedWhatsAppMessage(result?.text, fallback);
+    if (!text || text === fallback) {
+      return { ok: true, text: fallback, usedAi: false, reason: 'empty' };
+    }
+    return {
+      ok: true,
+      text,
+      usedAi: true,
+      provider: result.providerId,
+      model: result.model,
+    };
+  } catch {
+    return { ok: true, text: fallback, usedAi: false, reason: 'ai-failed' };
+  }
+});
+crmLookupHandle('crm-lookup:close', () => {
+  closeCrmLookupWindow();
+  return { ok: true };
+});
+crmLookupHandle('crm-lookup:open-deal', (_e, url) => {
+  const href = String(url || '').trim();
+  if (!/^https?:\/\//i.test(href)) return { ok: false, error: 'Invalid deal URL' };
+  closeCrmLookupWindow();
+  const zoho =
+    orderedServices().find((s) => s.appId === 'zoho-crm') ||
+    orderedServices().find((s) => String(s.appId || '').startsWith('zoho')) ||
+    null;
+  const opened = openUrlAsHubAppTab(href, zoho);
+  if (!opened?.ok) {
+    activateService(zoho?.id || activeServiceId);
+    const entry = views.get(zoho?.id || activeServiceId);
+    entry?.view?.webContents?.loadURL(href).catch(() => {});
+  }
   return { ok: true };
 });
 aiResultHandle('ai-result:suggest-reply', () => runSuggestRepliesFromAiResult());
@@ -10079,7 +13861,7 @@ forwardPickerHandle('forward-picker:pick', (_e, serviceId) =>
   deliverForwardToTarget(String(serviceId || '')),
 );
 forwardPickerHandle('forward-picker:close', () => {
-  closeForwardPickerWindow();
+  closeForwardPickerWindow({ clearPayload: true });
   return { ok: true };
 });
 async function commitInstalledExtension(installed) {
@@ -10172,7 +13954,7 @@ extensionsHandle('extensions:install-package', async () => {
 });
 extensionsHandle('extensions:open-webstore', async (_e, input) => {
   const url = chromeWebStoreUrl(input);
-  await shell.openExternal(url);
+  openExternalSafe(url);
   return { ok: true, url };
 });
 extensionsHandle('extensions:load-unpacked', async () => {
@@ -10216,7 +13998,11 @@ extensionsHandle('extensions:remove', async (_e, id) => {
   return { ok: true };
 });
 extensionsHandle('extensions:reload-guests', async () => {
-  await syncExtensionsToAllGuestSessions();
+  try {
+    await syncExtensionsToAllGuestSessions();
+  } catch (error) {
+    console.warn('[extensions] reload-guests sync', error?.message || error);
+  }
   reloadAllGuestViews();
   pushExtensionsManagerData();
   return { ok: true };
@@ -10230,6 +14016,9 @@ dockHandle('dock:ai-status', () => ({
       ? settings.aiProviderModels
       : {},
   language: settings.aiLanguage || 'en',
+  extraLanguages: sanitizeAiExtraLanguages(settings.aiExtraLanguages),
+  outputLanguages: aiOutputLanguages().map((l) => languageSectionFor(l)),
+  languageMeta: aiLanguageMetaLabel(),
   allowedAppIds: AI_ALLOWED_APP_IDS,
   languages: AI_LANGUAGES,
   providers: aiProvidersForUi(),
@@ -10255,6 +14044,175 @@ dockHandle('dock:ai-set-key', (_e, providerId, apiKey) => {
   }
   broadcastState();
   return result;
+});
+dockHandle('dock:zoho-crm-status', () => ({
+  ok: true,
+  enabled: settings.zohoCrmEnabled !== false,
+  dc: sanitizeZohoCrmDc(settings.zohoCrmDc),
+  fleetUrl: String(settings.zohoCrmFleetUrl || ''),
+  fleetSyncedAt: String(settings.zohoCrmFleetSyncedAt || ''),
+  scopes: ZOHO_CRM_OAUTH_SCOPES,
+  dataCenters: ZOHO_CRM_DCS.map((d) => ({ id: d.id, label: d.label })),
+  ...zohoCrmAuthStatus(),
+  ...zohoCrmFleetStatus(),
+}));
+dockHandle('dock:zoho-crm-save', (_e, payload) => {
+  const body = payload && typeof payload === 'object' ? payload : {};
+  const dcId = sanitizeZohoCrmDc(body.dc || body.zohoCrmDc || settings.zohoCrmDc);
+  const dc = resolveZohoCrmDc(dcId);
+  const patch = { zohoCrmDc: dcId };
+  if (typeof body.enabled === 'boolean') {
+    patch.zohoCrmEnabled = body.enabled;
+  }
+  if (body.fleetUrl != null || body.zohoCrmFleetUrl != null) {
+    patch.zohoCrmFleetUrl = normalizeFleetApiUrl(
+      body.fleetUrl ?? body.zohoCrmFleetUrl,
+    );
+  }
+  settings = saveSettings(patch);
+  if (body.fleetToken != null) {
+    setZohoCrmFleetToken(body.fleetToken);
+  }
+  const result = setZohoCrmAuth({
+    clientId: body.clientId,
+    clientSecret: body.clientSecret,
+    refreshToken: body.refreshToken,
+    apiDomain: dc.apiDomain,
+    accountsUrl: dc.accountsUrl,
+    dcId: dc.id,
+  });
+  clearZohoCrmAccessCache();
+  broadcastState();
+  return {
+    ok: true,
+    ...result,
+    ...zohoCrmFleetStatus(),
+    dc: dcId,
+    fleetUrl: String(settings.zohoCrmFleetUrl || ''),
+  };
+});
+dockHandle('dock:zoho-crm-fleet-pull', async (_e, payload) => {
+  const body = payload && typeof payload === 'object' ? payload : {};
+  const urlFromBody = normalizeFleetApiUrl(
+    body.fleetUrl ?? body.zohoCrmFleetUrl ?? '',
+  );
+  const fleetUrl = urlFromBody || normalizeFleetApiUrl(settings.zohoCrmFleetUrl);
+  if (urlFromBody) {
+    settings = saveSettings({ zohoCrmFleetUrl: fleetUrl });
+  }
+  if (body.fleetToken != null) {
+    setZohoCrmFleetToken(body.fleetToken);
+  }
+  const token = getZohoCrmFleetToken();
+  const credentialsUrl = buildFleetCredentialsUrl(fleetUrl);
+  if (!credentialsUrl) {
+    return {
+      ok: false,
+      error: 'Set a valid HTTPS Fleet API URL (your Vercel project URL).',
+    };
+  }
+  if (!token) {
+    return { ok: false, error: 'Set the Fleet token before fetching.' };
+  }
+  try {
+    const response = await fetch(credentialsUrl, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+    });
+    let json = null;
+    try {
+      json = await response.json();
+    } catch {
+      json = null;
+    }
+    if (!response.ok) {
+      const errMsg =
+        (json && json.error) ||
+        `Fleet API returned HTTP ${response.status}.`;
+      return { ok: false, error: String(errMsg) };
+    }
+    const parsed = parseFleetCredentialsBody(json);
+    if (!parsed.ok) return parsed;
+    const dcId = sanitizeZohoCrmDc(parsed.dc);
+    const dc = resolveZohoCrmDc(dcId);
+    const auth = setZohoCrmAuth({
+      clientId: parsed.clientId,
+      clientSecret: parsed.clientSecret,
+      refreshToken: parsed.refreshToken,
+      apiDomain: dc.apiDomain,
+      accountsUrl: dc.accountsUrl,
+      dcId: dc.id,
+    });
+    const syncedAt = new Date().toISOString();
+    settings = saveSettings({
+      zohoCrmEnabled: true,
+      zohoCrmDc: dcId,
+      zohoCrmFleetUrl: fleetUrl,
+      zohoCrmFleetSyncedAt: syncedAt,
+    });
+    clearZohoCrmAccessCache();
+    broadcastState();
+    return {
+      ok: true,
+      ...auth,
+      ...zohoCrmFleetStatus(),
+      dc: dcId,
+      fleetUrl,
+      fleetSyncedAt: syncedAt,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: String(error?.message || error || 'Fleet fetch failed.'),
+    };
+  }
+});
+dockHandle('dock:zoho-crm-clear', () => {
+  const result = clearZohoCrmAuth();
+  clearZohoCrmAccessCache();
+  broadcastState();
+  return result;
+});
+dockHandle('dock:zoho-crm-test', async () => {
+  if (settings.zohoCrmEnabled === false) {
+    return { ok: false, error: 'Zoho CRM lookup is disabled.' };
+  }
+  return testZohoCrmConnection({
+    dcId: sanitizeZohoCrmDc(settings.zohoCrmDc),
+  });
+});
+dockHandle('dock:zoho-crm-connect', async (_e, payload) => {
+  const body = payload && typeof payload === 'object' ? payload : {};
+  const dcId = sanitizeZohoCrmDc(body.dc || settings.zohoCrmDc);
+  const dc = resolveZohoCrmDc(dcId);
+  const stored = getZohoCrmAuth({ dcId });
+  try {
+    const result = await exchangeGrantCode({
+      clientId: String(body.clientId || '').trim() || stored.clientId,
+      clientSecret: String(body.clientSecret || '').trim() || stored.clientSecret,
+      code: body.code || body.grantCode,
+      accountsUrl: dc.accountsUrl,
+      apiDomain: dc.apiDomain,
+      dcId: dc.id,
+      redirectUri: body.redirectUri || '',
+    });
+    settings = saveSettings({
+      zohoCrmEnabled: true,
+      zohoCrmDc: dcId,
+    });
+    broadcastState();
+    return result;
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+});
+dockHandle('dock:zoho-crm-lookup', async (_e, payload) => {
+  const text = String(payload?.query || payload?.selectionText || '');
+  const dark = !!payload?.dark;
+  return lookupZohoCrmDeals(text, { dark });
 });
 dockHandle('dock:ai-clear-key', (_e, providerId) => {
   const id = String(providerId || '').trim();
@@ -10302,27 +14260,40 @@ dockHandle('dock:ai-reset-route', () =>
 dockHandle('dock:ai-catch-up', (_e, opts) =>
   runAsperaAiSkill('catch-up', opts || {}),
 );
+dockHandle('dock:ai-open-inbox', (_e, opts) => openAsperaAiInbox(opts || {}));
 dockHandle('dock:ai-summarize', (_e, opts) =>
-  runAsperaAiSkill('summarize', opts || {}),
+  openAsperaAiInbox({ ...(opts || {}), skill: 'summarize' }),
 );
 dockHandle('dock:ai-refine', (_e, opts) =>
-  runAsperaAiSkill('refine', opts || {}),
+  openAsperaAiInbox({ ...(opts || {}), skill: 'refine' }),
 );
 dockHandle('dock:toggle-keep-warm', (_e, id) => toggleKeepWarm(id));
 dockHandle('dock:save-app-config', (_e, id, incoming) => {
   if (!getService(id)) return { ok: false, error: 'Not found' };
   const patch = { ...(incoming || {}) };
-  // Company default: block page injection unless explicitly enabled.
-  if (!settings.allowPageInjection) {
+  // Company default: injection only with allowPageInjection AND ASPERADOCK_ADMIN=1.
+  if (!isPageInjectionEnabled(settings)) {
     delete patch.injectJs;
     delete patch.injectCss;
     delete patch.stylishUrl;
+  } else if (patch.stylishUrl != null) {
+    const httpsUrl = normalizeStylishHttpsUrl(patch.stylishUrl);
+    if (String(patch.stylishUrl || '').trim() && !httpsUrl) {
+      return { ok: false, error: 'Stylish URL must be HTTPS' };
+    }
+    patch.stylishUrl = httpsUrl || '';
   }
 
   if (patch.profileId != null) {
     const moved = setInstanceProfile(id, patch.profileId);
     if (!moved.ok) return moved;
     delete patch.profileId;
+  }
+
+  if ('linkHandling' in patch) {
+    const raw = patch.linkHandling;
+    if (raw == null || raw === '' || raw === 'default') patch.linkHandling = null;
+    else patch.linkHandling = normalizeLinkHandling(raw, 'block');
   }
 
   const labels = { ...(settings.serviceLabels || {}) };
@@ -10407,12 +14378,19 @@ dockHandle('dock:app-navigate', (_e, id, action) => {
     if (action === 'home' || action === 'reload') return { ok: true };
   }
   const wc = entry.view.webContents;
-  if (action === 'back' && wc.canGoBack()) wc.goBack();
-  else if (action === 'forward' && wc.canGoForward()) wc.goForward();
-  else if (action === 'reload') wc.reload();
-  else if (action === 'home') {
+  if (action === 'back' && wc.canGoBack()) {
+    wc.goBack();
+    scheduleActiveNavStatePush();
+  } else if (action === 'forward' && wc.canGoForward()) {
+    wc.goForward();
+    scheduleActiveNavStatePush();
+  } else if (action === 'reload') {
+    wc.reload();
+  } else if (action === 'home') {
     const service = getService(id);
-    if (service) wc.loadURL(startUrlForService(service) || service.url);
+    if (service) {
+      wc.loadURL(startUrlForService(service) || service.url);
+    }
   } else if (action === 'devtools') {
     if (app.isPackaged && !settings.allowGuestDevTools) {
       return { ok: false, error: 'Guest DevTools disabled' };
@@ -10435,6 +14413,7 @@ dockHandle('dock:reload-active', () => {
   reloadActive();
   return { ok: true };
 });
+dockHandle('dock:copy-active-link', () => copyActivePageLink());
 dockHandle('dock:toggle-focus', () => {
   toggleFocusMode();
   return { focusMode: settings.focusMode };
@@ -10466,6 +14445,12 @@ dockHandle('dock:save-settings', (_e, patch) => {
   }
   if (next.sentryDsn === '[configured]') {
     delete next.sentryDsn;
+  }
+  if (next.zohoCrmDc != null) {
+    next.zohoCrmDc = sanitizeZohoCrmDc(next.zohoCrmDc);
+  }
+  if (next.zohoCrmFleetUrl != null) {
+    next.zohoCrmFleetUrl = normalizeFleetApiUrl(next.zohoCrmFleetUrl);
   }
   if (next.errorReportUrl != null) {
     const reportUrl = String(next.errorReportUrl || '').trim();
@@ -10501,6 +14486,15 @@ dockHandle('dock:save-settings', (_e, patch) => {
   }
   if (next.lockEnabled === false) {
     next.lockPasswordHash = '';
+  }
+  if (next.linkHandling != null) {
+    next.linkHandling = normalizeLinkHandling(next.linkHandling, 'hub-tab');
+  }
+  if (next.updateChannel != null && next.updateChannel !== 'stable') {
+    // Beta feed is unpublished on GitHub — keep custom mirrors via updateFeedUrl.
+    if (!String(next.updateFeedUrl || settings.updateFeedUrl || '').trim()) {
+      next.updateChannel = 'stable';
+    }
   }
   // Low-memory mode clamps warm/hibernate and turns GPU off (relaunch needed).
   // Keep at least 2 warm slots so multi-WhatsApp switching still works.
@@ -10545,13 +14539,19 @@ dockHandle('dock:save-settings', (_e, patch) => {
   initSentryMain(settings);
   layoutActiveView();
   for (const [id, entry] of views.entries()) {
-    applyFocusMode(entry.view.webContents, id);
+    const wc = entry?.view?.webContents;
+    if (!wc || wc.isDestroyed()) continue;
+    applyFocusMode(wc, id);
     const cfg = getAppConfig(id);
     const langs = cfg.spellChecker || settings.spellChecker || ['en-US'];
-    entry.view.webContents.session.setSpellCheckerLanguages(
-      Array.isArray(langs) && langs.length ? langs : ['en-US'],
-    );
-    entry.view.webContents.setAudioMuted(settings.muted || !cfg.allowSounds);
+    try {
+      wc.session.setSpellCheckerLanguages(
+        Array.isArray(langs) && langs.length ? langs : ['en-US'],
+      );
+      wc.setAudioMuted(settings.muted || !cfg.allowSounds);
+    } catch {
+      // ignore destroyed session races
+    }
   }
   refreshBadge();
   broadcastState();
@@ -10694,6 +14694,7 @@ app.whenReady().then(async () => {
     app.setName('Aspera Hub');
   }
   settings = loadSettings();
+  initDownloadHistory(app.getPath('userData'));
   try {
     const userData = app.getPath('userData');
     fs.chmodSync(userData, 0o700);
@@ -10743,7 +14744,8 @@ app.whenReady().then(async () => {
   });
   startAutoUpdate();
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+    else raiseDockWindow();
   });
 });
 
@@ -10755,9 +14757,8 @@ app.on('second-instance', () => {
     raiseDockWindow();
     return;
   }
-  if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
-  }
+  // Shell missing — recreate even if guest OAuth popups are still open.
+  createWindow();
 });
 
 app.on('before-quit', () => {

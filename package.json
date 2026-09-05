@@ -1,8 +1,9 @@
 {
   "name": "asperadock",
   "productName": "Aspera Hub",
-  "version": "0.4.39",
+  "version": "0.5.76",
   "description": "Aspera Hub — free Linux company workspace for WhatsApp, Arattai, Google Workspace, and Zoho",
+  "homepage": "https://asperahub.com",
   "main": ".vite/build/main.js",
   "private": true,
   "scripts": {
@@ -12,10 +13,12 @@
     "package": "electron-forge package",
     "make": "electron-forge make",
     "publish": "electron-forge publish",
+    "release:check": "node scripts/assert-release-from-master.mjs",
     "publish:update": "node scripts/publish-update.mjs",
     "deploy": "node scripts/deploy.mjs",
     "lint": "echo \"No linter configured\"",
     "test": "node --test test/**/*.mjs",
+    "test:fleet": "node --test test/liveFleetGuardrails.test.mjs test/catalogTabClose.test.mjs test/zohoWorkdriveCatalog.test.mjs test/sharedProfileTabs.test.mjs",
     "preview:bar": "node scripts/preview-bar.mjs && electron scripts/shot.cjs scripts/preview-bar.html scripts/preview-bar.png 1366 110 --no-sandbox --disable-gpu",
     "fix-sandbox": "echo \"Run: sudo chown root:root node_modules/electron/dist/chrome-sandbox && sudo chmod 4755 node_modules/electron/dist/chrome-sandbox\""
   },
@@ -41,11 +44,12 @@
     "@electron-forge/plugin-fuses": "^7.11.2",
     "@electron-forge/plugin-vite": "^7.11.2",
     "@electron/fuses": "^1.8.0",
-    "electron": "^37.2.0",
+    "electron": "37.10.3",
     "vite": "^5.4.19"
   },
   "dependencies": {
     "@sentry/electron": "^7.16.0",
-    "electron-squirrel-startup": "^1.0.1"
+    "electron-squirrel-startup": "^1.0.1",
+    "pdfjs-dist": "^4.10.38"
   }
 }

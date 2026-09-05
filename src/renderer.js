@@ -27,15 +27,24 @@ const els = {
   appsTop: document.getElementById('apps-top'),
   lockBtn: document.getElementById('lock-btn'),
   addAppBtn: document.getElementById('add-app-btn'),
+  navBackBtn: document.getElementById('nav-back-btn'),
+  navForwardBtn: document.getElementById('nav-forward-btn'),
+  navReloadBtn: document.getElementById('nav-reload-btn'),
+  navCopyLinkBtn: document.getElementById('nav-copy-link-btn'),
+  asperaConnectBtn: document.getElementById('aspera-connect-btn'),
   emptyState: document.getElementById('empty-state'),
   emptyAddBtn: document.getElementById('empty-add-btn'),
   focusBtn: document.getElementById('focus-btn'),
   muteBtn: document.getElementById('mute-btn'),
   freeRamBtn: null,
-  reloadBtn: null,
+  reloadBtn: document.getElementById('nav-reload-btn'),
   menuBtn: document.getElementById('menu-btn'),
+  asperaAiBtn: document.getElementById('aspera-ai-btn'),
+  notesBtn: document.getElementById('notes-btn'),
   chromeMenu: document.getElementById('app-chrome-menu'),
   downloadsBtn: document.getElementById('downloads-btn'),
+  downloadBadge: document.getElementById('download-badge'),
+  webSearchBtn: document.getElementById('web-search-btn'),
   extensionsBtn: document.getElementById('extensions-btn'),
   checkUpdatesBtn: document.getElementById('check-updates-btn'),
   searchBtn: document.getElementById('search-btn'),
@@ -199,9 +208,16 @@ function paintToolbarIcons() {
   if (els.downloadsBtn) els.downloadsBtn.innerHTML = icon('download');
   if (els.extensionsBtn) els.extensionsBtn.innerHTML = icon('puzzle');
   if (els.checkUpdatesBtn) els.checkUpdatesBtn.innerHTML = icon('sync');
+  if (els.webSearchBtn) els.webSearchBtn.innerHTML = icon('search');
+  if (els.notesBtn) els.notesBtn.innerHTML = icon('list');
   if (els.menuBtn) els.menuBtn.innerHTML = asperaAppIconSvg(24);
   if (els.lockBtn) els.lockBtn.innerHTML = icon('lock');
   if (els.addAppBtn) els.addAppBtn.innerHTML = icon('plus');
+  if (els.navBackBtn) els.navBackBtn.innerHTML = icon('back');
+  if (els.navForwardBtn) els.navForwardBtn.innerHTML = icon('forward');
+  if (els.navReloadBtn) els.navReloadBtn.innerHTML = icon('reload');
+  if (els.navCopyLinkBtn) els.navCopyLinkBtn.innerHTML = icon('link');
+  if (els.asperaConnectBtn) els.asperaConnectBtn.innerHTML = icon('phone');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
   if (els.appMenuEdit) els.appMenuEdit.innerHTML = icon('settings');
   if (els.appMenuHome) els.appMenuHome.innerHTML = icon('home');
@@ -235,6 +251,7 @@ let state = {
   totalUnread: 0,
   settings: {},
   locked: false,
+  nav: { canGoBack: false, canGoForward: false },
 };
 
 let draft = {};
@@ -292,20 +309,36 @@ function makeAppTab(service, index) {
   btn.tabIndex = 0;
   btn.dataset.id = service.id;
   btn.style.setProperty('--app-accent', service.color || '#64748b');
-  btn.dataset.tooltip = service.title || service.name;
+  const fromLabel = service.sourceName
+    ? `Link from ${service.sourceName}`
+    : service.linkTab || service.isCustom
+      ? 'Opened from link'
+      : '';
+  btn.dataset.tooltip = fromLabel
+    ? `${service.title || service.name} · ${fromLabel}`
+    : service.title || service.name;
   btn.setAttribute(
     'aria-label',
-    `${service.title || service.name}${index < 9 ? ` — Ctrl+${index + 1}` : ''}`,
+    `${btn.dataset.tooltip}${index < 9 ? ` — Ctrl+${index + 1}` : ''}`,
   );
   if (service.id === state.activeServiceId) btn.classList.add('active');
   if (state.warmIds.includes(service.id)) btn.classList.add('warm');
   else btn.classList.add('sleep');
   if (cfg.enabled === false) btn.classList.add('disabled');
   if (muted) btn.classList.add('muted');
+  if (service.linkTab || service.isCustom) btn.classList.add('link-tab');
 
   const iconStack = document.createElement('span');
   iconStack.className = 'app-icon-stack';
   const logo = makeAppIcon(service);
+
+  if (service.linkTab || service.isCustom) {
+    const linkMark = document.createElement('span');
+    linkMark.className = 'app-mark link-mark';
+    linkMark.title = fromLabel || 'Opened from link';
+    linkMark.innerHTML = icon('link');
+    logo.appendChild(linkMark);
+  }
 
   if (unread > 0 && cfg.displayUnreadInTab !== false) {
     const badge = document.createElement('span');
@@ -347,6 +380,22 @@ function makeAppTab(service, index) {
     btn.appendChild(label);
   }
 
+  // Close control — temporary Hub link / custom tabs only (catalog apps: right-click → Remove).
+  if (service.linkTab || service.isCustom) {
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'app-tab-close';
+    closeBtn.title = 'Close tab';
+    closeBtn.setAttribute('aria-label', closeBtn.title);
+    closeBtn.textContent = '×';
+    closeBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeAppTab(service);
+    });
+    btn.appendChild(closeBtn);
+  }
+
   btn.addEventListener('click', () => {
     if (dragDidMove) {
       dragDidMove = false;
@@ -363,6 +412,14 @@ function makeAppTab(service, index) {
     event.preventDefault();
     btn.click();
   });
+  btn.addEventListener('auxclick', (event) => {
+    // Middle-click closes temporary link tabs only (browser convention).
+    if (event.button !== 1) return;
+    if (!service.linkTab && !service.isCustom) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeAppTab(service);
+  });
   btn.addEventListener('contextmenu', (event) => {
     event.preventDefault();
     event.stopPropagation();
@@ -370,6 +427,20 @@ function makeAppTab(service, index) {
   });
   bindAppTabDrag(btn, service);
   return btn;
+}
+
+async function closeAppTab(service) {
+  if (!service?.id) return;
+  const isLink = !!(service.linkTab || service.isCustom);
+  if (
+    !isLink &&
+    !confirm(
+      `Remove ${service.title || service.name}? Login data for this instance stays until you clear the session.`,
+    )
+  ) {
+    return;
+  }
+  await window.asperadock.removeService(service.id);
 }
 
 function renderApps() {
@@ -408,7 +479,19 @@ function paintAppVersion() {
   if (running) running.textContent = full;
 
   const menuVer = document.getElementById('chrome-menu-version');
-  if (menuVer) menuVer.textContent = full;
+  if (menuVer) {
+    menuVer.textContent = '';
+    menuVer.append(document.createTextNode(full));
+    const site = document.createElement('span');
+    site.className = 'chrome-menu-site';
+    site.textContent = 'asperahub.com';
+    menuVer.appendChild(site);
+  }
+}
+
+function openAsperaWebsite(event) {
+  event?.preventDefault?.();
+  window.asperadock.openExternal?.('https://asperahub.com');
 }
 
 function renderChromeActions() {
@@ -416,8 +499,25 @@ function renderChromeActions() {
   const folder = String(s.downloadPath || '').trim();
   if (els.downloadsBtn) {
     els.downloadsBtn.title = folder
-      ? `Open Downloads folder\n${folder}`
-      : 'Open Downloads folder';
+      ? `Recent downloads\n${folder}`
+      : 'Recent downloads';
+  }
+
+  const unseen = Number(state.downloadUnseen) || 0;
+  if (els.downloadBadge) {
+    els.downloadBadge.textContent = unseen > 99 ? '99+' : String(unseen);
+    els.downloadBadge.classList.toggle('hidden', unseen <= 0);
+  }
+
+  const nav = state.nav || {};
+  if (els.navBackBtn) {
+    els.navBackBtn.disabled = !nav.canGoBack || state.locked;
+  }
+  if (els.navForwardBtn) {
+    els.navForwardBtn.disabled = !nav.canGoForward || state.locked;
+  }
+  if (els.navReloadBtn) {
+    els.navReloadBtn.disabled = !!state.locked || !state.activeServiceId;
   }
 
   const total = state.totalUnread || 0;
@@ -428,6 +528,12 @@ function renderChromeActions() {
     els.globalBadge.classList.add('hidden');
   }
   renderHubRails();
+}
+
+async function navigateActive(action) {
+  const id = state?.activeServiceId;
+  if (!id || state.locked) return;
+  await window.asperadock.appNavigate?.(id, action);
 }
 
 function makeHubChip({
@@ -612,6 +718,7 @@ function renderNotificationCenter() {
 let lastChromeReport = '';
 function reportChromeSize() {
   if (!els.topBar) return;
+  // Find is a floating child window above the guest — never resize chrome for it.
   const top = Math.round(els.topBar.getBoundingClientRect().height);
   const key = `0:0:${top}`;
   if (key === lastChromeReport) return;
@@ -758,6 +865,41 @@ async function setAiProviderEnabled(providerId, enabled) {
 
 /** Providers currently showing the key input (new key or edit). */
 const aiKeyEditMode = new Set();
+
+function readAiExtraLanguages() {
+  const a = String(document.getElementById('set-ai-extra-1')?.value || '').trim();
+  const b = String(document.getElementById('set-ai-extra-2')?.value || '').trim();
+  const out = [];
+  for (const id of [a, b]) {
+    if (!id || id === 'en' || out.includes(id)) continue;
+    out.push(id);
+    if (out.length >= 2) break;
+  }
+  return out;
+}
+
+/** Hide a language already chosen in the other extra select. */
+function syncAiExtraLanguageOptions() {
+  const sel1 = document.getElementById('set-ai-extra-1');
+  const sel2 = document.getElementById('set-ai-extra-2');
+  if (!sel1 || !sel2) return;
+  const v1 = String(sel1.value || '');
+  const v2 = String(sel2.value || '');
+  for (const opt of sel1.options) {
+    if (!opt.value) {
+      opt.hidden = false;
+      continue;
+    }
+    opt.hidden = !!v2 && opt.value === v2;
+  }
+  for (const opt of sel2.options) {
+    if (!opt.value) {
+      opt.hidden = false;
+      continue;
+    }
+    opt.hidden = !!v1 && opt.value === v1;
+  }
+}
 
 function renderAiProviderKeys() {
   const root = document.getElementById('ai-provider-keys');
@@ -1074,10 +1216,37 @@ function fillSettingsForm() {
   set('set-lock-enabled', String(!!s.lockEnabled));
   set('set-lock-password', '');
   set('set-lock-idle', s.lockOnSystemIdle);
+  set('set-whatsapp-safe-mode', s.whatsappSafeMode !== false);
   set('set-ai-enabled', s.aiEnabled !== false);
   set('set-ai-language', s.aiLanguage || 'en');
+  {
+    const extras = Array.isArray(s.aiExtraLanguages)
+      ? s.aiExtraLanguages
+      : Array.isArray(s.ai?.extraLanguages)
+        ? s.ai.extraLanguages
+        : ['hi', 'mr'];
+    set('set-ai-extra-1', extras[0] || '');
+    set('set-ai-extra-2', extras[1] || '');
+    syncAiExtraLanguageOptions();
+  }
   aiKeyEditMode.clear();
   renderAiProviderKeys();
+  set('set-zoho-crm-enabled', s.zohoCrmEnabled !== false);
+  set('set-zoho-crm-dc', s.zohoCrmDc || s.zohoCrm?.dc || 'in');
+  paintZohoCrmStatus(s.zohoCrm);
+  set(
+    'set-zoho-crm-fleet-url',
+    s.zohoCrmFleetUrl || s.zohoCrm?.fleetUrl || '',
+  );
+  set(
+    'set-zoho-crm-fleet-token',
+    s.zohoCrm?.hasFleetToken ? '[configured]' : '',
+  );
+  set('set-zoho-crm-client-id', s.zohoCrm?.hasClientId ? '[configured]' : '');
+  set('set-zoho-crm-client-secret', s.zohoCrm?.hasClientSecret ? '[configured]' : '');
+  set('set-zoho-crm-refresh', s.zohoCrm?.hasRefreshToken ? '[configured]' : '');
+  set('set-zoho-crm-grant', '');
+  setZohoCrmFeedback('');
   set('set-proxy-mode', s.proxyMode || 'none');
   set('set-proxy-rules', s.proxyRules || '');
   set('set-proxy-bypass', s.proxyBypass ?? '<local>');
@@ -1099,7 +1268,7 @@ function fillSettingsForm() {
   set('set-hw-accel', s.hardwareAcceleration === true);
   set('set-hidpi', s.hiDpiSupport !== false);
   set('set-media-keys', s.mediaKeys !== false);
-  set('set-links', s.linkHandling || 'block');
+  set('set-links', s.linkHandling || 'hub-tab');
   set(
     'set-spell',
     Array.isArray(s.spellChecker) ? s.spellChecker[0] : s.spellChecker || 'en-US',
@@ -1135,8 +1304,13 @@ function readSettingsForm() {
     confirmQuit: checked('set-confirm-quit'),
     lockEnabled: val('set-lock-enabled') === 'true',
     lockOnSystemIdle: checked('set-lock-idle'),
+    whatsappSafeMode: checked('set-whatsapp-safe-mode'),
     aiEnabled: checked('set-ai-enabled'),
     aiLanguage: val('set-ai-language'),
+    aiExtraLanguages: readAiExtraLanguages(),
+    zohoCrmEnabled: checked('set-zoho-crm-enabled'),
+    zohoCrmDc: val('set-zoho-crm-dc') || 'in',
+    zohoCrmFleetUrl: val('set-zoho-crm-fleet-url').trim(),
     proxyMode: val('set-proxy-mode'),
     proxyRules: val('set-proxy-rules').trim(),
     proxyBypass: val('set-proxy-bypass').trim() || '<local>',
@@ -1444,9 +1618,6 @@ function openEditApp(id) {
   if (!cfg.spellChecker) spell.value = 'default';
   else spell.value = Array.isArray(cfg.spellChecker) ? cfg.spellChecker[0] : cfg.spellChecker;
 
-  const links = document.getElementById('ea-links');
-  links.value = cfg.linkHandling || 'default';
-
   fillProfileSelect(service.profileId);
   els.editAppModal.classList.remove('hidden');
   syncOverlayFromModals();
@@ -1474,7 +1645,6 @@ function closeEditApp() {
 async function saveEditApp() {
   if (!editServiceId) return;
   const spellVal = document.getElementById('ea-spell').value;
-  const linkVal = document.getElementById('ea-links').value;
   const patch = {
     name: (els.editAppName.value || '').trim().slice(0, 10),
     title: (els.editAppName.value || '').trim().slice(0, 10),
@@ -1496,7 +1666,8 @@ async function saveEditApp() {
     forceMobile: document.getElementById('ea-mobile').checked,
     preventBasicAuth: document.getElementById('ea-no-basic-auth').checked,
     spellChecker: spellVal === 'default' ? null : [spellVal],
-    linkHandling: linkVal === 'default' ? null : linkVal,
+    // One Hub-wide link rule — clear any old per-app override.
+    linkHandling: null,
   };
   const urlInput = document.getElementById('ea-url');
   const service = getServiceById(editServiceId);
@@ -1687,6 +1858,32 @@ function toggleNotificationCenter() {
   });
 }
 
+function openDownloadShelf() {
+  closeAppMenu();
+  closeChromeMenu();
+  closeNotificationCenter();
+  const btn = els.downloadsBtn?.getBoundingClientRect?.();
+  window.asperadock.openDownloadShelf?.({
+    x: btn ? btn.right : window.innerWidth - 16,
+    y: btn ? btn.bottom + 6 : 64,
+    align: 'right',
+    dark: document.body.classList.contains('theme-dark'),
+  });
+}
+
+function toggleDownloadShelf() {
+  closeAppMenu();
+  closeChromeMenu();
+  closeNotificationCenter();
+  const btn = els.downloadsBtn?.getBoundingClientRect?.();
+  window.asperadock.toggleDownloadShelf?.({
+    x: btn ? btn.right : window.innerWidth - 16,
+    y: btn ? btn.bottom + 6 : 64,
+    align: 'right',
+    dark: document.body.classList.contains('theme-dark'),
+  });
+}
+
 function closeChromeMenu() {
   els.chromeMenu?.classList.add('hidden');
   window.asperadock.closeChromeMenu?.();
@@ -1758,6 +1955,14 @@ async function lockHubFromUi() {
 }
 
 function handleChromeAction(action) {
+  if (action === 'web-search') {
+    openWebSearch();
+    return;
+  }
+  if (action === 'notes') {
+    openNotes();
+    return;
+  }
   if (action === 'search') openSearch();
   if (action === 'settings') openSettings();
   if (action === 'ai-settings') openAiSettings();
@@ -1770,13 +1975,16 @@ function handleChromeAction(action) {
       dark: document.body.classList.contains('theme-dark'),
     });
   }
-  if (action === 'summarize') {
-    window.asperadock.aiSummarize?.({
+  if (action === 'aspera-ai' || action === 'summarize') {
+    window.asperadock.aiOpenInbox?.({
       dark: document.body.classList.contains('theme-dark'),
     });
   }
   if (action === 'check-updates') {
     runUpdateCheck();
+  }
+  if (action === 'website') {
+    openAsperaWebsite();
   }
 }
 
@@ -1956,11 +2164,8 @@ function runUpdateCheck() {
     .finally(() => refreshUpdateStatus());
 }
 
-els.downloadsBtn?.addEventListener('click', async () => {
-  const result = await window.asperadock.openDownloads?.();
-  if (result && !result.ok) {
-    alert(`Could not open Downloads folder.\n${result.error || result.path || ''}`);
-  }
+els.downloadsBtn?.addEventListener('click', () => {
+  toggleDownloadShelf();
 });
 els.extensionsBtn?.addEventListener('click', () => {
   window.asperadock.openExtensions?.({
@@ -1974,6 +2179,27 @@ els.menuBtn.addEventListener('click', (event) => {
   event.stopPropagation();
   toggleChromeMenu();
 });
+els.asperaAiBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  closeChromeMenu();
+  closeAppMenu();
+  window.asperadock.aiOpenInbox?.({
+    dark: document.body.classList.contains('theme-dark'),
+    skill: 'summarize',
+  });
+});
+els.webSearchBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  closeChromeMenu();
+  closeAppMenu();
+  openWebSearch();
+});
+els.notesBtn?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  closeChromeMenu();
+  closeAppMenu();
+  openNotes();
+});
 els.settingsClose.addEventListener('click', closeSettings);
 els.settingsModal?.querySelector('.settings-nav')?.addEventListener('click', (event) => {
   const btn = event.target.closest('[data-settings-panel]');
@@ -1982,6 +2208,31 @@ els.settingsModal?.querySelector('.settings-nav')?.addEventListener('click', (ev
 });
 els.lockBtn?.addEventListener('click', () => {
   lockHubFromUi();
+});
+els.asperaConnectBtn?.addEventListener('click', () => {
+  window.asperadock.openAsperaConnect?.();
+});
+els.navBackBtn?.addEventListener('click', () => navigateActive('back'));
+els.navForwardBtn?.addEventListener('click', () => navigateActive('forward'));
+els.navReloadBtn?.addEventListener('click', () => {
+  window.asperadock.reloadActive?.();
+});
+els.navCopyLinkBtn?.addEventListener('click', async () => {
+  const btn = els.navCopyLinkBtn;
+  const result = await window.asperadock.copyActiveLink?.();
+  if (!btn) return;
+  const prevTitle = btn.getAttribute('title') || 'Copy link — current page URL';
+  if (result?.ok) {
+    btn.setAttribute('title', 'Copied!');
+    btn.setAttribute('aria-label', 'Copied');
+    setTimeout(() => {
+      btn.setAttribute('title', prevTitle);
+      btn.setAttribute('aria-label', 'Copy link');
+    }, 1600);
+  } else if (result?.error) {
+    btn.setAttribute('title', result.error);
+    setTimeout(() => btn.setAttribute('title', prevTitle), 2200);
+  }
 });
 els.addAppBtn.addEventListener('click', openAppsSettings);
 els.emptyAddBtn.addEventListener('click', openAppsSettings);
@@ -1995,13 +2246,126 @@ els.chromeMenu?.addEventListener('click', (event) => {
   if (action === 'focus') window.asperadock.toggleFocus?.();
   if (action === 'mute') window.asperadock.toggleMute?.();
   if (action === 'reload') window.asperadock.reloadActive();
+  if (action === 'back') navigateActive('back');
+  if (action === 'forward') navigateActive('forward');
   if (action === 'home') {
     const id = state?.activeServiceId;
     if (id) window.asperadock.appNavigate?.(id, 'home');
   }
   if (action === 'free-ram') window.asperadock.hibernateBackground();
+  if (action === 'copy-link') window.asperadock.copyActiveLink?.();
   if (action === 'about') window.asperadock.showAbout?.();
+  if (action === 'aspera-connect') window.asperadock.openAsperaConnect?.();
+  if (action === 'website') openAsperaWebsite();
 });
+
+document.getElementById('empty-website-link')?.addEventListener('click', openAsperaWebsite);
+document.getElementById('settings-website-link')?.addEventListener('click', openAsperaWebsite);
+document
+  .getElementById('settings-general-website-link')
+  ?.addEventListener('click', openAsperaWebsite);
+
+function paintZohoCrmStatus(status) {
+  const el = document.getElementById('zoho-crm-status');
+  if (!el) return;
+  if (status?.configured) {
+    const synced = status.fleetSyncedAt
+      ? ` · fleet ${new Date(status.fleetSyncedAt).toLocaleString()}`
+      : status.hasFleetToken
+        ? ' · fleet token saved'
+        : '';
+    el.textContent = `Status: Connected (${status.dc || status.apiDomain || 'ready'})${synced}`;
+  } else {
+    const parts = [];
+    if (!status?.hasClientId) parts.push('Client ID');
+    if (!status?.hasClientSecret) parts.push('Secret');
+    if (!status?.hasRefreshToken) parts.push('Refresh token');
+    el.textContent = parts.length
+      ? `Status: Not configured — missing ${parts.join(', ')} (or Fetch from cloud)`
+      : 'Status: Not configured';
+  }
+}
+
+function setZohoCrmFeedback(text, isError = false) {
+  const el = document.getElementById('zoho-crm-feedback');
+  if (!el) return;
+  el.textContent = text || '';
+  el.style.color = isError ? '#b91c1c' : '';
+}
+
+function secretFieldValue(id) {
+  const raw = String(document.getElementById(id)?.value || '').trim();
+  if (!raw || raw === '[configured]') return '';
+  return raw;
+}
+
+async function saveZohoCrmCredentials() {
+  setZohoCrmFeedback('Saving…');
+  try {
+    const result = await window.asperadock.zohoCrmSave({
+      enabled: document.getElementById('set-zoho-crm-enabled')?.checked !== false,
+      dc: document.getElementById('set-zoho-crm-dc')?.value || 'in',
+      fleetUrl: document.getElementById('set-zoho-crm-fleet-url')?.value || '',
+      fleetToken: secretFieldValue('set-zoho-crm-fleet-token'),
+      clientId: secretFieldValue('set-zoho-crm-client-id'),
+      clientSecret: secretFieldValue('set-zoho-crm-client-secret'),
+      refreshToken: secretFieldValue('set-zoho-crm-refresh'),
+    });
+    if (result?.ok === false) {
+      setZohoCrmFeedback(result.error || 'Could not save.', true);
+      return;
+    }
+    paintZohoCrmStatus(result);
+    setZohoCrmFeedback(result?.configured ? 'Saved.' : 'Saved — Fetch from cloud or add refresh token.');
+    fillSettingsForm();
+  } catch (err) {
+    setZohoCrmFeedback(String(err?.message || err), true);
+  }
+}
+
+async function pullZohoCrmFromFleet() {
+  setZohoCrmFeedback('Fetching from cloud…');
+  try {
+    const result = await window.asperadock.zohoCrmFleetPull({
+      fleetUrl: document.getElementById('set-zoho-crm-fleet-url')?.value || '',
+      fleetToken: secretFieldValue('set-zoho-crm-fleet-token'),
+    });
+    if (!result?.ok) {
+      setZohoCrmFeedback(result?.error || 'Fleet fetch failed.', true);
+      return;
+    }
+    paintZohoCrmStatus(result);
+    setZohoCrmFeedback('Fetched Zoho credentials from Vercel and stored encrypted.');
+    fillSettingsForm();
+  } catch (err) {
+    setZohoCrmFeedback(String(err?.message || err), true);
+  }
+}
+
+async function connectZohoCrmGrant() {
+  const code = secretFieldValue('set-zoho-crm-grant');
+  if (!code) {
+    setZohoCrmFeedback('Paste a grant code first.', true);
+    return;
+  }
+  setZohoCrmFeedback('Exchanging grant code…');
+  try {
+    const result = await window.asperadock.zohoCrmConnect({
+      dc: document.getElementById('set-zoho-crm-dc')?.value || 'in',
+      clientId: secretFieldValue('set-zoho-crm-client-id'),
+      clientSecret: secretFieldValue('set-zoho-crm-client-secret'),
+      code,
+    });
+    if (!result?.ok) {
+      setZohoCrmFeedback(result?.error || 'Connect failed.', true);
+      return;
+    }
+    setZohoCrmFeedback('Connected — refresh token stored encrypted.');
+    fillSettingsForm();
+  } catch (err) {
+    setZohoCrmFeedback(String(err?.message || err), true);
+  }
+}
 
 els.settingsSave.addEventListener('click', async () => {
   const patch = readSettingsForm();
@@ -2012,15 +2376,92 @@ els.settingsSave.addEventListener('click', async () => {
       return;
     }
   }
-  await window.asperadock.saveSettings(patch);
-  closeSettings();
+  try {
+    const result = await window.asperadock.saveSettings(patch);
+    if (result && result.ok === false) {
+      alert(result.error || 'Could not save settings.');
+      return;
+    }
+    // Persist Zoho secrets separately (encrypted) when fields were edited.
+    const hasSecretEdits =
+      secretFieldValue('set-zoho-crm-fleet-token') ||
+      secretFieldValue('set-zoho-crm-client-id') ||
+      secretFieldValue('set-zoho-crm-client-secret') ||
+      secretFieldValue('set-zoho-crm-refresh');
+    if (hasSecretEdits || patch.zohoCrmFleetUrl) {
+      await window.asperadock.zohoCrmSave({
+        enabled: patch.zohoCrmEnabled !== false,
+        dc: patch.zohoCrmDc || 'in',
+        fleetUrl: patch.zohoCrmFleetUrl || '',
+        fleetToken: secretFieldValue('set-zoho-crm-fleet-token'),
+        clientId: secretFieldValue('set-zoho-crm-client-id'),
+        clientSecret: secretFieldValue('set-zoho-crm-client-secret'),
+        refreshToken: secretFieldValue('set-zoho-crm-refresh'),
+      });
+    }
+    closeSettings();
+  } catch (err) {
+    alert(String(err?.message || err || 'Could not save settings.'));
+  }
+});
+
+document.getElementById('zoho-crm-save-btn')?.addEventListener('click', () => {
+  saveZohoCrmCredentials().catch(() => {});
+});
+document.getElementById('zoho-crm-fleet-pull-btn')?.addEventListener('click', () => {
+  pullZohoCrmFromFleet().catch(() => {});
+});
+document.getElementById('zoho-crm-connect-btn')?.addEventListener('click', () => {
+  connectZohoCrmGrant().catch(() => {});
+});
+document.getElementById('zoho-crm-test-btn')?.addEventListener('click', async () => {
+  setZohoCrmFeedback('Testing…');
+  try {
+    await window.asperadock.saveSettings({
+      zohoCrmEnabled: document.getElementById('set-zoho-crm-enabled')?.checked !== false,
+      zohoCrmDc: document.getElementById('set-zoho-crm-dc')?.value || 'in',
+    });
+    if (
+      secretFieldValue('set-zoho-crm-client-id') ||
+      secretFieldValue('set-zoho-crm-client-secret') ||
+      secretFieldValue('set-zoho-crm-refresh')
+    ) {
+      await saveZohoCrmCredentials();
+    }
+    const result = await window.asperadock.zohoCrmTest();
+    if (!result?.ok) {
+      setZohoCrmFeedback(result?.error || 'Test failed.', true);
+      return;
+    }
+    setZohoCrmFeedback(result.message || 'Connected.');
+  } catch (err) {
+    setZohoCrmFeedback(String(err?.message || err), true);
+  }
+});
+document.getElementById('zoho-crm-clear-btn')?.addEventListener('click', async () => {
+  if (!confirm('Clear Zoho CRM credentials from this PC?')) return;
+  try {
+    await window.asperadock.zohoCrmClear();
+    setZohoCrmFeedback('Cleared.');
+    fillSettingsForm();
+  } catch (err) {
+    setZohoCrmFeedback(String(err?.message || err), true);
+  }
 });
 
 els.shortcutsSave.addEventListener('click', async () => {
   stopShortcutCapture({ restore: true });
   if (!validateShortcutsForm()) return;
-  await window.asperadock.saveSettings(readShortcutsForm());
-  closeShortcuts();
+  try {
+    const result = await window.asperadock.saveSettings(readShortcutsForm());
+    if (result && result.ok === false) {
+      alert(result.error || 'Could not save shortcuts.');
+      return;
+    }
+    closeShortcuts();
+  } catch (err) {
+    alert(String(err?.message || err || 'Could not save shortcuts.'));
+  }
 });
 els.shortcutsClose.addEventListener('click', () => {
   stopShortcutCapture({ restore: false });
@@ -2084,17 +2525,14 @@ window.asperadock.onOpenAppsSettings?.(openAppsSettings);
 window.asperadock.onOpenProfiles?.(openProfiles);
 window.asperadock.onOpenSearch?.(openSearch);
 window.asperadock.onOpenFind?.(openFindBar);
-window.asperadock.onFindResult?.((data) => {
-  if (!els.findStatus || !data) return;
-  if (!data.matches) {
-    els.findStatus.textContent = '0/0';
-    return;
-  }
-  els.findStatus.textContent = `${data.activeMatchOrdinal || 0}/${data.matches}`;
-});
 window.asperadock.onSyncOverlay?.(syncOverlayFromModals);
 window.asperadock.onOpenEditApp?.((id) => {
   if (id) openEditApp(id);
+});
+window.asperadock.onConfirmRemoveApp?.((id) => {
+  const service = (state.services || []).find((s) => s.id === id);
+  if (!service) return;
+  closeAppTab(service);
 });
 window.asperadock.onChromeAction?.(handleChromeAction);
 window.asperadock.onOpenAiSettings?.(openAiSettings);
@@ -2104,6 +2542,12 @@ document.getElementById('ai-catch-up-btn')?.addEventListener('click', () => {
   window.asperadock.aiCatchUp?.({
     dark: document.body.classList.contains('theme-dark'),
   });
+});
+document.getElementById('set-ai-extra-1')?.addEventListener('change', () => {
+  syncAiExtraLanguageOptions();
+});
+document.getElementById('set-ai-extra-2')?.addEventListener('change', () => {
+  syncAiExtraLanguageOptions();
 });
 
 async function patchMenuFlag(key, checked) {
@@ -2258,42 +2702,38 @@ els.customAppUrl?.addEventListener('keydown', (event) => {
 });
 
 function openFindBar() {
-  if (!els.findBar) return;
-  els.findBar.classList.remove('hidden');
-  els.findInput.value = '';
-  els.findStatus.textContent = '';
-  requestAnimationFrame(() => {
-    els.findInput?.focus();
-    els.findInput?.select();
+  // Keep legacy in-page bar hidden — guest WebContentsView covers it, so Find
+  // is a floating popup that does not push the page down.
+  els.findBar?.classList.add('hidden');
+  window.asperadock.openFindBar?.({
+    dark: document.body.classList.contains('theme-dark'),
   });
 }
 
 function closeFindBar() {
   els.findBar?.classList.add('hidden');
-  window.asperadock.stopFind?.();
-  els.findStatus.textContent = '';
+  window.asperadock.closeFindBar?.();
 }
 
-async function runFind({ findNext = false, forward = true } = {}) {
-  const text = els.findInput?.value || '';
-  await window.asperadock.findInPage?.(text, { findNext, forward });
-  els.findStatus.textContent = text ? 'Searching…' : '';
+function openWebSearch() {
+  window.asperadock.openWebSearch?.({
+    dark: document.body.classList.contains('theme-dark'),
+  });
 }
 
-els.findClose?.addEventListener('click', closeFindBar);
-els.findNext?.addEventListener('click', () => runFind({ findNext: true, forward: true }));
-els.findPrev?.addEventListener('click', () => runFind({ findNext: true, forward: false }));
-els.findInput?.addEventListener('input', () => runFind({ findNext: false }));
-els.findInput?.addEventListener('keydown', (event) => {
-  if (event.key === 'Enter') {
-    event.preventDefault();
-    runFind({ findNext: true, forward: !event.shiftKey });
-  }
-  if (event.key === 'Escape') {
-    event.preventDefault();
-    closeFindBar();
-  }
-});
+function closeWebSearch() {
+  window.asperadock.closeWebSearch?.();
+}
+
+function openNotes() {
+  window.asperadock.openNotes?.({
+    dark: document.body.classList.contains('theme-dark'),
+  });
+}
+
+function closeNotes() {
+  window.asperadock.closeNotes?.();
+}
 
 els.editAppModal.addEventListener('click', (event) => {
   if (event.target === els.editAppModal) closeEditApp();
@@ -2301,8 +2741,8 @@ els.editAppModal.addEventListener('click', (event) => {
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
-    if (!els.findBar?.classList.contains('hidden')) closeFindBar();
-    else if (!els.customAppModal?.classList.contains('hidden')) closeCustomAppModal();
+    // Floating Find handles Escape in its own window / guest shortcut path.
+    if (!els.customAppModal?.classList.contains('hidden')) closeCustomAppModal();
     else if (!els.profileNameModal?.classList.contains('hidden')) closeProfileNameModal(null);
     else if (!els.profilesModal?.classList.contains('hidden')) closeProfiles();
     else if (!els.editAppModal.classList.contains('hidden')) closeEditApp();
@@ -2310,6 +2750,9 @@ document.addEventListener('keydown', (event) => {
     else if (!els.settingsModal.classList.contains('hidden')) closeSettings();
     else if (!els.searchModal.classList.contains('hidden')) closeSearch();
     else {
+      closeFindBar();
+      closeWebSearch();
+      closeNotes();
       closeChromeMenu();
       closeNotificationCenter();
       closeAppMenu();
@@ -2460,6 +2903,13 @@ async function boot() {
   window.asperadock.onState((next) => {
     state = next;
     render();
+  });
+  window.asperadock.onNavState?.((nav) => {
+    state = { ...state, nav: nav || { canGoBack: false, canGoForward: false } };
+    renderChromeActions();
+  });
+  window.asperadock.onDownloadShelfAuto?.(() => {
+    openDownloadShelf();
   });
 }
 

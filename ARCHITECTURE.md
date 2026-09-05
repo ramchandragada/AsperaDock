@@ -19,13 +19,18 @@ Chrome is **not** loaded via `file://`. Packaged UI uses the `asperadock://` cus
 | Module | Role |
 |--------|------|
 | `main.js` | Boot, window lifecycle, IPC wiring, view orchestration |
+| `guestNavigation.js` | Window-open + will-navigate gates (deps injected) |
+| `guestIdleRecovery.js` | Portal blank/idle recovery policy + timings |
+| `guestLifecycle.js` | Hibernate / keepWarm policy helpers |
 | `guestNav.js` | URL allow/deny policy (pure, tested) |
+| `linkHandling.js` | Hub-wide link modes (pure, tested) |
+| `pageInjection.js` | Admin+env injection gate; HTTPS stylish URLs |
 | `vendors/google.js` | Gmail/Google spoof quarantine |
 | `vendors/zoho.js` | Wrong-product reclaim quarantine |
 | `chromeProtocol.js` | `asperadock://` handler |
-| `safeShell.js` | `openExternal` scheme allowlist |
+| `safeShell.js` / `safeShellPolicy.js` | `openExternal` scheme allowlist |
 | `passwordCrypto.js` | scrypt lock hashes (pure, tested) |
-| `updater.js` | Manifest + SHA-256 + elevated install |
+| `updater.js` / `updateFeedResolve.js` | Manifest + SHA-256 + elevated install |
 | `store.js` | settings.json |
 | `errorReporter.js` / `sentryMain.js` | crashes / freezes |
 

@@ -9,9 +9,8 @@
  * Kill switch: settings.googleSpoofEnabled === false (or edit settings.json).
  */
 import { logBreadcrumb } from '../errorReporter.js';
-import { applyGoogleRequestHeaders } from './googleHeaders.js';
 
-export { applyGoogleRequestHeaders } from './googleHeaders.js';
+export { applyGoogleRequestHeaders, isGoogleInsecureBrowserErrorUrl } from './googleHeaders.js';
 
 const marketingNoted = new Set();
 
@@ -76,21 +75,24 @@ export function noteGoogleMarketingLanding(serviceId, url) {
   });
 }
 
-export function buildGoogleChromeSpoofSource(chromeVersion, chromeMajor) {
+export function buildGoogleChromeSpoofSource(chromeVersion, chromeMajor, chromeUA = '') {
   const full = chromeVersion;
   const major = chromeMajor;
+  const ua = chromeUA || `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${full} Safari/537.36`;
   return `(() => {
   try {
     const full = ${JSON.stringify(full)};
     const major = ${JSON.stringify(major)};
+    const chromeUA = ${JSON.stringify(ua)};
+    // Match sec-ch-ua header order: Google Chrome, Chromium, Not_A Brand.
     const brands = [
-      { brand: 'Chromium', version: major },
       { brand: 'Google Chrome', version: major },
+      { brand: 'Chromium', version: major },
       { brand: 'Not_A Brand', version: '24' },
     ];
     const fullVersionList = [
-      { brand: 'Chromium', version: full },
       { brand: 'Google Chrome', version: full },
+      { brand: 'Chromium', version: full },
       { brand: 'Not_A Brand', version: '24.0.0.0' },
     ];
     const high = {
@@ -105,6 +107,12 @@ export function buildGoogleChromeSpoofSource(chromeVersion, chromeMajor) {
     };
     Object.defineProperty(Navigator.prototype, 'userAgentData', {
       get: () => uaData, configurable: true,
+    });
+    Object.defineProperty(Navigator.prototype, 'userAgent', {
+      get: () => chromeUA, configurable: true,
+    });
+    Object.defineProperty(Navigator.prototype, 'appVersion', {
+      get: () => chromeUA.replace(/^Mozilla\\//, ''), configurable: true,
     });
     const t = Date.now() / 1000;
     const chrome = window.chrome || {};
@@ -139,12 +147,13 @@ export function buildGoogleChromeSpoofSource(chromeVersion, chromeMajor) {
  * Attach lightweight page-world spoof. No CDP (Linux flicker).
  * No-op when enabled === false.
  */
-export async function attachGoogleChromeSpoof(wc, { chromeVersion, chromeMajor, enabled = true } = {}) {
+export async function attachGoogleChromeSpoof(wc, { chromeVersion, chromeMajor, chromeUA = '', enabled = true } = {}) {
   if (!enabled || !wc || wc.isDestroyed() || wc.__asperaGoogleSpoof) return;
   wc.__asperaGoogleSpoof = true;
   const source = buildGoogleChromeSpoofSource(
     chromeVersion || '138.0.0.0',
     chromeMajor || '138',
+    chromeUA,
   );
   const inject = () => {
     if (wc.isDestroyed()) return;

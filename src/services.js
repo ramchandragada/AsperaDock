@@ -21,6 +21,39 @@ export function isCustomAppId(appId) {
   return appId === CUSTOM_APP_ID;
 }
 
+/**
+ * Zoho workspace apps may open sibling-product / in-app deep links as Hub tabs
+ * that reuse the source tab's login (same profile).
+ */
+export function allowsZohoWorkspaceHubTabs(appId) {
+  return (
+    appId === 'zoho-crm' ||
+    appId === 'zoho-one' ||
+    appId === 'zoho-books' ||
+    appId === 'zoho-workdrive'
+  );
+}
+
+/**
+ * Catalog adds always get a dedicated profile (WhatsApp / Gmail model).
+ * Needed so team leads can run two CRM orgs (e.g. VSCG-ACC + VSCG-Sales).
+ * Deep links within one Zoho tab still reuse that tab's profile via startUrl.
+ */
+export function canShareProfileAcrossInstances(_appId) {
+  return false;
+}
+
+/**
+ * Auto profile label when adding an app instance, e.g. "WhatsApp 1", "Gmail 2".
+ * @param {string} appName
+ * @param {number} slot
+ */
+export function buildAppProfileName(appName, slot) {
+  const base = String(appName || 'App').trim() || 'App';
+  const n = Math.max(1, Number(slot) || 1);
+  return `${base} ${n}`;
+}
+
 /** @typedef {{
  *   appId: string,
  *   name: string,
@@ -83,6 +116,15 @@ export const APP_CATALOG = [
     logo: 'zoho-books',
   },
   {
+    appId: 'zoho-workdrive',
+    name: 'WorkDrive',
+    title: 'Zoho WorkDrive',
+    // India DC file workspace — same SSO family as CRM / Books / One.
+    url: 'https://workdrive.zoho.in/',
+    color: '#00A7B5',
+    logo: 'zoho-workdrive',
+  },
+  {
     appId: 'zoho-one',
     name: 'Zoho One',
     title: 'Zoho One',
@@ -135,6 +177,7 @@ export function defaultInstanceName(entry, index) {
     'zoho-mail': 'ZMail',
     'zoho-crm': 'CRM',
     'zoho-books': 'Books',
+    'zoho-workdrive': 'Drive',
     'zoho-one': 'ZohoOne',
     custom: 'Custom',
   }[entry.appId] || clampAppName(entry.name, 7);

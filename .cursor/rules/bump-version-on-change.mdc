@@ -1,20 +1,36 @@
 ---
-description: Always bump version, build, push, and release Aspera Hub changes
+description: Version bump and release — master only, never from feature branches
 alwaysApply: true
 ---
 
-# Version bump, ship, and release (no extra approval)
+# Version bump, ship, and release (master only)
 
 Whenever you make user-facing or packaged Aspera Hub changes:
 
-1. Check the latest GitHub release (`gh release list --limit 1`) and/or installed version.
-2. Bump `package.json` `version` to the **next patch** (or minor/major if warranted) **before or with** the commit.
-3. Include the version bump in the same commit as the feature/fix when practical.
-4. Mention the new version in the commit message (e.g. `Add downloads button (v0.1.9).`).
-5. Build the `.deb` (`npm run make`) and install locally when practical.
-6. **Always commit, push to `origin`, and publish a GitHub release** for that version — **do not wait for the user to ask**. Permission is standing; no extra approval needed for push/release of shipped versions.
-7. Attach the built `.deb` to the GitHub release when available (`gh release create` / `gh release upload`).
-8. Keep `package.json` ahead of or equal to the next expected release so CI/Deploy can stamp correctly.
+## Order (mandatory)
+
+1. Implement on a feature branch `cursor/<name>-55c1`.
+2. Bump `package.json` `version` to the **next patch** (or minor/major if warranted) in the same commit when practical.
+3. Commit, push, open/update the PR.
+4. **Merge the PR to `master`** (`gh pr merge` / ManagePullRequest merge). Do **not** treat an open draft PR as shipped.
+5. On **`master`** only: build and publish.
+   - Preferred: push/merge to `master` triggers **Deploy Aspera Hub** (builds `.deb` + release).
+   - Manual: `git checkout master && git pull origin master`, then `npm run release:check`, `npm run make`, `npm run publish:update`.
+6. Mention the version in the commit message (e.g. `Add downloads button (v0.1.9).`).
+
+## Hard bans (live fleet)
+
+- **Do NOT** run `gh release create` from a feature branch.
+- **Do NOT** publish a release for a commit that is not on `origin/master`.
+- **Do NOT** leave live fixes only on draft PRs — merge first or users lose them on the next master-based “latest”.
+- Always run **`npm run release:check`** before any manual publish (`publish-update` also enforces this).
+
+## Why
+
+Unmerged feature-branch releases caused WorkDrive, catalog × removal, and multi-CRM isolation to disappear from “latest”, flooding support. See `docs/RELEASE-LINE.md`. Safety nets: `scripts/assert-release-from-master.mjs`, `.github/workflows/release-guard.yml` (demotes illegal releases to draft).
+
+## Standing permission
+
+After a versioned change is **merged to master**, ship it — do not ask “should I release?”. Permission is standing for master-line releases only.
 
 Do **not** leave `package.json` stuck on an old base version while shipping new builds.
-Do **not** ask “should I push/release?” after a versioned build — just do it.

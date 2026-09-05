@@ -241,7 +241,18 @@ export function buildExtensionsHtml(dark = false) {
         setBusy(false);
       }
     };
-    document.getElementById('reload').onclick = () => api.reloadGuests();
+    document.getElementById('reload').onclick = async () => {
+      setBusy(true, 'Reloading apps…');
+      showError('');
+      try {
+        await api.reloadGuests();
+        showStatus('Apps reloaded.');
+      } catch (error) {
+        showError(String(error?.message || error));
+      } finally {
+        setBusy(false);
+      }
+    };
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') api.close(); });
   </script>
 </body>

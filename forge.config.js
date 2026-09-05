@@ -1,5 +1,29 @@
+const fs = require('node:fs');
+const path = require('node:path');
 const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
+
+function syncPdfjsRuntime() {
+  const src = path.join(
+    __dirname,
+    'node_modules',
+    'pdfjs-dist',
+    'legacy',
+    'build',
+  );
+  const dest = path.join(__dirname, 'packaging', 'pdfjs-runtime');
+  fs.mkdirSync(dest, { recursive: true });
+  for (const file of ['pdf.mjs', 'pdf.worker.mjs']) {
+    fs.copyFileSync(path.join(src, file), path.join(dest, file));
+  }
+}
+
+// Prefer a local Electron zip when present (Mint office nets). In CI the
+// directory is gitignored / empty — omit electronZipDir so packager downloads.
+const electronZipDir = path.join(__dirname, '.electron-zips');
+const useLocalElectronZip =
+  fs.existsSync(electronZipDir) &&
+  fs.readdirSync(electronZipDir).some((name) => name.endsWith('.zip'));
 
 module.exports = {
   packagerConfig: {
@@ -9,6 +33,7 @@ module.exports = {
     appBundleId: 'app.asperadock.desktop',
     // Stylized Aspera "A" only — not the full wordmark.
     icon: './assets/icon',
+    ...(useLocalElectronZip ? { electronZipDir: './.electron-zips' } : {}),
     extraResource: [
       './assets/icon.png',
       './assets/icon-16.png',
@@ -20,7 +45,14 @@ module.exports = {
       './assets/icon-256.png',
       './assets/icon-512.png',
       './packaging/asperadock-wrapper.sh',
+      // Loaded at runtime by Aspera AI PDF text extract (not bundled into asar).
+      './packaging/pdfjs-runtime',
     ],
+  },
+  hooks: {
+    generateAssets: async () => {
+      syncPdfjsRuntime();
+    },
   },
   rebuildConfig: {},
   makers: [
@@ -84,12 +116,37 @@ module.exports = {
             target: 'preload',
           },
           {
+            entry: 'src/findBarPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/webSearchPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/notesPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
             entry: 'src/notifCenterPreload.js',
             config: 'vite.preload.config.mjs',
             target: 'preload',
           },
           {
+            entry: 'src/downloadShelfPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
             entry: 'src/aiResultPreload.js',
+            config: 'vite.preload.config.mjs',
+            target: 'preload',
+          },
+          {
+            entry: 'src/crmLookupPreload.js',
             config: 'vite.preload.config.mjs',
             target: 'preload',
           },

@@ -1,5 +1,9 @@
 #!/bin/sh
-# Safe Aspera Hub launcher for Linux Mint (XFCE / Cinnamon).
+# Safe Aspera Hub launcher for Linux Mint (XFCE / Cinnamon), Zorin OS
+# (GNOME / Lite XFCE), and Q4OS Andromeda (Plasma / Trinity). Always uses
+# --no-sandbox --disable-gpu* because Electron's GPU/sandbox often FATAL-exits
+# on company PCs. Desktop-specific lean defaults and maximize-on-launch live
+# in the app — see docs/MINT-ELECTRON-MATRIX.md.
 set -eu
 
 BIN="/usr/lib/asperadock/asperadock"
@@ -20,23 +24,29 @@ clear_stale_singleton() {
   lock="$UD/SingletonLock"
   cookie="$UD/SingletonCookie"
   socket="$UD/SingletonSocket"
-  stale=0
 
-  if [ -L "$socket" ] && [ ! -e "$socket" ]; then
-    stale=1
-  fi
-
+  # Live lock owner → leave every singleton file alone (dangling socket must
+  # not wipe a live SingletonLock).
   if [ -L "$lock" ]; then
     target=$(readlink "$lock" 2>/dev/null || true)
     pid=${target##*-}
     case "$pid" in
       ''|*[!0-9]*) ;;
       *)
-        if ! kill -0 "$pid" 2>/dev/null; then
-          stale=1
+        if kill -0 "$pid" 2>/dev/null; then
+          return 0
         fi
         ;;
     esac
+  fi
+
+  stale=0
+  if [ -L "$lock" ]; then
+    # Lock present but owner is dead (or pid unreadable) — clean.
+    stale=1
+  fi
+  if [ -L "$socket" ] && [ ! -e "$socket" ]; then
+    stale=1
   fi
 
   if [ "$stale" -eq 1 ]; then
@@ -52,6 +62,15 @@ clear_stale_singleton
 } >>"$LOG" 2>&1 || true
 
 FLAGS="--no-sandbox --disable-gpu-sandbox --disable-gpu --disable-software-rasterizer --class=asperadock"
+
+# Mint Wayland + newer Chromium: prefer X11 backend (avoids fatal Wayland reset).
+# Harmless on pure X11 sessions.
+case "${XDG_SESSION_TYPE:-}:${WAYLAND_DISPLAY:-}" in
+  wayland:*|*:wayland*)
+    FLAGS="$FLAGS --ozone-platform=x11"
+    export ELECTRON_OZONE_PLATFORM_HINT=x11
+    ;;
+esac
 
 # From a terminal: show output so it does not look "stuck".
 # From the menu/desktop: keep a log file.

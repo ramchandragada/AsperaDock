@@ -1,0 +1,18 @@
+---
+description: Target Linux Mint / Cinnamon for office deployments
+alwaysApply: true
+---
+
+# Linux Mint / Cinnamon (office PCs)
+
+Except the developer’s personal machine, **office Aspera Hub PCs run Linux Mint with the Cinnamon desktop**.
+
+Always optimize and verify for that environment:
+
+- Prefer Cinnamon / Mint / GNOME-ish desktop behaviors (tray, window manager, file manager `nemo`, notifications).
+- Avoid assuming KDE, GNOME Shell-only, or non-Mint packaging quirks unless unavoidable.
+- When fixing tray, window icons, Wayland/X11, `.desktop`, menus, or system browser opens, think **Mint + Cinnamon first**.
+- Keep installs/updates friendly for Debian-based Mint (`apt` / `.deb`).
+- Do not regress Mint/Cinnamon UX for the sake of niche desktop environments.
+
+Mention Mint/Cinnamon in release notes when a change is desktop-integration related.

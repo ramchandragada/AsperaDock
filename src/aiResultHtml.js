@@ -69,7 +69,19 @@ export function buildAiResultHtml(dark = false) {
   .reply-lang-head {
     display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;
   }
-  .reply-lang-head strong { font-size:14px; font-weight:700; }
+  .reply-lang-head strong, .lang-label {
+    font-size:14px; font-weight:700;
+  }
+  .lang-label.lang-en { color:#1d4ed8; }
+  .lang-label.lang-hi { color:#c2410c; }
+  .lang-label.lang-mr { color:#047857; }
+  .lang-label.lang-bn { color:#be185d; }
+  .lang-label.lang-te { color:#7c3aed; }
+  .lang-label.lang-ta { color:#0f766e; }
+  .lang-label.lang-gu { color:#b45309; }
+  .lang-label.lang-kn { color:#4338ca; }
+  .lang-label.lang-or { color:#e11d48; }
+  .lang-label.lang-ml { color:#0284c7; }
   .reply-card {
     border:1px solid ${border}; border-radius:10px; padding:10px;
     background:${inputBg}; display:flex; flex-direction:column; gap:8px;
@@ -88,17 +100,69 @@ export function buildAiResultHtml(dark = false) {
     background:${card}; border-radius:12px; padding:12px 14px;
     display:flex; flex-direction:column; gap:8px;
   }
-  .refine-lang-head {
+  .refine-lang-head, .summary-lang-head {
     display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;
   }
-  .refine-lang-head strong { font-size:14px; font-weight:700; }
+  .summary-wrap { display:none; flex-direction:column; gap:12px; flex:0 0 auto; }
+  .summary-wrap.show { display:flex; }
+  .summary-lang {
+    background:${card}; border-radius:12px; padding:12px 14px;
+    display:flex; flex-direction:column; gap:8px;
+  }
+  .summary-lang-body {
+    white-space:pre-wrap; word-break:break-word; font-weight:500;
+    font-size:15px; line-height:1.55;
+    border:1px solid ${border}; border-radius:10px; padding:10px 12px;
+    background:${inputBg}; min-height:64px;
+  }
+  .summary-lang-actions, .refine-lang-actions { display:flex; gap:6px; flex-wrap:wrap; }
   .refine-lang textarea {
     width:100%; box-sizing:border-box; min-height:88px; resize:vertical;
     border:1px solid ${border}; border-radius:10px; padding:10px 12px;
     font:inherit; font-size:15px; line-height:1.55; color:inherit; background:${inputBg};
   }
   .refine-lang textarea:focus { outline:2px solid #2563eb55; border-color:#2563eb; }
-  .refine-lang-actions { display:flex; gap:6px; flex-wrap:wrap; }
+  .inbox {
+    display:none; flex-direction:column; gap:12px; flex:1 1 auto; min-height:0;
+  }
+  .inbox.show { display:flex; }
+  .inbox textarea {
+    width:100%; box-sizing:border-box; flex:1 1 auto; min-height:160px; resize:vertical;
+    border:1px solid ${border}; border-radius:12px; padding:12px 14px;
+    font:inherit; font-size:15px; line-height:1.55; color:inherit; background:${inputBg};
+  }
+  .inbox textarea:focus { outline:2px solid #2563eb55; border-color:#2563eb; }
+  .inbox-skills {
+    display:flex; flex-direction:column; gap:8px; flex:0 0 auto;
+    padding:10px 12px; border-radius:10px; background:${card};
+  }
+  .inbox-skills label {
+    display:flex; align-items:center; gap:8px; font-size:14px; font-weight:600; cursor:pointer;
+  }
+  .attach-row {
+    display:flex; flex-wrap:wrap; gap:8px; align-items:center; flex:0 0 auto;
+  }
+  .attach-chip {
+    display:none; align-items:center; gap:8px; max-width:100%;
+    padding:7px 10px; border-radius:9px; background:${card};
+    border:1px solid ${border}; font-size:12px; font-weight:600;
+  }
+  .attach-chip.show { display:inline-flex; }
+  .attach-chip .name {
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:220px;
+  }
+  .attach-chip .meta { color:${muted}; font-weight:600; }
+  .drop-hint {
+    color:${muted}; font-size:12px; font-weight:600; line-height:1.4;
+  }
+  .inbox.drag {
+    outline:2px dashed #2563eb88; outline-offset:-4px; border-radius:12px;
+  }
+  .inbox-foot {
+    color:${muted}; font-size:12px; font-weight:600; line-height:1.4; flex:0 0 auto;
+  }
+  .work-pane { display:flex; flex-direction:column; gap:12px; flex:1 1 auto; min-height:0; }
+  .work-pane.hide { display:none; }
 </style>
 </head>
 <body>
@@ -113,34 +177,85 @@ export function buildAiResultHtml(dark = false) {
         <button type="button" class="btn" id="close">Close</button>
       </div>
     </header>
+    <div class="inbox" id="inbox">
+      <div class="section-label">Your text (or paste a screenshot)</div>
+      <textarea id="inbox-text" placeholder="Paste text, or attach a PDF/image for Summarize."></textarea>
+      <div class="actions">
+        <button type="button" class="btn" id="inbox-paste">Paste from clipboard</button>
+        <button type="button" class="btn" id="inbox-clear">Clear text</button>
+      </div>
+      <div class="section-label">Or attach a file (Summarize)</div>
+      <div class="attach-row">
+        <button type="button" class="btn" id="inbox-attach">Upload PDF / image…</button>
+        <input type="file" id="inbox-file" accept=".pdf,application/pdf,image/png,image/jpeg,image/jpg,image/webp,image/gif" hidden />
+        <span class="drop-hint">or drop a file / paste a screenshot</span>
+      </div>
+      <div class="attach-chip" id="attach-chip">
+        <span class="name" id="attach-name">file</span>
+        <span class="meta" id="attach-meta"></span>
+        <button type="button" class="btn small danger" id="attach-remove">Remove</button>
+      </div>
+      <div class="inbox-skills" role="radiogroup" aria-label="Aspera AI skill">
+        <div class="section-label">What do you need?</div>
+        <label><input type="radio" name="inbox-skill" value="summarize" checked /> Summarize</label>
+        <label id="skill-refine-label"><input type="radio" name="inbox-skill" value="refine" /> Polish draft</label>
+        <label id="skill-suggest-label"><input type="radio" name="inbox-skill" value="suggest-reply" /> Suggest reply</label>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn primary" id="inbox-run">Run Aspera AI</button>
+      </div>
+      <p class="inbox-foot" id="inbox-status">
+        Paste text or attach a PDF/image. Hub never sends for you.
+      </p>
+    </div>
+    <div class="work-pane" id="work-pane">
+    <div class="toolbar" id="result-actions">
+      <button type="button" class="btn" id="new-paste-any">New paste</button>
+      <span class="hint">Same window — paste new text to run again</span>
+    </div>
     <div class="toolbar" id="reply-bar">
-      <button type="button" class="btn primary" id="suggest-reply">Suggest replies (EN · HI · MR)</button>
-      <span class="hint" id="reply-hint">Rough drafts for this message — edit before you copy</span>
+      <button type="button" class="btn primary" id="suggest-reply">Suggest replies</button>
+      <span class="hint" id="reply-hint">Rough drafts — copy and paste into the app yourself</span>
     </div>
     <div class="toolbar" id="refine-bar">
-      <button type="button" class="btn" id="refine-again">Refine again (EN · HI · MR)</button>
-      <span class="hint" id="refine-hint">Pick English, Hindi, or Marathi for the send box</span>
+      <button type="button" class="btn primary" id="use-in-compose" hidden>Use in chat</button>
+      <button type="button" class="btn" id="refine-again">Polish again</button>
+      <button type="button" class="btn" id="new-paste">New paste</button>
+      <span class="hint" id="refine-hint">Pick a language — then Use in chat or Copy</span>
     </div>
     <div class="scroll" id="scroll">
-      <div class="section-label" id="summary-label" hidden>Summary · EN · HI · MR</div>
+      <div class="section-label" id="summary-label" hidden>Summary</div>
       <div class="body loading" id="body">Working…</div>
+      <div class="summary-wrap" id="summary-wrap">
+        <div id="summary-editor"></div>
+      </div>
       <div class="refine-wrap" id="refine-wrap">
-        <div class="section-label">Refined message · EN · HI · MR</div>
+        <div class="section-label" id="refine-section-label">Polished message</div>
         <div id="refine-editor"></div>
         <div class="reply-status" id="refine-status" hidden></div>
       </div>
       <div class="replies-block" id="replies-wrap">
-        <div class="section-label">Suggested replies · EN · HI · MR</div>
+        <div class="section-label" id="replies-section-label">Suggested replies</div>
         <div id="replies-status" class="reply-status" hidden></div>
         <div class="replies-editor" id="replies-editor" hidden></div>
         <div class="body" id="replies" hidden></div>
       </div>
+      <p class="inbox-foot" id="result-foot" hidden>
+        Next: Copy (or Use in chat), then you still press Send. Hub never auto-sends.
+      </p>
+    </div>
     </div>
   </div>
   <script>
     const api = window.aiResultApi;
     const body = document.getElementById('body');
     const copyBtn = document.getElementById('copy');
+    const inbox = document.getElementById('inbox');
+    const workPane = document.getElementById('work-pane');
+    const inboxText = document.getElementById('inbox-text');
+    const inboxStatus = document.getElementById('inbox-status');
+    const inboxRun = document.getElementById('inbox-run');
+    const resultFoot = document.getElementById('result-foot');
     const replyBar = document.getElementById('reply-bar');
     const refineBar = document.getElementById('refine-bar');
     const refineWrap = document.getElementById('refine-wrap');
@@ -148,6 +263,9 @@ export function buildAiResultHtml(dark = false) {
     const refineStatus = document.getElementById('refine-status');
     const refineHint = document.getElementById('refine-hint');
     const refineAgainBtn = document.getElementById('refine-again');
+    const useInComposeBtn = document.getElementById('use-in-compose');
+    const summaryWrap = document.getElementById('summary-wrap');
+    const summaryEditor = document.getElementById('summary-editor');
     const suggestBtn = document.getElementById('suggest-reply');
     const replyHint = document.getElementById('reply-hint');
     const repliesWrap = document.getElementById('replies-wrap');
@@ -160,34 +278,219 @@ export function buildAiResultHtml(dark = false) {
     let latestReplies = '';
     let latestRefine = '';
     let mode = '';
+    let canUseInCompose = false;
     let sections = [];
     let refineSections = [];
+    let summarySections = [];
     let syncTimer = null;
     let refineSyncTimer = null;
     let renderSeq = 0;
+    let stagedAttachment = null;
 
-    const REFINE_LANGS = [
-      { id: 'en', heading: '## English', label: 'English' },
-      { id: 'hi', heading: '## Hindi (हिन्दी)', label: 'Hindi (हिन्दी)' },
-      { id: 'mr', heading: '## Marathi (मराठी)', label: 'Marathi (मराठी)' },
+    function langLabelClass(id) {
+      const key = String(id || 'en').toLowerCase().replace(/[^a-z]/g, '');
+      return 'lang-label lang-' + (key || 'en');
+    }
+
+    function bindCopyButton(btn, getText) {
+      btn.type = 'button';
+      btn.className = 'btn small primary';
+      btn.textContent = 'Copy';
+      btn.onclick = async () => {
+        const t = String(getText() || '').trim();
+        if (!t) return;
+        await api.copy(t);
+        btn.textContent = 'Copied';
+        setTimeout(() => { btn.textContent = 'Copy'; }, 1000);
+      };
+      return btn;
+    }
+
+    function selectedInboxSkill() {
+      const el = document.querySelector('input[name="inbox-skill"]:checked');
+      return el ? el.value : 'summarize';
+    }
+
+    function setInboxSkill(skill) {
+      const id = skill === 'refine' || skill === 'suggest-reply' ? skill : 'summarize';
+      const el = document.querySelector('input[name="inbox-skill"][value="' + id + '"]');
+      if (el) el.checked = true;
+    }
+
+    function formatSize(n) {
+      const b = Number(n) || 0;
+      if (b < 1024) return b + ' B';
+      if (b < 1024 * 1024) return Math.round(b / 1024) + ' KB';
+      return (b / (1024 * 1024)).toFixed(1) + ' MB';
+    }
+
+    function syncAttachmentUi() {
+      const chip = document.getElementById('attach-chip');
+      const nameEl = document.getElementById('attach-name');
+      const metaEl = document.getElementById('attach-meta');
+      const refineLab = document.getElementById('skill-refine-label');
+      const suggestLab = document.getElementById('skill-suggest-label');
+      const has = !!stagedAttachment;
+      chip.classList.toggle('show', has);
+      if (has) {
+        nameEl.textContent = stagedAttachment.name || 'file';
+        metaEl.textContent =
+          (stagedAttachment.kind === 'pdf' ? 'PDF' : 'Image') +
+          ' · ' +
+          formatSize(stagedAttachment.size);
+        setInboxSkill('summarize');
+      }
+      if (refineLab) refineLab.style.opacity = has ? '0.45' : '';
+      if (suggestLab) suggestLab.style.opacity = has ? '0.45' : '';
+      const refineIn = document.querySelector('input[name="inbox-skill"][value="refine"]');
+      const suggestIn = document.querySelector('input[name="inbox-skill"][value="suggest-reply"]');
+      if (refineIn) refineIn.disabled = has;
+      if (suggestIn) suggestIn.disabled = has;
+    }
+
+    async function clearStagedAttachment() {
+      stagedAttachment = null;
+      try {
+        if (api.clearAttachment) await api.clearAttachment();
+      } catch {
+        // ignore
+      }
+      syncAttachmentUi();
+    }
+
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = String(reader.result || '');
+          const idx = result.indexOf('base64,');
+          resolve(idx >= 0 ? result.slice(idx + 7) : result);
+        };
+        reader.onerror = () => reject(reader.error || new Error('Could not read file'));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function stageLocalFile(file) {
+      if (!file) return;
+      inboxStatus.textContent = 'Attaching ' + (file.name || 'file') + '…';
+      try {
+        const base64 = await fileToBase64(file);
+        const result = await api.attachFile({
+          name: file.name || 'file',
+          mime: file.type || '',
+          base64,
+        });
+        if (!result?.ok) {
+          inboxStatus.textContent = String(result?.error || 'Could not attach file.');
+          return;
+        }
+        stagedAttachment = result.attachment;
+        syncAttachmentUi();
+        inboxStatus.textContent =
+          'Attached ' +
+          (stagedAttachment.name || 'file') +
+          '. Summarize is selected — Run Aspera AI.';
+      } catch (err) {
+        inboxStatus.textContent = String(err?.message || err || 'Could not attach file.');
+      }
+    }
+
+    async function pasteClipboardIntoInbox() {
+      try {
+        if (api.pasteClipboard) {
+          const result = await api.pasteClipboard();
+          if (!result?.ok) {
+            inboxStatus.textContent = String(
+              result?.error ||
+                'Clipboard is empty — copy text, or take a screenshot and paste.',
+            );
+            return;
+          }
+          if (result.kind === 'image' && result.attachment) {
+            stagedAttachment = result.attachment;
+            syncAttachmentUi();
+            inboxStatus.textContent =
+              'Screenshot attached from clipboard. Summarize is selected — Run Aspera AI.';
+            return;
+          }
+          const text = String(result.text || '');
+          if (text) inboxText.value = text;
+          inboxStatus.textContent = text
+            ? 'Clipboard text pasted. Choose a skill and Run — or paste a screenshot for Summarize.'
+            : 'Clipboard is empty — copy text, or take a screenshot and paste.';
+          return;
+        }
+        const text = await api.readClipboard();
+        if (text) inboxText.value = text;
+        inboxStatus.textContent = text
+          ? 'Clipboard pasted. Choose a skill and Run — or attach a PDF/image for Summarize.'
+          : 'Clipboard is empty — paste text, or attach a PDF/image for Summarize.';
+      } catch (err) {
+        inboxStatus.textContent = String(err?.message || err || 'Could not read clipboard.');
+      }
+    }
+
+    let languageMeta = 'EN · HI · MR';
+    let REFINE_LANGS = [
+      { id: 'en', heading: '## English', label: 'English', name: 'English' },
+      { id: 'hi', heading: '## Hindi (हिन्दी)', label: 'Hindi (हिन्दी)', name: 'Hindi' },
+      { id: 'mr', heading: '## Marathi (मराठी)', label: 'Marathi (मराठी)', name: 'Marathi' },
+    ];
+    let LANGS = [
+      { id: 'en', heading: '## English replies', label: 'English', name: 'English' },
+      { id: 'hi', heading: '## Hindi replies (हिन्दी)', label: 'Hindi (हिन्दी)', name: 'Hindi' },
+      { id: 'mr', heading: '## Marathi replies (मराठी)', label: 'Marathi (मराठी)', name: 'Marathi' },
     ];
 
-    const LANGS = [
-      { id: 'en', heading: '## English replies', label: 'English' },
-      { id: 'hi', heading: '## Hindi replies (हिन्दी)', label: 'Hindi (हिन्दी)' },
-      { id: 'mr', heading: '## Marathi replies (मराठी)', label: 'Marathi (मराठी)' },
-    ];
+    function escapeRegExp(value) {
+      return String(value || '').replace(/[.*+?^$()|[\\]\\\\{}]/g, '\\\\$&');
+    }
+
+    function applyOutputLanguages(list, meta) {
+      if (Array.isArray(list) && list.length) {
+        REFINE_LANGS = list.map((l) => ({
+          id: l.id,
+          name: l.name || l.label || l.id,
+          label: l.label || l.name || l.id,
+          heading: l.heading || ('## ' + (l.label || l.name || l.id)),
+        }));
+        LANGS = list.map((l) => ({
+          id: l.id,
+          name: l.name || l.label || l.id,
+          label: l.label || l.name || l.id,
+          heading:
+            l.repliesHeading ||
+            (l.id === 'en'
+              ? '## English replies'
+              : ('## ' + (l.name || l.label || l.id) + ' replies' + (l.native ? ' (' + l.native + ')' : ''))),
+        }));
+      }
+      if (meta) languageMeta = String(meta);
+      const suggestBtn = document.getElementById('suggest-reply');
+      const refineAgainBtn = document.getElementById('refine-again');
+      const summaryLabel = document.getElementById('summary-label');
+      const refineLabel = document.getElementById('refine-section-label');
+      const repliesLabel = document.getElementById('replies-section-label');
+      if (suggestBtn) suggestBtn.textContent = 'Suggest replies (' + languageMeta + ')';
+      if (refineAgainBtn) refineAgainBtn.textContent = 'Polish again (' + languageMeta + ')';
+      if (summaryLabel) summaryLabel.textContent = 'Summary · ' + languageMeta;
+      if (refineLabel) refineLabel.textContent = 'Polished message · ' + languageMeta;
+      if (repliesLabel) repliesLabel.textContent = 'Suggested replies · ' + languageMeta;
+    }
 
     function matchHeading(line) {
       const t = String(line || '').trim();
       if (!t) return null;
       const lower = t.toLowerCase();
       for (const section of LANGS) {
-        if (t === section.heading || lower.startsWith(section.heading.toLowerCase())) return section.id;
+        if (t === section.heading || lower.startsWith(String(section.heading || '').toLowerCase())) return section.id;
       }
-      if (/^##\\s*english/i.test(t)) return 'en';
-      if (/^##\\s*hindi/i.test(t)) return 'hi';
-      if (/^##\\s*marathi/i.test(t)) return 'mr';
+      for (const section of LANGS) {
+        const name = section.name || String(section.label || '').split('(')[0].trim();
+        if (!name) continue;
+        if (new RegExp('^##\\\\s*' + escapeRegExp(name) + '(?:\\\\s+replies)?\\\\b', 'i').test(t)) return section.id;
+      }
       return null;
     }
 
@@ -231,11 +534,13 @@ export function buildAiResultHtml(dark = false) {
       if (!t) return null;
       const lower = t.toLowerCase();
       for (const section of REFINE_LANGS) {
-        if (t === section.heading || lower.startsWith(section.heading.toLowerCase())) return section.id;
+        if (t === section.heading || lower.startsWith(String(section.heading || '').toLowerCase())) return section.id;
       }
-      if (/^##\\s*english\\b/i.test(t)) return 'en';
-      if (/^##\\s*hindi\\b/i.test(t)) return 'hi';
-      if (/^##\\s*marathi\\b/i.test(t)) return 'mr';
+      for (const section of REFINE_LANGS) {
+        const name = section.name || String(section.label || '').split('(')[0].trim();
+        if (!name) continue;
+        if (new RegExp('^##\\\\s*' + escapeRegExp(name) + '\\\\b', 'i').test(t)) return section.id;
+      }
       return null;
     }
 
@@ -245,18 +550,21 @@ export function buildAiResultHtml(dark = false) {
       const raw = String(text || '').replace(/\\r\\n/g, '\\n').trim();
       if (!raw) return base;
       if (!/^##\\s+/m.test(raw)) {
-        byId.en.text = raw;
+        if (byId.en) byId.en.text = raw;
+        else if (base[0]) base[0].text = raw;
         return base;
       }
       let current = null;
-      const buckets = { en: [], hi: [], mr: [] };
+      const buckets = Object.fromEntries(base.map((s) => [s.id, []]));
       for (const line of raw.split('\\n')) {
         const headingId = matchRefineHeading(line);
         if (headingId) { current = headingId; continue; }
-        if (!current) current = 'en';
+        if (!current) current = base[0] ? base[0].id : 'en';
+        if (!buckets[current]) buckets[current] = [];
         buckets[current].push(line);
       }
       for (const id of Object.keys(buckets)) {
+        if (!byId[id]) continue;
         byId[id].text = buckets[id].join('\\n').trim();
       }
       return base;
@@ -277,9 +585,42 @@ export function buildAiResultHtml(dark = false) {
           ? serializeRefineSections(refineSections)
           : String(latestRefine || '').trim();
       }
+      const summaryText = summarySections.length
+        ? serializeRefineSections(summarySections)
+        : latestSummary;
       const repliesText = sections.length ? serializeReplies(sections) : latestReplies;
-      const parts = [latestSummary, repliesText].filter(Boolean);
+      const parts = [summaryText, repliesText].filter(Boolean);
       return parts.join('\\n\\n—\\n\\n');
+    }
+
+    function anySummaryText() {
+      return summarySections.some((s) => String(s.text || '').trim());
+    }
+
+    function renderSummaryEditor() {
+      if (!summaryEditor) return;
+      summaryEditor.innerHTML = '';
+      summarySections.forEach((section) => {
+        if (!String(section.text || '').trim()) return;
+        const wrap = document.createElement('div');
+        wrap.className = 'summary-lang';
+        const head = document.createElement('div');
+        head.className = 'summary-lang-head';
+        const title = document.createElement('strong');
+        title.className = langLabelClass(section.id);
+        title.textContent = section.label;
+        const copyOne = document.createElement('button');
+        bindCopyButton(copyOne, () => section.text);
+        head.appendChild(title);
+        head.appendChild(copyOne);
+        wrap.appendChild(head);
+
+        const bodyEl = document.createElement('div');
+        bodyEl.className = 'summary-lang-body';
+        bodyEl.textContent = section.text || '';
+        wrap.appendChild(bodyEl);
+        summaryEditor.appendChild(wrap);
+      });
     }
 
     function setRefineStatus(msg) {
@@ -312,61 +653,58 @@ export function buildAiResultHtml(dark = false) {
         const head = document.createElement('div');
         head.className = 'refine-lang-head';
         const title = document.createElement('strong');
+        title.className = langLabelClass(section.id);
         title.textContent = section.label;
-        head.appendChild(title);
-        wrap.appendChild(head);
 
         const ta = document.createElement('textarea');
         ta.value = section.text || '';
         ta.rows = 3;
-        ta.placeholder = 'Refined draft in ' + section.label + '…';
+        ta.placeholder = 'Polished draft in ' + section.label + '…';
         ta.oninput = () => {
           section.text = ta.value;
           scheduleRefineSync();
           copyBtn.disabled = !anyRefineText();
           refineAgainBtn.disabled = !anyRefineText();
+          if (useInComposeBtn) useInComposeBtn.disabled = !anyRefineText();
         };
 
         const actions = document.createElement('div');
         actions.className = 'refine-lang-actions';
-
         const copyOne = document.createElement('button');
-        copyOne.type = 'button';
-        copyOne.className = 'btn small';
-        copyOne.textContent = 'Copy';
-        copyOne.onclick = async () => {
-          const t = String(ta.value || '').trim();
-          if (!t) return;
-          await api.copy(t);
-          copyOne.textContent = 'Copied';
-          setTimeout(() => { copyOne.textContent = 'Copy'; }, 1000);
-        };
-
-        const useBtn = document.createElement('button');
-        useBtn.type = 'button';
-        useBtn.className = 'btn small primary';
-        useBtn.textContent = 'Use in send box';
-        useBtn.onclick = async () => {
-          const t = String(ta.value || '').trim();
-          if (!t) {
-            setRefineStatus('Type or refine text in ' + section.label + ' first.');
-            return;
-          }
-          useBtn.disabled = true;
-          setRefineStatus('Putting ' + section.label + ' into the send box…');
-          try {
-            const result = await api.useInCompose({ text: t, language: section.id });
-            if (result?.ok) return;
-            setRefineStatus(String(result?.error || 'Copied — paste into the send box with Ctrl+V.'));
-          } catch (err) {
-            setRefineStatus(String(err?.message || err || 'Could not update send box.'));
-          } finally {
-            useBtn.disabled = !String(ta.value || '').trim();
-          }
-        };
-
-        actions.appendChild(useBtn);
+        bindCopyButton(copyOne, () => ta.value);
         actions.appendChild(copyOne);
+        if (canUseInCompose && api.useInCompose) {
+          const useOne = document.createElement('button');
+          useOne.type = 'button';
+          useOne.className = 'btn small primary';
+          useOne.textContent = 'Use in chat';
+          useOne.onclick = async () => {
+            const t = String(ta.value || '').trim();
+            if (!t) return;
+            useOne.disabled = true;
+            setRefineStatus('Inserting into send box…');
+            try {
+              const result = await api.useInCompose({ text: t });
+              if (result?.ok) {
+                setRefineStatus('Inserted — review in chat, then press Send.');
+                return;
+              }
+              setRefineStatus(
+                String(
+                  result?.error ||
+                    'Could not insert. Text was copied — paste with Ctrl+V.',
+                ),
+              );
+            } catch (err) {
+              setRefineStatus(String(err?.message || err || 'Could not insert.'));
+            } finally {
+              useOne.disabled = false;
+            }
+          };
+          actions.appendChild(useOne);
+        }
+        head.appendChild(title);
+        wrap.appendChild(head);
         wrap.appendChild(ta);
         wrap.appendChild(actions);
         refineEditor.appendChild(wrap);
@@ -402,6 +740,7 @@ export function buildAiResultHtml(dark = false) {
         const head = document.createElement('div');
         head.className = 'reply-lang-head';
         const title = document.createElement('strong');
+        title.className = langLabelClass(section.id);
         title.textContent = section.label;
         const addBtn = document.createElement('button');
         addBtn.type = 'button';
@@ -517,15 +856,44 @@ export function buildAiResultHtml(dark = false) {
     api.onInit((data) => {
       document.getElementById('title').textContent = data?.title || 'Aspera AI';
       document.getElementById('meta').textContent = data?.meta || '';
+      applyOutputLanguages(data?.outputLanguages, data?.languageMeta || data?.meta);
       mode = String(data?.mode || (data?.canUseInCompose ? 'refine' : ''));
+      canUseInCompose = !!data?.canUseInCompose;
       latestSummary = String(data?.text || '');
       latestReplies = String(data?.repliesText || '');
       const err = !!data?.error;
       const loading = !!data?.loading;
+      const isInbox = mode === 'inbox';
       const isRefine = mode === 'refine';
+      const resultActions = document.getElementById('result-actions');
+
+      inbox.classList.toggle('show', isInbox);
+      workPane.classList.toggle('hide', isInbox);
+      copyBtn.style.display = isInbox ? 'none' : '';
+      resultFoot.hidden = true;
+      if (resultActions) {
+        resultActions.classList.toggle('show', !isInbox && !loading);
+      }
+
+      if (isInbox) {
+        if (data?.pasteText != null) inboxText.value = String(data.pasteText || '');
+        if (data?.skill) setInboxSkill(data.skill);
+        stagedAttachment = data?.attachment || null;
+        syncAttachmentUi();
+        inboxStatus.textContent =
+          data?.hint ||
+          'Paste text or a screenshot, or attach a PDF/image for Summarize. Hub never sends for you.';
+        inboxRun.disabled = false;
+        copyBtn.disabled = true;
+        if (useInComposeBtn) useInComposeBtn.hidden = true;
+        return;
+      }
 
       if (isRefine && !loading && !err) {
         body.hidden = true;
+        if (summaryWrap) summaryWrap.classList.remove('show');
+        summarySections = [];
+        if (summaryEditor) summaryEditor.innerHTML = '';
         refineWrap.classList.add('show');
         latestRefine = latestSummary;
         if (Array.isArray(data?.refineSections) && data.refineSections.length) {
@@ -543,11 +911,48 @@ export function buildAiResultHtml(dark = false) {
         setRefineStatus('');
         summaryLabel.hidden = true;
         copyBtn.textContent = 'Copy all';
+        resultFoot.hidden = false;
+        resultFoot.textContent = canUseInCompose
+          ? 'Use in chat puts text in the send box — you still press Send. Hub never auto-sends.'
+          : 'Copy a language, paste into the app, then press Send. Hub never auto-sends.';
+      } else if (
+        data?.showTrilingual &&
+        !loading &&
+        !err &&
+        latestSummary &&
+        !isRefine
+      ) {
+        // Summarize: per-language cards with colored labels + Copy (like Refine).
+        body.hidden = true;
+        refineWrap.classList.remove('show');
+        refineEditor.innerHTML = '';
+        refineSections = [];
+        summarySections = parseRefineSections(latestSummary).filter((s) =>
+          String(s.text || '').trim(),
+        );
+        if (!summarySections.length) {
+          body.hidden = false;
+          body.className = 'body';
+          body.textContent = latestSummary;
+          if (summaryWrap) summaryWrap.classList.remove('show');
+          summaryLabel.hidden = false;
+        } else {
+          if (summaryWrap) summaryWrap.classList.add('show');
+          renderSummaryEditor();
+          summaryLabel.hidden = false;
+        }
+        copyBtn.textContent = 'Copy all';
+        resultFoot.hidden = false;
+        resultFoot.textContent =
+          'Next: Copy (or Use in chat), then you still press Send. Hub never auto-sends.';
       } else {
         body.hidden = false;
         refineWrap.classList.remove('show');
         refineEditor.innerHTML = '';
         refineSections = [];
+        summarySections = [];
+        if (summaryWrap) summaryWrap.classList.remove('show');
+        if (summaryEditor) summaryEditor.innerHTML = '';
         body.className = 'body' + (err ? ' error' : loading ? ' loading' : '');
         body.textContent = latestSummary || (err ? String(data.error) : '…');
         summaryLabel.hidden = !(data?.showTrilingual && !loading && !err && latestSummary);
@@ -555,23 +960,31 @@ export function buildAiResultHtml(dark = false) {
         if (isRefine && (loading || err)) {
           setRefineStatus('');
         }
+        if (!loading && !err && latestSummary) resultFoot.hidden = false;
       }
 
       const showReplyToolbar = !!(data?.canSuggestReply && !loading && !err && !isRefine);
       replyBar.classList.toggle('show', showReplyToolbar);
       refineBar.classList.toggle('show', !!(isRefine && !loading && !err));
       refineAgainBtn.disabled = isRefine ? !anyRefineText() : true;
-      refineHint.textContent = 'Edit any language, then Use in send box for that version';
+      if (useInComposeBtn) {
+        const showUse = !!(isRefine && !loading && !err && canUseInCompose);
+        useInComposeBtn.hidden = !showUse;
+        useInComposeBtn.disabled = showUse ? !anyRefineText() : true;
+      }
+      refineHint.textContent = canUseInCompose
+        ? 'Edit any language, then Use in chat (or Copy). You still press Send.'
+        : 'Edit any language, then Copy and paste into the app yourself';
 
       suggestBtn.disabled = !!data?.repliesLoading;
       suggestBtn.textContent = latestReplies || data?.repliesError
         ? 'Regenerate replies'
-        : 'Suggest replies (EN · HI · MR)';
+        : 'Suggest replies (' + languageMeta + ')';
       replyHint.textContent = data?.repliesLoading
         ? 'Writing reply drafts…'
         : latestReplies
           ? 'Edit, add, or revise any reply, then Copy'
-          : 'Rough drafts for this message — you can edit before sending';
+          : 'Rough drafts — copy and paste into the app yourself';
 
       if (isRefine) {
         repliesWrap.classList.remove('show');
@@ -581,7 +994,7 @@ export function buildAiResultHtml(dark = false) {
       } else if (data?.repliesLoading) {
         repliesWrap.classList.add('show');
         setStatus('');
-        showPlainReplies('Writing reply drafts in English, Hindi, and Marathi…', 'loading');
+        showPlainReplies('Writing reply drafts (' + languageMeta + ')…', 'loading');
         scroll.scrollTop = scroll.scrollHeight;
       } else if (latestReplies) {
         repliesWrap.classList.add('show');
@@ -598,6 +1011,7 @@ export function buildAiResultHtml(dark = false) {
         }
         renderEditor();
         latestReplies = serializeReplies(sections);
+        resultFoot.hidden = false;
       } else if (data?.repliesError) {
         repliesWrap.classList.add('show');
         setStatus('');
@@ -610,16 +1024,152 @@ export function buildAiResultHtml(dark = false) {
       }
       const hasReplyText = sections.some((s) => s.items.some((i) => String(i.text || '').trim()));
       copyBtn.disabled =
-        (isRefine ? !anyRefineText() : (!latestSummary && !latestReplies && !hasReplyText))
+        (isRefine
+          ? !anyRefineText()
+          : (!anySummaryText() && !latestSummary && !latestReplies && !hasReplyText))
         || err
         || loading;
     });
 
+    document.getElementById('inbox-paste').onclick = () => {
+      pasteClipboardIntoInbox().catch(() => {});
+    };
+    document.getElementById('inbox-clear').onclick = () => {
+      inboxText.value = '';
+      inboxStatus.textContent =
+        'Text cleared. Paste text or a screenshot, or attach a PDF/image, then Run.';
+      inboxText.focus();
+    };
+    // Ctrl+V image paste (screenshots) — text paste keeps default textarea behavior.
+    document.addEventListener('paste', (event) => {
+      if (!inbox.classList.contains('show')) return;
+      const items = event.clipboardData?.items;
+      if (!items?.length) return;
+      for (const item of items) {
+        if (item && String(item.type || '').startsWith('image/')) {
+          const file = item.getAsFile();
+          if (!file) continue;
+          event.preventDefault();
+          stageLocalFile(file).catch(() => {});
+          return;
+        }
+      }
+    });
+    document.getElementById('inbox-attach').onclick = () => {
+      document.getElementById('inbox-file')?.click();
+    };
+    document.getElementById('inbox-file').onchange = (event) => {
+      const file = event.target?.files?.[0];
+      event.target.value = '';
+      stageLocalFile(file).catch(() => {});
+    };
+    document.getElementById('attach-remove').onclick = () => {
+      clearStagedAttachment()
+        .then(() => {
+          inboxStatus.textContent =
+            'Attachment removed. Paste text or a screenshot, or attach another file.';
+        })
+        .catch(() => {});
+    };
+    ;['dragenter', 'dragover'].forEach((type) => {
+      inbox.addEventListener(type, (e) => {
+        e.preventDefault();
+        inbox.classList.add('drag');
+      });
+    });
+    ;['dragleave', 'drop'].forEach((type) => {
+      inbox.addEventListener(type, (e) => {
+        e.preventDefault();
+        if (type === 'dragleave') inbox.classList.remove('drag');
+      });
+    });
+    inbox.addEventListener('drop', (e) => {
+      inbox.classList.remove('drag');
+      const file = e.dataTransfer?.files?.[0];
+      stageLocalFile(file).catch(() => {});
+    });
+    async function goNewPaste() {
+      stagedAttachment = null;
+      syncAttachmentUi();
+      if (api.newPaste) await api.newPaste();
+    }
+    document.getElementById('new-paste')?.addEventListener('click', () => {
+      goNewPaste().catch(() => {});
+    });
+    document.getElementById('new-paste-any')?.addEventListener('click', () => {
+      goNewPaste().catch(() => {});
+    });
+    inboxRun.onclick = async () => {
+      const text = String(inboxText.value || '').trim();
+      const skill = selectedInboxSkill();
+      if (!text && !stagedAttachment) {
+        inboxStatus.textContent =
+          'Paste text or a screenshot first, or attach a PDF/image and choose Summarize.';
+        inboxText.focus();
+        return;
+      }
+      if (stagedAttachment && skill !== 'summarize') {
+        inboxStatus.textContent =
+          'PDF/image attachments only work with Summarize. Clear the file for Polish or Suggest reply.';
+        setInboxSkill('summarize');
+        return;
+      }
+      inboxRun.disabled = true;
+      inboxStatus.textContent = stagedAttachment
+        ? 'Summarizing attachment…'
+        : 'Running Aspera AI…';
+      try {
+        const result = await api.runClipboard({
+          skill,
+          text,
+          attachmentId: stagedAttachment?.id || '',
+        });
+        if (result?.ok === false) {
+          inboxStatus.textContent = String(result.error || 'Could not run Aspera AI.');
+          inboxRun.disabled = false;
+        }
+      } catch (err) {
+        inboxStatus.textContent = String(err?.message || err || 'Could not run Aspera AI.');
+        inboxRun.disabled = false;
+      }
+    };
+
     refineAgainBtn.onclick = async () => {
       refineAgainBtn.disabled = true;
-      setRefineStatus('Refining again in English, Hindi, and Marathi…');
+      if (useInComposeBtn) useInComposeBtn.disabled = true;
+      setRefineStatus('Polishing again (' + languageMeta + ')…');
       await api.refineAgain({});
     };
+
+    if (useInComposeBtn) {
+      useInComposeBtn.onclick = async () => {
+        const preferred =
+          refineSections.find((s) => s.id === 'en' && String(s.text || '').trim()) ||
+          refineSections.find((s) => String(s.text || '').trim()) ||
+          null;
+        const t = String(preferred?.text || latestRefine || '').trim();
+        if (!t || !api.useInCompose) return;
+        useInComposeBtn.disabled = true;
+        setRefineStatus('Inserting into send box…');
+        try {
+          const result = await api.useInCompose({ text: t });
+          if (result?.ok) {
+            setRefineStatus('Inserted — review in chat, then press Send.');
+            return;
+          }
+          setRefineStatus(
+            String(
+              result?.error ||
+                'Could not insert. Text was copied — paste with Ctrl+V.',
+            ),
+          );
+        } catch (err) {
+          setRefineStatus(String(err?.message || err || 'Could not insert.'));
+        } finally {
+          useInComposeBtn.disabled = !anyRefineText();
+        }
+      };
+    }
 
     suggestBtn.onclick = async () => {
       suggestBtn.disabled = true;

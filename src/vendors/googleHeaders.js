@@ -1,11 +1,52 @@
 /**
  * Pure Google request-header rewrite (unit-tested).
- * Kept separate from Electron inject so CI stays lightweight.
+ *
+ * accounts.google.com ALWAYS uses a Firefox UA in Hub. That is intentional:
+ * Google shows “This browser or app may not be secure” for Electron when we
+ * send a Chrome UA on the accounts host (especially first-time sign-in).
+ * Firefox softens that gate for ALL Google sign-in — Gmail and third-party
+ * OAuth alike.
+ *
+ * Never flip Chrome↔Firefox mid-OAuth. Destination sites still get Chrome + CH
+ * elsewhere so CDNs are happy — only the accounts host is Firefox.
+ */
+
+/** True when Google blocked embedded sign-in (“browser may not be secure”). */
+export function isGoogleInsecureBrowserErrorUrl(url) {
+  try {
+    const u = new URL(String(url || ''));
+    const host = u.hostname.toLowerCase();
+    if (host !== 'accounts.google.com' && !host.endsWith('.accounts.google.com')) {
+      return false;
+    }
+    const path = u.pathname.toLowerCase();
+    if (/rejected|deniedsigninrejected|signin\/rejected/i.test(path)) return true;
+    if (/browser.?not.?secure|not.?secure/i.test(u.search)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {Record<string,string>} headers
+ * @param {string} url
+ * @param {{
+ *   chromeUA: string,
+ *   firefoxAccountsUA: string,
+ *   secChUa: string,
+ *   enabled?: boolean,
+ * }} opts
  */
 export function applyGoogleRequestHeaders(
   headers,
   url,
-  { chromeUA, firefoxAccountsUA, secChUa, enabled = true },
+  {
+    chromeUA,
+    firefoxAccountsUA,
+    secChUa,
+    enabled = true,
+  },
 ) {
   if (!enabled) return headers;
   let host = '';

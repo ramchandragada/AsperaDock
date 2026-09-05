@@ -1,0 +1,84 @@
+# Release guard — demote GitHub Releases that were not cut from master
+
+# Live fleet regression: agents published releases from feature branches while
+# master stayed behind. Users then got “latest” builds that silently dropped
+# WorkDrive, catalog × removal, multi-CRM isolation, etc.
+#
+# This workflow runs whenever a release is published. If the tagged commit is
+# NOT on origin/master, the release is forced back to draft so it cannot stay
+# as “Latest”, and the job fails loudly.
+
+name: Release guard
+
+on:
+  release:
+    types: [published, prereleased]
+
+permissions:
+  contents: write
+
+jobs:
+  must-be-on-master:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify release tag commit is on master
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+          REL_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          echo "Release tag: $TAG"
+          echo "Event SHA:   $REL_SHA"
+
+          # Prefer the tag object's commit (more reliable than github.sha on release events).
+          TAG_SHA=$(git rev-list -n 1 "refs/tags/$TAG" 2>/dev/null || true)
+          if [ -z "$TAG_SHA" ]; then
+            git fetch origin "refs/tags/$TAG:refs/tags/$TAG" || true
+            TAG_SHA=$(git rev-list -n 1 "refs/tags/$TAG" 2>/dev/null || true)
+          fi
+          if [ -z "$TAG_SHA" ]; then
+            TAG_SHA="$REL_SHA"
+          fi
+          echo "Tag commit:  $TAG_SHA"
+          echo "sha=$TAG_SHA" >> "$GITHUB_OUTPUT"
+
+          git fetch origin master main 2>/dev/null || git fetch origin master
+          BASE=$(git rev-parse origin/master 2>/dev/null || git rev-parse origin/main)
+          echo "origin/master (or main): $BASE"
+
+          if git merge-base --is-ancestor "$TAG_SHA" "$BASE"; then
+            echo "✓ Tag commit is on master"
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::error::Release $TAG commit $TAG_SHA is NOT on master ($BASE). Demoting to draft."
+            exit 1
+          fi
+
+      - name: Demote illegal release to draft
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          echo "Demoting $TAG to draft so it cannot remain Latest for the fleet…"
+          gh release edit "$TAG" --draft --repo "${{ github.repository }}" \
+            --notes "$(printf '%s\n\n---\n**BLOCKED BY RELEASE GUARD**\nThis release was published from a commit that is **not on master**. It was moved back to draft automatically. Merge the PR to master and re-publish from the Deploy workflow or \`npm run publish:update\` on master.\n\n%s' \
+              "${{ github.event.release.body }}" \
+              "See docs/RELEASE-LINE.md")"
+          {
+            echo "## ❌ Illegal release demoted"
+            echo ""
+            echo "Tag \`$TAG\` was published from a non-master commit."
+            echo "It has been converted to **draft** so company PCs do not treat it as Latest."
+            echo ""
+            echo "Fix: merge to \`master\`, then let Deploy ship (or run \`npm run release:check && npm run publish:update\` on master)."
+          } >> "$GITHUB_STEP_SUMMARY"

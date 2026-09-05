@@ -77,15 +77,28 @@ export function buildNotifCenterHtml(dark = false) {
     background: #cbd5e1; color: #0f172a; font-size: 14px; font-weight: 700; overflow: hidden;
   }
   .avatar img { width: 100%; height: 100%; object-fit: cover; }
-  .notif-text { display: grid; gap: 3px; min-width: 0; }
-  .notif-text strong, .notif-text .body-line {
+  .notif-text { display: grid; gap: 4px; min-width: 0; }
+  .notif-text strong {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 13.5px; font-weight: 700;
   }
-  .notif-text strong { font-size: 13.5px; font-weight: 700; }
-  .notif-text .body-line { color: ${muted}; font-size: 12.5px; font-weight: 500; }
+  .notif-text .body-line {
+    color: ${text}; font-size: 12.5px; font-weight: 500; line-height: 1.45;
+    white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+    overflow: hidden; max-height: calc(1.45em * 3);
+  }
+  .notif-text .body-line.is-muted { color: ${muted}; }
   .meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .account, .time { color: ${muted}; font-size: 11.5px; white-space: nowrap; }
   .account { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .unread-pill {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 18px; height: 18px; padding: 0 6px; border-radius: 999px;
+    background: ${accent}; color: #fff; font-size: 10.5px; font-weight: 700;
+  }
+  .title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .title-row strong { min-width: 0; flex: 1 1 auto; }
   .actions { display: flex; gap: 6px; }
   .btn {
     border: 1px solid ${border}; background: ${bg}; color: inherit; border-radius: 8px;
@@ -96,8 +109,13 @@ export function buildNotifCenterHtml(dark = false) {
   .btn:disabled { opacity: 0.55; cursor: default; }
   .reply-box { display: none; gap: 6px; }
   .reply-box.open { display: grid; }
+  .reply-hint {
+    color: ${muted}; font-size: 11px; font-weight: 500; line-height: 1.35;
+    white-space: pre-wrap; display: -webkit-box; -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2; overflow: hidden;
+  }
   .reply-box textarea {
-    width: 100%; min-height: 56px; resize: vertical; box-sizing: border-box;
+    width: 100%; min-height: 64px; resize: vertical; box-sizing: border-box;
     border: 1px solid ${border}; border-radius: 8px; padding: 8px 10px;
     font: 500 12.5px/1.4 inherit; color: inherit; background: ${bg};
   }
@@ -167,11 +185,20 @@ export function buildNotifCenterHtml(dark = false) {
             ? '<img src="' + esc(item.logo) + '" alt="" />'
             : initial;
           const account = esc(item.accountLabel || '');
+          const body = String(item.body || '').trim();
+          const unread = Number(item.unread) || 0;
+          const bodyMuted = !body || /^\\d+\\s*unread\\b/i.test(body) || body === 'New message' || body === 'New notification';
+          const unreadPill = unread > 1
+            ? '<span class="unread-pill" title="' + unread + ' unread">' + unread + '</span>'
+            : '';
           const reply = item.canReply
             ? '<div class="actions">' +
               '<button type="button" class="btn reply-toggle" data-index="' + index + '">Quick reply</button>' +
               '</div>' +
               '<div class="reply-box" data-reply="' + index + '">' +
+              (body
+                ? '<div class="reply-hint">Replying about: ' + esc(body) + '</div>'
+                : '') +
               '<textarea maxlength="2000" placeholder="Type a short reply…"></textarea>' +
               '<div class="reply-actions">' +
               '<button type="button" class="btn cancel-reply">Cancel</button>' +
@@ -179,11 +206,13 @@ export function buildNotifCenterHtml(dark = false) {
               '</div><div class="status"></div></div>'
             : '';
           return '<article class="notif-item" data-index="' + index + '">' +
-            '<button type="button" class="open-btn" data-index="' + index + '" title="Open">' +
+            '<button type="button" class="open-btn" data-index="' + index + '" title="Open chat">' +
             '<span class="avatar" style="background:' + esc(item.color || '#cbd5e1') + '">' + logo + '</span>' +
             '<span class="notif-text">' +
-            '<strong>' + esc(item.title) + '</strong>' +
-            '<span class="body-line">' + esc(item.body || '') + '</span>' +
+            '<span class="title-row"><strong>' + esc(item.title) + '</strong>' + unreadPill + '</span>' +
+            (body
+              ? '<span class="body-line' + (bodyMuted ? ' is-muted' : '') + '">' + esc(body) + '</span>'
+              : '<span class="body-line is-muted">Open to read the latest message</span>') +
             '<span class="meta">' +
             '<span class="account">' + account + '</span>' +
             '<span class="time">' + esc(relativeTime(item.at)) + '</span>' +

@@ -14,14 +14,52 @@
       <header id="top-bar" class="app-bar app-bar-top">
         <div class="app-bar-main">
           <nav id="apps-top" class="apps-track" aria-label="Apps"></nav>
-          <div class="chrome-brand" title="Aspera">
-            <img id="chrome-wordmark" class="chrome-wordmark" alt="Aspera" draggable="false" />
-          </div>
           <div class="chrome-actions">
+            <button
+              type="button"
+              id="aspera-ai-btn"
+              class="chrome-brand"
+              title="Aspera AI — copy text in an app, then click here to paste and run"
+              aria-label="Open Aspera AI"
+            >
+              <img id="chrome-wordmark" class="chrome-wordmark" alt="" draggable="false" />
+              <span class="chrome-brand-ai-hint" aria-hidden="true">AI</span>
+            </button>
+            <button
+              type="button"
+              id="notes-btn"
+              class="icon-btn"
+              title="Notes — copy links and repeated text (Ctrl+Shift+N)"
+              aria-label="Notes"
+            ></button>
+            <button
+              type="button"
+              id="web-search-btn"
+              class="icon-btn"
+              title="Web search — Google (Ctrl+E)"
+              aria-label="Web search"
+            ></button>
+            <div class="nav-history" role="group" aria-label="Page history">
+              <button id="nav-back-btn" type="button" class="icon-btn nav-btn" title="Back (Alt+Left)" aria-label="Back" disabled></button>
+              <button id="nav-forward-btn" type="button" class="icon-btn nav-btn" title="Forward (Alt+Right)" aria-label="Forward" disabled></button>
+              <button id="nav-reload-btn" type="button" class="icon-btn nav-btn" title="Reload (Ctrl+R)" aria-label="Reload"></button>
+              <button id="nav-copy-link-btn" type="button" class="icon-btn nav-btn" title="Copy link — current page URL" aria-label="Copy link"></button>
+              <button
+                id="aspera-connect-btn"
+                type="button"
+                class="icon-btn nav-btn connect-btn"
+                title="Open Aspera Connect — click-to-call companion"
+                aria-label="Open Aspera Connect"
+              ></button>
+            </div>
+            <span class="chrome-divider" aria-hidden="true"></span>
             <button id="lock-btn" type="button" class="icon-btn lock-btn" title="Lock Aspera Hub (Ctrl+Shift+L)" aria-label="Lock Aspera Hub"></button>
             <button id="add-app-btn" type="button" class="icon-btn add-app-btn" title="Add app"></button>
             <span class="chrome-divider" aria-hidden="true"></span>
-            <button id="downloads-btn" type="button" class="icon-btn" title="Open Downloads folder" aria-label="Open Downloads folder"></button>
+            <button id="downloads-btn" type="button" class="icon-btn badge-host" title="Recent downloads" aria-label="Recent downloads">
+              <span class="icon-slot"></span>
+              <span id="download-badge" class="global-badge hidden">0</span>
+            </button>
             <button id="extensions-btn" type="button" class="icon-btn" title="Extensions" aria-label="Extensions"></button>
             <button id="check-updates-btn" type="button" class="icon-btn" title="Check for updates" aria-label="Check for updates"></button>
             <div class="menu-wrap">
@@ -46,51 +84,73 @@
             </div>
             <div class="menu-wrap">
               <button id="menu-btn" type="button" class="icon-btn brand-avatar" title="Menu" aria-label="Menu"></button>
-              <div id="app-chrome-menu" class="chrome-menu hidden" role="menu">
-                <button type="button" data-action="search" class="chrome-menu-item">
-                  <span class="chrome-menu-ico" data-ico="search"></span> Quick search
+              <div id="app-chrome-menu" class="chrome-menu hidden" role="menu" aria-label="Aspera Hub menu">
+                <div class="chrome-menu-section" role="group" aria-label="Presence">
+                  <div class="chrome-menu-section-title">Presence</div>
+                  <button type="button" data-action="focus" class="chrome-menu-item" id="focus-item">
+                    <span class="chrome-menu-ico" data-ico="focus"></span> Focus mode
+                  </button>
+                  <button type="button" data-action="mute" class="chrome-menu-item" id="mute-item">
+                    <span class="chrome-menu-ico" data-ico="unmute"></span> Mute
+                  </button>
+                </div>
+                <hr />
+                <div class="chrome-menu-section" role="group" aria-label="Aspera AI">
+                  <div class="chrome-menu-section-title">Aspera AI</div>
+                  <button type="button" data-action="aspera-ai" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="spark"></span> Aspera AI…
+                  </button>
+                  <button type="button" data-action="catch-up" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="list"></span> Catch me up
+                  </button>
+                  <button type="button" data-action="ai-settings" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="aiSettings"></span> AI settings
+                  </button>
+                </div>
+                <hr />
+                <div class="chrome-menu-section" role="group" aria-label="Current app">
+                  <div class="chrome-menu-section-title">Current app</div>
+                  <button type="button" data-action="copy-link" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="link"></span> Copy link
+                  </button>
+                  <button type="button" data-action="free-ram" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="ram"></span> Free RAM
+                  </button>
+                </div>
+                <hr />
+                <div class="chrome-menu-section" role="group" aria-label="Workspace">
+                  <div class="chrome-menu-section-title">Workspace</div>
+                  <button type="button" data-action="notes" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="list"></span> Notes…
+                  </button>
+                  <button type="button" data-action="profiles" class="chrome-menu-item">
+                    <span class="chrome-menu-ico" data-ico="users"></span> Profiles
+                  </button>
+                </div>
+                <hr />
+                <button type="button" data-action="lock" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="lock"></span> Lock Hub
                 </button>
-              <button type="button" data-action="focus" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="focus"></span> Focus mode
-              </button>
-              <button type="button" data-action="mute" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="unmute"></span> Mute
-              </button>
-              <hr />
-              <button type="button" data-action="settings" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="settings"></span> Settings
-              </button>
-              <button type="button" data-action="profiles" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="users"></span> Profiles
-              </button>
-              <button type="button" data-action="shortcuts" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="keyboard"></span> Shortcuts
-              </button>
-              <button type="button" data-action="about" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="info"></span> About Aspera Hub
-              </button>
-              <hr />
-              <button type="button" data-action="reload" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="reload"></span> Reload app
-              </button>
-              <button type="button" data-action="home" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="home"></span> Go to app home
-              </button>
-              <button type="button" data-action="free-ram" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="ram"></span> Free RAM
-              </button>
-              <hr />
-              <button type="button" data-action="lock" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="lock"></span> Lock Aspera Hub
-              </button>
-              <button type="button" data-action="add-app" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="plus"></span> Add app
-              </button>
-              <hr />
-              <button type="button" data-action="check-updates" class="chrome-menu-item">
-                <span class="chrome-menu-ico" data-ico="sync"></span> Check for updates
-              </button>
-              <div id="chrome-menu-version" class="chrome-menu-version">Aspera Hub</div>
+                <hr />
+                <button type="button" data-action="settings" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="settings"></span> Settings
+                </button>
+                <button type="button" data-action="shortcuts" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="keyboard"></span> Keyboard shortcuts
+                </button>
+                <button type="button" data-action="aspera-connect" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="phone"></span> Open Aspera Connect…
+                </button>
+                <button type="button" data-action="check-updates" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="download"></span> Check for updates
+                </button>
+                <button type="button" data-action="website" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="link"></span> asperahub.com
+                </button>
+                <button type="button" data-action="about" class="chrome-menu-item">
+                  <span class="chrome-menu-ico" data-ico="info"></span> About Aspera Hub
+                </button>
+                <div id="chrome-menu-version" class="chrome-menu-version">Aspera Hub<span class="chrome-menu-site">asperahub.com</span></div>
               </div>
             </div>
           </div>
@@ -111,6 +171,9 @@
               <h1>Aspera Hub</h1>
               <p id="empty-version" class="app-version-label">Version …</p>
               <p>Add WhatsApp, Arattai, Gmail, and Zoho from the Aspera catalog. Up to 10 apps. Names max 10 characters.</p>
+              <p class="empty-site">
+                <a href="https://asperahub.com" id="empty-website-link" class="site-link">asperahub.com</a>
+              </p>
               <button id="empty-add-btn" type="button" class="primary">Add your first app</button>
             </div>
           </div>
@@ -145,6 +208,7 @@
             <button type="button" class="settings-nav-btn" data-settings-panel="startup">Startup &amp; window</button>
             <button type="button" class="settings-nav-btn" data-settings-panel="security">Security</button>
             <button type="button" class="settings-nav-btn" data-settings-panel="ai">Aspera AI</button>
+            <button type="button" class="settings-nav-btn" data-settings-panel="integrations">Integrations</button>
             <button type="button" class="settings-nav-btn" data-settings-panel="proxy">Proxy</button>
             <button type="button" class="settings-nav-btn" data-settings-panel="performance">Performance</button>
             <button type="button" class="settings-nav-btn" data-settings-panel="errors">Error reporting</button>
@@ -160,6 +224,10 @@
 
           <section class="settings-panel active" data-panel="general" aria-label="General">
           <h3 class="settings-panel-title">General</h3>
+          <p class="hint-text">
+            Product site:
+            <a href="https://asperahub.com" id="settings-general-website-link" class="site-link">asperahub.com</a>
+          </p>
 
           <label class="field">
             <span>Theme</span>
@@ -227,8 +295,9 @@
             </div>
             <p class="hint-text">Leave blank to ask location every time you download a file.</p>
           </label>
-          <label class="check"><input id="set-open-folder" type="checkbox" /> Open folder on finish</label>
-          <label class="check"><input id="set-open-file" type="checkbox" /> Open file on finish</label>
+          <label class="check"><input id="set-open-folder" type="checkbox" /> Open folder when a download finishes</label>
+          <label class="check"><input id="set-open-file" type="checkbox" /> Open file when a download finishes</label>
+          <p class="hint-text">Finished downloads appear in the toolbar download menu — like Chrome. Drag a completed file from that list to the Desktop or any folder.</p>
           </section>
 
           <section class="settings-panel" data-panel="startup" aria-label="Startup and window" hidden>
@@ -278,6 +347,19 @@
             <input id="set-lock-idle" type="checkbox" />
             <span>Lock when the system locks or sleeps</span>
           </label>
+          <label class="switch-row">
+            <input id="set-whatsapp-safe-mode" type="checkbox" />
+            <span>
+              WhatsApp Safe Mode (recommended)
+              <small>
+                Disables Hub Pins auto-open, Quick reply Send, chat scrape/search,
+                notification/visibility patches, and Aspera AI on WhatsApp —
+                closer to WhatsApp’s terms. Multiple WhatsApp tabs are fine when
+                each uses its own profile and a separate phone number. You still
+                use WhatsApp Web yourself in each tab. Arattai is unaffected.
+              </small>
+            </span>
+          </label>
           </section>
 
           <section class="settings-panel" data-panel="ai" id="ai-settings-section" aria-label="Aspera AI" hidden>
@@ -292,7 +374,8 @@
             Default failover is
             <strong>Gemini → Sarvam → Grok → DeepSeek → SambaNova → OpenRouter → Anthropic</strong>
             — reorder or disable providers below for full control.
-            <strong>Summarize</strong> returns English + Hindi + Marathi, with optional reply drafts.
+            <strong>Summarize / Refine / Suggest reply</strong> always include English,
+            plus up to <strong>2</strong> extra Indian languages you choose below.
           </p>
           <label class="switch-row">
             <input id="set-ai-enabled" type="checkbox" />
@@ -304,8 +387,48 @@
               <option value="en">English</option>
               <option value="hi">Hindi (हिन्दी)</option>
               <option value="mr">Marathi (मराठी)</option>
+              <option value="bn">Bengali (বাংলা)</option>
+              <option value="te">Telugu (తెలుగు)</option>
+              <option value="ta">Tamil (தமிழ்)</option>
+              <option value="gu">Gujarati (ગુજરાતી)</option>
+              <option value="kn">Kannada (ಕನ್ನಡ)</option>
+              <option value="or">Odia (ଓଡ଼ିଆ)</option>
+              <option value="ml">Malayalam (മലയാളം)</option>
             </select>
           </label>
+          <div class="field ai-extra-langs">
+            <span>Also include in Summarize / Refine / Suggest reply</span>
+            <p class="hint-text" style="margin:4px 0 8px;">
+              English is always included. Choose up to 2 more (default Hindi + Marathi).
+            </p>
+            <div class="ai-extra-langs-row">
+              <span class="ai-lang-chip locked" title="Always included">English</span>
+              <select id="set-ai-extra-1" aria-label="Extra language 1">
+                <option value="">None</option>
+                <option value="hi">Hindi (हिन्दी)</option>
+                <option value="mr">Marathi (मराठी)</option>
+                <option value="bn">Bengali (বাংলা)</option>
+                <option value="te">Telugu (తెలుగు)</option>
+                <option value="ta">Tamil (தமிழ்)</option>
+                <option value="gu">Gujarati (ગુજરાતી)</option>
+                <option value="kn">Kannada (ಕನ್ನಡ)</option>
+                <option value="or">Odia (ଓଡ଼ିଆ)</option>
+                <option value="ml">Malayalam (മലയാളം)</option>
+              </select>
+              <select id="set-ai-extra-2" aria-label="Extra language 2">
+                <option value="">None</option>
+                <option value="hi">Hindi (हिन्दी)</option>
+                <option value="mr">Marathi (मराठी)</option>
+                <option value="bn">Bengali (বাংলা)</option>
+                <option value="te">Telugu (తెలుగు)</option>
+                <option value="ta">Tamil (தமிழ்)</option>
+                <option value="gu">Gujarati (ગુજરાતી)</option>
+                <option value="kn">Kannada (ಕನ್ನಡ)</option>
+                <option value="or">Odia (ଓଡ଼ିଆ)</option>
+                <option value="ml">Malayalam (മലയാളം)</option>
+              </select>
+            </div>
+          </div>
           <div class="ai-route-toolbar">
             <div class="ai-route-toolbar-text">
               <strong>Failover order</strong>
@@ -320,6 +443,80 @@
           <div class="row-actions" style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px;">
             <button id="ai-catch-up-btn" type="button" class="ghost-btn">Catch me up</button>
           </div>
+          </section>
+
+          <section class="settings-panel" data-panel="integrations" aria-label="Integrations" hidden>
+            <h3 class="settings-panel-title">Integrations</h3>
+            <p class="hint-text">
+              Connect Zoho CRM so you can select a keyword in any app, right-click,
+              and look up matching <strong>Deals</strong> (Stage, amount, account).
+            </p>
+            <label class="switch-row">
+              <input id="set-zoho-crm-enabled" type="checkbox" />
+              <span>Enable Zoho CRM Deals lookup</span>
+            </label>
+            <label class="field">
+              <span>Data center</span>
+              <select id="set-zoho-crm-dc">
+                <option value="in">India</option>
+                <option value="com">United States</option>
+                <option value="eu">Europe</option>
+                <option value="com.au">Australia</option>
+                <option value="jp">Japan</option>
+                <option value="ca">Canada</option>
+              </select>
+            </label>
+            <p id="zoho-crm-status" class="hint-text">Status: Not configured</p>
+            <label class="field">
+              <span>Fleet API URL (Vercel)</span>
+              <input id="set-zoho-crm-fleet-url" type="url" autocomplete="off" placeholder="https://your-fleet.vercel.app" />
+            </label>
+            <label class="field">
+              <span>Fleet token</span>
+              <input id="set-zoho-crm-fleet-token" type="password" autocomplete="off" placeholder="FLEET_BEARER_TOKEN from Vercel" />
+            </label>
+            <div class="settings-inline-actions">
+              <button type="button" class="secondary" id="zoho-crm-fleet-pull-btn">Fetch from cloud</button>
+            </div>
+            <p class="hint-text">
+              Office Mint PCs: set the Vercel URL + fleet token once, then Fetch.
+              Zoho Client ID / Secret / refresh token stay in Vercel env — not pasted here.
+            </p>
+            <label class="field">
+              <span>Client ID</span>
+              <input id="set-zoho-crm-client-id" type="password" autocomplete="off" placeholder="From Zoho API Console (manual fallback)" />
+            </label>
+            <label class="field">
+              <span>Client Secret</span>
+              <input id="set-zoho-crm-client-secret" type="password" autocomplete="off" placeholder="Manual fallback" />
+            </label>
+            <label class="field">
+              <span>Refresh Token</span>
+              <input id="set-zoho-crm-refresh" type="password" autocomplete="off" placeholder="Paste refresh token, or use Grant code / Fetch from cloud" />
+            </label>
+            <label class="field">
+              <span>Grant code (one-time)</span>
+              <input id="set-zoho-crm-grant" type="password" autocomplete="off" placeholder="Self Client / authorization code" />
+            </label>
+            <div class="settings-inline-actions">
+              <button type="button" class="secondary" id="zoho-crm-save-btn">Save credentials</button>
+              <button type="button" class="secondary" id="zoho-crm-connect-btn">Connect with grant code</button>
+              <button type="button" class="secondary" id="zoho-crm-test-btn">Test connection</button>
+              <button type="button" class="secondary" id="zoho-crm-clear-btn">Clear</button>
+            </div>
+            <p id="zoho-crm-feedback" class="hint-text" aria-live="polite"></p>
+            <details class="settings-details">
+              <summary>Setup scopes</summary>
+              <p class="hint-text">
+                In Zoho API Console create a client with scopes
+                <code>ZohoCRM.modules.deals.READ</code> and
+                <code>ZohoSearch.securesearch.READ</code>,
+                and generate a token with <code>access_type=offline</code>.
+                Secrets stay encrypted on this PC — never paste them into chat or git.
+                Preferred fleet path: store Zoho secrets in a Vercel project env and use
+                <strong>Fetch from cloud</strong> above.
+              </p>
+            </details>
           </section>
 
           <section class="settings-panel" data-panel="proxy" aria-label="Proxy" hidden>
@@ -349,18 +546,18 @@
             <input id="set-low-memory" type="checkbox" />
             <span>
               Low memory mode (optional — off by default)
-              <small>Use only on very low-RAM PCs. Reduces warm apps and turns GPU off (relaunch needed). Leave off for instant tab switching.</small>
+              <small>Use on low-RAM PCs (Q4OS Andromeda / Plasma with compositor off / Trinity, or Mint XFCE). Reduces warm apps and turns GPU off (relaunch needed). On Q4OS lean fleets Aspera Hub enables this automatically for new installs — leave off on faster machines for instant tab switching.</small>
             </span>
           </label>
           <label class="field">
             <span>Hibernate after (minutes)</span>
             <input id="set-hibernate" type="number" min="1" max="120" />
-            <p class="hint-text">Unselected apps unload when you switch away. This timer applies to other idle background activity.</p>
+            <p class="hint-text">Recently used tabs stay loaded when you switch away so form drafts are kept. Idle tabs unload after this many minutes.</p>
           </label>
           <label class="field">
             <span>Max warm apps in RAM</span>
             <input id="set-max-warm" type="number" min="1" max="7" />
-            <p class="hint-text">Warm apps stay fully loaded for instant switching (includes the active tab). Default is 5; you can raise up to 7 in Settings. Flame-mark background apps within that limit. Non-warm apps load only when you click them.</p>
+            <p class="hint-text">Warm apps stay fully loaded for instant switching (includes the active tab). Default is 5; you can raise up to 7 in Settings. Flame-mark background apps within that limit. Other recently used tabs also stay resident briefly so CRM/Books drafts are not wiped.</p>
           </label>
           <label class="switch-row">
             <input id="set-consumption" type="checkbox" />
@@ -427,6 +624,8 @@
           <h3 class="settings-panel-title">Updates</h3>
           <p class="settings-banner" id="settings-version-banner">
             You are running <strong id="settings-running-version">Aspera Hub</strong>.
+            Learn more at
+            <a href="https://asperahub.com" id="settings-website-link" class="site-link">asperahub.com</a>.
           </p>
           <label class="switch-row">
             <input id="set-auto-update" type="checkbox" />
@@ -453,8 +652,10 @@
             <span>Update channel</span>
             <select id="set-update-channel">
               <option value="stable">Stable (GitHub latest release)</option>
-              <option value="beta">Beta</option>
             </select>
+            <p class="hint-text">
+              Stable only — the beta feed is not published. Custom feed URL still works for internal mirrors.
+            </p>
           </label>
           <label class="field">
             <span>Update feed URL (optional override)</span>
@@ -496,14 +697,18 @@
 
           <details class="defaults-block" open>
             <summary>Default app settings</summary>
-            <p class="hint-text">Applied to new apps. Individual apps can override these via right-click → Edit.</p>
+            <p class="hint-text">These apply the same way to every app (WhatsApp, Arattai, Gmail, Zoho, Books, …).</p>
             <label class="field">
               <span>Link handling</span>
               <select id="set-links">
-                <option value="block">In-app for known hosts (recommended)</option>
-                <option value="external">Unknown links open in system browser</option>
+                <option value="hub-tab">Links → new Hub tab (top bar)</option>
+                <option value="block">In-app for known hosts</option>
+                <option value="external">Unknown links → system browser</option>
+                <option value="ask">Ask every time</option>
               </select>
-              <p class="hint-text">Zoho One / CRM always keep internal popups in-dock — otherwise Sales/CRM can show a blank page.</p>
+              <p class="hint-text">
+                One rule for the whole Hub. “New Hub tab” = real top app-bar tab (right of your last app) — never a floating popup. “Ask” can remember for all apps.
+              </p>
             </label>
             <label class="field">
               <span>Spell checker</span>
@@ -670,13 +875,10 @@
           </section>
           <section>
             <h3>Link handling</h3>
-            <label class="field">
-              <select id="ea-links">
-                <option value="default">Default (global)</option>
-                <option value="block">In-app for known hosts</option>
-                <option value="external">Unknown links → system browser</option>
-              </select>
-            </label>
+            <p class="hint-text">
+              Same for every app — change it in Settings → Default app settings → Link handling.
+              (Per-app link overrides were removed so WhatsApp, Arattai, Gmail, Zoho, etc. cannot diverge.)
+            </p>
           </section>
           <section>
             <h3>Hibernate</h3>
@@ -776,6 +978,7 @@
       <div class="lock-card">
         <div class="brand-mark" id="lock-brand" aria-hidden="true"></div>
         <h1>Aspera Hub is locked</h1>
+        <p class="lock-site">asperahub.com</p>
         <input id="lock-password" type="password" placeholder="Password" />
         <button id="unlock-btn" type="button" class="primary">Unlock</button>
         <p id="lock-error" class="error"></p>

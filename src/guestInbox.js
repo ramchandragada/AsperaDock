@@ -307,11 +307,32 @@ export function scrapeMessagingInboxJs() {
       const unread = rowUnread(cell);
       if (!unread) continue;
 
+      // WhatsApp + Arattai last-message previews (needed for notif-center quick reply).
       const previewEl =
         cell.querySelector('[data-testid="last-msg-body"]')
         || cell.querySelector('[data-testid="cell-frame-secondary"]')
+        || cell.querySelector('.lhs-list-msginfo')
+        || cell.querySelector('.chat-msg-text')
+        || cell.querySelector('[class*="last-msg" i]')
+        || cell.querySelector('[class*="preview" i]')
+        || cell.querySelector('[class*="msg-preview" i]')
         || null;
-      let preview = String(previewEl?.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 100);
+      let preview = textOf(previewEl);
+      if (!preview) {
+        const lines = String(cell.innerText || '')
+          .split(/\\n/)
+          .map((l) => l.replace(/\\s+/g, ' ').trim())
+          .filter(Boolean);
+        preview =
+          lines.slice(1).find(
+            (l) =>
+              l.length >= 4 &&
+              !isJunkName(l) &&
+              !/^\\d{1,2}:\\d{2}/.test(l) &&
+              l.toLowerCase() !== name.toLowerCase(),
+          ) || '';
+      }
+      preview = String(preview || '').replace(/\\s+/g, ' ').trim().slice(0, 220);
       if (isJunkName(preview) || /^\\d+$/.test(preview)) preview = '';
       seen.add(key);
       rows.push({ chatKey: key, name, preview, unread });

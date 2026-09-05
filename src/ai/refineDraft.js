@@ -1,32 +1,61 @@
-/** Parse / serialize trilingual Refine-with-Aspera-AI drafts. */
+/** Parse / serialize multi-language Refine-with-Aspera-AI drafts. */
 
-export const REFINE_SECTIONS = [
-  { id: 'en', heading: '## English', label: 'English' },
-  { id: 'hi', heading: '## Hindi (हिन्दी)', label: 'Hindi (हिन्दी)' },
-  { id: 'mr', heading: '## Marathi (मराठी)', label: 'Marathi (मराठी)' },
-];
+import {
+  AI_DEFAULT_EXTRA_LANGUAGES,
+  refineSectionsForLanguages,
+  resolveAiOutputLanguages,
+} from './catalog.js';
 
-function matchHeading(line) {
+/** Default EN+HI+MR sections (backward compatible). */
+export const REFINE_SECTIONS = refineSectionsForLanguages(
+  resolveAiOutputLanguages(AI_DEFAULT_EXTRA_LANGUAGES),
+);
+
+function escapeRegExp(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function sectionsFrom(languages) {
+  if (Array.isArray(languages) && languages.length) {
+    if (languages[0]?.id && (languages[0]?.heading || languages[0]?.name)) {
+      return languages.map((s) => ({
+        id: s.id,
+        heading: s.heading || s.activeHeading || `## ${s.name || s.label || s.id}`,
+        label: s.label || s.name || s.id,
+        name: s.name || s.label || s.id,
+      }));
+    }
+    return refineSectionsForLanguages(languages);
+  }
+  return REFINE_SECTIONS;
+}
+
+function matchHeading(line, sections) {
   const t = String(line || '').trim();
   if (!t) return null;
   const lower = t.toLowerCase();
-  for (const section of REFINE_SECTIONS) {
-    if (t === section.heading || lower.startsWith(section.heading.toLowerCase())) {
+  for (const section of sections) {
+    if (t === section.heading || lower.startsWith(String(section.heading || '').toLowerCase())) {
       return section.id;
     }
   }
-  if (/^##\s*english\b/i.test(t)) return 'en';
-  if (/^##\s*hindi\b/i.test(t)) return 'hi';
-  if (/^##\s*marathi\b/i.test(t)) return 'mr';
+  for (const section of sections) {
+    const name = section.name || String(section.label || '').split('(')[0].trim();
+    if (!name) continue;
+    if (new RegExp(`^##\\s*${escapeRegExp(name)}\\b`, 'i').test(t)) {
+      return section.id;
+    }
+  }
   return null;
 }
 
 /**
  * @param {string} text
+ * @param {object[]|string[]} [languages]
  * @returns {{ id: string, heading: string, label: string, text: string }[]}
  */
-export function parseRefinedDrafts(text) {
-  const base = REFINE_SECTIONS.map((s) => ({
+export function parseRefinedDrafts(text, languages) {
+  const base = sectionsFrom(languages).map((s) => ({
     id: s.id,
     heading: s.heading,
     label: s.label,
@@ -38,22 +67,28 @@ export function parseRefinedDrafts(text) {
 
   // Single-language model output with no headings → treat as English.
   if (!/^##\s+/m.test(raw)) {
-    byId.en.text = raw.replace(/^["'“”]+|["'“”]+$/g, '').trim();
+    if (byId.en) {
+      byId.en.text = raw.replace(/^["'“”]+|["'“”]+$/g, '').trim();
+    } else if (base[0]) {
+      base[0].text = raw.replace(/^["'“”]+|["'“”]+$/g, '').trim();
+    }
     return base;
   }
 
   let current = null;
-  const buckets = { en: [], hi: [], mr: [] };
+  const buckets = Object.fromEntries(base.map((s) => [s.id, []]));
   for (const line of raw.split('\n')) {
-    const headingId = matchHeading(line);
+    const headingId = matchHeading(line, base);
     if (headingId) {
       current = headingId;
       continue;
     }
-    if (!current) current = 'en';
+    if (!current) current = base[0]?.id || 'en';
+    if (!buckets[current]) buckets[current] = [];
     buckets[current].push(line);
   }
   for (const id of Object.keys(buckets)) {
+    if (!byId[id]) continue;
     byId[id].text = buckets[id]
       .join('\n')
       .trim()
@@ -65,15 +100,17 @@ export function parseRefinedDrafts(text) {
 
 /**
  * @param {{ id?: string, heading?: string, label?: string, text?: string }[]} sections
+ * @param {object[]|string[]} [languages]
  */
-export function serializeRefinedDrafts(sections) {
+export function serializeRefinedDrafts(sections, languages) {
+  const catalog = sectionsFrom(languages);
   const list = Array.isArray(sections) && sections.length
     ? sections
-    : REFINE_SECTIONS.map((s) => ({ ...s, text: '' }));
+    : catalog.map((s) => ({ ...s, text: '' }));
   return list
     .map((section) => {
       const meta =
-        REFINE_SECTIONS.find((s) => s.id === section.id) ||
+        catalog.find((s) => s.id === section.id) ||
         {
           heading: section.heading || '## Draft',
           label: section.label || 'Draft',

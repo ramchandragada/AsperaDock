@@ -18,4 +18,6 @@ test('notification center keeps quick reply for messaging alerts', () => {
   const html = buildNotifCenterHtml(true);
   assert.match(html, /Quick reply/);
   assert.match(html, /width:\s*400px/);
+  assert.match(html, /-webkit-line-clamp:\s*3/);
+  assert.match(html, /Replying about:/);
 });
