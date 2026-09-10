@@ -2,6 +2,7 @@ import './index.css';
 import { logoHtml } from './logos.js';
 import { icon } from './icons.js';
 import { BRAND, asperaAppIconSvg } from './brand.js';
+import { formatZoomPercent, ZOOM_MAX, ZOOM_MIN, ZOOM_STEP } from './zoomPolicy.js';
 import {
   accelFromKeyEvent,
   findShortcutConflicts,
@@ -32,6 +33,9 @@ const els = {
   navReloadBtn: document.getElementById('nav-reload-btn'),
   navCopyLinkBtn: document.getElementById('nav-copy-link-btn'),
   asperaConnectBtn: document.getElementById('aspera-connect-btn'),
+  zoomOutBtn: document.getElementById('zoom-out-btn'),
+  zoomInBtn: document.getElementById('zoom-in-btn'),
+  zoomResetBtn: document.getElementById('zoom-reset-btn'),
   emptyState: document.getElementById('empty-state'),
   emptyAddBtn: document.getElementById('empty-add-btn'),
   focusBtn: document.getElementById('focus-btn'),
@@ -218,6 +222,8 @@ function paintToolbarIcons() {
   if (els.navReloadBtn) els.navReloadBtn.innerHTML = icon('reload');
   if (els.navCopyLinkBtn) els.navCopyLinkBtn.innerHTML = icon('link');
   if (els.asperaConnectBtn) els.asperaConnectBtn.innerHTML = icon('phone');
+  if (els.zoomOutBtn) els.zoomOutBtn.innerHTML = icon('zoomOut');
+  if (els.zoomInBtn) els.zoomInBtn.innerHTML = icon('zoomIn');
   if (els.notifIconSlot) els.notifIconSlot.innerHTML = icon('bell');
   if (els.appMenuEdit) els.appMenuEdit.innerHTML = icon('settings');
   if (els.appMenuHome) els.appMenuHome.innerHTML = icon('home');
@@ -519,6 +525,22 @@ function renderChromeActions() {
   if (els.navReloadBtn) {
     els.navReloadBtn.disabled = !!state.locked || !state.activeServiceId;
   }
+  const zoomFactor = Number(nav.zoomFactor);
+  const zoom = Number.isFinite(zoomFactor) && zoomFactor > 0 ? zoomFactor : 1;
+  const zoomLabel = formatZoomPercent(zoom);
+  const zoomDisabled = !!state.locked || !state.activeServiceId;
+  if (els.zoomOutBtn) {
+    els.zoomOutBtn.disabled = zoomDisabled || zoom <= ZOOM_MIN + 0.001;
+  }
+  if (els.zoomInBtn) {
+    els.zoomInBtn.disabled = zoomDisabled || zoom >= ZOOM_MAX - 0.001;
+  }
+  if (els.zoomResetBtn) {
+    els.zoomResetBtn.disabled = zoomDisabled;
+    els.zoomResetBtn.textContent = zoomLabel;
+    els.zoomResetBtn.title = `Zoom ${zoomLabel} — click to reset to 100% (Ctrl+0)`;
+    els.zoomResetBtn.setAttribute('aria-label', `Reset zoom (currently ${zoomLabel})`);
+  }
 
   const total = state.totalUnread || 0;
   if (total > 0) {
@@ -534,6 +556,23 @@ async function navigateActive(action) {
   const id = state?.activeServiceId;
   if (!id || state.locked) return;
   await window.asperadock.appNavigate?.(id, action);
+}
+
+async function changeActiveZoom({ delta = 0, exact = null } = {}) {
+  if (state?.locked || !state?.activeServiceId) return;
+  const result = await window.asperadock.changeZoom?.(
+    exact != null ? { exact } : { delta },
+  );
+  if (!result?.ok) return;
+  const zoomFactor = Number(result.zoomFactor);
+  state = {
+    ...state,
+    nav: {
+      ...(state.nav || {}),
+      zoomFactor: Number.isFinite(zoomFactor) ? zoomFactor : 1,
+    },
+  };
+  renderChromeActions();
 }
 
 function makeHubChip({
@@ -2212,6 +2251,15 @@ els.lockBtn?.addEventListener('click', () => {
 els.asperaConnectBtn?.addEventListener('click', () => {
   window.asperadock.openAsperaConnect?.();
 });
+els.zoomOutBtn?.addEventListener('click', () => {
+  changeActiveZoom({ delta: -ZOOM_STEP });
+});
+els.zoomInBtn?.addEventListener('click', () => {
+  changeActiveZoom({ delta: ZOOM_STEP });
+});
+els.zoomResetBtn?.addEventListener('click', () => {
+  changeActiveZoom({ exact: 1 });
+});
 els.navBackBtn?.addEventListener('click', () => navigateActive('back'));
 els.navForwardBtn?.addEventListener('click', () => navigateActive('forward'));
 els.navReloadBtn?.addEventListener('click', () => {
@@ -2905,7 +2953,10 @@ async function boot() {
     render();
   });
   window.asperadock.onNavState?.((nav) => {
-    state = { ...state, nav: nav || { canGoBack: false, canGoForward: false } };
+    state = {
+      ...state,
+      nav: nav || { canGoBack: false, canGoForward: false, zoomFactor: 1 },
+    };
     renderChromeActions();
   });
   window.asperadock.onDownloadShelfAuto?.(() => {
