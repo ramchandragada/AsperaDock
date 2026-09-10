@@ -172,6 +172,13 @@ import {
 } from './guestChatContext.js';
 import { guestContextMenuActionOrder, canOfferHubPin } from './guestContextMenu.js';
 import { isHubComposePollution } from './composeSafety.js';
+import {
+  ZOOM_MAX,
+  ZOOM_MIN,
+  ZOOM_STEP,
+  formatZoomPercent,
+  nextZoomFactor,
+} from './zoomPolicy.js';
 import { aboutDetailText, ASPERA_HUB_WEBSITE } from './aboutCopy.js';
 import { spawnSync } from 'node:child_process';
 import {
@@ -12302,11 +12309,18 @@ function activeNavState() {
     ? views.get(activeServiceId)?.view?.webContents
     : null;
   if (!wc || wc.isDestroyed()) {
-    return { canGoBack: false, canGoForward: false };
+    return { canGoBack: false, canGoForward: false, zoomFactor: 1 };
+  }
+  let zoomFactor = 1;
+  try {
+    zoomFactor = wc.getZoomFactor();
+  } catch {
+    zoomFactor = 1;
   }
   return {
     canGoBack: wc.canGoBack(),
     canGoForward: wc.canGoForward(),
+    zoomFactor,
   };
 }
 
@@ -12659,13 +12673,20 @@ function activeWebContents() {
 
 function changeZoom(delta = 0, exact = null) {
   const webContents = activeWebContents();
-  if (!webContents || webContents.isDestroyed()) return;
-  const next = exact ?? webContents.getZoomFactor() + delta;
-  const clamped = Math.min(2, Math.max(0.5, next));
+  if (!webContents || webContents.isDestroyed()) return null;
+  let current = 1;
+  try {
+    current = webContents.getZoomFactor();
+  } catch {
+    current = 1;
+  }
+  const clamped = nextZoomFactor(current, { delta, exact });
   webContents.setZoomFactor(clamped);
   if (activeServiceId) {
     saveAppConfig(activeServiceId, { zoomFactor: clamped });
   }
+  pushActiveNavState();
+  return clamped;
 }
 
 function clearGuestFindHighlights(webContents) {
@@ -12955,12 +12976,12 @@ function installApplicationMenu() {
         {
           label: 'Zoom In',
           accelerator: 'CommandOrControl+Plus',
-          click: () => changeZoom(0.1),
+          click: () => changeZoom(ZOOM_STEP),
         },
         {
           label: 'Zoom Out',
           accelerator: 'CommandOrControl+-',
-          click: () => changeZoom(-0.1),
+          click: () => changeZoom(-ZOOM_STEP),
         },
         { type: 'separator' },
         {
@@ -13464,6 +13485,25 @@ dockHandle('dock:show-about', () => {
 dockHandle('dock:open-aspera-connect', () => {
   const ok = openAsperaConnectApp();
   return { ok: !!ok };
+});
+dockHandle('dock:change-zoom', (_e, payload = {}) => {
+  if (locked) return { ok: false, error: 'locked' };
+  if (!activeServiceId) return { ok: false, error: 'no-app' };
+  const exact =
+    payload?.exact != null && Number.isFinite(Number(payload.exact))
+      ? Number(payload.exact)
+      : null;
+  const delta = Number(payload?.delta) || 0;
+  const zoomFactor =
+    exact != null ? changeZoom(0, exact) : changeZoom(delta);
+  if (zoomFactor == null) return { ok: false, error: 'no-page' };
+  return {
+    ok: true,
+    zoomFactor,
+    percent: formatZoomPercent(zoomFactor),
+    min: ZOOM_MIN,
+    max: ZOOM_MAX,
+  };
 });
 dockHandle('dock:update-check', () => checkForUpdates({ silent: false }));
 dockHandle('dock:update-download', () => downloadUpdate());
