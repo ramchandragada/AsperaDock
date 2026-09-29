@@ -164,7 +164,8 @@ body {
   border-bottom: 1px solid #152448;
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 10px 28px rgba(8, 18, 48, 0.28);
   z-index: 4;
-  padding: 3px 10px 2px;
+  /* Extra top pad so unread badges are not clipped by the window edge */
+  padding: 6px 10px 2px;
   color: var(--bar-fg);
   /* Local tokens so app tabs / badges read correctly on navy chrome */
   --label: var(--bar-fg);
@@ -359,13 +360,15 @@ body.theme-mint .app-bar-top {
 /* Wrap onto extra rows instead of scrolling when many apps are added */
 body.wrap-tabs.layout-top .app-bar-top {
   align-items: flex-start;
-  padding-top: 3px;
+  padding-top: 6px;
   padding-bottom: 2px;
 }
 
 body.wrap-tabs .apps-track {
   flex-wrap: wrap;
-  overflow-x: visible;
+  /* Never paint app tiles under Aspera AI / nav chrome (was overflow-x: visible). */
+  overflow-x: hidden;
+  overflow-y: visible;
   row-gap: 4px;
 }
 
@@ -388,12 +391,19 @@ body.layout-top .app-bar-top {
   min-width: 0;
   /* Leave room for brand + lock + utility cluster on the right */
   max-width: none;
-  padding: 2px 4px;
-  scrollbar-width: none;
+  /* Top pad keeps unread badges inside the track (badges sit at top: -5px). */
+  padding: 8px 4px 2px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
 
 .apps-track::-webkit-scrollbar {
-  display: none;
+  height: 4px;
+}
+
+.apps-track::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
 }
 
 .chrome-brand {
@@ -453,11 +463,20 @@ body.layout-top .app-bar-top {
   gap: 2px;
   flex: 0 0 auto;
   flex-shrink: 0;
-  padding: 0 2px 0 4px;
+  padding: 0 2px 0 8px;
   margin-left: 4px;
-  border-left: none;
+  border-left: 1px solid rgba(255, 255, 255, 0.1);
   height: auto;
   align-self: center;
+  /* Sit above any spilled app tiles and match the navy bar so tabs can’t peek through. */
+  position: relative;
+  z-index: 5;
+  background: linear-gradient(
+    90deg,
+    rgba(8, 18, 48, 0) 0%,
+    var(--bar-bg-bottom) 12px,
+    var(--bar-bg-bottom) 100%
+  );
 }
 
 .chrome-divider {
@@ -485,11 +504,11 @@ body.layout-top .app-bar-top {
 .app-bar-top .nav-history {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: 1px;
   flex-shrink: 0;
-  margin: 0 2px 0 6px;
-  padding: 3px;
-  border-radius: 12px;
+  margin: 0 2px 0 4px;
+  padding: 2px;
+  border-radius: 10px;
   background: rgba(255, 255, 255, 0.14);
   border: 1px solid rgba(255, 255, 255, 0.22);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
@@ -498,24 +517,24 @@ body.layout-top .app-bar-top {
 .app-bar-top .nav-zoom {
   display: inline-flex;
   align-items: center;
-  gap: 1px;
-  margin-left: 2px;
-  padding-left: 2px;
+  gap: 0;
+  margin-left: 1px;
+  padding-left: 1px;
   border-left: 1px solid rgba(255, 255, 255, 0.18);
 }
 
 .app-bar-top .nav-btn {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
   color: var(--bar-fg);
 }
 
 .app-bar-top .zoom-pct-btn {
   width: auto;
-  min-width: 46px;
-  padding: 0 6px;
-  font-size: 11px;
+  min-width: 38px;
+  padding: 0 4px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.02em;
   line-height: 1;
@@ -523,8 +542,8 @@ body.layout-top .app-bar-top {
 }
 
 .app-bar-top .nav-btn svg {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   stroke-width: 2.4;
 }
 
