@@ -239,12 +239,15 @@ body {
   gap: 6px;
   min-width: 0;
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
   padding: 2px 0;
 }
 
 .hub-rail::-webkit-scrollbar {
   display: none;
+  width: 0;
+  height: 0;
 }
 
 .hub-chip {
@@ -378,9 +381,9 @@ body.wrap-tabs.layout-top .app-bar-top {
 
 body.wrap-tabs .apps-track {
   flex-wrap: wrap;
-  /* Never paint app tiles under Aspera AI / nav chrome (was overflow-x: visible). */
-  overflow-x: hidden;
-  overflow-y: visible;
+  /* Both axes must be non-visible together — if only overflow-x is hidden,
+     CSS computes overflow-y to auto and a vertical scrollbar appears. */
+  overflow: hidden;
   row-gap: 4px;
 }
 
@@ -397,25 +400,34 @@ body.layout-top .app-bar-top {
 .apps-track {
   display: flex;
   align-items: center;
+  align-content: center;
   gap: var(--apps-gap);
+  /* Prefer wrap (when enabled) over scroll; never show a vertical bar. */
   overflow-x: auto;
+  overflow-y: hidden;
   flex: 1 1 auto;
   min-width: 0;
   /* Leave room for brand + lock + utility cluster on the right */
   max-width: none;
   /* Top pad keeps unread badges inside the track (badges sit at top: -5px). */
   padding: 8px 4px 2px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
+  /* No visible scrollbar — ultra-compact/small fits apps without scroll chrome. */
+  scrollbar-width: none;
 }
 
 .apps-track::-webkit-scrollbar {
-  height: 4px;
+  display: none;
+  width: 0;
+  height: 0;
 }
 
-.apps-track::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.28);
-  border-radius: 999px;
+/* Compact + small: tighter pad so badges don’t force a taller scrollport */
+body.density-compact.icon-size-small .apps-track {
+  padding: 5px 2px 1px;
+}
+
+body.density-compact.icon-size-small.wrap-tabs .apps-track {
+  row-gap: 2px;
 }
 
 .chrome-brand {
