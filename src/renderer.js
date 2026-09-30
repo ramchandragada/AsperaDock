@@ -282,8 +282,10 @@ function applyChromeClasses() {
   document.body.classList.toggle('wrap-tabs', s.wrapAppTabs !== false);
   document.body.classList.add('layout-top');
   document.body.classList.remove('layout-left', 'layout-right');
-  for (const size of ['normal', 'large', 'huge']) {
+  for (const size of ['compact', 'normal', 'large', 'huge']) {
     document.body.classList.toggle(`density-${size}`, (s.density || 'normal') === size);
+  }
+  for (const size of ['small', 'normal', 'large', 'huge']) {
     document.body.classList.toggle(
       `icon-size-${size}`,
       (s.appIconSize || 'normal') === size,

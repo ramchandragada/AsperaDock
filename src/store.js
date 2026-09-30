@@ -40,8 +40,8 @@ export const DEFAULTS = {
   // Top-bar presentation
   appsPosition: 'top',
   hideAppLabels: false,
-  density: 'normal', // normal | large | huge — spacing / tile width only
-  appIconSize: 'normal', // normal | large | huge
+  density: 'normal', // compact | normal | large | huge — spacing / tile width only
+  appIconSize: 'normal', // small | normal | large | huge
   theme: 'system', // system | light | dark | darkest | glossy | mint
   autoHideMenuBar: true,
   /** Let the app bar grow to a second row instead of scrolling. */
@@ -485,10 +485,10 @@ function migrateWarmKeepAlive(settings) {
     const migrated =
       legacyMap[legacyDensity] ||
       {
-        density: ['normal', 'large', 'huge'].includes(legacyDensity)
+        density: ['compact', 'normal', 'large', 'huge'].includes(legacyDensity)
           ? legacyDensity
           : 'large',
-        appIconSize: ['normal', 'large', 'huge'].includes(next.appIconSize)
+        appIconSize: ['small', 'normal', 'large', 'huge'].includes(next.appIconSize)
           ? next.appIconSize
           : 'large',
       };

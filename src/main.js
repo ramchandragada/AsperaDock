@@ -14559,10 +14559,16 @@ dockHandle('dock:save-settings', (_e, patch) => {
       Math.max(1, Number(next.maxResidentViews) || MAX_WARM_VIEWS_DEFAULT),
     );
   }
-  if (next.density != null && !['normal', 'large', 'huge'].includes(next.density)) {
+  if (
+    next.density != null &&
+    !['compact', 'normal', 'large', 'huge'].includes(next.density)
+  ) {
     next.density = 'normal';
   }
-  if (next.appIconSize != null && !['normal', 'large', 'huge'].includes(next.appIconSize)) {
+  if (
+    next.appIconSize != null &&
+    !['small', 'normal', 'large', 'huge'].includes(next.appIconSize)
+  ) {
     next.appIconSize = 'normal';
   }
   next.appsPosition = 'top';
