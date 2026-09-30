@@ -192,7 +192,8 @@ export function defaultInstanceTitle(entry, index) {
   return `${entry.title} ${index}`;
 }
 
-/** Layout chrome sizes (px) — must match CSS */
+/** Layout chrome sizes (px) — must match CSS --top-bar for each icon size */
+export const TOP_APP_BAR_SMALL = 56;
 export const TOP_APP_BAR_NORMAL = 70;
 export const TOP_APP_BAR_LARGE = 78;
 export const TOP_APP_BAR_HUGE = 88;
@@ -215,12 +216,13 @@ export const INTERNAL_HOSTS = [
 
 export function getChromeMetrics(settings) {
   const iconSize = settings.appIconSize || 'normal';
-  const top =
-    iconSize === 'normal'
-      ? TOP_APP_BAR_NORMAL
-      : iconSize === 'huge'
-        ? TOP_APP_BAR_HUGE
-        : TOP_APP_BAR_LARGE;
+  const topBySize = {
+    small: TOP_APP_BAR_SMALL,
+    normal: TOP_APP_BAR_NORMAL,
+    large: TOP_APP_BAR_LARGE,
+    huge: TOP_APP_BAR_HUGE,
+  };
+  const top = topBySize[iconSize] || TOP_APP_BAR_NORMAL;
   return {
     top,
     left: 0,

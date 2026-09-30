@@ -45,6 +45,12 @@ body.theme-dark {
   --shadow: 0 10px 32px rgba(0, 0, 0, 0.45);
 }
 
+body.density-compact {
+  --app-tab-min: 56px;
+  --apps-gap: 2px;
+  --app-tab-pad-x: 2px;
+}
+
 body.density-normal {
   --app-tab-min: 78px;
   --apps-gap: 4px;
@@ -61,6 +67,12 @@ body.density-huge {
   --app-tab-min: 104px;
   --apps-gap: 8px;
   --app-tab-pad-x: 10px;
+}
+
+body.icon-size-small {
+  --top-bar: 56px;
+  --app-icon: 32px;
+  --app-label-size: 10px;
 }
 
 body.icon-size-normal {
@@ -971,6 +983,13 @@ body.theme-dark .app-mark.link-mark {
   color: #93c5fd;
 }
 
+body.density-compact .app-tab {
+  border-radius: 10px;
+  gap: 1px;
+  padding-top: 2px;
+  padding-bottom: 1px;
+}
+
 body.density-normal .app-tab {
   border-radius: 14px;
 }
@@ -1081,6 +1100,11 @@ body.layout-left .app-tab[data-tooltip]:hover::after {
   transition: transform 0.18s var(--ease), box-shadow 0.18s var(--ease);
 }
 
+body.icon-size-small .app-icon.has-logo svg,
+body.icon-size-small .app-icon.has-logo .app-logo-img {
+  border-radius: 9px;
+}
+
 body.icon-size-normal .app-icon.has-logo svg,
 body.icon-size-normal .app-icon.has-logo .app-logo-img {
   border-radius: 12px;
@@ -1089,6 +1113,49 @@ body.icon-size-normal .app-icon.has-logo .app-logo-img {
 body.icon-size-huge .app-icon.has-logo svg,
 body.icon-size-huge .app-icon.has-logo .app-logo-img {
   border-radius: 18px;
+}
+
+/* Compact chrome controls when using small icons on tight screens */
+body.icon-size-small.layout-top .app-bar-top .icon-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+
+body.icon-size-small.layout-top .app-bar-top .nav-btn {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+
+body.icon-size-small.layout-top .app-bar-top .nav-btn svg,
+body.icon-size-small.layout-top .app-bar-top .icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+body.icon-size-small.layout-top .chrome-wordmark {
+  height: 18px;
+  max-width: 96px;
+}
+
+body.icon-size-small.layout-top .chrome-brand-ai-hint {
+  font-size: 10px;
+  padding: 2px 5px;
+}
+
+body.icon-size-small.layout-top .zoom-pct-btn {
+  min-width: 34px;
+  font-size: 9px;
+}
+
+body.icon-size-small .app-badge {
+  min-width: 15px;
+  height: 15px;
+  font-size: 9px;
+  top: -4px;
+  right: -4px;
+  padding: 0 4px;
 }
 
 .app-mark {
