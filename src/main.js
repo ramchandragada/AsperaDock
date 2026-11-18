@@ -2066,6 +2066,91 @@ function openUnknownExternalIfAllowed(service, url) {
   return openExternalSafe(url);
 }
 
+/** Warn when a Hub link tab could not be created (app bar full, etc.). */
+function warnHubTabOpenFailed(opened) {
+  if (opened?.ok || !opened?.error) return;
+  const errBox = {
+    type: 'warning',
+    buttons: ['OK'],
+    defaultId: 0,
+    title: 'Could not open Hub tab',
+    message: opened.error,
+  };
+  if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
+  else dialog.showMessageBox(errBox).catch(() => {});
+}
+
+/**
+ * WhatsApp / Arattai outbound http(s) links — never load into the chat tab.
+ * Honors Settings → Link handling (Hub tab / browser / ask / block).
+ * @returns {true} always (caller should preventDefault / deny)
+ */
+function openMessagingOutboundLink(service, href, webContents) {
+  const mode = effectiveLinkHandling(service);
+  if (shouldAskLinkHandling(mode)) {
+    void promptAndApplyLinkChoice(service, href, webContents);
+    return true;
+  }
+  if (shouldOpenAsHubTab(mode)) {
+    warnHubTabOpenFailed(openUrlAsHubAppTab(href, service));
+    return true;
+  }
+  if (shouldOpenUnknownExternally(mode)) {
+    if (shouldOpenInSystemBrowser(href)) openExternalSafe(href);
+    return true;
+  }
+  // block — do not navigate the messenger; link is discarded.
+  return true;
+}
+
+/** Resolve a right-click / menu target for opening outside the current guest. */
+function resolveContextOpenTarget(service, rawUrl) {
+  const href = String(rawUrl || '').trim();
+  if (!href) return '';
+  if (isGoogleService(service)) {
+    const outbound = extractGoogleOutboundUrl(href);
+    if (outbound) return outbound;
+  }
+  return href;
+}
+
+/** Force-open http(s) as a top-bar Hub tab (right-click “Open in Hub tab”). */
+function openLinkInHubTabFromMenu(service, rawUrl, webContents) {
+  const live = liveService(service);
+  const target = resolveContextOpenTarget(live, rawUrl);
+  if (!target || isForbiddenGuestNavigation(target)) return;
+  if (isPhoneDialUrl(target)) {
+    openExternalSafe(target);
+    return;
+  }
+  // Google SSO/consent that 400s in Chrome — keep in Hub guest instead.
+  if (
+    mustKeepGoogleUrlInApp(target) ||
+    (isAuthOrLoginUrl(target) && isGoogleOwnedUrl(target))
+  ) {
+    if (webContents && !webContents.isDestroyed()) {
+      webContents.loadURL(target).catch(() => {});
+    }
+    return;
+  }
+  if (shouldOpenZohoSharedDeepLinkAsHubTab(live, target)) {
+    if (openInternalLinkAsHubTab(live, target)) return;
+  }
+  warnHubTabOpenFailed(openUrlAsHubAppTab(target, live));
+}
+
+/** Force-open http(s) in the OS default browser (right-click menu). */
+function openLinkInDefaultBrowserFromMenu(service, rawUrl) {
+  const live = liveService(service);
+  const target = resolveContextOpenTarget(live, rawUrl);
+  if (!target || isForbiddenGuestNavigation(target)) return;
+  if (isPhoneDialUrl(target)) {
+    openExternalSafe(target);
+    return;
+  }
+  if (shouldOpenInSystemBrowser(target)) openExternalSafe(target);
+}
+
 /** Extra temporary link tabs allowed beyond the normal 10-app bar. */
 const LINK_TAB_OVERFLOW = 4;
 
@@ -2329,26 +2414,15 @@ function handleOutboundOrNewWindowLink(service, url, webContents, opts = {}) {
     }
     return false;
   }
-  // WhatsApp / Arattai: Hub-tab BEFORE same-ecosystem. google.com is in
-  // INTERNAL_HOSTS for Gmail, so Drive used to hit loadURL-in-messenger and
-  // fight will-navigate preventDefault — link opened nowhere.
+  // WhatsApp / Arattai: honor Hub-wide Link handling BEFORE same-ecosystem.
+  // google.com is in INTERNAL_HOSTS for Gmail, so Drive used to hit
+  // loadURL-in-messenger and fight will-navigate — link opened nowhere.
+  // Never navigate the messenger tab itself to a third-party URL.
   if (
     isMessagingAppId(service?.appId) &&
     !isAllowedMessagingTabUrl(service, href)
   ) {
-    const opened = openUrlAsHubAppTab(href, service);
-    if (!opened.ok && opened.error) {
-      const errBox = {
-        type: 'warning',
-        buttons: ['OK'],
-        defaultId: 0,
-        title: 'Could not open Hub tab',
-        message: opened.error,
-      };
-      if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
-      else dialog.showMessageBox(errBox).catch(() => {});
-    }
-    return true;
+    return openMessagingOutboundLink(service, href, webContents);
   }
   // Catalog apps (Gmail/Zoho/…): same-ecosystem URLs stay in-tab — except Zoho
   // CRM/Books/One deep links, which open as shared-login Hub tabs (multi-screen).
@@ -10543,128 +10617,43 @@ function attachGuestContextMenu(webContents) {
       const live = liveService(service);
       const isLinkTabGuest = !!(live?.isCustom || live?.linkTab);
       const linkIsInternal = live ? isInternalUrl(safeLink, live) : false;
-      template.push({
-        label: 'Open link',
-        click: () => {
-          // Click-to-call from Zoho CRM / One inside Hub.
-          if (isPhoneDialUrl(safeLink)) {
-            openExternalSafe(safeLink);
-            return;
-          }
-          // WhatsApp / Arattai: never load Drive/Google into the chat tab.
-          if (
-            isMessagingAppId(live?.appId) &&
-            !isAllowedMessagingTabUrl(live, safeLink)
-          ) {
-            const opened = openUrlAsHubAppTab(safeLink, live);
-            if (!opened.ok && opened.error) {
-              const errBox = {
-                type: 'warning',
-                buttons: ['OK'],
-                defaultId: 0,
-                title: 'Could not open Hub tab',
-                message: opened.error,
-              };
-              if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
-              else dialog.showMessageBox(errBox).catch(() => {});
-            }
-            return;
-          }
-          // Google SSO/consent URLs 400 in Chrome — keep them in Hub (Gmail/Zoho).
-          if (mustKeepGoogleUrlInApp(safeLink) || isGoogleOwnedUrl(safeLink)) {
-            webContents.loadURL(safeLink).catch(() => {});
-            return;
-          }
-          if (handleOutboundOrNewWindowLink(live, safeLink, webContents)) {
-            return;
-          }
-          webContents.loadURL(safeLink).catch(() => {});
-        },
-      });
-      // Never replace WhatsApp/Arattai/etc. with a third-party site via this
-      // menu — that looked like “Open in tab” but covered the messenger.
-      // Link tabs (and same-app URLs) may navigate in place.
-      // Zoho CRM/Books/One also offer Hub tab so lead/deal links can multi-screen.
-      if (isLinkTabGuest || linkIsInternal) {
+      const isHttpLink = /^https?:\/\//i.test(safeLink);
+      const messagingOutbound =
+        isMessagingAppId(live?.appId) &&
+        !isAllowedMessagingTabUrl(live, safeLink);
+
+      if (isPhoneDialUrl(safeLink)) {
+        // Click-to-call from Zoho CRM / One inside Hub.
         template.push({
-          label: 'Open link in this tab',
-          click: () => {
-            if (isForbiddenGuestNavigation(safeLink)) return;
-            webContents.loadURL(safeLink).catch(() => {});
-          },
+          label: 'Open link',
+          click: () => openExternalSafe(safeLink),
         });
-      }
-      if (
-        !isLinkTabGuest &&
-        (!linkIsInternal || shouldOpenZohoSharedDeepLinkAsHubTab(live, safeLink))
-      ) {
+      } else if (isHttpLink) {
+        // Always offer both destinations on any http(s) link (WA/Arattai/Gmail/…).
         template.push({
           label: 'Open in Hub tab',
+          click: () => openLinkInHubTabFromMenu(live, safeLink, webContents),
+        });
+        template.push({
+          label: 'Open in default browser',
+          click: () => openLinkInDefaultBrowserFromMenu(live, safeLink),
+        });
+        // Never replace WhatsApp/Arattai with a third-party site in-place.
+        // Link tabs and same-app URLs may still navigate this tab.
+        if ((isLinkTabGuest || linkIsInternal) && !messagingOutbound) {
+          template.push({
+            label: 'Open link in this tab',
+            click: () => {
+              if (isForbiddenGuestNavigation(safeLink)) return;
+              webContents.loadURL(safeLink).catch(() => {});
+            },
+          });
+        }
+      } else {
+        template.push({
+          label: 'Open link',
           click: () => {
-            if (isForbiddenGuestNavigation(safeLink)) return;
-            if (isGoogleService(live)) {
-              const outbound = extractGoogleOutboundUrl(safeLink);
-              if (outbound) {
-                if (
-                  mustKeepGoogleUrlInApp(outbound) ||
-                  isGoogleOwnedUrl(outbound)
-                ) {
-                  webContents.loadURL(outbound).catch(() => {});
-                  return;
-                }
-                handleOutboundOrNewWindowLink(live, outbound, webContents);
-                return;
-              }
-              if (!isAllowedGmailTabUrl(safeLink)) {
-                handleOutboundOrNewWindowLink(live, safeLink, webContents);
-                return;
-              }
-              webContents.loadURL(safeLink).catch(() => {});
-              return;
-            }
-            // Messaging: always Hub-tab outbound (including Google Drive / Accounts).
-            if (
-              isMessagingAppId(live?.appId) &&
-              !isAllowedMessagingTabUrl(live, safeLink)
-            ) {
-              const opened = openUrlAsHubAppTab(safeLink, live);
-              if (!opened.ok && opened.error) {
-                const errBox = {
-                  type: 'warning',
-                  buttons: ['OK'],
-                  defaultId: 0,
-                  title: 'Could not open Hub tab',
-                  message: opened.error,
-                };
-                if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
-                else dialog.showMessageBox(errBox).catch(() => {});
-              }
-              return;
-            }
-            if (
-              mustKeepGoogleUrlInApp(safeLink) ||
-              (isAuthOrLoginUrl(safeLink) && isGoogleOwnedUrl(safeLink))
-            ) {
-              webContents.loadURL(safeLink).catch(() => {});
-              return;
-            }
-            // Zoho shared deep links reuse the same profile/session.
-            if (shouldOpenZohoSharedDeepLinkAsHubTab(live, safeLink)) {
-              if (openInternalLinkAsHubTab(live, safeLink)) return;
-            }
-            // Force a real top-bar tab (ignore temporary external/block modes).
-            const opened = openUrlAsHubAppTab(safeLink, live);
-            if (!opened.ok && opened.error) {
-              const errBox = {
-                type: 'warning',
-                buttons: ['OK'],
-                defaultId: 0,
-                title: 'Could not open Hub tab',
-                message: opened.error,
-              };
-              if (mainWindow) dialog.showMessageBox(mainWindow, errBox).catch(() => {});
-              else dialog.showMessageBox(errBox).catch(() => {});
-            }
+            if (shouldOpenInSystemBrowser(safeLink)) openExternalSafe(safeLink);
           },
         });
       }
