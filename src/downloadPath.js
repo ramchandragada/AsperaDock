@@ -19,9 +19,37 @@ function isPathTaken(candidate) {
   return reservedDownloadPaths.has(candidate) || fs.existsSync(candidate);
 }
 
+/** True when chosen basename matches the intended download name (case-insensitive). */
+export function sameDownloadBasename(chosenPath, downloadName) {
+  const chosenBase = sanitizeDownloadFilename(path.basename(String(chosenPath || '')));
+  const intended = sanitizeDownloadFilename(
+    downloadName || chosenBase,
+  );
+  return chosenBase.toLowerCase() === intended.toLowerCase();
+}
+
 /**
- * Pick a save path that does not already exist — avoids GTK "file already
- * exists, replace?" when the same document name was downloaded before.
+ * Natural save path for a download (no `(n)` suffix). Reserves the path so a
+ * parallel download does not also claim it. Prefer this for Save As defaults
+ * so re-downloads can ask Replace instead of pre-filling `(1)`.
+ *
+ * If another in-flight download already reserved the natural name, falls back
+ * to {@link uniqueDownloadPath}.
+ */
+export function suggestDownloadPath(directory, filename) {
+  const dir = String(directory || '').trim() || '.';
+  const safeName = sanitizeDownloadFilename(filename);
+  const candidate = path.join(dir, safeName);
+  if (!reservedDownloadPaths.has(candidate)) {
+    reservedDownloadPaths.add(candidate);
+    return candidate;
+  }
+  return uniqueDownloadPath(dir, safeName);
+}
+
+/**
+ * Pick a save path that does not already exist — used for "Keep both" and for
+ * sticky-filename safety when the dialog points at a different existing file.
  */
 export function uniqueDownloadPath(directory, filename) {
   const dir = String(directory || '').trim() || '.';
@@ -58,9 +86,11 @@ export function releaseDownloadPath(filePath) {
  * time saves to a temp claim first, then relocates here on `done`.
  *
  * Prefers rename (same volume); falls back to copy + unlink.
+ * When `overwrite` is true, removes an existing final path first so Linux
+ * `rename` can replace (rename fails if the destination exists).
  * @returns {string} Path that holds the file (final or claim on failure).
  */
-export function moveDownloadClaim(claimPath, finalPath) {
+export function moveDownloadClaim(claimPath, finalPath, { overwrite = false } = {}) {
   const claim = String(claimPath || '').trim();
   const final = String(finalPath || '').trim();
   if (!final) return claim;
@@ -74,6 +104,14 @@ export function moveDownloadClaim(claimPath, finalPath) {
 
   if (!fs.existsSync(claim)) {
     return fs.existsSync(final) ? final : claim;
+  }
+
+  if (overwrite && fs.existsSync(final)) {
+    try {
+      fs.unlinkSync(final);
+    } catch {
+      // rename/copy may still fail; surface via fallback return
+    }
   }
 
   try {
@@ -95,17 +133,24 @@ export function moveDownloadClaim(claimPath, finalPath) {
 }
 
 /**
- * After the Save dialog returns a path, never clobber an existing file — and
- * never let GTK's sticky last-used name save Maharashtra into Karnataka.pdf.
- *
- * Call {@link releaseDownloadPath} on the dialog suggestion first so the
- * suggested unique path is not treated as "taken" by its own reservation.
+ * After the Save dialog returns a path:
  *
  * - Directory always comes from the user's dialog choice.
  * - If the chosen path is free, keep it (honors rename).
- * - If it already exists on disk, save under the real download filename (unique).
+ * - If it exists and basename matches the download name:
+ *   - `overwrite: true` → replace that file
+ *   - otherwise → unique `(n)` ("Keep both")
+ * - If it exists but basename differs (GTK sticky last-used name), never
+ *   overwrite that other file — save under the real download filename (unique).
+ *
+ * Call {@link releaseDownloadPath} on the dialog suggestion first so the
+ * suggested path is not treated as "taken" by its own reservation.
  */
-export function resolveSavePathAfterPrompt(chosenPath, downloadName) {
+export function resolveSavePathAfterPrompt(
+  chosenPath,
+  downloadName,
+  { overwrite = false } = {},
+) {
   const chosen = String(chosenPath || '').trim();
   if (!chosen) {
     return uniqueDownloadPath('.', sanitizeDownloadFilename(downloadName));
@@ -120,7 +165,18 @@ export function resolveSavePathAfterPrompt(chosenPath, downloadName) {
     return chosen;
   }
 
-  // Existing file on disk: never overwrite. Prefer the download's real name so
-  // a sticky "REG Karnataka.pdf" dialog does not eat a Maharashtra save.
+  const sameName = chosenBase.toLowerCase() === intended.toLowerCase();
+
+  // Sticky GTK name pointing at a different existing file — never overwrite.
+  if (!sameName) {
+    return uniqueDownloadPath(dir, intended);
+  }
+
+  if (overwrite) {
+    reservedDownloadPaths.add(chosen);
+    return chosen;
+  }
+
+  // Same name exists and caller wants Keep both (or did not confirm replace).
   return uniqueDownloadPath(dir, intended);
 }
