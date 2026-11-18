@@ -116,7 +116,9 @@ import {
   moveDownloadClaim,
   releaseDownloadPath,
   resolveSavePathAfterPrompt,
+  sameDownloadBasename,
   sanitizeDownloadFilename,
+  suggestDownloadPath,
   uniqueDownloadPath,
 } from './downloadPath.js';
 import {
@@ -731,24 +733,48 @@ function swallowForwardExtraDownload(item) {
 }
 
 /**
- * Ask-every-time Save As for guest downloads.
- *
- * Electron only honors `setSavePath` inside `will-download`. We claim a temp
- * path immediately (silences Chromium's dialog), show Hub's picker, then on
- * `done` move the claim to the user's path via {@link moveDownloadClaim}.
- * Changing `setSavePath` after the dialog and deleting the claim (v0.5.20)
- * left users with no file on disk.
- *
- * @param {object} destHolder Shared with the will-download `done` handler.
+ * Mint/Cinnamon-friendly Replace / Keep both / Cancel when a same-named file
+ * already exists. Returns 'replace' | 'keep' | 'cancel'.
  */
-function promptGuestDownloadSave(item, defaultPath, downloadName, destHolder) {
-  const suggested = String(defaultPath || '').trim();
-  const intendedName =
-    String(downloadName || '').trim() ||
-    item.getFilename?.() ||
-    path.basename(suggested) ||
-    'download';
+async function askReplaceExistingDownload(filePath) {
+  const parent =
+    mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
+  const name = path.basename(String(filePath || '').trim()) || 'file';
+  try {
+    if (parent) {
+      if (parent.isMinimized()) parent.restore();
+      parent.show();
+      parent.focus();
+      parent.moveTop?.();
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    const { response } = await dialog.showMessageBox(parent, {
+      type: 'question',
+      buttons: ['Replace', 'Keep both', 'Cancel'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+      title: 'File already exists',
+      message: `A file named "${name}" already exists. Do you want to replace it?`,
+      detail:
+        'Replace overwrites the earlier file. Keep both saves a new copy with (1), (2), … in the name.',
+    });
+    if (response === 0) return 'replace';
+    if (response === 1) return 'keep';
+    return 'cancel';
+  } catch {
+    return 'keep';
+  }
+}
 
+/**
+ * Claim a temp save path inside will-download (Electron only honors setSavePath
+ * here), pause, then relocate on done via {@link moveDownloadClaim}.
+ */
+function claimGuestDownloadTemp(item, intendedName, fallbackPath = '') {
   let claimPath = '';
   try {
     const claimDir = path.join(app.getPath('temp'), 'asperahub-downloads');
@@ -760,23 +786,23 @@ function promptGuestDownloadSave(item, defaultPath, downloadName, destHolder) {
     item.setSavePath(claimPath);
   } catch {
     try {
-      if (suggested) {
-        claimPath = suggested;
+      if (fallbackPath) {
+        claimPath = fallbackPath;
         item.setSavePath(claimPath);
       }
     } catch {
       // ignore
     }
   }
-
-  destHolder.claimPath = claimPath;
-  destHolder.path = suggested;
-
   try {
     item.pause();
   } catch {
     // ignore — older builds may not support pause
   }
+  return claimPath;
+}
+
+function focusHubForDownloadDialog() {
   const parent =
     mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined;
   try {
@@ -789,6 +815,26 @@ function promptGuestDownloadSave(item, defaultPath, downloadName, destHolder) {
   } catch {
     // ignore
   }
+  return parent;
+}
+
+/**
+ * Fixed download folder: when the natural name already exists, ask Replace /
+ * Keep both / Cancel (no Save As). Uses claim+move like Ask-every-time.
+ *
+ * @param {object} destHolder Shared with the will-download `done` handler.
+ */
+function confirmGuestDownloadConflict(item, targetPath, downloadName, destHolder) {
+  const intendedName =
+    String(downloadName || '').trim() ||
+    item.getFilename?.() ||
+    path.basename(String(targetPath || '')) ||
+    'download';
+  const suggested = String(targetPath || '').trim();
+  const claimPath = claimGuestDownloadTemp(item, intendedName, suggested);
+  destHolder.claimPath = claimPath;
+  destHolder.path = suggested;
+  destHolder.overwrite = false;
 
   const cleanupClaimFile = () => {
     if (!claimPath) return;
@@ -799,10 +845,90 @@ function promptGuestDownloadSave(item, defaultPath, downloadName, destHolder) {
     }
   };
 
-  const finishWithPath = (pickedPath) => {
+  const cancelItem = () => {
+    destHolder.canceled = true;
+    destHolder.resolveReady();
     releaseDownloadPath(suggested);
-    const finalPath = resolveSavePathAfterPrompt(pickedPath, intendedName);
+    try {
+      item.cancel();
+    } catch {
+      // ignore
+    }
+    cleanupClaimFile();
+  };
+
+  const resumeWith = (finalPath, overwrite) => {
     destHolder.path = finalPath;
+    destHolder.overwrite = Boolean(overwrite);
+    destHolder.canceled = false;
+    destHolder.resolveReady();
+    try {
+      item.resume();
+    } catch {
+      // ignore
+    }
+  };
+
+  focusHubForDownloadDialog();
+  askReplaceExistingDownload(suggested).then((choice) => {
+    releaseDownloadPath(suggested);
+    if (choice === 'cancel') {
+      cancelItem();
+      return;
+    }
+    if (choice === 'replace') {
+      resumeWith(
+        resolveSavePathAfterPrompt(suggested, intendedName, { overwrite: true }),
+        true,
+      );
+      return;
+    }
+    resumeWith(resolveSavePathAfterPrompt(suggested, intendedName), false);
+  });
+}
+
+/**
+ * Ask-every-time Save As for guest downloads.
+ *
+ * Electron only honors `setSavePath` inside `will-download`. We claim a temp
+ * path immediately (silences Chromium's dialog), show Hub's picker, then on
+ * `done` move the claim to the user's path via {@link moveDownloadClaim}.
+ * Changing `setSavePath` after the dialog and deleting the claim (v0.5.20)
+ * left users with no file on disk.
+ *
+ * When the chosen path already exists and matches the download name, ask
+ * Replace / Keep both / Cancel. Sticky GTK names that point at a *different*
+ * existing file still never overwrite (Maharashtra must not eat Karnataka.pdf).
+ *
+ * @param {object} destHolder Shared with the will-download `done` handler.
+ */
+function promptGuestDownloadSave(item, defaultPath, downloadName, destHolder) {
+  const suggested = String(defaultPath || '').trim();
+  const intendedName =
+    String(downloadName || '').trim() ||
+    item.getFilename?.() ||
+    path.basename(suggested) ||
+    'download';
+
+  const claimPath = claimGuestDownloadTemp(item, intendedName, suggested);
+  destHolder.claimPath = claimPath;
+  destHolder.path = suggested;
+  destHolder.overwrite = false;
+
+  const parent = focusHubForDownloadDialog();
+
+  const cleanupClaimFile = () => {
+    if (!claimPath) return;
+    try {
+      if (fs.existsSync(claimPath)) fs.unlinkSync(claimPath);
+    } catch {
+      // ignore
+    }
+  };
+
+  const resumeWith = (finalPath, overwrite) => {
+    destHolder.path = finalPath;
+    destHolder.overwrite = Boolean(overwrite);
     destHolder.canceled = false;
     destHolder.resolveReady();
     // Do not setSavePath here — it only applies inside will-download.
@@ -827,6 +953,36 @@ function promptGuestDownloadSave(item, defaultPath, downloadName, destHolder) {
     cleanupClaimFile();
   };
 
+  const finishWithPath = async (pickedPath) => {
+    releaseDownloadPath(suggested);
+    const picked = String(pickedPath || '').trim();
+    if (!picked) {
+      cancelItem();
+      return;
+    }
+
+    // Same-name conflict → ask Replace / Keep both. Different basename that
+    // already exists is the GTK sticky-name case — never ask to overwrite it.
+    if (fs.existsSync(picked) && sameDownloadBasename(picked, intendedName)) {
+      const choice = await askReplaceExistingDownload(picked);
+      if (choice === 'cancel') {
+        cancelItem();
+        return;
+      }
+      if (choice === 'replace') {
+        resumeWith(
+          resolveSavePathAfterPrompt(picked, intendedName, { overwrite: true }),
+          true,
+        );
+        return;
+      }
+      resumeWith(resolveSavePathAfterPrompt(picked, intendedName), false);
+      return;
+    }
+
+    resumeWith(resolveSavePathAfterPrompt(picked, intendedName), false);
+  };
+
   dialog
     .showSaveDialog(parent, {
       title: 'Save download',
@@ -840,15 +996,13 @@ function promptGuestDownloadSave(item, defaultPath, downloadName, destHolder) {
         cancelItem();
         return;
       }
-      finishWithPath(filePath);
+      return finishWithPath(filePath);
     })
     .catch(() => {
       // showSaveDialog failed — save to the suggested Downloads location.
-      try {
-        finishWithPath(suggested);
-      } catch {
+      return finishWithPath(suggested).catch(() => {
         cancelItem();
-      }
+      });
     });
 }
 /** Floating Chrome-like Extensions manager. */
@@ -7590,28 +7744,45 @@ function configureSession(partitionSession, partitionKey) {
 
     const downloadDir = String(settings.downloadPath || '').trim();
     let savePathClaimed = '';
-    /** @type {{ path: string, claimPath: string, canceled: boolean, ready: Promise<void>, resolveReady: () => void } | null} */
+    /** @type {{ path: string, claimPath: string, canceled: boolean, overwrite?: boolean, ready: Promise<void>, resolveReady: () => void } | null} */
     let destHolder = null;
-    if (downloadDir) {
-      savePathClaimed = uniqueDownloadPath(downloadDir, downloadName);
-      item.setSavePath(savePathClaimed);
-    } else {
-      const defaultPath = uniqueDownloadPath(
-        app.getPath('downloads'),
-        downloadName,
-      );
-      savePathClaimed = defaultPath;
+    const makeDestHolder = (initialPath) => {
       let resolveReady = () => {};
       const ready = new Promise((resolve) => {
         resolveReady = resolve;
       });
-      destHolder = {
-        path: defaultPath,
+      return {
+        path: initialPath,
         claimPath: '',
         canceled: false,
+        overwrite: false,
         ready,
         resolveReady: () => resolveReady(),
       };
+    };
+    if (downloadDir) {
+      // Prefer the real filename. If it already exists, ask Replace / Keep both
+      // (claim+move) instead of silently writing `(1)`.
+      const naturalPath = suggestDownloadPath(downloadDir, downloadName);
+      savePathClaimed = naturalPath;
+      if (fs.existsSync(naturalPath)) {
+        destHolder = makeDestHolder(naturalPath);
+        confirmGuestDownloadConflict(
+          item,
+          naturalPath,
+          downloadName,
+          destHolder,
+        );
+      } else {
+        item.setSavePath(naturalPath);
+      }
+    } else {
+      const defaultPath = suggestDownloadPath(
+        app.getPath('downloads'),
+        downloadName,
+      );
+      savePathClaimed = defaultPath;
+      destHolder = makeDestHolder(defaultPath);
       promptGuestDownloadSave(item, defaultPath, downloadName, destHolder);
     }
     item.once('done', async (_e, state) => {
@@ -7639,6 +7810,7 @@ function configureSession(partitionSession, partitionKey) {
         const savePath = moveDownloadClaim(
           destHolder.claimPath,
           destHolder.path,
+          { overwrite: Boolean(destHolder.overwrite) },
         );
         releaseDownloadPath(savePath);
         if (!savePath || !fs.existsSync(savePath)) {
