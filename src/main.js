@@ -1114,12 +1114,37 @@ function applyMemorySwitches() {
   }
 }
 
+/** Low memory: throttle even the selected tab after this many idle seconds. */
+const LEAN_ACTIVE_IDLE_THROTTLE_SEC = 12;
+
+function systemIdleSeconds() {
+  try {
+    return powerMonitor.getSystemIdleTime();
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * In low memory mode, the selected tab only runs full-speed while the user is
+ * actually interacting (Hub focused + recent input). Otherwise WhatsApp Web
+ * keeps burning CPU/disk while "idle" on thin clients (HP t640).
+ */
+function leanGuestRunsFullSpeed(serviceId) {
+  if (!isLowMemoryMode()) return true;
+  if (locked) return false;
+  if (overlayOpen && overlayMode === 'full') return false;
+  if (!serviceId || serviceId !== activeServiceId) return false;
+  if (!dockIsUserFocused()) return false;
+  return systemIdleSeconds() < LEAN_ACTIVE_IDLE_THROTTLE_SEC;
+}
+
 /**
  * Guest Chromium throttle policy.
  *
  * Full mode: warm apps stay full-speed in the background (instant switch).
- * Low memory mode: only the active tab stays unthrottled — background WhatsApp /
- * Zoho drop timers/raf (big CPU cut on HP t640 / Cutefish / 8GB PCs).
+ * Low memory mode: only an actively used tab stays unthrottled — background
+ * and idle/unfocused WhatsApp drop timers/raf (CPU cut on HP t640 / Cutefish).
  */
 function applyGuestPerfMode(
   webContents,
@@ -1144,16 +1169,19 @@ function applyGuestPerfMode(
 }
 
 function syncAllGuestPerfModes() {
+  const lean = isLowMemoryMode();
   for (const [id, entry] of views.entries()) {
     const wc = entry?.view?.webContents;
     if (!wc || wc.isDestroyed()) continue;
     const service = getService(id) || entry.service;
     const keepWarm = isKeepWarmService(id);
+    const isSelected =
+      !locked &&
+      id === activeServiceId &&
+      !(overlayOpen && overlayMode === 'full');
     applyGuestPerfMode(wc, {
-      active:
-        !locked &&
-        id === activeServiceId &&
-        !(overlayOpen && overlayMode === 'full'),
+      // Lean: selected tab still throttles when Hub is blurred or user is idle.
+      active: lean ? isSelected && leanGuestRunsFullSpeed(id) : isSelected,
       loadedOnce: entry.loadedOnce === true,
       keepWarm,
       allowThrottle:
@@ -12110,9 +12138,9 @@ function softWakeKeepWarmApps(exceptId = null) {
     clearTimeout(softWakeTimer);
     softWakeTimer = null;
   }
-  const pending = selectedWarmIds().filter(
-    (id) => id !== exceptId && !views.has(id),
-  );
+  // Low memory: only soft-wake user flame marks (not every default WhatsApp).
+  const warmIds = isLowMemoryMode() ? explicitWarmIds() : selectedWarmIds();
+  const pending = warmIds.filter((id) => id !== exceptId && !views.has(id));
   if (!pending.length) return;
 
   let i = 0;
@@ -13516,8 +13544,11 @@ function createWindow() {
     // Guest compositor may need a kick when we come back (esp. Mint XFCE).
     guestNeedsRepaint = true;
     markUserAway('window-blur');
+    // Low memory: throttle the selected WhatsApp tab as soon as Hub loses focus.
+    if (isLowMemoryMode()) syncAllGuestPerfModes();
   });
   mainWindow.on('focus', () => {
+    if (isLowMemoryMode()) syncAllGuestPerfModes();
     const awayMs = awayStartedAt ? Date.now() - awayStartedAt : 0;
     // Long away: full recover (repaint + blank reload). Short: two-step repaint.
     if (awayMs >= 3 * 60_000 || peakIdleSec >= 3 * 60) {
@@ -13658,15 +13689,22 @@ function startHibernateTimer() {
   let cacheTrimTicks = 0;
   setInterval(() => {
     const now = Date.now();
+    const lean = isLowMemoryMode();
     for (const [id, entry] of views.entries()) {
       if (id === activeServiceId) continue;
-      // Messaging apps stay warm — switching must not reload WhatsApp every time.
-      if (isKeepWarmService(id)) continue;
+      // Full mode: flame/catalog keepWarm never idle-hibernate.
+      // Low memory: only *explicit* flame marks are exempt — default WhatsApp
+      // keep-warm may sleep so thin clients are not stuck with 3+ live WA tabs.
+      if (isKeepWarmService(id)) {
+        if (!lean || isExplicitKeepWarm(id)) continue;
+        const svc = getService(id) || entry.service;
+        if (!isMessagingAppId(svc?.appId)) continue;
+      }
       const cfg = getAppConfig(id);
       const mins =
         cfg.hibernateMinutes > 0
           ? cfg.hibernateMinutes
-          : isLowMemoryMode()
+          : lean
             ? Math.min(10, Math.max(3, Number(settings.hibernateMinutes) || 10))
             : Math.max(5, Number(settings.hibernateMinutes) || 30);
       if (now - entry.lastUsed >= mins * 60_000) hibernateService(id);
@@ -14976,6 +15014,21 @@ function watchSystemIdle() {
       }
     }
   }, 15_000);
+
+  // Low memory: re-evaluate throttle when the user goes idle / comes back
+  // (selected WhatsApp must not keep burning CPU while Hub sits open unused).
+  let leanWasInteractive = true;
+  setInterval(() => {
+    if (!isLowMemoryMode()) {
+      leanWasInteractive = true;
+      return;
+    }
+    const interactive = leanGuestRunsFullSpeed(activeServiceId);
+    if (interactive !== leanWasInteractive) {
+      leanWasInteractive = interactive;
+      syncAllGuestPerfModes();
+    }
+  }, 4_000);
 
   // While Hub stays focused, periodically sample the active guest surface.
   // Catches WhatsApp/Arattai going blank without alt-tab or idle.
