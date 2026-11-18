@@ -41,10 +41,7 @@ test('low memory softens startup and tab-switch CPU spikes', () => {
 
 test('low memory may hibernate default keep-warm messaging', () => {
   assert.match(mainSrc, /isExplicitKeepWarm\(id\)/);
-  assert.match(
-    mainSrc,
-    /isLowMemoryMode\(\) \? explicitWarmIds\(\) : selectedWarmIds\(\)/,
-  );
+  assert.match(mainSrc, /lean \? explicitWarmIds\(\) : selectedWarmIds\(\)/);
 });
 
 test('low memory skips periodic capturePage surface polls', () => {
