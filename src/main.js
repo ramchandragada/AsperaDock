@@ -4562,10 +4562,21 @@ function buildNotifCenterDataSync(scrapedChats = []) {
     hideContent,
   });
   const monitorOn = !!settings.consumptionMonitor;
+  // Use orderedServices() — raw serviceInstances have no name/title (only appId),
+  // which made MEMORY PER APP show the generic label "App" for every row.
   const memoryRows = monitorOn
-    ? (settings.serviceInstances || [])
+    ? orderedServices()
         .map((service) => ({
-          name: service.name || service.defaultName || 'App',
+          id: service.id,
+          name:
+            String(
+              service.title ||
+                service.name ||
+                service.defaultName ||
+                service.defaultTitle ||
+                service.appId ||
+                '',
+            ).trim() || 'App',
           mb: Number(appMemory?.[service.id]) || 0,
         }))
         .filter((row) => row.mb > 0)
