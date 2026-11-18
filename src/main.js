@@ -1116,6 +1116,15 @@ function applyMemorySwitches() {
 
 /** Low memory: throttle even the selected tab after this many idle seconds. */
 const LEAN_ACTIVE_IDLE_THROTTLE_SEC = 12;
+/** Low memory: keep a newly selected tab throttled briefly (softens switch spike). */
+const LEAN_ACTIVATE_RAMP_MS = 800;
+/** Low memory: space soft-wakes so startup does not fire all messengers at once. */
+const LEAN_WARM_WAKE_STAGGER_MS = 1800;
+const LEAN_WARM_WAKE_INITIAL_MS = 1200;
+
+let leanActivateRampId = null;
+let leanActivateRampUntil = 0;
+let leanActivateRampTimer = null;
 
 function systemIdleSeconds() {
   try {
@@ -1126,9 +1135,34 @@ function systemIdleSeconds() {
 }
 
 /**
+ * Brief post-activate throttle window for Low memory mode (tab-switch spike).
+ * Cleared when the ramp ends or another tab is selected.
+ */
+function scheduleLeanActivateRamp(serviceId) {
+  if (!isLowMemoryMode() || !serviceId) {
+    leanActivateRampId = null;
+    leanActivateRampUntil = 0;
+    if (leanActivateRampTimer) {
+      clearTimeout(leanActivateRampTimer);
+      leanActivateRampTimer = null;
+    }
+    return;
+  }
+  leanActivateRampId = serviceId;
+  leanActivateRampUntil = Date.now() + LEAN_ACTIVATE_RAMP_MS;
+  if (leanActivateRampTimer) clearTimeout(leanActivateRampTimer);
+  leanActivateRampTimer = setTimeout(() => {
+    leanActivateRampTimer = null;
+    if (leanActivateRampId !== serviceId) return;
+    leanActivateRampUntil = 0;
+    if (activeServiceId === serviceId) syncAllGuestPerfModes();
+  }, LEAN_ACTIVATE_RAMP_MS);
+}
+
+/**
  * In low memory mode, the selected tab only runs full-speed while the user is
- * actually interacting (Hub focused + recent input). Otherwise WhatsApp Web
- * keeps burning CPU/disk while "idle" on thin clients (HP t640).
+ * actually interacting (Hub focused + recent input), and after a short activate
+ * ramp. Otherwise WhatsApp Web burns CPU/disk while "idle" on thin clients.
  */
 function leanGuestRunsFullSpeed(serviceId) {
   if (!isLowMemoryMode()) return true;
@@ -1136,6 +1170,12 @@ function leanGuestRunsFullSpeed(serviceId) {
   if (overlayOpen && overlayMode === 'full') return false;
   if (!serviceId || serviceId !== activeServiceId) return false;
   if (!dockIsUserFocused()) return false;
+  if (
+    leanActivateRampId === serviceId &&
+    Date.now() < leanActivateRampUntil
+  ) {
+    return false;
+  }
   return systemIdleSeconds() < LEAN_ACTIVE_IDLE_THROTTLE_SEC;
 }
 
@@ -12130,7 +12170,8 @@ function softWakeService(id) {
 
 /**
  * Soft-load every warm app so switching stays instant.
- * Fast stagger — warm guests must be ready within ~1s of each other.
+ * Full mode: fast stagger (~250ms). Low memory: slow stagger so startup does
+ * not peg HP t640 CPUs by waking WhatsApp + Arattai together.
  */
 let softWakeTimer = null;
 function softWakeKeepWarmApps(exceptId = null) {
@@ -12139,9 +12180,13 @@ function softWakeKeepWarmApps(exceptId = null) {
     softWakeTimer = null;
   }
   // Low memory: only soft-wake user flame marks (not every default WhatsApp).
-  const warmIds = isLowMemoryMode() ? explicitWarmIds() : selectedWarmIds();
+  const lean = isLowMemoryMode();
+  const warmIds = lean ? explicitWarmIds() : selectedWarmIds();
   const pending = warmIds.filter((id) => id !== exceptId && !views.has(id));
   if (!pending.length) return;
+
+  const staggerMs = lean ? LEAN_WARM_WAKE_STAGGER_MS : 250;
+  const initialMs = lean ? LEAN_WARM_WAKE_INITIAL_MS : 80;
 
   let i = 0;
   const step = () => {
@@ -12155,9 +12200,9 @@ function softWakeKeepWarmApps(exceptId = null) {
     softWakeService(pending[i]);
     i += 1;
     broadcastState();
-    if (i < pending.length) softWakeTimer = setTimeout(step, 250);
+    if (i < pending.length) softWakeTimer = setTimeout(step, staggerMs);
   };
-  softWakeTimer = setTimeout(step, 80);
+  softWakeTimer = setTimeout(step, initialMs);
 }
 
 function enforceResidentLimit() {
@@ -12277,8 +12322,12 @@ function activateService(id) {
   settings = saveSettings({ lastActiveServiceId: id });
 
   const wc = entry.view.webContents;
+  // Low memory: brief throttle after tab switch so the spike is softer, then
+  // ramp to full speed (see scheduleLeanActivateRamp / leanGuestRunsFullSpeed).
+  if (isLowMemoryMode()) scheduleLeanActivateRamp(id);
+  else scheduleLeanActivateRamp(null);
   applyGuestPerfMode(wc, {
-    active: true,
+    active: isLowMemoryMode() ? leanGuestRunsFullSpeed(id) : true,
     loadedOnce: true,
     keepWarm,
     allowThrottle: true,

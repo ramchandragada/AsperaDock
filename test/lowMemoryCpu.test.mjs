@@ -28,6 +28,17 @@ test('low memory throttles selected tab when idle or Hub unfocused', () => {
   );
 });
 
+test('low memory softens startup and tab-switch CPU spikes', () => {
+  assert.match(mainSrc, /LEAN_ACTIVATE_RAMP_MS/);
+  assert.match(mainSrc, /LEAN_WARM_WAKE_STAGGER_MS/);
+  assert.match(mainSrc, /function scheduleLeanActivateRamp/);
+  assert.match(mainSrc, /scheduleLeanActivateRamp\(id\)/);
+  assert.match(
+    mainSrc,
+    /staggerMs = lean \? LEAN_WARM_WAKE_STAGGER_MS : 250/,
+  );
+});
+
 test('low memory may hibernate default keep-warm messaging', () => {
   assert.match(mainSrc, /isExplicitKeepWarm\(id\)/);
   assert.match(
@@ -54,5 +65,6 @@ test('settings save re-applies guest perf + memory timer', () => {
 
 test('settings copy mentions CPU throttle for thin clients', () => {
   assert.match(indexHtml, /throttles background \+ idle tabs to cut CPU/);
+  assert.match(indexHtml, /Softens startup and tab-switch spikes/);
   assert.match(indexHtml, /HP t640/);
 });
