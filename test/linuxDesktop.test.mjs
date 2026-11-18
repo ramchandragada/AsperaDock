@@ -7,6 +7,7 @@ import {
   linuxIsZorinOS,
   linuxIsPlasmaDesktop,
   linuxIsTrinityDesktop,
+  linuxIsCutefishDesktop,
   linuxPlasmaCompositorDisabled,
   linuxIsLeanFleetDesktop,
   linuxNeedsDelayedMaximize,
@@ -184,6 +185,19 @@ test('Mint XFCE stays opaque but is not lean fleet', () => {
   };
   assert.equal(linuxUsesOpaqueOverlays(env), true);
   assert.equal(linuxIsLeanFleetDesktop(env), false);
+});
+
+test('Cutefish is opaque + lean fleet (HP t640 thin clients)', () => {
+  resetLinuxOsReleaseCache();
+  const env = {
+    platform: 'linux',
+    xdgCurrentDesktop: 'Cutefish',
+    desktopSession: 'cutefish-session',
+    osRelease: 'NAME="CutefishOS"\nID=cutefish\nID_LIKE=debian\n',
+  };
+  assert.equal(linuxIsCutefishDesktop(env), true);
+  assert.equal(linuxUsesOpaqueOverlays(env), true);
+  assert.equal(linuxIsLeanFleetDesktop(env), true);
 });
 
 test('Zorin Core GNOME is detected; transparent overlays; not lean', () => {

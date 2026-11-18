@@ -1099,21 +1099,27 @@ function applyMemorySwitches() {
     String((lean ? 16 : 32) * 1024 * 1024),
   );
   // Room for all warm guests + Zoho CRM child windows + shell.
+  // Lean: fewer renderer slots — less CPU on thin clients (HP t640 / Cutefish).
   app.commandLine.appendSwitch(
     'renderer-process-limit',
-    String(Math.max(12, warm + 6)),
+    String(lean ? Math.max(6, warm + 3) : Math.max(12, warm + 6)),
   );
-  // Keep warm SPA portals (Zoho One CRM) alive when the window is occluded /
-  // idle — otherwise the shell stays and the content pane goes blank.
-  app.commandLine.appendSwitch('disable-renderer-backgrounding');
-  app.commandLine.appendSwitch('disable-background-timer-throttling');
-  app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+  // Full mode: keep warm SPA portals alive when occluded (avoids blank CRM).
+  // Low memory mode: allow Chromium to background-throttle — major CPU win on
+  // 8GB thin clients; active tab still runs full speed via setBackgroundThrottling.
+  if (!lean) {
+    app.commandLine.appendSwitch('disable-renderer-backgrounding');
+    app.commandLine.appendSwitch('disable-background-timer-throttling');
+    app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+  }
 }
 
 /**
- * Warm apps stay full-speed even in the background (instant switch / UX first).
- * Non-warm background guests may throttle after first load.
- * Heavy portals are not throttled until the user has opened them once.
+ * Guest Chromium throttle policy.
+ *
+ * Full mode: warm apps stay full-speed in the background (instant switch).
+ * Low memory mode: only the active tab stays unthrottled — background WhatsApp /
+ * Zoho drop timers/raf (big CPU cut on HP t640 / Cutefish / 8GB PCs).
  */
 function applyGuestPerfMode(
   webContents,
@@ -1122,6 +1128,11 @@ function applyGuestPerfMode(
   if (!webContents || webContents.isDestroyed()) return;
   if (!active && !loadedOnce) return;
   try {
+    const leanCpu = isLowMemoryMode();
+    if (leanCpu) {
+      webContents.setBackgroundThrottling(!active);
+      return;
+    }
     if (active || keepWarm || !allowThrottle) {
       webContents.setBackgroundThrottling(false);
     } else {
@@ -1398,7 +1409,11 @@ function softReloadActiveGuest(reason = 'idle-blank') {
 }
 
 const ACTIVE_SURFACE_CHECK_DELAYS_MS = [2500, 5500, 10000];
+/** Low memory: fewer post-activate capturePage samples (CPU-heavy on software paint). */
+const ACTIVE_SURFACE_CHECK_DELAYS_LEAN_MS = [8000, 20000];
 const ACTIVE_SURFACE_POLL_MS = 40_000;
+const MEMORY_SAMPLE_MS = 5_000;
+const MEMORY_SAMPLE_LEAN_MS = 20_000;
 /** Give messaging apps time to finish QR pairing before any surface checks. */
 const MESSAGING_SURFACE_GRACE_MS = 90_000;
 
@@ -1499,9 +1514,12 @@ function scheduleActiveGuestSurfaceChecks(id) {
   clearActiveSurfaceTimers(entry);
   entry.__surfaceBlankStrikes = 0;
   const service = getService(id) || entry.service;
-  const delays = isMessagingApp(service)
-    ? ACTIVE_SURFACE_CHECK_DELAYS_MS.map((d) => d + MESSAGING_SURFACE_GRACE_MS)
+  const baseDelays = isLowMemoryMode()
+    ? ACTIVE_SURFACE_CHECK_DELAYS_LEAN_MS
     : ACTIVE_SURFACE_CHECK_DELAYS_MS;
+  const delays = isMessagingApp(service)
+    ? baseDelays.map((d) => d + MESSAGING_SURFACE_GRACE_MS)
+    : baseDelays;
   entry.__surfaceHealthTimers = delays.map((delay) =>
     setTimeout(() => {
       runActiveGuestSurfaceHealthCheck(id);
@@ -7613,7 +7631,8 @@ function sampleAppMemory() {
 
 function startMemoryTimer() {
   if (memoryTimer) clearInterval(memoryTimer);
-  memoryTimer = setInterval(sampleAppMemory, 5000);
+  const ms = isLowMemoryMode() ? MEMORY_SAMPLE_LEAN_MS : MEMORY_SAMPLE_MS;
+  memoryTimer = setInterval(sampleAppMemory, ms);
 }
 
 function parseUnread(title) {
@@ -14833,6 +14852,10 @@ dockHandle('dock:save-settings', (_e, patch) => {
   installApplicationMenu();
   ensureTray();
   applyProxyToAllSessions();
+  // Low memory ↔ full: re-apply guest throttle + memory sample interval now
+  // (Chromium process-limit / backgrounding flags still need relaunch).
+  syncAllGuestPerfModes();
+  startMemoryTimer();
   sampleAppMemory();
   startAutoUpdate();
   // Sentry can start mid-session if the user just pasted a DSN.
@@ -14956,7 +14979,10 @@ function watchSystemIdle() {
 
   // While Hub stays focused, periodically sample the active guest surface.
   // Catches WhatsApp/Arattai going blank without alt-tab or idle.
+  // Low memory: skip capturePage polls entirely — they peg CPU on thin clients
+  // (HP t640); focus/idle-return recovery still runs.
   setInterval(() => {
+    if (isLowMemoryMode()) return;
     if (!activeServiceId || locked) return;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (!dockIsUserFocused()) return;
