@@ -4456,26 +4456,32 @@ function openChromeMenuWindow({ x = 0, y = 0, dark = false, align = 'right' } = 
 
 function buildNotifCenterDataSync(scrapedChats = []) {
   const hideContent = !!settings.hideNotificationContent;
-  const logItems = (notificationLog || []).slice(0, 40).map((item) => {
-    const service = getService(item.serviceId);
-    const appId = service?.appId || item.appId || '';
-    return {
-      id: item.id,
-      serviceId: item.serviceId,
-      appId,
-      title: item.title,
-      body: item.body,
-      at: item.at,
-      chatName: item.chatName || '',
-      chatKey: item.chatKey || '',
-      unread: Number(item.unread) || 0,
-      canReply:
-        isInboxAppId(appId) && !whatsappAutomationBlocked(settings, appId),
-      accountLabel: item.accountLabel || service?.title || service?.name || '',
-      logo: service?.logo || null,
-      color: service?.color || '#e2e8f0',
-    };
-  });
+  const logItems = (notificationLog || [])
+    .filter((item) => {
+      const cfg = getAppConfig(item.serviceId);
+      return cfg.allowNotifications !== false;
+    })
+    .slice(0, 40)
+    .map((item) => {
+      const service = getService(item.serviceId);
+      const appId = service?.appId || item.appId || '';
+      return {
+        id: item.id,
+        serviceId: item.serviceId,
+        appId,
+        title: item.title,
+        body: item.body,
+        at: item.at,
+        chatName: item.chatName || '',
+        chatKey: item.chatKey || '',
+        unread: Number(item.unread) || 0,
+        canReply:
+          isInboxAppId(appId) && !whatsappAutomationBlocked(settings, appId),
+        accountLabel: item.accountLabel || service?.title || service?.name || '',
+        logo: service?.logo || null,
+        color: service?.color || '#e2e8f0',
+      };
+    });
   const notifications = mergeNotificationFeed({
     logItems,
     scrapedChats,
@@ -4500,6 +4506,7 @@ function buildNotifCenterData() {
 
 async function scrapeUnreadChatsForService(service, { allowDefer = true } = {}) {
   if (!service || !isInboxAppId(service.appId)) return [];
+  if (getAppConfig(service.id).allowNotifications === false) return [];
   if (whatsappAutomationBlocked(settings, service.appId)) return [];
   const wc = views.get(service.id)?.view?.webContents;
   if (!wc || wc.isDestroyed()) return [];
@@ -4535,7 +4542,10 @@ async function scrapeUnreadChatsForService(service, { allowDefer = true } = {}) 
 
 async function scrapeAllUnreadChats() {
   const services = orderedServices().filter(
-    (s) => isInboxAppId(s.appId) && views.has(s.id),
+    (s) =>
+      isInboxAppId(s.appId) &&
+      views.has(s.id) &&
+      getAppConfig(s.id).allowNotifications !== false,
   );
   const batches = await Promise.all(
     services.map((service) => scrapeUnreadChatsForService(service)),
@@ -6108,7 +6118,12 @@ async function handleAppMenuAction(type, value) {
   }
   if (type === 'notifications') {
     saveAppConfig(id, { allowNotifications: !!value });
+    const entry = views.get(id);
+    const wc = entry?.view?.webContents;
+    // Re-apply immediately so Safe Mode WhatsApp mute takes effect without reload.
+    if (wc && !wc.isDestroyed()) applyFocusMode(wc, id);
     broadcastState();
+    pushNotifCenterData();
     return { ok: true };
   }
   if (type === 'warm') {
@@ -6280,21 +6295,51 @@ async function handleNotifCenterAction(type, value) {
   return { ok: false };
 }
 
+/**
+ * Guest Notification / focus policy for one webContents.
+ *
+ * - Normal apps (and WhatsApp with Safe Mode off): replace Notification with a
+ *   quiet stub that bridges title/body to Hub (avoids Linux focus-steal).
+ * - WhatsApp Safe Mode + notifications ON: leave native Notification alone
+ *   (human-driven WA Web; no Hub instrumentation).
+ * - Notifications OFF (any app, including Safe Mode WhatsApp): suppress native
+ *   toasts. Previously Safe Mode returned early and ignored the mute toggle —
+ *   renamed WhatsApp tabs like "GST" kept showing chat notifications.
+ */
 function applyFocusMode(webContents, serviceId) {
   const service = getService(serviceId);
-  // Safe Mode: do not replace Notification / focus on WhatsApp Web.
-  if (whatsappAutomationBlocked(settings, service?.appId)) return;
   const cfg = serviceId ? getAppConfig(serviceId) : mergeAppConfig();
-  // Suppress native guest Notification (avoids Linux focus steal) but forward
-  // title/body to main via a console bridge for rich OS + in-app toasts.
+  const allowNotifications =
+    cfg.allowNotifications !== false && !settings.focusMode;
+  const safeBlocked = whatsappAutomationBlocked(settings, service?.appId);
   const hideBody =
     settings.hideNotificationContent || cfg.hideNotificationContent
       ? 'true'
       : 'false';
+
+  // Safe Mode + user wants notifications: do not instrument Notification.
+  // If we previously patched for mute, clear the mute flag so Original fires.
+  if (safeBlocked && allowNotifications) {
+    webContents
+      .executeJavaScript(
+        `(() => {
+          window.__asperaDockMuteNotifications = false;
+          window.__asperaDockHideBody = ${hideBody};
+          try { window.focus = function () {}; } catch (e) {}
+        })();`,
+        true,
+      )
+      .catch(() => {});
+    return;
+  }
+
+  const useBridge = !safeBlocked;
   webContents
     .executeJavaScript(
       `(() => {
+        window.__asperaDockMuteNotifications = ${allowNotifications ? 'false' : 'true'};
         window.__asperaDockHideBody = ${hideBody};
+        window.__asperaDockUseBridge = ${useBridge ? 'true' : 'false'};
         try { window.focus = function () {}; } catch (e) {}
         if (window.__asperaDockPatched) {
           window.__asperaDockSilenced = true;
@@ -6304,29 +6349,56 @@ function applyFocusMode(webContents, serviceId) {
         window.__asperaDockSilenced = true;
         const Original = window.Notification;
         if (!Original) return;
+        window.__asperaDockOriginalNotification = Original;
         function Patched(title, options) {
-          try {
-            const opts = options && typeof options === 'object' ? options : {};
-            const payload = {
-              title: String(title || ''),
-              body: String(opts.body || ''),
-              tag: String(opts.tag || ''),
+          if (window.__asperaDockMuteNotifications) {
+            return {
+              close() {},
+              addEventListener() {},
+              removeEventListener() {},
+              dispatchEvent() { return false; },
+              onclick: null,
             };
-            console.log('${ASPERA_NOTIFY_PREFIX}' + JSON.stringify(payload));
-          } catch (e) {}
-          return {
-            close() {},
-            addEventListener() {},
-            removeEventListener() {},
-            dispatchEvent() { return false; },
-            onclick: null,
-          };
+          }
+          if (window.__asperaDockUseBridge) {
+            try {
+              const opts = options && typeof options === 'object' ? options : {};
+              const payload = {
+                title: String(title || ''),
+                body: String(opts.body || ''),
+                tag: String(opts.tag || ''),
+              };
+              console.log('${ASPERA_NOTIFY_PREFIX}' + JSON.stringify(payload));
+            } catch (e) {}
+            return {
+              close() {},
+              addEventListener() {},
+              removeEventListener() {},
+              dispatchEvent() { return false; },
+              onclick: null,
+            };
+          }
+          try {
+            return new Original(title, options);
+          } catch (e) {
+            return {
+              close() {},
+              addEventListener() {},
+              removeEventListener() {},
+              dispatchEvent() { return false; },
+              onclick: null,
+            };
+          }
         }
         Patched.prototype = Original.prototype;
         Object.defineProperty(Patched, 'permission', {
-          get: () => 'granted',
+          get: () =>
+            window.__asperaDockMuteNotifications ? 'denied' : 'granted',
         });
-        Patched.requestPermission = () => Promise.resolve('granted');
+        Patched.requestPermission = () =>
+          Promise.resolve(
+            window.__asperaDockMuteNotifications ? 'denied' : 'granted',
+          );
         window.Notification = Patched;
       })();`,
       true,
@@ -7599,18 +7671,29 @@ function configureSession(partitionSession, partitionKey) {
   configuredPartitions.add(partitionKey);
 
   partitionSession.setUserAgent(CHROME_USER_AGENT);
-  partitionSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    callback(
-      [
-        'notifications',
-        'media',
-        'clipboard-read',
-        'clipboard-sanitized-write',
-        'fullscreen',
-        'background-sync',
-      ].includes(permission),
-    );
+  const guestPermissionAllowed = (wc, permission) => {
+    if (permission === 'notifications') {
+      if (settings.focusMode) return false;
+      const svc = serviceForWebContentsId(wc?.id);
+      if (svc && !getAppConfig(svc.id).allowNotifications) return false;
+      return true;
+    }
+    return [
+      'media',
+      'clipboard-read',
+      'clipboard-sanitized-write',
+      'fullscreen',
+      'background-sync',
+    ].includes(permission);
+  };
+  partitionSession.setPermissionRequestHandler((wc, permission, callback) => {
+    callback(guestPermissionAllowed(wc, permission));
   });
+  if (typeof partitionSession.setPermissionCheckHandler === 'function') {
+    partitionSession.setPermissionCheckHandler((wc, permission) =>
+      guestPermissionAllowed(wc, permission),
+    );
+  }
 
   // Google: Chrome UA/Client Hints on product hosts; Firefox on accounts.google.com
   // for ALL Google sign-in (Gmail and third-party OAuth). Never flip mid-OAuth.
