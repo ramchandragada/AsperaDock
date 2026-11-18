@@ -15,6 +15,27 @@ test('low memory mode throttles background guests for CPU', () => {
   assert.match(mainSrc, /if \(!lean\) \{[\s\S]*?disable-background-timer-throttling/);
 });
 
+test('low memory throttles selected tab when idle or Hub unfocused', () => {
+  assert.match(mainSrc, /LEAN_ACTIVE_IDLE_THROTTLE_SEC/);
+  assert.match(mainSrc, /function leanGuestRunsFullSpeed/);
+  assert.match(
+    mainSrc,
+    /active: lean \? isSelected && leanGuestRunsFullSpeed\(id\) : isSelected/,
+  );
+  assert.match(
+    mainSrc,
+    /if \(isLowMemoryMode\(\)\) syncAllGuestPerfModes\(\);/,
+  );
+});
+
+test('low memory may hibernate default keep-warm messaging', () => {
+  assert.match(mainSrc, /isExplicitKeepWarm\(id\)/);
+  assert.match(
+    mainSrc,
+    /isLowMemoryMode\(\) \? explicitWarmIds\(\) : selectedWarmIds\(\)/,
+  );
+});
+
 test('low memory skips periodic capturePage surface polls', () => {
   assert.match(
     mainSrc,
@@ -32,6 +53,6 @@ test('settings save re-applies guest perf + memory timer', () => {
 });
 
 test('settings copy mentions CPU throttle for thin clients', () => {
-  assert.match(indexHtml, /throttles background tabs to cut CPU/);
+  assert.match(indexHtml, /throttles background \+ idle tabs to cut CPU/);
   assert.match(indexHtml, /HP t640/);
 });
