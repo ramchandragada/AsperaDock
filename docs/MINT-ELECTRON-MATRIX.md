@@ -38,6 +38,7 @@ Local installs only until every row is green.
 | **Zorin OS Lite** | Opaque floats (XFCE) | Opt-in only | Same opaque menu path as Mint XFCE; still delayed maximize. |
 | **Q4OS Andromeda Plasma** | Opaque floats | Auto one-shot | Company low-spec target. Prefer X11; tray icon sized ~22px. |
 | **Q4OS Trinity (TDE)** | Opaque floats | Auto one-shot | No reliable compositor — same opaque menu path as XFCE. |
+| **Cutefish OS** | Opaque floats | Auto one-shot | Thin-client DE (e.g. HP t640). Low memory also throttles background CPU. |
 | **Plasma (Kubuntu/Neon) compositor on** | Transparent OK | No (unless `ASPERA_LEAN=1`) | Do **not** treat as lean fleet. |
 | **Plasma compositor off** (`KWIN_COMPOSE=N`) | Opaque floats | Auto one-shot | Same black-menu risk as XFCE. |
 | **Ubuntu GNOME** | Transparent floats OK | Opt-in only | Prefer X11 (`--ozone-platform=x11`) when session is Wayland. |

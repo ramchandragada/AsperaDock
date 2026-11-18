@@ -19,7 +19,10 @@ import {
   sanitizeAiExtraLanguages,
   sanitizeAiProviderOrder,
 } from './ai/catalog.js';
-import { linuxIsLeanFleetDesktop } from './linuxDesktop.js';
+import {
+  linuxIsCutefishDesktop,
+  linuxIsLeanFleetDesktop,
+} from './linuxDesktop.js';
 
 export const PRIMARY_PROFILE_ID = 'primary';
 
@@ -593,6 +596,28 @@ function migrateWarmKeepAlive(settings) {
     next = { ...next, q4osLeanDefaultsV1: true };
     try {
       if (linuxIsLeanFleetDesktop({ platform: process.platform })) {
+        next.lowMemoryMode = true;
+        next.maxWarmViews = Math.min(
+          3,
+          Math.max(2, Number(next.maxWarmViews) || 3),
+        );
+        next.maxResidentViews = next.maxWarmViews;
+        next.hibernateMinutes = Math.min(
+          10,
+          Math.max(5, Number(next.hibernateMinutes) || 10),
+        );
+        next.hardwareAcceleration = false;
+      }
+    } catch {
+      // ignore — never block settings load on DE detection
+    }
+  }
+  // Cutefish (HP t640 thin clients) may have already consumed q4osLeanDefaultsV1
+  // before Cutefish was treated as lean — one-shot enable low memory for them.
+  if (!next.cutefishLeanDefaultsV1) {
+    next = { ...next, cutefishLeanDefaultsV1: true };
+    try {
+      if (linuxIsCutefishDesktop({ platform: process.platform })) {
         next.lowMemoryMode = true;
         next.maxWarmViews = Math.min(
           3,

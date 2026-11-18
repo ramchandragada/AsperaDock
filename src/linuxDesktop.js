@@ -101,6 +101,22 @@ export function linuxIsTrinityDesktop(env = {}) {
 }
 
 /**
+ * Cutefish OS / CutefishDE — light Debian-based DE often used on thin clients
+ * (e.g. HP t640). Treat like other lean fleets for opaque overlays + defaults.
+ */
+export function linuxIsCutefishDesktop(env = {}) {
+  const release = readLinuxOsRelease(env);
+  if (
+    release.includes('cutefish') ||
+    /\bid\s*=\s*"?cutefish"?/.test(release)
+  ) {
+    return true;
+  }
+  const de = linuxDesktopFingerprint(env);
+  return de.includes('cutefish');
+}
+
+/**
  * KWin composition explicitly off (common on low-spec Q4OS Plasma to save RAM).
  * KWIN_COMPOSE=N → no compositor → transparent Electron windows go black.
  */
@@ -114,7 +130,7 @@ export function linuxPlasmaCompositorDisabled(env = {}) {
 }
 
 /**
- * Company low-spec fleet: Q4OS Andromeda / Plasma / Trinity.
+ * Company low-spec fleet: Q4OS Andromeda / Plasma / Trinity / Cutefish.
  * Used for opaque overlays + optional one-shot lean defaults — never Mint
  * or Zorin Core (GNOME). Zorin Lite XFCE still uses the XFCE opaque path
  * via linuxUsesOpaqueOverlays, but lean defaults stay opt-in.
@@ -124,6 +140,7 @@ export function linuxIsLeanFleetDesktop(env = {}) {
   if (platform !== 'linux') return false;
   if (linuxIsQ4OS(env)) return true;
   if (linuxIsTrinityDesktop(env)) return true;
+  if (linuxIsCutefishDesktop(env)) return true;
   // Plasma alone is not enough (Kubuntu/Neon can be fine) — only lean when
   // composition is off or the operator opts in.
   if (
@@ -178,7 +195,8 @@ export function linuxUsesOpaqueOverlays(env = {}) {
     de.includes('lxqt') ||
     de.includes('openbox') ||
     de.includes('mate') ||
-    linuxIsTrinityDesktop(env)
+    linuxIsTrinityDesktop(env) ||
+    linuxIsCutefishDesktop(env)
   ) {
     return true;
   }
