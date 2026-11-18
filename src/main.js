@@ -119,7 +119,6 @@ import {
   sameDownloadBasename,
   sanitizeDownloadFilename,
   suggestDownloadPath,
-  uniqueDownloadPath,
 } from './downloadPath.js';
 import {
   beginDownload,
