@@ -34,7 +34,7 @@ test('terminated stream errors are retryable with clear copy', () => {
   assert.equal(isRetryableDownloadError('Download failed 404'), true);
   assert.equal(isRetryableDownloadError('Checksum mismatch — download rejected'), false);
   assert.match(formatDownloadErrorDetail('terminated'), /connection closed early/i);
-  assert.match(formatDownloadErrorDetail('terminated'), /Check for updates/i);
+  assert.match(formatDownloadErrorDetail('terminated'), /resumes automatically/i);
   assert.equal(formatDownloadErrorDetail('Download failed 503'), 'Download failed 503');
 });
 
