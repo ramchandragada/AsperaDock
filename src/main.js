@@ -1196,8 +1196,12 @@ function applyGuestPerfMode(
     const leanCpu = isLowMemoryMode();
     if (leanCpu) {
       webContents.setBackgroundThrottling(!active);
+      // Force Page Visibility so messengers pause even with portal keep-alive.
+      setGuestLeanPageHidden(webContents, !active);
       return;
     }
+    // Leaving lean mode: clear force-hidden without installing a new hook.
+    clearGuestLeanPageHidden(webContents);
     if (active || keepWarm || !allowThrottle) {
       webContents.setBackgroundThrottling(false);
     } else {
@@ -1208,8 +1212,38 @@ function applyGuestPerfMode(
   }
 }
 
+/**
+ * Low memory: stop painting guest WebContentsViews when Hub is not focused.
+ * Background throttling alone still leaves WhatsApp compositing + disk writes
+ * while System Monitor / another app is on top (HP t640 ~90% CPU when "unused").
+ */
+function applyGuestLeanCompositor(entry, id, { interactive }) {
+  if (!entry?.view || typeof entry.view.setVisible !== 'function') return;
+  try {
+    if (!isLowMemoryMode()) {
+      // Full mode: selected tab visible; parked warm apps stay visible off-screen.
+      if (id === activeServiceId && !locked && !(overlayOpen && overlayMode === 'full')) {
+        entry.view.setVisible(true);
+      }
+      return;
+    }
+    const hubFocused = dockIsUserFocused();
+    const showPaint =
+      !!hubFocused &&
+      !locked &&
+      !(overlayOpen && overlayMode === 'full') &&
+      id === activeServiceId;
+    entry.view.setVisible(showPaint);
+    // interactive reserved for future frame-rate hooks; paint follows focus.
+    void interactive;
+  } catch {
+    // ignore
+  }
+}
+
 function syncAllGuestPerfModes() {
   const lean = isLowMemoryMode();
+  const hubFocused = dockIsUserFocused();
   for (const [id, entry] of views.entries()) {
     const wc = entry?.view?.webContents;
     if (!wc || wc.isDestroyed()) continue;
@@ -1219,9 +1253,12 @@ function syncAllGuestPerfModes() {
       !locked &&
       id === activeServiceId &&
       !(overlayOpen && overlayMode === 'full');
+    const interactive = lean
+      ? isSelected && leanGuestRunsFullSpeed(id)
+      : isSelected;
     applyGuestPerfMode(wc, {
       // Lean: selected tab still throttles when Hub is blurred or user is idle.
-      active: lean ? isSelected && leanGuestRunsFullSpeed(id) : isSelected,
+      active: interactive,
       loadedOnce: entry.loadedOnce === true,
       keepWarm,
       allowThrottle:
@@ -1229,6 +1266,20 @@ function syncAllGuestPerfModes() {
         !isHeavyPortalApp(service) ||
         entry.activatedOnce === true,
     });
+    applyGuestLeanCompositor(entry, id, { interactive });
+  }
+  // When Hub is blurred in lean mode, ensure every guest is compositor-hidden
+  // even if activate raced before blur handlers ran.
+  if (lean && !hubFocused) {
+    for (const entry of views.values()) {
+      try {
+        if (entry?.view && typeof entry.view.setVisible === 'function') {
+          entry.view.setVisible(false);
+        }
+      } catch {
+        // ignore
+      }
+    }
   }
 }
 
@@ -3024,6 +3075,7 @@ function contentGuestBounds() {
  * Keep warm guests attached at full size and Chromium-visible.
  * setVisible(false) freezes Zoho CRM / Arattai iframes via Page Visibility.
  * Park every warm app off-screen instead — instant switch is the product promise.
+ * Low memory: park compositor-hidden so unused warm messengers do not burn CPU.
  */
 function parkGuestView(entry, viewId = null) {
   if (!mainWindow || !entry?.view || mainWindow.isDestroyed()) return;
@@ -3037,10 +3089,13 @@ function parkGuestView(entry, viewId = null) {
     entry.view.setBounds(parked);
     entry.__lastBounds = parked;
     if (typeof entry.view.setVisible === 'function') {
-      entry.view.setVisible(true);
+      entry.view.setVisible(!isLowMemoryMode());
     }
     entry.__parked = true;
     setGuestHubActiveFlag(entry.view.webContents, false);
+    if (isLowMemoryMode()) {
+      setGuestLeanPageHidden(entry.view.webContents, true);
+    }
     // Keep warm portals "present" so idle logic never treats them as stale.
     touchPortalPresence(entry);
   } catch {
@@ -3118,6 +3173,7 @@ function scheduleZohoSalesRecovery(id) {
 /**
  * Spoof Page Visibility so Zoho CRM / Arattai do not freeze when parked.
  * Also exposes __asperaHubActive so in-page guardians never reload background tabs.
+ * Low memory: `__asperaLeanHidden` can still force hidden so unused Hub drops CPU.
  */
 function attachPortalVisibilityKeepAlive(webContents) {
   if (!webContents || webContents.isDestroyed()) return;
@@ -3128,12 +3184,22 @@ function attachPortalVisibilityKeepAlive(webContents) {
       if (typeof window.__asperaHubActive === 'undefined') {
         window.__asperaHubActive = false;
       }
-      Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+      if (typeof window.__asperaLeanHidden === 'undefined') {
+        window.__asperaLeanHidden = false;
+      }
+      Object.defineProperty(document, 'hidden', {
+        configurable: true,
+        get: () => !!window.__asperaLeanHidden,
+      });
       Object.defineProperty(document, 'visibilityState', {
         configurable: true,
-        get: () => 'visible',
+        get: () => (window.__asperaLeanHidden ? 'hidden' : 'visible'),
       });
-      const stop = (e) => e.stopImmediatePropagation();
+      const stop = (e) => {
+        // Allow lean hide/show events through so messengers pause timers/disk I/O.
+        if (window.__asperaLeanHidden) return;
+        e.stopImmediatePropagation();
+      };
       window.addEventListener('visibilitychange', stop, true);
       document.addEventListener('visibilitychange', stop, true);
     } catch (_) {}
@@ -3145,6 +3211,68 @@ function attachPortalVisibilityKeepAlive(webContents) {
   webContents.on('dom-ready', inject);
   webContents.on('did-finish-load', inject);
   inject();
+}
+
+/**
+ * Low memory: force Page Visibility hidden when Hub is unused so WhatsApp /
+ * Arattai stop rAF + IndexedDB churn (setBackgroundThrottling alone is not enough
+ * while WebContentsView stays painted / visibility is spoofed).
+ */
+function setGuestLeanPageHidden(webContents, hidden) {
+  if (!webContents || webContents.isDestroyed()) return;
+  const flag = hidden ? 'true' : 'false';
+  webContents
+    .executeJavaScript(
+      `(() => {
+        try {
+          const next = ${flag};
+          if (!window.__asperaLeanVisHook) {
+            window.__asperaLeanVisHook = true;
+            if (typeof window.__asperaLeanHidden === 'undefined') {
+              window.__asperaLeanHidden = false;
+            }
+            Object.defineProperty(document, 'hidden', {
+              configurable: true,
+              get: () => !!window.__asperaLeanHidden,
+            });
+            Object.defineProperty(document, 'visibilityState', {
+              configurable: true,
+              get: () => (window.__asperaLeanHidden ? 'hidden' : 'visible'),
+            });
+          }
+          if (window.__asperaLeanHidden === next) return;
+          window.__asperaLeanHidden = next;
+          try {
+            document.dispatchEvent(new Event('visibilitychange'));
+          } catch (_) {}
+          try {
+            window.dispatchEvent(new Event('visibilitychange'));
+          } catch (_) {}
+        } catch (_) {}
+      })()`,
+      true,
+    )
+    .catch(() => {});
+}
+
+/** Clear lean force-hidden without installing hooks (full / non-lean path). */
+function clearGuestLeanPageHidden(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  webContents
+    .executeJavaScript(
+      `(() => {
+        try {
+          if (!window.__asperaLeanVisHook && !window.__asperaPortalVisible) return;
+          if (window.__asperaLeanHidden === false) return;
+          window.__asperaLeanHidden = false;
+          try {
+            document.dispatchEvent(new Event('visibilitychange'));
+          } catch (_) {}
+        } catch (_) {}
+      })()`,
+      true,
+    )
+    .catch(() => {});
 }
 
 function setGuestHubActiveFlag(webContents, active) {

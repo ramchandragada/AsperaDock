@@ -18,13 +18,26 @@ test('low memory mode throttles background guests for CPU', () => {
 test('low memory throttles selected tab when idle or Hub unfocused', () => {
   assert.match(mainSrc, /LEAN_ACTIVE_IDLE_THROTTLE_SEC/);
   assert.match(mainSrc, /function leanGuestRunsFullSpeed/);
-  assert.match(
-    mainSrc,
-    /active: lean \? isSelected && leanGuestRunsFullSpeed\(id\) : isSelected/,
-  );
+  assert.match(mainSrc, /const interactive = lean/);
+  assert.match(mainSrc, /leanGuestRunsFullSpeed\(id\)/);
   assert.match(
     mainSrc,
     /if \(isLowMemoryMode\(\)\) syncAllGuestPerfModes\(\);/,
+  );
+});
+
+test('low memory hides guests when Hub is unused (compositor + page visibility)', () => {
+  assert.match(mainSrc, /function setGuestLeanPageHidden/);
+  assert.match(mainSrc, /function applyGuestLeanCompositor/);
+  assert.match(mainSrc, /setGuestLeanPageHidden\(webContents, !active\)/);
+  assert.match(mainSrc, /__asperaLeanHidden/);
+  assert.match(
+    mainSrc,
+    /entry\.view\.setVisible\(false\)/,
+  );
+  assert.match(
+    mainSrc,
+    /entry\.view\.setVisible\(!isLowMemoryMode\(\)\)/,
   );
 });
 
@@ -63,5 +76,6 @@ test('settings save re-applies guest perf + memory timer', () => {
 test('settings copy mentions CPU throttle for thin clients', () => {
   assert.match(indexHtml, /throttles background \+ idle tabs to cut CPU/);
   assert.match(indexHtml, /Softens startup and tab-switch spikes/);
+  assert.match(indexHtml, /hide and pause/);
   assert.match(indexHtml, /HP t640/);
 });
