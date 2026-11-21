@@ -35,7 +35,10 @@ import crypto from 'node:crypto';
 import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { GITHUB_UPDATE_FEED, GITHUB_SLUG } from './github.js';
 import { assertHttpsUrl } from './netTrust.js';
-import { extractWhatsNewNotes, formatUpdatePromptDetail } from './updateNotes.js';
+import {
+  extractWhatsNewNotes,
+  formatUpdatePromptDetail,
+} from './updateNotes.js';
 import {
   formatDownloadErrorDetail,
   isRetryableDownloadError,
@@ -74,6 +77,8 @@ let checkTimer = null;
 let pendingUpdate = null;
 let downloadedPath = null;
 let busy = false;
+/** Latest download-progress payload (for "already downloading" dialogs). */
+let downloadProgress = null;
 /** True while Install & restart is waiting on dpkg / package UI. */
 let installBusy = false;
 
@@ -481,11 +486,12 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
         await showUpdateBox({
           type: 'info',
           title: 'Downloading update',
-          message: `Aspera Hub ${enriched.version} is already downloading.`,
+          message: `Aspera Hub ${enriched.version} is downloading…`,
           detail: formatUpdatePromptDetail({
             version: enriched.version,
             notes: pendingUpdate.notes,
-            phase: 'available',
+            phase: 'downloading',
+            progress: downloadProgress,
           }),
           buttons: ['OK'],
         });
@@ -718,6 +724,11 @@ export async function downloadUpdate(opts = {}) {
   }
   if (busy) return { ok: false, error: 'Update already in progress' };
   busy = true;
+  downloadProgress = {
+    percent: 0,
+    received: 0,
+    total: Number(pendingUpdate.file?.size) || 0,
+  };
 
   const { url, sha256, size } = pendingUpdate.file;
   assertHttpsArtifactUrl(url);
@@ -745,7 +756,10 @@ export async function downloadUpdate(opts = {}) {
         // eslint-disable-next-line no-await-in-loop
         const { hash } = await streamResponseToFile(res, tmp, {
           size,
-          onProgress: (progress) => broadcast('download-progress', progress),
+          onProgress: (progress) => {
+            downloadProgress = { ...progress };
+            broadcast('download-progress', progress);
+          },
         });
 
         if (!sha256) {
@@ -753,6 +767,7 @@ export async function downloadUpdate(opts = {}) {
             fs.renameSync(tmp, dest);
             downloadedPath = dest;
             busy = false;
+            downloadProgress = null;
             broadcast('downloaded', { version: pendingUpdate.version, path: dest });
             await promptReady();
             return { ok: true, path: dest };
@@ -781,6 +796,7 @@ export async function downloadUpdate(opts = {}) {
         fs.renameSync(tmp, dest);
         downloadedPath = dest;
         busy = false;
+        downloadProgress = null;
         broadcast('downloaded', { version: pendingUpdate.version, path: dest });
 
         // Always prompt — users must see the update while using the app.
@@ -811,14 +827,15 @@ export async function downloadUpdate(opts = {}) {
         if (checksumMiss && attempt >= streamAttempts - 1) {
           throw lastError;
         }
-        broadcast('download-progress', {
+        downloadProgress = {
           percent: 0,
           received: 0,
           total: size || 0,
           retrying: true,
           attempt: attempt + 1,
           checksumRetry: checksumMiss,
-        });
+        };
+        broadcast('download-progress', downloadProgress);
         // eslint-disable-next-line no-await-in-loop
         await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
       }
@@ -826,6 +843,7 @@ export async function downloadUpdate(opts = {}) {
     throw lastError || new Error('Download failed');
   } catch (error) {
     busy = false;
+    downloadProgress = null;
     try {
       if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
     } catch {
@@ -1349,6 +1367,8 @@ export function getUpdateStatus() {
     packaging: detectPackaging(),
     channel: settings().updateChannel || 'stable',
     enabled: settings().autoUpdateEnabled !== false,
+    downloading: !!busy,
+    downloadProgress: busy ? downloadProgress : null,
     pending: pendingUpdate
       ? {
           version: pendingUpdate.version,
