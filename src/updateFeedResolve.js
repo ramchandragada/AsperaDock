@@ -25,6 +25,17 @@ export function compareVersions(a, b) {
 }
 
 /**
+ * True when the feed has moved past a pending/in-flight update.
+ * Clients must jump to latest — never install N then N+1 then N+2.
+ */
+export function shouldJumpToNewerUpdate(pendingVersion, latestVersion) {
+  return compareVersions(latestVersion, pendingVersion) > 0;
+}
+
+/** Cap hop loops if releases keep publishing during one update session. */
+export const MAX_UPDATE_LATEST_HOPS = 3;
+
+/**
  * Resolve the update manifest URL.
  * Unpublished beta channel on GitHub falls back to stable latest.json.
  */
