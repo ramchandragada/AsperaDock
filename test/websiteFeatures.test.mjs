@@ -75,6 +75,10 @@ test('website audit P0 copy and a11y guards', () => {
   assert.equal(/you can enable it/i.test(html), false);
   assert.equal(/Every tab stays alive/.test(html), false);
   assert.equal(/Linus Torvalds/.test(html), false);
+  assert.equal(/Not built to earn money/i.test(html), false);
+  assert.equal(/spirit of the Linux community/i.test(html), false);
+  assert.equal(/lifetime-free/i.test(html), false);
+  assert.match(html, /free under the MIT license/);
   assert.match(html, /scroll-padding-top:76px/);
   assert.match(html, /<main id="main">/);
   assert.match(html, /scope="row"/);
