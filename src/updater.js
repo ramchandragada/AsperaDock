@@ -60,6 +60,8 @@ import {
   resolveUpdateFeedUrl,
   synthesizeManifestFromGithubRelease,
   githubTaggedManifestUrl,
+  shouldJumpToNewerUpdate,
+  MAX_UPDATE_LATEST_HOPS,
 } from './updateFeedResolve.js';
 
 export {
@@ -67,6 +69,8 @@ export {
   resolveUpdateFeedUrl,
   synthesizeManifestFromGithubRelease,
   githubTaggedManifestUrl,
+  shouldJumpToNewerUpdate,
+  MAX_UPDATE_LATEST_HOPS,
 } from './updateFeedResolve.js';
 
 /** Default feed: GitHub Releases (no custom server). */
@@ -87,6 +91,14 @@ let downloadedPath = null;
 let busy = false;
 /** Latest download-progress payload (for "already downloading" dialogs). */
 let downloadProgress = null;
+/** Version currently streaming to disk (may differ briefly from pendingUpdate). */
+let activeDownloadVersion = null;
+/**
+ * Bumped when a newer release supersedes an in-flight download so the stream
+ * aborts and restarts on absolute latest (never install N then N+1 then N+2).
+ */
+let downloadEpoch = 0;
+let activeDownloadEpoch = 0;
 /** True while Install & restart is waiting on dpkg / package UI. */
 let installBusy = false;
 
@@ -368,6 +380,90 @@ async function fetchManifest() {
   return manifest;
 }
 
+/** Drop on-disk artifacts that are not the absolute-latest pending package. */
+function clearStaleUpdateArtifacts(keepVersion = null) {
+  const keep = String(keepVersion || '').trim();
+  try {
+    if (
+      downloadedPath &&
+      fs.existsSync(downloadedPath) &&
+      keep &&
+      !String(downloadedPath).includes(keep)
+    ) {
+      clearConsumedUpdateArtifact(downloadedPath);
+    }
+  } catch {
+    // ignore
+  }
+  if (downloadedPath && keep && !String(downloadedPath).includes(keep)) {
+    downloadedPath = null;
+  }
+  try {
+    const dir = updatesDir();
+    if (!fs.existsSync(dir)) return;
+    for (const name of fs.readdirSync(dir)) {
+      if (keep && name.includes(keep)) continue;
+      if (!/\.(deb|AppImage|rpm|part)$/i.test(name)) continue;
+      try {
+        fs.unlinkSync(path.join(dir, name));
+      } catch {
+        // ignore
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function applyPendingFromManifest(manifest) {
+  const enriched = await enrichNotesFromGithub(manifest);
+  const file = pickFileForPackaging(enriched);
+  pendingUpdate = {
+    version: enriched.version,
+    notes: extractWhatsNewNotes(enriched.notes || '') || String(enriched.notes || ''),
+    mandatory: !!enriched.mandatory,
+    synthesized: !!enriched.synthesized,
+    file,
+  };
+  return { enriched, file };
+}
+
+/**
+ * Re-check the feed and jump pendingUpdate to absolute latest when it moved.
+ * Prevents: download 0.5.88 → install → download 0.5.89 → install → …
+ */
+async function refreshPendingToAbsoluteLatest({ force = false } = {}) {
+  const currentPending = String(pendingUpdate?.version || '').trim();
+  let manifest;
+  try {
+    manifest = await fetchManifest();
+  } catch (error) {
+    if (force) throw error;
+    return { switched: false, error: String(error?.message || error) };
+  }
+  const latest = String(manifest?.version || '').trim();
+  if (!latest) return { switched: false };
+  if (currentPending && !shouldJumpToNewerUpdate(currentPending, latest)) {
+    return { switched: false, version: latest };
+  }
+  if (!currentPending && compareVersions(latest, currentVersion()) <= 0) {
+    return { switched: false, version: latest };
+  }
+  clearStaleUpdateArtifacts(latest);
+  downloadedPath = null;
+  await applyPendingFromManifest(manifest);
+  // Abort any in-flight stream so downloadUpdate restarts on the new file.
+  downloadEpoch += 1;
+  broadcast('available', {
+    version: pendingUpdate.version,
+    notes: pendingUpdate.notes,
+    mandatory: !!pendingUpdate.mandatory,
+    canAutoInstall: !!pendingUpdate.file,
+    jumpedToLatest: true,
+  });
+  return { switched: true, version: pendingUpdate.version, from: currentPending || null };
+}
+
 /**
  * @returns {Promise<{available:boolean, version?:string, notes?:string, mandatory?:boolean, error?:string}>}
  */
@@ -386,9 +482,17 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
     };
   }
 
-  // Already downloaded and waiting? Re-offer it instead of doing nothing.
+  // Already downloaded and waiting? Jump to absolute latest first — never
+  // install a stale N when N+1 is already on the feed.
   if (!silent && pendingUpdate && downloadedPath && fs.existsSync(downloadedPath)) {
     clearSnooze();
+    const hop = await refreshPendingToAbsoluteLatest();
+    if (hop.switched) {
+      downloadUpdate({ quiet: false }).catch((err) =>
+        reportError('update-download', { message: String(err) }),
+      );
+      return { available: true, version: pendingUpdate.version, jumpedToLatest: true };
+    }
     await promptReady({ force: true });
     return { available: true, version: pendingUpdate.version, downloaded: true };
   }
@@ -464,19 +568,32 @@ export async function checkForUpdates({ silent = true, promptOnAvailable = false
       return { available: true, snoozed: true, version: manifest.version };
     }
 
-    const enriched = await enrichNotesFromGithub(manifest);
-    const file = pickFileForPackaging(enriched);
-    pendingUpdate = {
-      version: enriched.version,
-      notes: extractWhatsNewNotes(enriched.notes || '') || String(enriched.notes || ''),
-      mandatory: !!enriched.mandatory,
-      synthesized: !!enriched.synthesized,
-      file,
-    };
+    const { enriched, file } = await applyPendingFromManifest(manifest);
 
-    // Reuse a previously finished download only after SHA-256 re-verify.
+    // If an older package is mid-download, supersede it with absolute latest.
+    if (
+      busy &&
+      activeDownloadVersion &&
+      shouldJumpToNewerUpdate(activeDownloadVersion, enriched.version)
+    ) {
+      clearStaleUpdateArtifacts(enriched.version);
+      downloadedPath = null;
+      downloadEpoch += 1;
+      broadcast('download-progress', {
+        percent: 0,
+        received: 0,
+        total: Number(file?.size) || 0,
+        retrying: true,
+        jumpingToLatest: true,
+        version: enriched.version,
+      });
+    }
+
+    // Reuse a previously finished download only after SHA-256 re-verify,
+    // and only when it matches absolute latest (never install an older hop).
     const existing = await findDownloadedArtifact(enriched.version, file);
     if (existing) downloadedPath = existing;
+    else downloadedPath = null;
 
     broadcast('available', {
       version: enriched.version,
@@ -775,17 +892,34 @@ async function streamResponseToFile(
  */
 export async function downloadUpdate(opts = {}) {
   const quiet = !!opts.quiet;
+  const hopCount = Math.max(0, Number(opts.hopCount) || 0);
   if (!pendingUpdate?.file?.url) {
     return { ok: false, error: 'No update file available for this install type' };
   }
   if (busy) return { ok: false, error: 'Update already in progress' };
+
+  // Always aim at absolute latest before spending ~85MB on a mid-version.
+  if (hopCount < MAX_UPDATE_LATEST_HOPS) {
+    try {
+      await refreshPendingToAbsoluteLatest();
+    } catch {
+      // Keep current pending if the feed blips — still better than doing nothing.
+    }
+  }
+  if (!pendingUpdate?.file?.url) {
+    return { ok: false, error: 'No update file available for this install type' };
+  }
+
   busy = true;
+  activeDownloadVersion = pendingUpdate.version;
+  activeDownloadEpoch = downloadEpoch;
   downloadProgress = {
     percent: 0,
     received: 0,
     total: Number(pendingUpdate.file?.size) || 0,
   };
 
+  const targetVersion = pendingUpdate.version;
   const { url, sha256, size } = pendingUpdate.file;
   assertHttpsArtifactUrl(url);
   const dest = path.join(updatesDir(), path.basename(new URL(url).pathname) || 'asperadock-update');
@@ -793,11 +927,20 @@ export async function downloadUpdate(opts = {}) {
   const streamAttempts = DOWNLOAD_STREAM_ATTEMPTS;
   let lastError = null;
 
+  const assertNotSuperseded = () => {
+    if (activeDownloadEpoch !== downloadEpoch) {
+      const err = new Error('Update superseded by a newer release');
+      err.code = 'UPDATE_SUPERSEDED';
+      throw err;
+    }
+  };
+
   try {
-    broadcast('download-start', { version: pendingUpdate.version });
+    broadcast('download-start', { version: targetVersion });
 
     for (let attempt = 0; attempt < streamAttempts; attempt += 1) {
       try {
+        assertNotSuperseded();
         let startAt = 0;
         try {
           if (fs.existsSync(tmp)) {
@@ -825,6 +968,7 @@ export async function downloadUpdate(opts = {}) {
           cacheBust: attempt > 0 && startAt === 0,
           rangeOffset: startAt,
         });
+        assertNotSuperseded();
         // Server ignored Range and sent the full body — rewrite from byte 0.
         if (startAt > 0 && res.status === 200) {
           startAt = 0;
@@ -839,18 +983,34 @@ export async function downloadUpdate(opts = {}) {
           size,
           startAt,
           onProgress: (progress) => {
+            if (activeDownloadEpoch !== downloadEpoch) {
+              const err = new Error('Update superseded by a newer release');
+              err.code = 'UPDATE_SUPERSEDED';
+              throw err;
+            }
             downloadProgress = { ...progress };
             broadcast('download-progress', progress);
           },
         });
+
+        assertNotSuperseded();
 
         if (!sha256) {
           if (pendingUpdate?.synthesized) {
             fs.renameSync(tmp, dest);
             downloadedPath = dest;
             busy = false;
+            activeDownloadVersion = null;
             downloadProgress = null;
             broadcast('downloaded', { version: pendingUpdate.version, path: dest });
+            // Hop again — a newer release may have published during this download.
+            if (hopCount < MAX_UPDATE_LATEST_HOPS) {
+              const hop = await refreshPendingToAbsoluteLatest();
+              if (hop.switched) {
+                clearStaleUpdateArtifacts(hop.version);
+                return downloadUpdate({ quiet, hopCount: hopCount + 1 });
+              }
+            }
             await promptReady();
             return { ok: true, path: dest };
           }
@@ -878,8 +1038,19 @@ export async function downloadUpdate(opts = {}) {
         fs.renameSync(tmp, dest);
         downloadedPath = dest;
         busy = false;
+        activeDownloadVersion = null;
         downloadProgress = null;
-        broadcast('downloaded', { version: pendingUpdate.version, path: dest });
+        broadcast('downloaded', { version: targetVersion, path: dest });
+
+        // Absolute latest may have moved while this ~85MB finished — jump, don't
+        // install mid-versions one after another.
+        if (hopCount < MAX_UPDATE_LATEST_HOPS) {
+          const hop = await refreshPendingToAbsoluteLatest();
+          if (hop.switched) {
+            clearStaleUpdateArtifacts(hop.version);
+            return downloadUpdate({ quiet, hopCount: hopCount + 1 });
+          }
+        }
 
         // Always prompt — users must see the update while using the app.
         // autoUpdateInstall still applies on quit if they choose Later.
@@ -887,6 +1058,9 @@ export async function downloadUpdate(opts = {}) {
         return { ok: true, path: dest };
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
+        if (lastError.code === 'UPDATE_SUPERSEDED') {
+          throw lastError;
+        }
         // Keep .part for Range resume unless the bytes themselves are bad.
         if (
           shouldDiscardPartialOnError(lastError) ||
@@ -937,7 +1111,12 @@ export async function downloadUpdate(opts = {}) {
     throw lastError || new Error('Download failed');
   } catch (error) {
     busy = false;
+    activeDownloadVersion = null;
     downloadProgress = null;
+    if (error?.code === 'UPDATE_SUPERSEDED' && hopCount < MAX_UPDATE_LATEST_HOPS) {
+      clearStaleUpdateArtifacts(pendingUpdate?.version);
+      return downloadUpdate({ quiet, hopCount: hopCount + 1 });
+    }
     // Leave .part on disk for the next Check for updates (resume).
     // Only wipe on final checksum / missing-hash failures (already handled).
     const message = String(error?.message || error);
@@ -1082,8 +1261,21 @@ export async function installUpdate({ silentOnFail = false } = {}) {
   if (installBusy) {
     return { ok: false, error: 'Install already in progress' };
   }
+  // Never install a mid-version when absolute latest has moved on.
+  try {
+    const hop = await refreshPendingToAbsoluteLatest();
+    if (hop.switched) {
+      downloadedPath = null;
+      const result = await downloadUpdate({ quiet: silentOnFail });
+      if (!result.ok) return result;
+      // downloadUpdate already prompted Install when interactive.
+      if (!silentOnFail) return result;
+    }
+  } catch {
+    // Proceed with whatever is pending if the feed is briefly unreachable.
+  }
   if (!downloadedPath || !fs.existsSync(downloadedPath)) {
-    const result = await downloadUpdate();
+    const result = await downloadUpdate({ quiet: silentOnFail });
     if (!result.ok) return result;
   }
   installBusy = true;
@@ -1404,6 +1596,18 @@ async function promptReady({ force = false } = {}) {
   if (installBusy) return;
   if (!force && !pendingUpdate.mandatory && isUpdateSnoozed(pendingUpdate.version)) return;
   if (force) clearSnooze();
+  // Don't offer Install for N when N+2 is already latest — hop first.
+  try {
+    const hop = await refreshPendingToAbsoluteLatest();
+    if (hop.switched) {
+      downloadedPath = null;
+      await downloadUpdate({ quiet: false });
+      return;
+    }
+  } catch {
+    // Feed blip — fall through and offer whatever is already downloaded.
+  }
+  if (!downloadedPath || !fs.existsSync(downloadedPath)) return;
   try {
     const r = await showUpdateBox({
       type: 'info',
