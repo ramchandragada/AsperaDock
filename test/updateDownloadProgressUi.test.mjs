@@ -15,8 +15,7 @@ test('busy update check shows downloading progress detail', () => {
     updaterSrc,
     /Aspera Hub \$\{enriched\.version\} is downloading…/,
   );
-  assert.match(
-    updaterSrc,
-    /onProgress: \(progress\) => \{\s*downloadProgress = \{ \.\.\.progress \};/,
-  );
+  assert.match(updaterSrc, /onProgress: \(progress\) => \{/);
+  assert.match(updaterSrc, /downloadProgress = \{ \.\.\.progress \};/);
+  assert.match(updaterSrc, /UPDATE_SUPERSEDED/);
 });
