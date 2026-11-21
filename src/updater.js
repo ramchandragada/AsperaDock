@@ -44,6 +44,14 @@ import {
   isRetryableDownloadError,
 } from './updateDownloadErrors.js';
 import {
+  DOWNLOAD_STALL_MS,
+  DOWNLOAD_STREAM_ATTEMPTS,
+  partResumeOffset,
+  rangeRequestHeaders,
+  resolveDownloadTotal,
+  shouldDiscardPartialOnError,
+} from './updateDownloadStream.js';
+import {
   stagePackageForElevatedInstall as stagePackageForElevatedInstallPure,
   shouldSilentInstallOnQuit,
 } from './updateInstallPolicy.js';
@@ -614,7 +622,10 @@ function withCacheBust(url, nonce = Date.now()) {
   }
 }
 
-async function fetchUpdateArtifact(url, { attempts = 4, cacheBust = false } = {}) {
+async function fetchUpdateArtifact(
+  url,
+  { attempts = 4, cacheBust = false, rangeOffset = 0 } = {},
+) {
   let lastError = null;
   let activeUrl = cacheBust ? withCacheBust(url) : url;
   let triedApiFallback = false;
@@ -629,13 +640,21 @@ async function fetchUpdateArtifact(url, { attempts = 4, cacheBust = false } = {}
           'User-Agent': 'AsperaHub-Updater',
           'Cache-Control': 'no-cache',
           Pragma: 'no-cache',
+          ...rangeRequestHeaders(rangeOffset),
         },
       });
-      if (res.ok && res.body) return res;
+      // 206 = resumed Range; 200 = full body (caller may restart .part).
+      if ((res.ok || res.status === 206) && res.body) return res;
       lastError = new Error(`Download failed ${res.status}`);
       // Release asset clobber / CDN race — wait and retry.
-      if (![404, 408, 425, 429, 500, 502, 503, 504].includes(res.status)) {
+      if (![404, 408, 416, 425, 429, 500, 502, 503, 504].includes(res.status)) {
         throw lastError;
+      }
+      // Range not satisfiable — caller should discard .part and restart.
+      if (res.status === 416) {
+        const err = new Error('Download failed 416');
+        err.code = 'RANGE_NOT_SATISFIABLE';
+        throw err;
       }
       // One-shot: swap to Releases API asset URL after a 404.
       if (res.status === 404 && !triedApiFallback) {
@@ -657,20 +676,57 @@ async function fetchUpdateArtifact(url, { attempts = 4, cacheBust = false } = {}
 }
 
 /**
- * Stream one fetch response body to disk while hashing + reporting progress.
- * Throws on mid-stream abort ("terminated") so callers can retry the whole file.
+ * Read the next body chunk, aborting if the connection stalls.
  */
-async function streamResponseToFile(res, tmp, { size = 0, onProgress } = {}) {
-  const total = Number(res.headers.get('content-length')) || size || 0;
-  let received = 0;
+function readBodyChunkWithStall(reader, stallMs = DOWNLOAD_STALL_MS) {
+  let timer = null;
+  const stall = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error('Download stalled — no data received');
+      err.code = 'DOWNLOAD_STALL';
+      reject(err);
+    }, stallMs);
+  });
+  return Promise.race([reader.read(), stall]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+/**
+ * Stream one fetch response body to disk while hashing + reporting progress.
+ * Supports resume via startAt (append + seed SHA-256 from existing .part bytes).
+ * Throws on mid-stream abort / stall so callers can Range-resume the .part file.
+ */
+async function streamResponseToFile(
+  res,
+  tmp,
+  { size = 0, onProgress, startAt = 0 } = {},
+) {
+  const start = Math.max(0, Math.floor(Number(startAt) || 0));
+  const total = resolveDownloadTotal({
+    status: res.status,
+    contentLength: Number(res.headers.get('content-length')) || 0,
+    contentRange: res.headers.get('content-range') || '',
+    startAt: start,
+    expectedSize: size,
+  });
+  let received = start;
   const hash = crypto.createHash('sha256');
-  const out = fs.createWriteStream(tmp);
+  if (start > 0) {
+    await new Promise((resolve, reject) => {
+      const rs = fs.createReadStream(tmp, { start: 0, end: start - 1 });
+      rs.on('data', (d) => hash.update(d));
+      rs.on('end', resolve);
+      rs.on('error', reject);
+    });
+  }
+  const out = fs.createWriteStream(tmp, start > 0 ? { flags: 'a' } : undefined);
   const reader = res.body.getReader();
   try {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       // eslint-disable-next-line no-await-in-loop
-      const { done, value } = await reader.read();
+      const { done, value } = await readBodyChunkWithStall(reader);
       if (done) break;
       received += value.length;
       hash.update(value);
@@ -734,7 +790,7 @@ export async function downloadUpdate(opts = {}) {
   assertHttpsArtifactUrl(url);
   const dest = path.join(updatesDir(), path.basename(new URL(url).pathname) || 'asperadock-update');
   const tmp = `${dest}.part`;
-  const streamAttempts = 4;
+  const streamAttempts = DOWNLOAD_STREAM_ATTEMPTS;
   let lastError = null;
 
   try {
@@ -742,20 +798,46 @@ export async function downloadUpdate(opts = {}) {
 
     for (let attempt = 0; attempt < streamAttempts; attempt += 1) {
       try {
+        let startAt = 0;
         try {
-          if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+          if (fs.existsSync(tmp)) {
+            startAt = partResumeOffset(fs.statSync(tmp).size, size);
+          }
         } catch {
-          // ignore
+          startAt = 0;
         }
-        // After a checksum miss, bust CDN caches — publish races can serve a
-        // stale .deb against a newer latest.json (or the reverse).
+        if (startAt > 0 && typeof downloadProgress?.received === 'number') {
+          // Keep the status bar honest while we reconnect.
+          downloadProgress = {
+            percent: size
+              ? Math.round((startAt / size) * 100)
+              : downloadProgress.percent || 0,
+            received: startAt,
+            total: size || downloadProgress.total || 0,
+            resuming: true,
+            attempt: attempt + 1,
+          };
+          broadcast('download-progress', downloadProgress);
+        }
+        // After a checksum miss / empty part, bust CDN caches.
         // eslint-disable-next-line no-await-in-loop
         const res = await fetchUpdateArtifact(url, {
-          cacheBust: attempt > 0,
+          cacheBust: attempt > 0 && startAt === 0,
+          rangeOffset: startAt,
         });
+        // Server ignored Range and sent the full body — rewrite from byte 0.
+        if (startAt > 0 && res.status === 200) {
+          startAt = 0;
+          try {
+            if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+          } catch {
+            // ignore
+          }
+        }
         // eslint-disable-next-line no-await-in-loop
         const { hash } = await streamResponseToFile(res, tmp, {
           size,
+          startAt,
           onProgress: (progress) => {
             downloadProgress = { ...progress };
             broadcast('download-progress', progress);
@@ -805,10 +887,16 @@ export async function downloadUpdate(opts = {}) {
         return { ok: true, path: dest };
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        try {
-          if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-        } catch {
-          // ignore
+        // Keep .part for Range resume unless the bytes themselves are bad.
+        if (
+          shouldDiscardPartialOnError(lastError) ||
+          lastError.code === 'RANGE_NOT_SATISFIABLE'
+        ) {
+          try {
+            if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
+          } catch {
+            // ignore
+          }
         }
         // Missing checksum is final; mismatch may be a CDN/publish race — retry.
         if (/missing a SHA-256/i.test(lastError.message)) {
@@ -827,9 +915,15 @@ export async function downloadUpdate(opts = {}) {
         if (checksumMiss && attempt >= streamAttempts - 1) {
           throw lastError;
         }
+        let kept = 0;
+        try {
+          if (fs.existsSync(tmp)) kept = fs.statSync(tmp).size;
+        } catch {
+          kept = 0;
+        }
         downloadProgress = {
-          percent: 0,
-          received: 0,
+          percent: size ? Math.round((kept / size) * 100) : 0,
+          received: kept,
           total: size || 0,
           retrying: true,
           attempt: attempt + 1,
@@ -844,11 +938,8 @@ export async function downloadUpdate(opts = {}) {
   } catch (error) {
     busy = false;
     downloadProgress = null;
-    try {
-      if (fs.existsSync(tmp)) fs.unlinkSync(tmp);
-    } catch {
-      // ignore
-    }
+    // Leave .part on disk for the next Check for updates (resume).
+    // Only wipe on final checksum / missing-hash failures (already handled).
     const message = String(error?.message || error);
     broadcast('error', { message });
     reportError('update-download', { message });

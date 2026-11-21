@@ -67,11 +67,16 @@ export function formatDownloadProgressLine(progress) {
   if (!progress || typeof progress !== 'object') {
     return 'Download in progress…';
   }
-  if (progress.retrying) {
+  if (progress.retrying || progress.resuming) {
     const attempt = Number(progress.attempt) || 0;
+    const kept = Math.max(0, Number(progress.received) || 0);
+    const total = Math.max(0, Number(progress.total) || 0);
+    const keptMb =
+      kept > 0 ? `${(kept / (1024 * 1024)).toFixed(kept >= 10 * 1024 * 1024 ? 0 : 1)} MB kept · ` : '';
+    const verb = progress.resuming ? 'Resuming' : 'Retrying';
     return attempt
-      ? `Retrying download (attempt ${attempt})…`
-      : 'Retrying download…';
+      ? `${keptMb}${verb} download (attempt ${attempt})…`
+      : `${keptMb}${verb} download…`;
   }
   const received = Math.max(0, Number(progress.received) || 0);
   const total = Math.max(0, Number(progress.total) || 0);
@@ -102,9 +107,11 @@ export function formatUpdatePromptDetail(opts = {}) {
     parts.push(formatDownloadProgressLine(opts.progress));
     parts.push('');
     parts.push(
-      'The package is about 85 MB (Electron is bundled). On office internet this can take a few minutes.',
+      'The package is about 85 MB (Electron is bundled). GitHub downloads can be slow from India even on a fast ISP — Hub resumes if the connection drops.',
     );
-    parts.push('Click OK and wait — Hub will prompt Install & restart when ready.');
+    parts.push(
+      'Click OK and wait — Hub will prompt Install & restart when ready. Or download the .deb in Chrome and install with apt.',
+    );
     if (bullets) {
       parts.push('');
       parts.push(version ? `What's new in ${version}` : "What's new");
